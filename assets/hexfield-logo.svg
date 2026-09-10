@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 160" role="img" aria-labelledby="title desc">
+  <title id="title">Hexfield</title>
+  <desc id="desc">Hexfield in a black and orange split wordmark with a rainbow underline</desc>
+  <defs>
+    <linearGradient id="pride" x1="0" x2="1">
+      <stop offset="0" stop-color="#f44336"/>
+      <stop offset=".17" stop-color="#ff9800"/>
+      <stop offset=".34" stop-color="#ffeb3b"/>
+      <stop offset=".51" stop-color="#28d17c"/>
+      <stop offset=".68" stop-color="#36bdf5"/>
+      <stop offset=".84" stop-color="#7048e8"/>
+      <stop offset="1" stop-color="#ee4db0"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="160" rx="22" fill="#090909"/>
+  <text x="26" y="108" fill="#fff" font-family="Arial Black, Impact, sans-serif" font-size="82" font-weight="900" letter-spacing="-6">HEX</text>
+  <rect x="190" y="30" width="294" height="92" rx="12" fill="#ff9000"/>
+  <text x="204" y="108" fill="#050505" font-family="Arial Black, Impact, sans-serif" font-size="76" font-weight="900" letter-spacing="-7">FIELD</text>
+  <rect x="26" y="132" width="458" height="9" rx="5" fill="url(#pride)"/>
+</svg>

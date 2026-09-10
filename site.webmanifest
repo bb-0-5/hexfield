@@ -1,0 +1,19 @@
+{
+  "name": "GAY DAY — Hexfield Pride Hub",
+  "short_name": "Hexfield",
+  "description": "A queer-led live generative-art studio, weekly museum, and print shop.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#08080c",
+  "theme_color": "#ff1493",
+  "categories": ["art", "entertainment", "lifestyle"],
+  "icons": [
+    {
+      "src": "/assets/hexfield-logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
