@@ -1,21 +1,21 @@
 <!doctype html>
 <!-- autodeploy-check: workers-builds-verify-8f2c1a -->
-<!-- hexfield build 163 (2026-09-23) -->
+<!-- hexfield build 163 (2026-09-11) -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>🌈 GAY DAY — Hexfield Pride Celebration</title>
-<meta name="description" content="Hexfield is a queer-led digital art and gay pride hub where Rob Boss paints evolving generative fields and weekly work becomes a print.">
+<title>Hexfield — Pride Studio</title>
+<meta name="description" content="Hexfield is a queer-led generative-art studio where Rob Boss develops evolving fields, a living museum, and print editions.">
 <meta name="keywords" content="gay pride, LGBTQIA+, queer art, digital art, generative art, pride community, Hexfield, Rob Boss">
-<meta name="theme-color" content="#ff1493">
+<meta name="theme-color" content="#0c141b">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Hexfield">
-<meta property="og:title" content="GAY DAY — Hexfield Pride Hub">
-<meta property="og:description" content="A loud, joyful queer generative-art studio and print shop.">
+<meta property="og:title" content="Hexfield — Pride Studio">
+<meta property="og:description" content="A queer generative-art studio, living museum, and print shop.">
 <meta property="og:url" content="https://hexfield.org/">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="GAY DAY — Hexfield Pride Hub">
+<meta name="twitter:title" content="Hexfield — Pride Studio">
 <meta name="twitter:description" content="Queer generative art painted live by Rob Boss.">
 <link rel="canonical" href="index.html">
 <link rel="manifest" href="site.webmanifest">
@@ -25,9 +25,9 @@
   "@context": "https://schema.org",
   "@type": "WebSite",
   "name": "Hexfield",
-  "alternateName": "GAY DAY — Hexfield Pride Hub",
+  "alternateName": "Hexfield Pride Studio",
   "url": "https://hexfield.org/",
-  "description": "A queer-led gay pride and generative-art hub with a live resident painter and print studio.",
+  "description": "A queer-led gay pride and generative-art hub with a live resident painter, weekly museum, and print studio.",
   "inLanguage": "en-AU",
   "about": [
     { "@type": "Thing", "name": "Gay pride" },
@@ -248,6 +248,20 @@
   .brush-sim-log { max-height: 82px; overflow: auto; margin-top: 4px; color: var(--dim); font-size: 8px; line-height: 1.3; }
   .brush-sim-log div { display: flex; justify-content: space-between; gap: 6px; }
   .brush-sim-log b { color: var(--ink); font-weight: 500; }
+  .museum-panel { position: fixed; inset: 12px; z-index: 80; display: none; flex-direction: column;
+    padding: 14px; background: #0b0b12; border: 1px solid var(--accent); border-radius: 7px;
+    box-shadow: 0 18px 70px #000c; }
+  .museum-panel.on { display: flex; }
+  .museum-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .museum-head h2 { margin: 0; font-size: 14px; letter-spacing: .11em; color: var(--accent); }
+  .museum-head button { width: auto; min-width: 64px; padding: 4px 7px; font-size: 10px; }
+  #museumState { margin: 8px 0; color: var(--dim); font-size: 11px; }
+  #museumGrid { flex: 1; min-height: 0; overflow: auto; display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 9px; align-content: start; }
+  .museum-card { padding: 6px; border: 1px solid var(--line); background: #101018; border-radius: 4px; }
+  .museum-card canvas { width: 100%; height: auto; aspect-ratio: 5 / 6; border-color: #303042; }
+  .museum-card-meta { display: flex; justify-content: space-between; gap: 6px; margin-top: 4px; color: var(--dim); font-size: 9px; }
+  #museumEditions { flex: 0 0 auto; max-height: 62vh; overflow: auto; margin-bottom: 8px; }
   .edition { border: 1px solid var(--line); border-radius: 4px; margin-bottom: 10px; padding: 8px; background: #0d0d14; }
   .edition-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
   .edition-head h3 { margin: 0; font-size: 12px; letter-spacing: 0.06em; }
@@ -428,6 +442,22 @@
      it is only an empty, invisible slot so KEEP/REJECT never jumps when the
      network probe finishes. */
   #localModeBadge[hidden] { display: block !important; visibility: hidden; }
+  #localTasteControls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px;
+    height: 34px;
+    min-height: 34px;
+    margin-top: 5px;
+  }
+  #localTasteControls button {
+    height: 34px;
+    min-height: 34px;
+    padding: 5px;
+    font-size: 10px;
+  }
+  #voteUp { border-color: #4d7d68; }
+  #voteDown { border-color: #7d4d56; }
   #localLearningStatus { margin-top: 4px; color: #aeb6cf; font-size: 8px; line-height: 1.3;
                          height: 22px; min-height: 22px; max-height: 22px; overflow: hidden; }
   /* Live diagnostics may change words, not geometry. */
@@ -458,76 +488,45 @@
     #headlessSim { opacity: .82; }
   }
 
-  /* GAY DAY is a celebration layer around the working painter, never baked
-     into the print canvas. The art can still be exported cleanly while the
-     studio itself looks like a hot-pink coming-out party. */
+  /* Pride is a quiet prismatic signal around the working painter, never baked
+     into an edition. The art stays primary; the studio keeps its queer context
+     without turning every panel into a novelty treatment. */
   :root {
-    --pride-pink: #ff1493;
-    --pride-hot: #ff3dbb;
-    --pride-deep: #8b005d;
-    --pride-gold: #fff176;
+    --pride-red: #ff6b6b;
+    --pride-amber: #f7c75b;
+    --pride-green: #66d3a0;
+    --pride-blue: #6dc9f2;
+    --pride-violet: #a991ed;
+    --pride-rose: #e7a3c9;
   }
   body {
     background:
-      radial-gradient(circle at 50% 42%, rgba(255,241,118,.42) 0 3%, transparent 24%),
-      radial-gradient(circle at 16% 24%, rgba(120,225,255,.54), transparent 28%),
-      radial-gradient(circle at 84% 70%, rgba(190,80,255,.58), transparent 30%),
-      linear-gradient(135deg, #ff70cf 0%, var(--pride-pink) 30%, #ff0084 58%, #9b26ff 100%);
-  }
-  body::before,
-  body::after {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: 65;
-    pointer-events: none;
-    background-image:
-      radial-gradient(circle, #fff 0 1px, transparent 2px),
-      radial-gradient(circle, #fff176 0 1.5px, transparent 2.5px),
-      radial-gradient(circle, #73efff 0 1px, transparent 2px),
-      radial-gradient(circle, #ff9ee7 0 1.5px, transparent 2.5px);
-    background-size: 47px 53px, 71px 67px, 83px 79px, 101px 97px;
-    background-position: 3px 7px, 19px 31px, 41px 11px, 13px 57px;
-    mix-blend-mode: screen;
-    opacity: .72;
-    animation: prideGlitterDrift 7s linear infinite;
-  }
-  body::after {
-    inset: -30%;
-    background-size: 67px 61px, 89px 83px, 109px 103px, 127px 119px;
-    filter: blur(.35px);
-    opacity: .48;
-    animation: prideGlitterSpin 18s linear infinite;
-  }
-  @keyframes prideGlitterDrift {
-    0% { transform: translate3d(0,0,0); opacity: .45; }
-    50% { transform: translate3d(14px,-18px,0); opacity: .86; }
-    100% { transform: translate3d(28px,-36px,0); opacity: .45; }
-  }
-  @keyframes prideGlitterSpin {
-    to { transform: rotate(3deg) scale(1.02); }
+      radial-gradient(ellipse at 50% 45%, rgba(109,201,242,.12), transparent 42%),
+      radial-gradient(ellipse at 86% 74%, rgba(169,145,237,.10), transparent 36%),
+      radial-gradient(ellipse at 12% 18%, rgba(102,211,160,.08), transparent 30%),
+      linear-gradient(145deg, #0a1015, #10131b 52%, #0a0d12);
   }
   #stage {
-    border: 5px solid transparent;
-    border-radius: 10px;
+    border: 2px solid transparent;
+    border-radius: 8px;
     background:
       linear-gradient(#08080c,#08080c) padding-box,
-      linear-gradient(90deg,#ff1744,#ff9100,#ffea00,#00e676,#00b0ff,#651fff,#f500b9) border-box;
-    box-shadow: 0 24px 80px rgba(82,0,53,.62), 0 0 38px rgba(255,241,118,.64);
+      linear-gradient(110deg,var(--pride-red),var(--pride-amber),var(--pride-green),var(--pride-blue),var(--pride-violet),var(--pride-rose)) border-box;
+    box-shadow: 0 22px 72px rgba(0,0,0,.42), 0 0 28px rgba(109,201,242,.12);
   }
   #view { border: 0; border-radius: 5px; }
   #autonomousControls,
   aside > div#shopEssentials,
   #headlessSim {
-    border-color: rgba(255,255,255,.62) !important;
-    background: rgba(91,0,61,.74) !important;
-    box-shadow: 0 10px 36px rgba(78,0,52,.55), 0 0 18px rgba(255,255,255,.18) !important;
+    border-color: rgba(190,218,230,.20) !important;
+    background: rgba(12,17,24,.82) !important;
+    box-shadow: 0 10px 36px rgba(0,0,0,.30), 0 0 18px rgba(109,201,242,.07) !important;
   }
   #reseedNow, #perturbNow, #captureLogo,
-  #shopEssentials button {
-    border-color: rgba(255,255,255,.74) !important;
-    background: rgba(255,20,147,.23) !important;
-    color: #fff !important;
+  #localTasteControls button, #shopEssentials button {
+    border-color: rgba(109,201,242,.38) !important;
+    background: rgba(109,201,242,.10) !important;
+    color: #e8f4f8 !important;
   }
   #prideBanner {
     position: fixed;
@@ -535,217 +534,96 @@
     top: 10px;
     left: 50%;
     transform: translateX(-50%);
-    max-width: calc(100vw - 610px);
-    padding: 7px 18px 8px;
-    border: 2px solid rgba(255,255,255,.82);
-    border-radius: 999px;
-    background: linear-gradient(90deg,rgba(255,23,68,.88),rgba(255,145,0,.88),rgba(0,200,83,.88),rgba(0,145,234,.88),rgba(124,77,255,.88),rgba(245,0,185,.88));
-    box-shadow: 0 6px 28px rgba(83,0,55,.48), inset 0 0 14px rgba(255,255,255,.28);
-    color: white;
-    font: 900 clamp(16px,2vw,30px)/1 ui-rounded,"Arial Rounded MT Bold",sans-serif;
-    letter-spacing: .14em;
+    max-width: calc(100vw - 340px);
+    padding: 7px 12px 8px 16px;
+    border: 1px solid rgba(190,218,230,.32);
+    border-radius: 5px;
+    background: rgba(8,13,18,.72);
+    box-shadow: 0 8px 24px rgba(0,0,0,.28);
+    color: #e9f1f4;
+    font: 700 clamp(10px,1.2vw,14px)/1 ui-monospace,SFMono-Regular,Menlo,monospace;
+    letter-spacing: .20em;
     text-align: center;
-    text-shadow: 0 2px 0 rgba(90,0,60,.38);
+    text-shadow: none;
     white-space: nowrap;
   }
   #prideBanner small {
     display: block;
     margin-top: 5px;
-    font: 800 8px/1 ui-monospace,monospace;
-    letter-spacing: .18em;
+    color: #a8bec8;
+    font: 600 8px/1 ui-monospace,monospace;
+    letter-spacing: .12em;
     text-transform: uppercase;
   }
-  #localMenAd {
-    position: fixed;
-    z-index: 80;
-    right: 12px;
-    top: 12px;
-    width: 250px;
-    padding: 10px;
-    border: 1px solid rgba(255,255,255,.82);
-    border-radius: 12px;
-    background: linear-gradient(165deg,rgba(39,16,45,.97),rgba(111,14,90,.97));
-    box-shadow: 0 12px 40px rgba(38,0,39,.62), inset 0 1px 0 rgba(255,255,255,.18);
-    color: #fff;
-    text-align: left;
-    font-family: Inter,Arial,sans-serif;
-  }
-  #localMenAd .adMeta { display: flex; justify-content: space-between; color: #d9bdd5;
-    font-size: 7px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
-  #localMenAd strong { display: block; margin: 5px 0 1px; font: 900 18px/1.05 Inter,Arial,sans-serif; }
-  #localMenAd .nearby { color: #ffd6f1; font-size: 10px; }
-  #localMenAd .adPortrait {
-    position: relative; height: 132px; margin: 8px 0; overflow: hidden; border-radius: 9px;
-    border: 1px solid rgba(255,255,255,.42); background: #9d1d7a;
-    box-shadow: inset 0 -24px 28px rgba(23,0,29,.25);
-  }
-  #localMenAd .adPortrait img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 29%; display: block; }
-  #localMenAd .onlineNow { position: absolute; left: 7px; bottom: 7px; padding: 4px 7px;
-    border-radius: 999px; background: rgba(20,13,25,.82); color: #fff; font-size: 8px; font-weight: 800; }
-  #localMenAd .onlineNow::before { content: ""; display: inline-block; width: 7px; height: 7px;
-    margin-right: 5px; border-radius: 50%; background: #39ef75; box-shadow: 0 0 8px #39ef75; vertical-align: -1px; }
-  #localMenAd .fakeCta { display: block; padding: 7px; border-radius: 7px;
-    background: linear-gradient(90deg,#ff3aaa,#ff735c); box-shadow: 0 4px 14px rgba(255,30,144,.35);
-    color: #fff; font-size: 10px; font-weight: 900; letter-spacing: .08em; text-align: center; }
-  #localMenAd small { display: block; margin-top: 5px; color: #d9bdd5; font-size: 7px; text-align: center; }
   @media (max-width: 980px) {
-    #prideBanner { top: 8px; max-width: calc(100vw - 252px); font-size: 15px; padding-inline: 10px; }
-    #localMenAd { width: 220px; }
+    #prideBanner { top: 8px; font-size: 12px; padding-inline: 10px; }
   }
   @media (max-width: 680px) {
-    #prideBanner { left: auto; right: 8px; transform: none; max-width: calc(100vw - 250px); font-size: 12px; }
+    #prideBanner { left: auto; right: 8px; transform: none; max-width: calc(100vw - 16px); font-size: 10px; }
     #prideBanner small { display: none; }
-    #localMenAd { top: auto; bottom: 8px; right: 8px; width: 190px; padding: 6px; }
-    #localMenAd strong { font-size: 14px; }
-    #localMenAd .adPortrait { height: 92px; }
   }
-  /* Requested cartoon anatomy for every control. It is a CSS silhouette only:
-     the native button stays focusable, labelled and large enough to operate. */
+  /* Controls are working tools, not a costume. */
   button {
     position: relative;
-    min-height: 34px;
-    padding-inline: 13%;
-    border-radius: 999px;
-    clip-path: polygon(7% 5%,76% 5%,82% 16%,87% 7%,94% 10%,100% 28%,96% 50%,100% 72%,94% 90%,87% 93%,82% 84%,76% 95%,7% 95%,0 72%,0 28%);
-    background:
-      radial-gradient(circle at 88% 24%,rgba(255,255,255,.20) 0 10%,transparent 11%),
-      radial-gradient(circle at 88% 76%,rgba(255,255,255,.16) 0 10%,transparent 11%),
-      linear-gradient(90deg,rgba(255,107,186,.96),rgba(231,32,141,.96)) !important;
-    border-color: rgba(255,255,255,.74) !important;
-    color: #fff !important;
-    text-shadow: 0 1px 0 rgba(90,0,60,.42);
+    min-height: 32px;
+    padding-inline: 10px;
+    border-radius: 5px;
+    clip-path: none;
+    background: rgba(20,29,38,.88) !important;
+    border-color: rgba(190,218,230,.28) !important;
+    color: #e8f4f8 !important;
+    text-shadow: none;
   }
   button::before {
-    content: "";
-    position: absolute;
-    left: 7%; top: 16%; bottom: 16%; width: 9%;
-    border-right: 1px solid rgba(108,0,67,.30);
-    border-radius: 50%;
-    pointer-events: none;
+    display: none;
   }
-  button:hover:not(:disabled) { filter: saturate(1.2) brightness(1.1); transform: translateY(-1px); }
-  button:focus-visible { outline: 3px solid #fff176; outline-offset: 3px; }
-  /* Hexfield's own black/orange split wordmark: the blunt adult-site visual
-     grammar is recognisable, while the letters, rainbow rule and living canvas
-     remain unmistakably this studio rather than somebody else's trademark. */
+  button:hover:not(:disabled) { border-color: rgba(109,201,242,.74) !important; background: rgba(109,201,242,.15) !important; transform: translateY(-1px); }
+  button:focus-visible { outline: 2px solid var(--pride-amber); outline-offset: 3px; }
+  /* A studio mark: quiet lettering held together by a living prismatic rule. */
   .hexfieldWordmark {
     display: inline-flex;
     align-items: center;
     position: relative;
     width: max-content;
-    padding: 3px 5px 7px;
-    border-radius: 6px;
-    background: #090909;
-    color: #fff;
-    font: 950 21px/.92 "Arial Black",Impact,system-ui,sans-serif;
-    letter-spacing: -.055em;
+    padding: 2px 2px 7px;
+    border-radius: 0;
+    background: transparent;
+    color: #dfeef2;
+    font: 800 18px/.95 ui-sans-serif,system-ui,sans-serif;
+    letter-spacing: .02em;
     text-transform: uppercase;
-    filter: drop-shadow(0 5px 10px rgba(0,0,0,.35));
+    filter: none;
   }
-  .hexfieldWordmark .hex { padding: 3px 3px 3px 2px; }
-  .hexfieldWordmark .field {
-    padding: 4px 5px 4px 4px;
-    border-radius: 4px;
-    background: #ff9000;
-    color: #050505;
-    letter-spacing: -.075em;
+  .hexfieldWordmark .markPrimary { padding: 2px 2px 2px 0; }
+  .hexfieldWordmark .markSecondary {
+    padding: 2px 0;
+    color: #9eb8c2;
+    letter-spacing: .04em;
   }
   .hexfieldWordmark::after {
     content: "";
     position: absolute;
-    left: 5px; right: 5px; bottom: 2px; height: 3px;
-    border-radius: 999px;
-    background: linear-gradient(90deg,#f44336,#ff9800,#ffeb3b,#28d17c,#36bdf5,#7048e8,#ee4db0);
+    left: 0; right: 0; bottom: 0; height: 2px;
+    border-radius: 1px;
+    background: linear-gradient(90deg,var(--pride-red),var(--pride-amber),var(--pride-green),var(--pride-blue),var(--pride-violet),var(--pride-rose));
+    opacity: .78;
   }
   #autonomousControls > .hexfieldWordmark { margin: 0 0 4px; }
   aside > .hexfieldWordmark { margin-bottom: 2px; }
 
-  #pridePrefsOpen {
-    position: fixed;
-    z-index: 92;
-    left: calc(50% - 82px);
-    top: 72px;
-    width: 164px;
-    min-height: 26px;
-    padding-block: 4px;
-    font-size: 8px;
-  }
-  #prideConsent {
-    position: fixed;
-    z-index: 130;
-    left: 50%; bottom: 14px;
-    transform: translateX(-50%);
-    width: min(620px,calc(100vw - 24px));
-    padding: 13px;
-    border: 2px solid #ff9000;
-    border-radius: 12px;
-    background: rgba(8,8,10,.97);
-    box-shadow: 0 20px 70px rgba(0,0,0,.72),0 0 28px rgba(255,20,147,.42);
-    color: #fff;
-    font-family: ui-monospace,monospace;
-  }
-  #prideConsent[hidden] { display: none !important; }
-  #prideConsent h2 { margin: 0 0 5px; font-size: 15px; }
-  #prideConsent p { margin: 0 0 8px; color: #d9bdd5; font-size: 9px; }
-  #prideConsent .preferenceTopics {
-    display: grid;
-    grid-template-columns: repeat(3,minmax(0,1fr));
-    gap: 6px;
-    margin-bottom: 9px;
-  }
-  #prideConsent label {
-    padding: 7px;
-    border: 1px solid #553b50;
-    border-radius: 7px;
-    background: #1b141d;
-    color: #fff;
-    font-size: 9px;
-    text-align: center;
-    cursor: pointer;
-  }
-  #prideConsent input { accent-color: #ff9000; vertical-align: -2px; }
-  #prideConsent .preferenceActions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  @media (max-width: 680px) {
-    #pridePrefsOpen { top: auto; left: auto; right: 8px; bottom: 110px; width: 184px; }
-    #prideConsent .preferenceTopics { grid-template-columns: 1fr; }
-  }
   @media (prefers-reduced-motion: reduce) {
     body::before, body::after { animation: none; }
   }
 </style>
 </head>
 <body>
-<header id="prideBanner" aria-label="Gay Day pride celebration">
-  🌈 GAY DAY 🌈
+<header id="prideBanner" aria-label="Hexfield Pride Studio">
+  PRIDE STUDIO
   <small>come out loud · make something joyful</small>
 </header>
-<section id="localMenAd" aria-label="Parody advertisement for local men">
-  <span class="adMeta"><span>Sponsored</span><span>Demo</span></span>
-  <strong id="prideAdHeadline">Local men near you</strong>
-  <span id="prideAdDetail" class="nearby">A handsome new profile is online now</span>
-  <span class="adPortrait" aria-hidden="true">
-    <img src="assets/gay-day-local-man.png" alt="">
-    <span class="onlineNow">ONLINE NOW</span>
-  </span>
-  <span id="prideAdCta" class="fakeCta" aria-hidden="true">VIEW PROFILES</span>
-  <small id="prideAdDisclosure">visual demo only · no link, tracking, or dating service</small>
-</section>
-<button id="pridePrefsOpen" type="button" aria-haspopup="dialog">COOKIE TASTE</button>
-<section id="prideConsent" role="dialog" aria-modal="true" aria-labelledby="prideConsentTitle" hidden>
-  <h2 id="prideConsentTitle">Remember your Hexfield taste?</h2>
-  <p>One first-party cookie can remember the art you choose on this site and tune this demo ad. It never reads other websites or infers sexuality.</p>
-  <div class="preferenceTopics">
-    <label><input id="prefPainting" type="checkbox" checked> live painting</label>
-    <label><input id="prefPrints" type="checkbox"> prints</label>
-  </div>
-  <div class="preferenceActions">
-    <button id="prideRemember" type="button">REMEMBER</button>
-    <button id="prideDecline" type="button">NO THANKS</button>
-  </div>
-</section>
 <aside>
   <div id="autonomousControls" aria-live="polite">
-    <div class="hexfieldWordmark" role="img" aria-label="Hexfield"><span class="hex">HEX</span><span class="field">FIELD</span></div>
+    <div class="hexfieldWordmark" role="img" aria-label="Hexfield"><span class="markPrimary">HEX</span><span class="markSecondary">FIELD</span></div>
     <canvas id="liveLogo" width="440" height="100" aria-label="Living HEXFIELD logo generated by the current taste brain"></canvas>
     <div id="artistName">ROB BOSS · RESIDENT PAINTER</div>
     <div class="autonomous-action">
@@ -756,11 +634,11 @@
     </div>
     <div id="autonomousBrain">viewing time becomes personal taste · the hidden engine chooses field, font, placement and mutation</div>
     <div id="localModeBadge" hidden>local-only · network blocked · memory stays on this computer</div>
-    <!-- KEEP / REJECT stood here. Removed for the same reason as the LIKE /
-         DISLIKE pair below: nobody is asked now, so a visible control a
-         stranger could click to steer the piece is an open door, not a
-         feature. The self-critic already casts this vote on its own. -->
-    <div id="localLearningStatus" aria-live="polite">the resident painter keeps learning in the background</div>
+    <div id="localTasteControls" aria-label="teach the local taste model">
+      <button id="voteUp" type="button" disabled>KEEP</button>
+      <button id="voteDown" type="button" disabled>REJECT</button>
+    </div>
+    <div id="localLearningStatus" aria-live="polite">teach it directly, or let the resident painter keep learning in the background</div>
     <!-- Inside #autonomousControls on purpose. The autonomous presentation
          blacks out the sidebar with `aside > div:not(#autonomousControls)`, so
          anything outside this element is invisible on the live site however
@@ -779,10 +657,10 @@
     <div id="colourChoice">colour: choosing…</div>
     <div id="robBossMood" aria-live="polite">rob boss: waking up · show me 4–8 clear choices</div>
     <div id="painterStatus">seed held · preparing the first paint pass</div>
-    <div id="buildBadge">build 162</div>
+    <div id="buildBadge">build 163</div>
   </div>
   <div id="shopEssentials" aria-label="print controls"></div>
-  <div class="hexfieldWordmark" role="img" aria-label="Hexfield"><span class="hex">HEX</span><span class="field">FIELD</span></div>
+  <div class="hexfieldWordmark" role="img" aria-label="Hexfield"><span class="markPrimary">HEX</span><span class="markSecondary">FIELD</span></div>
   <p class="sub">novelty-driven generative fields</p>
 
   <div>
@@ -908,6 +786,7 @@
   </div>
   <div class="row">
     <button id="learn">TASTE CYCLE</button>
+    <button id="museumOpen">MUSEUM</button>
     <button id="export">EXPORT PNG</button>
   </div>
 
@@ -973,9 +852,24 @@
   </div>
 </div>
 
-<script src="neural/runtime.js"></script>
-<script src="iso/hexfield-iso.js"></script>
-<script src="words/hexfield-words.js"></script>
+<section id="museumPanel" class="museum-panel" aria-hidden="true" aria-label="Hexfield museum">
+  <div class="museum-head"><h2>HEXFIELD MUSEUM</h2><button id="museumClose" type="button">CLOSE</button></div>
+  <div id="museumState">museum is waiting for the first learning cycle.</div>
+  <!-- Editions come first, deliberately. The live top ten is what the studio
+       thinks today and is rewritten nightly; the editions are what it has
+       actually chosen, kept, and can be held to. Reading them in order is the
+       only way to see whether the taste is going anywhere. -->
+  <div id="museumEditions"></div>
+  <div id="museumGrid"></div>
+  <!-- What the studio currently believes words mean, and which of those beliefs
+       it arrived at itself. Placed after the editions because the editions are
+       the record and this is the working state behind them. -->
+  <div id="lexiconState"></div>
+</section>
+
+<script src="runtime.js"></script>
+<script src="hexfield-iso.js"></script>
+<script src="hexfield-words.js"></script>
 <script>
 "use strict";
 
@@ -1037,12 +931,11 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") refreshForNewHexfieldBuild();
 });
 
-/* The shared Supabase project this used to sync against no longer resolves
- * in DNS - every remote call below always failed. Rather than let each one
- * discover that separately through its own catch block, this flag is now
- * true: the studio runs fully local-only, same as the designed offline
- * fallback, made permanent and honest instead of accidental. */
-const HEXFIELD_LOCAL_ONLY = true;
+/* Local and hosted pages use one render path. The old localhost-only bridge
+ * injected terminal learning into the page and made a local browser appear to
+ * be a different build. Learning now comes from the same Supabase path (with
+ * the normal browser fallback if the network is unavailable). */
+const HEXFIELD_LOCAL_ONLY = false;
 window.__hexfieldLocalOnly = HEXFIELD_LOCAL_ONLY;
 
 /* ------------------------------------------------------------------ *
@@ -1124,7 +1017,7 @@ const PALETTES = {
    * at 18 the multi-layer fields read as monochrome even though nothing is set
    * to mono. Raising the floor guarantees a second hue is actually visible, and
    * the wider ceiling lets it reach a true complement. */
-  random:     { hue: [0, 360],   hueStep: [34, 190], sat: [62, 100], light: [40, 78], theory: { relation: "free", accent: [0.04, 0.14], band: [0.30, 0.52], depth: [0.04, 0.24] } },
+  random:     { hue: [0, 360],   hueStep: [14, 310], sat: [42, 100], light: [28, 84], theory: { relation: "free", accent: [0.04, 0.22], band: [0.22, 0.72], depth: [0.02, 0.30] } },
   mono:       { hue: [0, 360],   hueStep: [0, 4],     sat: [0, 12],   light: [15, 92], theory: { relation: "monochrome", accent: [0, 0.03], band: [0.42, 0.72], depth: [0, 0.08] } },
   sunset:     { hue: [0, 45],    hueStep: [10, 40],   sat: [65, 100], light: [45, 68], theory: { relation: "analogous", accent: [0.05, 0.13], band: [0.28, 0.42], depth: [0.08, 0.22] } },
   christmas:  { hue: [0, 8],     hueStep: [110, 130], sat: [65, 95],  light: [32, 55], theory: { relation: "split-complement", accent: [0.04, 0.10], band: [0.24, 0.38], depth: [0.06, 0.18] } },
@@ -1144,13 +1037,24 @@ function samplePalette(rng) {
   const hue = range(rng, p.hue[0], p.hue[1]);
   const hueStep = range(rng, p.hueStep[0], p.hueStep[1]);
   const supportHue = (hue + hueStep + 360) % 360;
-  // The accent is a third role, not a third equally-used palette entry. It is
-  // anchored to the dominant/support relationship so a rare note belongs to
-  // the same painting instead of reading as an unrelated sticker.
-  const accentOffset = theory.relation === "analogous" || theory.relation === "cool-analogous"
-    ? (rng() < 0.5 ? 48 : -48)
-    : theory.relation === "monochrome" ? 0
-      : (rng() < 0.5 ? 180 : -180);
+  /* Colour relationships are sampled as an open vocabulary, not a permanent
+   * dominant/support/accent poster formula.  A harmony still has a readable
+   * centre, but the third and fourth pigments may be neighbouring, split,
+   * triadic, or deliberately offset.  Taste can favour a relationship after
+   * seeing it; it is never forced to favour contrast before that happens. */
+  const harmonyOffsets = theory.relation === "monochrome" ? [0]
+    : theory.relation === "analogous" || theory.relation === "cool-analogous" || theory.relation === "earth-analogous"
+      ? [-72, -48, -30, 30, 48, 72]
+      : theory.relation === "complementary" ? [150, 180, 210]
+        : theory.relation === "split-complement" ? [120, 150, 210, 240]
+          : theory.relation === "counterpoint" ? [-150, -120, -90, 90, 120, 150, 180]
+            : [-150, -120, -90, -60, -36, 36, 60, 90, 120, 150, 180, 210, 240];
+  const accentOffset = pick(rng, harmonyOffsets);
+  const counterpointOffset = pick(rng, harmonyOffsets.filter((offset) => offset !== accentOffset).length
+    ? harmonyOffsets.filter((offset) => offset !== accentOffset) : harmonyOffsets);
+  const colourPlay = theory.relation === "monochrome" ? 0.02
+    : theory.relation === "analogous" || theory.relation === "cool-analogous" || theory.relation === "earth-analogous"
+      ? range(rng, 0.04, 0.12) : range(rng, 0.08, 0.26);
   return {
     hue,
     hueStep,
@@ -1159,8 +1063,10 @@ function samplePalette(rng) {
     colourTheory: {
       relation: theory.relation,
       supportHue: Number(supportHue.toFixed(3)),
-      accentHue: Number(((supportHue + accentOffset + 360) % 360).toFixed(3)),
+      accentHue: Number(((hue + accentOffset + 360) % 360).toFixed(3)),
+      counterpointHue: Number(((supportHue + counterpointOffset + 360) % 360).toFixed(3)),
       accentBudget: Number(range(rng, theory.accent[0], theory.accent[1]).toFixed(4)),
+      counterpointBudget: Number(colourPlay.toFixed(4)),
       tonalBand: Number(range(rng, theory.band[0], theory.band[1]).toFixed(4)),
       atmosphericFalloff: Number(range(rng, theory.depth[0], theory.depth[1]).toFixed(4)),
     },
@@ -1177,19 +1083,25 @@ function paletteRoleHue(palette = {}, role = "dominant", index = 0) {
   const dominant = ((Number(palette.hue) || 0) % 360 + 360) % 360;
   const support = Number(palette.colourTheory?.supportHue);
   const accent = Number(palette.colourTheory?.accentHue);
+  const counterpoint = Number(palette.colourTheory?.counterpointHue);
   if (role === "accent" && Number.isFinite(accent)) return ((accent % 360) + 360) % 360;
+  if (role === "counterpoint" && Number.isFinite(counterpoint)) return ((counterpoint % 360) + 360) % 360;
   if (role === "support" && Number.isFinite(support)) return ((support % 360) + 360) % 360;
   return ((dominant + (Number(palette.hueStep) || 0) * index) % 360 + 360) % 360;
 }
 
 function paletteRoleAt(palette = {}, index = 0, total = 1) {
   if (index <= 0) return "dominant";
-  const budget = Math.max(0, Math.min(0.24, Number(palette.colourTheory?.accentBudget) || 0));
-  if (budget <= 0 || total < 4) return "support";
-  // One deterministic accent slot every N marks.  This keeps accents rare at
-  // any output size while making their placement stable under a held seed.
-  const every = Math.max(4, Math.round(1 / budget));
-  return (index + 1) % every === 0 ? "accent" : "support";
+  const accentBudget = Math.max(0, Math.min(0.32, Number(palette.colourTheory?.accentBudget) || 0));
+  const counterpointBudget = Math.max(0, Math.min(0.28, Number(palette.colourTheory?.counterpointBudget) || 0));
+  const counterpointEvery = counterpointBudget > 0 && total >= 5
+    ? Math.max(5, Math.round(1 / counterpointBudget)) : Infinity;
+  if ((index + 1) % counterpointEvery === 0) return "counterpoint";
+  if (accentBudget <= 0 || total < 4) return "support";
+  // The rare-note schedule is deterministic for one recipe, while its density
+  // remains an evolvable colour gene rather than a three-tone constant.
+  const accentEvery = Math.max(4, Math.round(1 / accentBudget));
+  return (index + 1) % accentEvery === 0 ? "accent" : "support";
 }
 
 function paletteRoleValues(palette = {}, role = "dominant", depth = 0) {
@@ -1197,13 +1109,16 @@ function paletteRoleValues(palette = {}, role = "dominant", depth = 0) {
   const band = Math.max(0.12, Math.min(0.82, Number(palette.colourTheory?.tonalBand) || 0.5));
   const far = Math.max(0, Math.min(1, Number(depth) || 0));
   const isAccent = role === "accent";
-  const sat = Math.max(0, Math.min(100, (Number(palette.sat) || 60) * (isAccent ? 1.08 : 1 - far * falloff)));
+  const isCounterpoint = role === "counterpoint";
+  const sat = Math.max(0, Math.min(100, (Number(palette.sat) || 60) *
+    (isAccent ? 1.08 : isCounterpoint ? 0.94 : 1 - far * falloff)));
   // The supporting field is deliberately compressed into a value family;
   // accents retain the available range. This is the Monet rule from Hex in a
   // painterly form: atmosphere does most of the work, rare notes puncture it.
   const baseLight = Number(palette.light) || 55;
   const light = isAccent ? Math.max(8, Math.min(92, baseLight + 13))
-    : Math.max(8, Math.min(92, 50 + (baseLight - 50) * band + far * falloff * 16));
+    : isCounterpoint ? Math.max(8, Math.min(92, baseLight - 9 + far * 8))
+      : Math.max(8, Math.min(92, 50 + (baseLight - 50) * band + far * falloff * 16));
   return { hue: paletteRoleHue(palette, role, role === "dominant" ? 0 : 1), sat, light };
 }
 
@@ -1280,49 +1195,9 @@ function sampleParams(field, rng) {
   return params;
 }
 
-const LANDSCAPE_ARCHETYPES = ["river-bend", "meadow", "water-garden", "orchard", "coast", "distant-ridge"];
-const FLOWER_ARCHETYPES = ["wildflower-field", "water-blooms", "iris-rise", "poppy-cluster", "garden-border", "flowering-branch"];
 const SUBJECT_CHROMA_MODES = ["wash", "natural", "full"];
 const SUBJECT_PETAL_PRIMES = [5, 7, 11, 13];
 const SUBJECT_GOLDEN_TURN = 0.6180339887498949;
-
-/* A scene is a genome, never a traced reference.
- *
- * The family is intentionally narrow—landscape or flowers—but the structure
- * inside it is continuous: horizon, depth bands, sweep, bloom centres, petal
- * rhythm, stem lean and scale all vary independently and all enter the recipe
- * archive. The painter can therefore learn "more like this" without learning
- * one flower stamp. */
-function sampleSubjectProgram(rng, dimension, chromaMode) {
-  const family = rng() < 0.56 ? "landscape" : "flowers";
-  const projection = dimension >= 0.5 ? "3d" : "2d";
-  const archetypes = family === "landscape" ? LANDSCAPE_ARCHETYPES : FLOWER_ARCHETYPES;
-  return {
-    version: 1,
-    family,
-    archetype: pick(rng, archetypes),
-    projection,
-    layoutSeed: Math.floor(rng() * 4294967296) >>> 0,
-    horizon: range(rng, 0.22, 0.58),
-    depthBands: irange(rng, 3, 7),
-    sweep: range(rng, -0.82, 0.82),
-    terrainCurve: range(rng, 0.72, 1.72),
-    skyShare: range(rng, 0.16, 0.48),
-    waterShare: range(rng, 0.05, 0.44),
-    /* A single bloom made the whole scene read as one oversized stamp. Keep
-     * several motif instances available so the same flower can recur at
-     * different depths and the taste model can learn whether repetition is
-     * helping or hurting the composition. */
-    bloomCount: family === "flowers" ? irange(rng, 3, 6) : irange(rng, 3, 7),
-    petalPrime: pick(rng, SUBJECT_PETAL_PRIMES),
-    petalTwist: range(rng, -0.42, 0.42),
-    bloomScale: range(rng, 0.72, 1.36),
-    clusterSpread: range(rng, 0.52, 1.34),
-    stemLean: range(rng, -0.38, 0.38),
-    phase: rng(),
-    chromaMode,
-  };
-}
 
 function subjectChromaScale(subject, saturation = 1) {
   const mode = SUBJECT_CHROMA_MODES.includes(subject?.chromaMode) ? subject.chromaMode : "natural";
@@ -1848,7 +1723,18 @@ function sampleArtifactProgram(field, rng, palette = null) {
    * budgets ask the critic whether the same composition still reads with
    * fewer pigments. The ranking can therefore discover the smallest useful
    * palette instead of us hard-coding one for every scene. */
-  const paletteBudget = pick(rng, [3, 3, 3, 4, 4, 5, 6, 8]);
+  /* Compression is only one possible colour decision.  Most new work keeps
+   * enough pigments for relationships to emerge, and some work is deliberately
+   * left uncompressed; a restricted study may still earn itself by taste. */
+  const paletteBudget = pick(rng, [0, 0, 5, 6, 8, 8, 12, 12, 16, 24, 32, 48, 64]);
+  /* A finish is an experiment rather than the studio's signature. Most
+   * paintings leave their material edge alone; a few offer the critic an edge
+   * echo, a broken contour, or a small contour lift made from the pixels that
+   * are actually there. */
+  const finishTreatment = pick(rng, [
+    "none", "none", "none", "none", "none",
+    "contour-echo", "broken-contour", "contour-lift",
+  ]);
   return {
     enabled: true,
     styleConstraints,
@@ -1900,6 +1786,7 @@ function sampleArtifactProgram(field, rng, palette = null) {
     farLightness: range(rng, 0.57, 0.82),
     nearLightness: range(rng, 0.35, 0.62),
     paletteBudget,
+    finishTreatment,
     hue: Number.isFinite(paletteHue) ? (paletteHue + range(rng, -24, 24) + 360) % 360 : range(rng, 0, 360),
     hueTravel: range(rng, -62, 62),
     relief: range(rng, 0.02, 0.16),
@@ -5434,10 +5321,18 @@ const SCENE_INTENT_METRIC = {
 };
 const SCENE_TARGET_METRICS = Object.values(SCENE_INTENT_METRIC);
 const SCENE_KINDS = ["scene-object", "scene-relation"];
-/* Four is the contract's ceiling and also the point: an intervention that has
- * to touch five things is not one intervention, and could not be attributed to
- * a single named tension afterwards. */
+/* Four is the normal contract ceiling: a critique should name one small
+ * correction, not smuggle a new picture into the frame.  A newly earned scene
+ * relationship is the one narrow exception.  It may need to name its new
+ * object, its parent, and its two-dimensional contact point at the same time;
+ * six addressable facts still describe one addition and keep its footprint
+ * fully auditable. */
 const SCENE_MAX_CHANGES = 4;
+const SCENE_CONTINUATION_MAX_CHANGES = 6;
+function sceneChangeLimit(proposal = {}) {
+  return proposal?.origin === "scene-continuation"
+    ? SCENE_CONTINUATION_MAX_CHANGES : SCENE_MAX_CHANGES;
+}
 
 /* A tiny recursive scene grammar.
  *
@@ -5451,9 +5346,9 @@ const SCENE_NEED_RULES = Object.freeze({
   tree: { children: ["trunk"], relation: "stands-through" },
   trunk: { children: ["ground"], relation: "roots-in" },
   ground: { children: ["grass", "dirt", "plant"], relation: "supports" },
-  grass: { children: ["animal", "flower"], relation: "shelters" },
+  grass: { children: ["animal", "trace"], relation: "shelters" },
   dirt: { children: ["plant", "rock"], relation: "gives-rise-to" },
-  plant: { children: ["animal", "flower"], relation: "feeds" },
+  plant: { children: ["animal", "leaf"], relation: "feeds" },
   animal: { children: ["trace"], relation: "leaves" },
   mountain: { children: ["foothill"], relation: "descends-to" },
   foothill: { children: ["ground"], relation: "meets" },
@@ -5704,6 +5599,13 @@ function sceneBlobRole(genome, position = {}, horizon = 0.4, seed = 0, context =
   const petal = Number.isFinite(Number(context.petalEvidence))
     ? clamp01(Number(context.petalEvidence)) : scenePetalEvidence(genome);
   const flowerGroup = clamp01(Number(context.flowerGroupEvidence) || 0);
+  /* A round first blob is not evidence of a flower. The old classifier gave
+   * compact smooth opening forms a generous petal score, so it frequently
+   * named the canvas `flower` before there was a stem, repeated bloom group,
+   * or a prompt asking for one. Flowers remain available when the work earns
+   * that reading, but a generic opening form is free to become something else. */
+  const flowerEvidenceIsSpecific = flowerGroup >= 0.62 ||
+    (petal >= 0.82 && round >= 0.70 && corners <= 0.34 && open >= 0.18);
   /* Position supplies affordance, not a command. The tiny stable seed term
    * breaks honest near-ties without letting a word or an authored subject win. */
   const score = {
@@ -5712,8 +5614,10 @@ function sceneBlobRole(genome, position = {}, horizon = 0.4, seed = 0, context =
     bird: 0.12 + above * 0.28 + angular * 0.18 + corners * 0.10 + open * 0.14 + wide * 0.08,
     mountain: 0.16 + nearHorizon * 0.22 + angular * 0.22 + corners * 0.12 + wide * 0.20,
     rock: 0.18 + below * 0.24 + angular * 0.16 + corners * 0.12 + (1 - open) * 0.12 + (surface === "pixel" ? 0.07 : 0),
-    flower: 0.10 + petal * 0.38 + flowerGroup * 0.30 + below * 0.05 +
-      tall * 0.05 + open * 0.05 + (surface === "fractal" ? 0.04 : 0),
+    flower: flowerEvidenceIsSpecific
+      ? 0.10 + petal * 0.38 + flowerGroup * 0.30 + below * 0.05 +
+        tall * 0.05 + open * 0.05 + (surface === "fractal" ? 0.04 : 0)
+      : -1,
     ground: 0.14 + below * 0.32 + wide * 0.34 + round * 0.08,
     water: 0.12 + below * 0.24 + wide * 0.27 + round * 0.12 + (surface === "moire" ? 0.14 : 0),
   };
@@ -5732,16 +5636,9 @@ function sceneNeedSeedRole(params, seed = 0, context = {}) {
   if (promptRole) return promptRole;
   const renderedGenome = context.genome || params?.__hexfieldArtifactState?.geometryGenomes?.[0] || null;
   if (renderedGenome) return sceneBlobRole(renderedGenome, context.position, context.horizon, seed, context);
-  /* Without a literal scene goal, earned paintings still start unnamed and let
-   * the visible contour earn its own interpretation. */
-  if (params?.artifact?.growthMode === "earned") return null;
-  const subject = params?.artifact?.subject || {};
-  if (subject.family === "flowers") return "flower";
-  if (subject.family === "landscape") {
-    if (subject.archetype === "distant-ridge") return "mountain";
-    if (["coast", "water-garden"].includes(subject.archetype)) return "rock";
-    return "tree";
-  }
+  /* Old stored recipes can still render, but they no longer get to impose a
+   * literal subject on new growth. Interpretation must come from the visible
+   * form or a word deliberately supplied by the visitor. */
   return null;
 }
 
@@ -6210,6 +6107,14 @@ function sceneRead(params) {
       ? scenePetalEvidence(rootObject.geometry.genome) : 0,
     flowerGroupEvidence: sceneFlowerGroupEvidence(result.objects, rootObject),
   });
+  /* A visible, measured base has already earned its first name. Leaving that
+     inference as a status-only observation forced each pass to re-propose the
+     root label instead of planning the next contextual object. Promote only
+     the deterministic geometry-derived root; later roles still need a winning
+     scene proposal, so they remain genuine additions. */
+  if (a.growthMode === "earned" && result.needRoot && rootObject && !rootObject.meaning?.role) {
+    rootObject.meaning = { ...(rootObject.meaning || {}), role: result.needRoot, parentId: "" };
+  }
   if (a.growthMode === "earned" && count < sceneNeedChain(result.needRoot, seed).length) {
     const nextLayout = scenePlacementVectors({
       ...params, artifact: { ...a, count: count + 1 },
@@ -6263,7 +6168,7 @@ function sceneObjectOverrideValue(object, key) {
 function sceneApply(params, intervention) {
   if (!params || !intervention) return params;
   const changes = Array.isArray(intervention.changes) ? intervention.changes : [];
-  if (!changes.length || changes.length > SCENE_MAX_CHANGES) return params;
+  if (!changes.length || changes.length > sceneChangeLimit(intervention)) return params;
   const next = JSON.parse(JSON.stringify({ ...params, artifact: { ...(params.artifact || {}) } }));
   /* Non-enumerable held materials do not survive the clone and must not: they
    * are canvases. Re-attached by reference so the variant paints the same
@@ -6378,6 +6283,11 @@ function sceneNeedProposal(scene, metrics = {}) {
     return ld - rd || ((left.index - phase) % free.length) - ((right.index - phase) % free.length);
   })[0];
   if (!candidate) return null;
+  /* A scene relationship has to say six concrete things at most: its new
+   * slot when it needs one, what it is, what it answers, and where/how large
+   * its contact is. It is still a single named continuation, never a broad
+   * restyle. */
+  const changeLimit = SCENE_CONTINUATION_MAX_CHANGES;
   const at = (key) => "artifact.objects." + candidate.index + "." + key;
   const changes = [...(spawning ? [{
     path: "artifact.count", before: scene.count, after: scene.count + 1,
@@ -6399,15 +6309,18 @@ function sceneNeedProposal(scene, metrics = {}) {
     { path: at("dy"), before: candidate.transform.dy, after: dy, amount: Math.abs(dy - candidate.transform.dy) },
   ].filter((change) => change.amount > 0.001).sort((left, right) => right.amount - left.amount);
   for (const nudge of nudges) {
-    if (changes.length >= SCENE_MAX_CHANGES) break;
+    if (changes.length >= changeLimit) break;
     changes.push({ path: nudge.path, before: nudge.before, after: nudge.after });
   }
-  if (parent && changes.length < SCENE_MAX_CHANGES) {
-    const scale = ["ground", "foothill", "bank"].includes(semantic.nextRole) ? 1.34
-      : ["trunk", "stem", "rain"].includes(semantic.nextRole) ? 0.76
-      : semantic.nextRole === "leaf" ? 0.48
-      : semantic.nextRole === "bush" ? 0.92
-      : ["animal", "flower", "grass", "trace"].includes(semantic.nextRole) ? 0.62 : 0.88;
+  if (parent && changes.length < changeLimit) {
+    /* A context form is subordinate to the form that earned it. The relation
+     * painting may span a wider contact, but the borrowed field material must
+     * begin smaller so it cannot become a second competing subject. */
+    const scale = ["ground", "foothill", "bank"].includes(semantic.nextRole) ? 0.62
+      : ["trunk", "stem", "rain"].includes(semantic.nextRole) ? 0.54
+      : semantic.nextRole === "leaf" ? 0.44
+      : semantic.nextRole === "bush" ? 0.58
+      : ["animal", "flower", "grass", "trace"].includes(semantic.nextRole) ? 0.50 : 0.64;
     if (Math.abs(scale - candidate.transform.scale) > 0.001) {
       changes.push({ path: at("scale"), before: candidate.transform.scale, after: scale });
     }
@@ -6419,12 +6332,13 @@ function sceneNeedProposal(scene, metrics = {}) {
     objectId: candidate.id,
     kind: parent ? "scene-relation" : "scene-object",
     targetMetric: "meaning",
+    origin: "scene-continuation",
     semantic: {
       role: semantic.nextRole,
       parentRole: semantic.roles[semantic.roles.length - 1] || "scene",
       relation: sceneNeedRelation(semantic.roles[semantic.roles.length - 1], semantic.nextRole),
     },
-    changes: changes.slice(0, SCENE_MAX_CHANGES),
+    changes: changes.slice(0, changeLimit),
   };
 }
 
@@ -6536,7 +6450,8 @@ const HexfieldStrokeContract = {
     const changes = proposal.changes;
     if (!Array.isArray(changes) || !changes.length) return "proposal changes nothing";
     if (recipeGene && changes.length !== 1) return "a recipe intervention must change exactly one gene";
-    if (changes.length > SCENE_MAX_CHANGES) return "a single intervention may change at most " + SCENE_MAX_CHANGES + " things";
+    const changeLimit = sceneChangeLimit(proposal);
+    if (changes.length > changeLimit) return "a single intervention may change at most " + changeLimit + " things";
     for (const change of changes) {
       if (!change || typeof change.path !== "string" || !change.path) return "a change has no path";
       if (!("before" in change) || !("after" in change)) return "a change must record before and after";
@@ -10246,6 +10161,55 @@ function screenIfPrinted(ctx, W, H, p) {
   if (p?.halftone && p.halftone.mode !== "off") applyHalftone(ctx, W, H, p.halftone);
 }
 
+/* A finish is an experiment made after the image has established its own
+ * masses. It is never a compulsory outline. The candidate recipe chooses
+ * whether to leave edges alone, echo them continuously, or let a broken line
+ * find only some of them; the normal taste ranking decides whether that move
+ * survives. Working from the rendered pixels means any line follows the form
+ * the painting actually made rather than a pre-written flower/tree stencil. */
+function applyFinishExperiment(ctx, W, H, p) {
+  const treatment = String(p?.artifact?.finishTreatment || "none");
+  if (treatment === "none" || !ctx?.canvas || !(W > 1 && H > 1)) return;
+  const sourceWidth = Math.max(80, Math.min(1200, Math.round(W)));
+  const sourceHeight = Math.max(40, Math.round(sourceWidth * H / W));
+  const source = scratchCanvas(sourceWidth, sourceHeight);
+  const sourceCtx = source.getContext("2d", { willReadFrequently: true });
+  sourceCtx.drawImage(ctx.canvas, 0, 0, W, H, 0, 0, sourceWidth, sourceHeight);
+  const input = sourceCtx.getImageData(0, 0, sourceWidth, sourceHeight).data;
+  const output = sourceCtx.createImageData(sourceWidth, sourceHeight);
+  const lineRole = treatment === "contour-lift" ? "support" : "counterpoint";
+  const [red, green, blue] = paletteRoleRgb(p?.palette || {}, lineRole, 0.5);
+  const threshold = treatment === "contour-lift" ? 36 : treatment === "broken-contour" ? 54 : 44;
+  const baseOpacity = treatment === "contour-lift" ? 38 : treatment === "broken-contour" ? 62 : 50;
+  const seed = Number(p?.artifact?.seed ?? p?.seed) >>> 0;
+  const luminance = (offset) => input[offset] * 0.2126 + input[offset + 1] * 0.7152 + input[offset + 2] * 0.0722;
+  for (let y = 1; y < sourceHeight - 1; y++) {
+    for (let x = 1; x < sourceWidth - 1; x++) {
+      const offset = (y * sourceWidth + x) * 4;
+      const centre = luminance(offset);
+      const horizontal = Math.abs(luminance(offset - 4) - luminance(offset + 4));
+      const vertical = Math.abs(luminance(offset - sourceWidth * 4) - luminance(offset + sourceWidth * 4));
+      const edge = Math.max(horizontal, vertical, Math.abs(centre - luminance(offset + (sourceWidth + 1) * 4)));
+      const broken = treatment !== "broken-contour" ||
+        ((hashText(`finish-line|${seed}|${x}|${y}`) >>> 0) % 100) >= 38;
+      if (edge < threshold || !broken) continue;
+      const alpha = Math.min(140, Math.round(baseOpacity + (edge - threshold) * 0.6));
+      output.data[offset] = red;
+      output.data[offset + 1] = green;
+      output.data[offset + 2] = blue;
+      output.data[offset + 3] = alpha;
+    }
+  }
+  sourceCtx.putImageData(output, 0, 0);
+  ctx.save();
+  ctx.globalCompositeOperation = treatment === "contour-lift" ? "screen" : "source-over";
+  ctx.globalAlpha = treatment === "contour-lift" ? 0.55 : 0.72;
+  ctx.drawImage(source, 0, 0, sourceWidth, sourceHeight, 0, 0, W, H);
+  ctx.restore();
+  source.width = 0;
+  source.height = 0;
+}
+
 /* Palette compression is one of the painter's experiments. It is deliberately
  * a value-preserving, histogram-guided reduction rather than a blanket RGB
  * posterize: dark/light anchors are kept, colours are matched by luminance as
@@ -10425,6 +10389,7 @@ function blitWorkerField(ctx, W, H, bitmap, p) {
   paintHarvestArtifacts(ctx, W, H, p);
   screenIfPrinted(ctx, W, H, p);
   applyPaletteBudget(ctx, W, H, p);
+  applyFinishExperiment(ctx, W, H, p);
 }
 
 function renderComposite(ctx, W, H, p, rng, text, mode) {
@@ -11148,15 +11113,36 @@ function styleVectorOf(shapeCanvas) {
   return { skew, aspect: w / h, roundness };
 }
 
-// The shared style table lived on the same dead Supabase project as
-// everything else here; both calls always failed, so both are now direct
-// local answers instead of a network round trip that never landed.
 async function fetchSharedStyle() {
-  return { skew: 0, aspect: 1, roundness: 0.5 };
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/hexfield_style?select=skew,aspect,roundness&id=eq.1`, {
+      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const rows = await res.json();
+    return rows[0] || { skew: 0, aspect: 1, roundness: 0.5 };
+  } catch {
+    return { skew: 0, aspect: 1, roundness: 0.5 };
+  }
 }
 
-async function relaxStyle() {
-  return null;
+async function relaxStyle(vec) {
+  try {
+    const session = await ensureTasteSession();
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/relax_style`, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_KEY, Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ p_skew: vec.skew, p_aspect: vec.aspect, p_roundness: vec.roundness }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const rows = await res.json();
+    return rows[0] || null;
+  } catch {
+    return null;
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -14221,15 +14207,54 @@ function trimTasteSamples(samples) {
   return chosen.sort((a, b) => (Number(a.at) || 0) - (Number(b.at) || 0)).slice(-TASTE_CAP);
 }
 
-// Shared harvest-materials sync lived on the same dead Supabase project;
-// both calls always failed, so both are now no-ops. sharedHarvestMaterials
-// stays local-only (whatever this browser session has harvested itself).
-async function publishHarvestMaterials() {
-  return false;
+async function publishHarvestMaterials(entry) {
+  if (!entry?.id) return false;
+  const selected = [
+    ...(entry.sourceShapes || []).slice(0, 4).map((shape) => ({ shape, stage: "source" })),
+    ...(entry.finishedShapes || []).slice(0, 4).map((shape) => ({ shape, stage: "finished" })),
+  ].filter((item) => item.shape?.id && item.shape?.material);
+  if (!selected.length) return false;
+  try {
+    const session = await ensureTasteSession();
+    const rows = selected.map(({ shape, stage }) => ({
+      material_id: shape.id, visitor_id: session.user.id,
+      iteration_id: entry.id, field: entry.field, stage,
+      material: shape.material,
+      descriptor: {
+        area: shape.area, width: shape.width, height: shape.height,
+        orientation: shape.orientation, edge: shape.edge,
+        topology: shape.topology, axioms: shape.axioms,
+        descriptor: shape.descriptor,
+      },
+    }));
+    const res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_shape_materials?on_conflict=material_id", {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token,
+        "Content-Type": "application/json", Prefer: "resolution=ignore-duplicates,return=minimal",
+      },
+      body: JSON.stringify(rows),
+    });
+    return res.ok;
+  } catch { return false; }
 }
 
 async function pullHarvestMaterials() {
-  return sharedHarvestMaterials.length;
+  try {
+    const session = await ensureTasteSession();
+    const res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_shape_materials?select=material_id,field,stage,material,descriptor,created_at&order=created_at.desc&limit=120", {
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token },
+    });
+    if (!res.ok) return 0;
+    const rows = await res.json();
+    sharedHarvestMaterials = rows.map((row) => ({
+      id: row.material_id, field: row.field, stage: row.stage,
+      material: row.material,
+      ...(row.descriptor || {}),
+      at: Date.parse(row.created_at || "") || Date.now(),
+    }));
+    return sharedHarvestMaterials.length;
+  } catch { return 0; }
 }
 
 /* Taste answers "do I like it?"; canon answers "does it belong to this hand?"
@@ -15204,12 +15229,57 @@ function mergeTasteSamples(localSamples, remoteSamples) {
     }));
 }
 
-// The shared taste profile and global taste prior lived on the same dead
-// Supabase project; both reads always failed, so both are now no-ops and
-// the model stays exactly what it was: local-only.
-async function pullRemoteTaste() {}
+async function pullRemoteTaste() {
+  const session = await ensureTasteSession();
+  const res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_taste_profiles?select=model,sample_count&limit=1", {
+    headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token },
+  });
+  if (!res.ok) throw new Error("taste read HTTP " + res.status);
+  const rows = await res.json();
+  const remote = rows[0]?.model;
+  if (!remote) return;
 
-async function pullGlobalTaste() {}
+  const remoteModel = { ...newTasteModel(), ...remote, weights: { ...newTasteModel().weights, ...(remote.weights || {}) } };
+  taste.samples = mergeTasteSamples(taste.samples, remoteModel.samples);
+  taste.weights = remoteModel.weights;
+  if (remote.canon && Number(remote.canon.count) > artistCanon.count && remote.canon.mean) {
+    artistCanon = {
+      version: 1, count: Number(remote.canon.count), mean: remote.canon.mean,
+      m2: remote.canon.m2 || {},
+      exemplars: Array.isArray(remote.canon.exemplars) ? remote.canon.exemplars.slice(-16) : [],
+    };
+    saveArtistCanon();
+  }
+  if (remote.visualProcess && typeof remote.visualProcess === "object") {
+    visualProcessMemory = mergeVisualProcessMemories(visualProcessMemory, remote.visualProcess);
+    saveVisualProcessMemory();
+  }
+  // The pool can change wholesale here rather than by one observation, and the
+  // held-out split is drawn from it, so the hidden layer is due a reassessment
+  // regardless of where its cadence had got to.
+  tasteHiddenFittedAt = -Infinity;
+  if (taste.samples.length >= 6) fitTasteModel();
+  saveTasteModel();
+}
+
+async function pullGlobalTaste() {
+  const session = await ensureTasteSession();
+  const headers = { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token };
+  let res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_global_taste?select=model,sample_count,effective_sample_count&id=eq.true", { headers });
+  // Build 61 may reach the CDN before its migration is applied. Keep the
+  // existing shared prior readable during that window; autonomous writes do
+  // not get the same fallback because the old trigger would over-weight them.
+  if (!res.ok) res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_global_taste?select=model,sample_count&id=eq.true", { headers });
+  if (!res.ok) throw new Error("global taste read HTTP " + res.status);
+  const row = (await res.json())[0];
+  if (!row?.model) return;
+  globalTaste = {
+    ready: true,
+    sampleCount: Math.max(0, Number(row.sample_count) || 0),
+    effectiveSampleCount: Math.max(0, Number(row.effective_sample_count ?? row.sample_count) || 0),
+    model: { ...newTasteModel(), ...row.model, weights: { ...newTasteModel().weights, ...(row.model.weights || {}) } },
+  };
+}
 
 function globalTasteInfluence() {
   if (!globalTaste.ready || globalTaste.effectiveSampleCount < 6) return 0;
@@ -15239,25 +15309,107 @@ function activeTasteModel() {
   return { weights };
 }
 
-// Pushing the taste profile always failed against the same dead project;
-// queueTasteSync (its only caller) is already gated behind
-// HEXFIELD_LOCAL_ONLY, so this is now a plain no-op.
-async function pushRemoteTaste() {}
+async function pushRemoteTaste() {
+  if (tasteSyncing) return;
+  tasteSyncing = true;
+  try {
+    const session = await ensureTasteSession();
+    const res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_taste_profiles?on_conflict=user_id", {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_KEY,
+        Authorization: "Bearer " + session.access_token,
+        "Content-Type": "application/json",
+        Prefer: "resolution=merge-duplicates,return=minimal",
+      },
+      body: JSON.stringify({
+        user_id: session.user.id,
+        model: {
+          version: 4,
+          weights: taste.weights,
+          samples: trimTasteSamples(taste.samples),
+          canon: artistCanon,
+          // Bounded, anonymous and evidence-only: no screenshots or prompt
+          // prose. This lets the same visitor keep their visual relationships
+          // across devices without introducing a new schema or public memory.
+          visualProcess: compactVisualProcessMemory(),
+        },
+        sample_count: taste.samples.length,
+      }),
+    });
+    if (!res.ok) throw new Error("taste write HTTP " + res.status);
+  } finally {
+    tasteSyncing = false;
+  }
+}
 
 /* Durable causal provenance. The local sensitivity model stays the hot path;
  * this append-only table lets a cleared browser recover named experiments and
  * lets several accelerator pages learn from one another without copying an
  * opaque fitted model. A missing table degrades to localStorage. */
-// Durable causal-experiment provenance lived on the same dead Supabase
-// project; both calls always failed, so both are now no-ops. The comment
-// this replaced said "a missing table degrades to localStorage" - that is
-// now the only path, made explicit instead of discovered through a catch.
-async function publishCausalExperiment() {
-  return false;
+async function publishCausalExperiment(experiment) {
+  if (!experiment?.id || !experiment?.gene || !experiment?.baseKey) return false;
+  try {
+    const session = await ensureTasteSession();
+    const res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_causal_experiments?on_conflict=experiment_id", {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_KEY,
+        Authorization: "Bearer " + session.access_token,
+        "Content-Type": "application/json",
+        Prefer: "resolution=ignore-duplicates,return=minimal",
+      },
+      body: JSON.stringify({
+        experiment_id: experiment.id,
+        visitor_id: session.user.id,
+        field: experiment.field || String(experiment.gene).split(":")[0],
+        gene: experiment.gene,
+        base_key: experiment.baseKey,
+        target_feature: experiment.targetFeature || null,
+        direction: Number(experiment.direction) || 0,
+        applied: Number(experiment.applied) || 0,
+        deltas: experiment.deltas || {},
+        composition: Number(experiment.composition) || 0,
+        outcome: {
+          variantWon: experiment.variantWon ?? null,
+          controlScore: Number(experiment.controlScore) || 0,
+          variantScore: Number(experiment.variantScore) || 0,
+        },
+      }),
+    });
+    return res.ok;
+  } catch { return false; }
 }
 
 async function pullCausalExperiments() {
-  return 0;
+  try {
+    const session = await ensureTasteSession();
+    const res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_causal_experiments?select=experiment_id,field,gene,base_key,target_feature,direction,applied,deltas,composition,outcome,created_at&order=created_at.desc&limit=240", {
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token },
+    });
+    if (!res.ok) return 0;
+    const rows = await res.json();
+    let merged = 0;
+    for (const row of rows.reverse()) {
+      const deltas = row.deltas && typeof row.deltas === "object" ? row.deltas : {};
+      const worst = Math.max(0, ...Object.values(deltas).map((value) => Math.abs(Number(value) || 0)));
+      if (recordSensitivity({
+        experimentId: row.experiment_id, gene: row.gene,
+        baseKey: row.base_key, applied: Number(row.applied),
+        deltas, worst, composition: Number(row.composition) || 0,
+      })) merged++;
+      causalExperiments = [...causalExperiments.filter((item) => item.id !== row.experiment_id), {
+        id: row.experiment_id, at: Date.parse(row.created_at || "") || Date.now(),
+        field: row.field, gene: row.gene, baseKey: row.base_key,
+        targetFeature: row.target_feature, direction: Number(row.direction) || 0,
+        applied: Number(row.applied) || 0, deltas,
+        composition: Number(row.composition) || 0,
+        variantWon: row.outcome?.variantWon ?? null,
+      }].slice(-CAUSAL_EXPERIMENTS_CAP);
+    }
+    saveCausalExperiments();
+    return merged;
+  } catch { return 0; }
 }
 
 function queueTasteSync() {
@@ -15279,9 +15431,10 @@ async function connectTaste() {
     await Promise.allSettled([
       pullGlobalTaste(), pullStyleCatalogue(), pullCausalExperiments(),
       pullHarvestMaterials(), pullSharedVisualSymbols(),
-      pullVisualSourceCorpus(), fetchKnownCreationHashes(),
+      pullVisualSourceCorpus(), fetchKnownCreationHashes(), refreshMuseumStatus(),
     ]);
     queueTasteSync();
+    scheduleSharedTasteFlush(0);
   } catch {
     // Anonymous sign-in may be intentionally disabled. Nothing breaks: the
     // same model remains in localStorage until the studio enables it.
@@ -15292,10 +15445,37 @@ let styleCatalogueSyncTimer = null;
 let styleCatalogueSyncing = false;
 let styleCatalogueSyncQueue = [];
 
-// The shared style catalogue lived on the same dead Supabase project; the
-// read always failed, so this always took its local-only fallback anyway.
 async function pullStyleCatalogue() {
-  styleCatalogueStatus = "catalogue: local edge memory";
+  try {
+    const session = await ensureTasteSession();
+    const res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_style_catalogue?select=style_hash,mode,program,edge_profile,grammar,score,critic,seen_count,parent_style_hash,lever,learning,updated_at&order=score.desc&limit=" + STYLE_CATALOGUE_CAP, {
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token },
+    });
+    if (!res.ok) throw new Error("catalogue read HTTP " + res.status);
+    const remote = await res.json();
+    const localById = new Map(styleCatalogue.entries.map((entry) => [entry.id, entry]));
+    for (const row of remote) {
+      const id = row.style_hash;
+      const known = localById.get(id);
+      localById.set(id, {
+        id, mode: row.mode, program: row.program || {}, profile: row.edge_profile || [],
+        score: Number(row.score) || 0, critic: Number(row.critic) || 0,
+        seen: Math.max(Number(row.seen_count) || 1, known?.seen || 1),
+        grammar: row.grammar || known?.grammar || null, parentStyleHash: row.parent_style_hash || known?.parentStyleHash || null,
+        lever: row.lever || known?.lever || null, learning: row.learning || known?.learning || null,
+        at: Date.parse(row.updated_at || "") || known?.at || Date.now(),
+      });
+    }
+    styleCatalogue.entries = [...localById.values()].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, STYLE_CATALOGUE_CAP);
+    try { localStorage.setItem(STYLE_CATALOGUE_KEY, JSON.stringify(styleCatalogue)); } catch {}
+    const restored = seedFontTemplatesFromCatalogue();
+    styleCatalogueStatus = "catalogue: " + styleCatalogue.entries.length + " shared edge families"
+      + (restored ? " · " + restored + " template" + (restored === 1 ? "" : "s") + " restored" : "");
+  } catch {
+    // The table is optional while a studio is being set up. Local curation is
+    // still useful and a missing table must never stop the canvas.
+    styleCatalogueStatus = "catalogue: local edge memory";
+  }
 }
 
 function queueStyleCatalogueSync(entry) {
@@ -20291,7 +20471,7 @@ function renderTasteLab(result = current) {
     : "shared prior: waiting for Supabase";
   const sim = "generate sim #" + generateSimulation.run + ": " + generateSimulation.status +
     (generateSimulation.total ? " · " + generateSimulation.scored + "/" + generateSimulation.total : "");
-  lab.insertAdjacentHTML("beforeend", '<div class="taste-guidance">' + globalStatus + '</div><canvas class="weight-graph" id="weightGraph" width="252" height="112" aria-label="Personal cyan, shared violet, active mint taste weights"></canvas><div class="graph-key"><span><i style="background:#6ee7ff"></i>personal</span><span><i style="background:#b18cff"></i>shared</span><span><i style="background:#c4e9d5"></i>active</span></div><div class="taste-guidance">' + sim + ' · score is foreign novelty + active self-critic; composition keeps the result legible.</div><div class="decision-trace">' + renderDecisionTrace() + '</div><div class="taste-guidance">' + creationLedgerStatus + '</div>');
+  lab.insertAdjacentHTML("beforeend", '<div class="taste-guidance">' + globalStatus + '</div><canvas class="weight-graph" id="weightGraph" width="252" height="112" aria-label="Personal cyan, shared violet, active mint taste weights"></canvas><div class="graph-key"><span><i style="background:#6ee7ff"></i>personal</span><span><i style="background:#b18cff"></i>shared</span><span><i style="background:#c4e9d5"></i>active</span></div><div class="taste-guidance">' + sim + ' · score is foreign novelty + active self-critic; composition keeps the result legible.</div><div class="decision-trace">' + renderDecisionTrace() + '</div><div class="taste-guidance">' + creationLedgerStatus + '</div><div class="taste-guidance">' + sharedTasteStatus() + '</div>');
   renderWeightGraph();
 }
 
@@ -20463,49 +20643,187 @@ async function recordSharedTasteObservation(result, liked, source = "human") {
    * of the effective teacher.  Keep autonomous learning local and reserve the
    * shared taste table for an actual KEEP/REJECT. */
   if (source !== "human") return false;
+  /* A click is evidence, not a best-effort request.  The old code waited for
+   * a creation claim and then made one untracked POST, so a slow tab, a brief
+   * outage, or a navigation could erase a real KEEP/REJECT without saying so.
+   * First put a compact, non-identifying event in durable local storage; the
+   * sender retries it with an authenticated RLS session until Supabase accepts
+   * it.  The server-side client_event_id is an idempotency key, so retrying
+   * after an uncertain response cannot turn one click into several votes. */
+  const renderHash = await ensureRenderHash(result);
+  const traits = renderTraits(result);
+  const payload = {
+    render_hash: renderHash, liked: Boolean(liked), source: "human",
+    features: Object.fromEntries(TASTE_FEATURES.map((key) => [key, featureValue(result.features, key)])),
+    ...(traits ? { traits } : {}),
+  };
+  enqueueSharedTasteObservation(payload);
+  // The recipe ledger is useful memory, but it must never be a prerequisite for
+  // preserving the human vote that points at it.
+  claimCreation(result).catch(() => {});
+  scheduleSharedTasteFlush(0);
+  return true;
+}
+
+/* Reliable shared-vote delivery.
+ *
+ * This lives beside the writer rather than inside the local taste fitter: the
+ * fitter is allowed to batch and forget intermediate work, while a person's
+ * explicit vote is not.  The outbox contains only the feature packet already
+ * sent to Supabase and a random browser-scoped event id; it never stores an
+ * access token, prompt text, or image pixels. */
+const SHARED_TASTE_OUTBOX_KEY = "hexfield.shared-taste-outbox.v1";
+const SHARED_TASTE_DEVICE_KEY = "hexfield.shared-taste-device.v1";
+const SHARED_TASTE_OUTBOX_CAP = 800;
+const SHARED_TASTE_BATCH_SIZE = 24;
+let sharedTasteFlushTimer = null;
+let sharedTasteFlushInFlight = false;
+let sharedTasteMemoryStatus = "shared memory: connecting";
+let sharedTasteEventsSynced = 0;
+
+function sharedTasteDeviceId() {
   try {
-    const session = await ensureTasteSession();
-    // A vote always refers to a ledgered render, including a thumbnail a
-    // visitor chose after the original Generate pass.
-    await claimCreation(result);
-    const renderHash = await ensureRenderHash(result);
-    const traits = renderTraits(result);
-    const payload = {
-      visitor_id: session.user.id, render_hash: renderHash, liked: Boolean(liked), source,
-      features: Object.fromEntries(TASTE_FEATURES.map((key) => [key, featureValue(result.features, key)])),
-      // Nullable and additive. The catalogue is local-first - it rebuilds from
-      // taste.samples and needs nothing from the server - so this is durability
-      // and cross-device evidence rather than a dependency, and a database
-      // without the column simply gets the row without it.
-      ...(traits ? { traits } : {}),
-    };
-    const post = (body) => fetch(SUPABASE_URL + "/rest/v1/hexfield_taste_observations", {
+    const existing = String(localStorage.getItem(SHARED_TASTE_DEVICE_KEY) || "");
+    if (/^device_[a-z0-9_-]{8,64}$/i.test(existing)) return existing;
+    const values = new Uint32Array(3);
+    crypto.getRandomValues(values);
+    const id = "device_" + Array.from(values, (value) => value.toString(36)).join("_");
+    localStorage.setItem(SHARED_TASTE_DEVICE_KEY, id);
+    return id;
+  } catch {
+    return "device_" + Math.random().toString(36).slice(2, 14);
+  }
+}
+
+function readSharedTasteOutbox() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SHARED_TASTE_OUTBOX_KEY) || "[]");
+    if (!Array.isArray(stored)) return [];
+    return stored.filter((event) => event && typeof event.client_event_id === "string" &&
+      typeof event.render_hash === "string" && typeof event.liked === "boolean" &&
+      event.features && typeof event.features === "object").slice(-SHARED_TASTE_OUTBOX_CAP);
+  } catch {
+    return [];
+  }
+}
+
+let sharedTasteOutbox = readSharedTasteOutbox();
+
+function saveSharedTasteOutbox() {
+  try { localStorage.setItem(SHARED_TASTE_OUTBOX_KEY, JSON.stringify(sharedTasteOutbox)); }
+  catch { sharedTasteMemoryStatus = "shared memory: browser storage unavailable"; }
+}
+
+function sharedTasteStatus() {
+  const waiting = sharedTasteOutbox.length;
+  if (waiting) return "shared memory: " + waiting + " human vote" + (waiting === 1 ? "" : "s") + " waiting to send";
+  if (sharedTasteEventsSynced) return "shared memory: " + sharedTasteEventsSynced + " vote" + (sharedTasteEventsSynced === 1 ? "" : "s") + " delivered this visit";
+  return sharedTasteMemoryStatus;
+}
+
+function enqueueSharedTasteObservation(payload) {
+  const id = "vote_" + sharedTasteDeviceId() + "_" +
+    (hashText(String(payload.render_hash) + "|" + (payload.liked ? "keep" : "reject")) >>> 0).toString(36);
+  if (sharedTasteOutbox.some((event) => event.client_event_id === id)) return false;
+  if (sharedTasteOutbox.length >= SHARED_TASTE_OUTBOX_CAP) {
+    sharedTasteMemoryStatus = "shared memory: queue full; keep this tab open to send votes";
+    return false;
+  }
+  sharedTasteOutbox.push({
+    client_event_id: id, render_hash: String(payload.render_hash), liked: Boolean(payload.liked),
+    source: "human", features: { ...payload.features },
+    ...(payload.traits ? { traits: payload.traits } : {}),
+    queued_at: Date.now(), attempts: 0, next_attempt_at: 0,
+  });
+  saveSharedTasteOutbox();
+  sharedTasteMemoryStatus = "shared memory: vote queued";
+  return true;
+}
+
+function scheduleSharedTasteFlush(delay = 300) {
+  if (HEXFIELD_LOCAL_ONLY || !sharedTasteOutbox.length) return;
+  if (sharedTasteFlushTimer) clearTimeout(sharedTasteFlushTimer);
+  sharedTasteFlushTimer = setTimeout(() => {
+    sharedTasteFlushTimer = null;
+    flushSharedTasteOutbox().catch(() => {});
+  }, Math.max(0, Number(delay) || 0));
+}
+
+async function postSharedTasteObservation(session, event, includeTraits = true, includeEventId = true) {
+  const body = {
+    visitor_id: session.user.id, render_hash: event.render_hash, liked: event.liked,
+    source: "human", features: event.features,
+    ...(includeTraits && event.traits ? { traits: event.traits } : {}),
+    ...(includeEventId ? { client_event_id: event.client_event_id } : {}),
+  };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 7000);
+  try {
+    return await fetch(SUPABASE_URL + "/rest/v1/hexfield_taste_observations", {
       method: "POST",
       headers: {
         apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token,
         "Content-Type": "application/json", Prefer: "resolution=ignore-duplicates,return=minimal",
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(body), signal: controller.signal,
     });
-    let res = await post(payload);
-    /* Shed the newest column if the database predates it. The deeper fallback
-     * below this one dropped `source` as well, but only ever for human rows -
-     * and no caller passes "human" now, so it was a retry for a request that
-     * cannot be made. The remaining callers are the self-critic and the
-     * simulator, both of which need `source` to mean anything at all. */
-    if (!res.ok && traits) {
-      const { traits: _traits, ...withoutTraits } = payload;
-      res = await post(withoutTraits);
-    }
-    if (!res.ok) throw new Error("global observation HTTP " + res.status);
-    // The trigger updates the global prior. Pull it back so the graph shows
-    // exactly what the shared model became, never a guessed client estimate.
-    await pullGlobalTaste();
-    updateTasteUI(result);
-  } catch {
-    // Personal learning remains fully usable when shared sync is unavailable.
+  } finally {
+    clearTimeout(timeout);
   }
 }
+
+async function flushSharedTasteOutbox() {
+  if (HEXFIELD_LOCAL_ONLY || sharedTasteFlushInFlight || !sharedTasteOutbox.length) return false;
+  sharedTasteFlushInFlight = true;
+  let delivered = 0;
+  try {
+    const session = await ensureTasteSession();
+    const now = Date.now();
+    const batch = sharedTasteOutbox.filter((event) => Number(event.next_attempt_at) <= now)
+      .slice(0, SHARED_TASTE_BATCH_SIZE);
+    for (const event of batch) {
+      let response = await postSharedTasteObservation(session, event, true, true);
+      // These two compatibility retries are only for a project awaiting the
+      // migration. The durable event remains queued if both fail.
+      if (!response.ok && event.traits) response = await postSharedTasteObservation(session, event, false, true);
+      if (!response.ok) response = await postSharedTasteObservation(session, event, false, false);
+      if (response.ok) {
+        sharedTasteOutbox = sharedTasteOutbox.filter((item) => item.client_event_id !== event.client_event_id);
+        delivered++;
+        sharedTasteEventsSynced++;
+        saveSharedTasteOutbox();
+        continue;
+      }
+      event.attempts = Math.max(0, Number(event.attempts) || 0) + 1;
+      event.next_attempt_at = Date.now() + Math.min(300000, 1000 * Math.pow(2, Math.min(8, event.attempts)));
+      sharedTasteMemoryStatus = "shared memory: retrying a vote later";
+      saveSharedTasteOutbox();
+      break;
+    }
+    if (delivered) {
+      sharedTasteMemoryStatus = "shared memory: vote delivered";
+      // Pull once for a group of deliveries, rather than placing another read
+      // behind every click.
+      pullGlobalTaste().catch(() => {});
+      updateTasteUI(current);
+    }
+  } catch {
+    sharedTasteMemoryStatus = "shared memory: waiting for Supabase";
+  } finally {
+    sharedTasteFlushInFlight = false;
+    const retryAt = sharedTasteOutbox.reduce((earliest, event) => {
+      const at = Number(event.next_attempt_at) || Date.now();
+      return Math.min(earliest, at);
+    }, Infinity);
+    if (Number.isFinite(retryAt)) scheduleSharedTasteFlush(Math.max(1000, retryAt - Date.now()));
+  }
+  return delivered > 0;
+}
+
+window.addEventListener("online", () => scheduleSharedTasteFlush(0));
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) scheduleSharedTasteFlush(0);
+});
 
 /* Direct local teaching is stronger than the resident painter's self-critique.
  * The autonomous rules still run, but KEEP/REJECT supplies the outside term
@@ -20585,11 +20903,15 @@ function recordHumanTasteDecision(result, liked) {
   }
   bindWordsToVisualProcess(result, liked, result.dislikeCounterfactual || null);
   driftWordsFromVote(result, liked);
-  if (!HEXFIELD_LOCAL_ONLY) recordSharedTasteObservation(result, liked, "human");
+  if (!HEXFIELD_LOCAL_ONLY) recordSharedTasteObservation(result, liked, "human").catch(() => {
+    // The local sample is already durable. A later online/reload event retries
+    // the shared copy if hashing or authentication was briefly unavailable.
+    sharedTasteMemoryStatus = "shared memory: vote will retry";
+  });
 
   const status = document.getElementById("localLearningStatus");
   if (status) status.textContent = (liked ? "kept" : "rejected") +
-    " · saved locally · " + taste.samples.length + " observations remembered" +
+    " · saved locally and queued for shared memory · " + taste.samples.length + " observations remembered" +
     (!liked && timing.renderDurationMs ? " · render " + (timing.renderDurationMs / 1000).toFixed(1) + "s → reject " +
       (timing.rejectAfterPaintMs / 1000).toFixed(1) + "s later" : "") +
     (!liked && timing.sincePreviousDecisionMs ? " · " + (timing.sincePreviousDecisionMs / 1000).toFixed(1) + "s since last vote" : "") +
@@ -20916,9 +21238,6 @@ function recordRuleVerdict(result) {
  * fails, generation still works from whatever was cached locally.
  * ------------------------------------------------------------------ */
 
-// Repointed at the project that actually exists (Bb5). The old ref
-// (wjtrduojxyaeenifpxct) never resolves in DNS - it's the reason every
-// learning/museum call in this file used to fail silently.
 const SUPABASE_URL = "https://uiobhojjgtsvyzuzqqiy.supabase.co";
 const SUPABASE_KEY = "sb_publishable_G6unWGHkbOkjAaRHhaq_8Q_j-1T4jA8";
 const ARCHIVE_KEY = "hexfield.archive.v1";
@@ -21096,21 +21415,85 @@ async function ensureFieldHash(result) {
   return hash;
 }
 
-// The shared creation ledger (dedup across every visitor) lived on the same
-// dead Supabase project; every read and write always failed, so dedup has
-// always actually run on this session's own hashes only. Made explicit.
-async function fetchKnownFieldHashes() {}
+async function fetchKnownFieldHashes() {
+  try {
+    const session = await ensureTasteSession();
+    const res = await fetch(SUPABASE_URL + "/rest/v1/rpc/known_hexfield_fields", {
+      method: "POST",
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token,
+                 "Content-Type": "application/json" },
+      body: JSON.stringify({ p_limit: 4000 }),
+    });
+    if (!res.ok) throw new Error("field hashes HTTP " + res.status);
+    for (const row of await res.json()) {
+      if (row?.field_hash) knownFieldHashes.add(row.field_hash);
+    }
+  } catch { /* dedup falls back to this session's own fields */ }
+}
 
 async function fetchKnownCreationHashes() {
-  creationLedgerStatus = "creation memory: this session only";
+  try {
+    const session = await ensureTasteSession();
+    /* The unique constraint remains the authority. Pulling ten thousand hashes
+     * on every visit cost far more data than the image being painted and only
+     * avoided harmless conflict-ignored inserts. A recent window catches the
+     * repeats a live session can realistically make; the server still rejects
+     * an older duplicate correctly. */
+    const res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_creations?select=render_hash&order=created_at.desc&limit=1200", {
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token },
+    });
+    if (!res.ok) throw new Error("creation read HTTP " + res.status);
+    knownCreationHashes = new Set((await res.json()).map((row) => row.render_hash).filter(Boolean));
+    creationLedgerStatus = "creation memory: " + knownCreationHashes.size + " unique recipes";
+  } catch {
+    creationLedgerStatus = "creation memory: offline local check";
+  }
 }
 
 async function claimCreation(result) {
   const renderHash = await ensureRenderHash(result);
   if (knownCreationHashes.has(renderHash)) return false;
-  knownCreationHashes.add(renderHash);
-  creationLedgerStatus = "creation memory: new recipe claimed this session";
-  return true;
+  try {
+    const session = await ensureTasteSession();
+    /* Bounded, because this sits between a visitor's click and their image.
+     *
+     * chooseFreshCandidate awaits one of these per candidate, up to
+     * MAX_CREATION_CLAIMS of them, and this fetch carried no timeout at all -
+     * so a slow or unreachable Supabase stalled the render for as long as the
+     * browser was willing to wait, three times over. fetchRemoteArchive already
+     * establishes the pattern; there was no reason for the path a person is
+     * actually waiting on to be the unbounded one. */
+    const controller = new AbortController();
+    const claimTimeout = setTimeout(() => controller.abort(), CREATION_CLAIM_TIMEOUT_MS);
+    let res;
+    try {
+      res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_creations?on_conflict=render_hash", {
+        method: "POST",
+        headers: {
+          apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token,
+          "Content-Type": "application/json", Prefer: "resolution=ignore-duplicates,return=representation",
+        },
+        body: JSON.stringify({
+          render_hash: renderHash, visitor_id: session.user.id,
+          field: result.params.field, signature: Array.from(result.sig || []),
+          field_hash: await ensureFieldHash(result),
+        }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(claimTimeout);
+    }
+    if (!res.ok) throw new Error("creation write HTTP " + res.status);
+    const rows = await res.json();
+    knownCreationHashes.add(renderHash);
+    if (rows.length) creationLedgerStatus = "creation memory: new recipe claimed";
+    else creationLedgerStatus = "creation memory: exact recipe already existed";
+    return rows.length > 0;
+  } catch {
+    // Never block a visitor's render because the shared ledger is unavailable.
+    creationLedgerStatus = "creation memory: offline local check";
+    return true;
+  }
 }
 
 // Each claim that misses the local known-hash set is a network round trip, and
@@ -21154,99 +21537,515 @@ async function chooseFreshCandidate(candidates) {
   return candidates[0];
 }
 
-// The curator worker, the museum function and the lexicon function all lived
-// behind the same dead Supabase project and have been retired along with the
-// museum panel and its voting UI; these two stay only because the taste lab
-// diagnostic line below still reads them.
-let curatorStatus = "shared learning: retired (local only)";
-let museumStatus = "museum: retired (local only)";
+const CURATOR_URL = "https://hexfield-curator.ranbondyenkendy.workers.dev";
+const CURATOR_VISITOR_KEY = "hexfield.curator.visitor.v1";
+const MUSEUM_FUNCTION_URL = SUPABASE_URL + "/functions/v1/hexfield-museum";
+const LEXICON_FUNCTION_URL = SUPABASE_URL + "/functions/v1/hexfield-lexicon";
+let curatorStatus = "shared learning: waiting for a study";
+let museumStatus = "museum: waiting for a taste cycle";
 
-/* Pride-hub preference memory is deliberately first-party and narrow. It sees
- * only three explicit Hexfield interests and clicks inside this document. It
- * never reads referral history, advertising IDs or sexuality; those would be
- * sensitive profiling, not a useful memory of which part of the studio a
- * visitor asked to see. */
-const PRIDE_PREFERENCE_COOKIE = "hexfield_pride_taste_v1";
-const PRIDE_CONSENT_COOKIE = "hexfield_pride_consent_v1";
-const PRIDE_TOPICS = ["painting", "prints"];
-
-function readFirstPartyCookie(name) {
-  const prefix = name + "=";
-  const entry = document.cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith(prefix));
-  return entry ? decodeURIComponent(entry.slice(prefix.length)) : null;
-}
-
-function writeFirstPartyCookie(name, value, maxAge = 60 * 60 * 24 * 180) {
-  const secure = location.protocol === "https:" ? "; Secure" : "";
-  document.cookie = `${name}=${encodeURIComponent(value)}; Max-Age=${maxAge}; Path=/; SameSite=Lax${secure}`;
-}
-
-function pridePreferences() {
-  if (readFirstPartyCookie(PRIDE_CONSENT_COOKIE) !== "yes") return null;
+function curatorVisitorId() {
   try {
-    const raw = JSON.parse(readFirstPartyCookie(PRIDE_PREFERENCE_COOKIE) || "{}");
-    const topics = {};
-    for (const topic of PRIDE_TOPICS) {
-      if (raw?.topics?.[topic] !== undefined) topics[topic] = Math.max(1, Math.min(99, Number(raw.topics[topic]) || 1));
-    }
-    return { version: 1, topics };
+    const existing = localStorage.getItem(CURATOR_VISITOR_KEY);
+    if (/^visitor_[A-Za-z0-9_-]{8,80}$/.test(existing || "")) return existing;
+    const bytes = new Uint32Array(3);
+    crypto.getRandomValues(bytes);
+    const id = "visitor_" + Array.from(bytes, (n) => n.toString(36)).join("_");
+    localStorage.setItem(CURATOR_VISITOR_KEY, id);
+    return id;
   } catch {
+    return "visitor_" + Math.random().toString(36).slice(2, 14);
+  }
+}
+
+function curatorIdFor(study) {
+  const raw = JSON.stringify({
+    params: study?.params || {},
+    drawSeed: Number(study?.drawSeed) || 0,
+    createdAt: Number(study?.createdAt) || Date.now(),
+    source: study?.source || "visitor",
+  });
+  return "study_" + (hashText(raw) >>> 0).toString(36).padStart(8, "0");
+}
+
+/* Can the shared model actually score this study?
+ *
+ * A candidate is only ever ranked on the features it was stored with, and both
+ * refresh_hexfield_museum() and recurate_hexfield_museum() exclude any row
+ * missing a feature the model weights - because featureValue falls back to 0.5
+ * for an absent key, and against a strongly negative weight that fallback beats
+ * every real value. Scoring an incomplete row would promote it for having less
+ * data, so excluding it is right.
+ *
+ * The consequence is that filing an incomplete study is filing a row that can
+ * never be curated, and nothing reports it. 60 of the 210 stored candidates are
+ * in exactly that state, and they are not spread evenly: 46 of 54 billiard rows
+ * and every one of the 10 moire rows, against 1 of 111 fractal. Those two
+ * fields are not losing on taste, they are absent from the ranking entirely,
+ * which is most of why a re-curated top ten came back as ten fractals.
+ *
+ * So the check is here, at the door. A study that cannot be scored is kept out
+ * of the pool and said out loud, rather than accepted and silently unrankable. */
+const TASTE_REQUIRED_FEATURES = ["chromaticContrast", "chromaticComplement", "complementaryClarity"];
+
+function studyIsScorable(features) {
+  if (!features || typeof features !== "object") return false;
+  return TASTE_REQUIRED_FEATURES.every((key) => Number.isFinite(Number(features[key])));
+}
+
+function curatorPayload(study, source = "visitor") {
+  const id = study.curatorId || curatorIdFor({ ...study, source });
+  study.curatorId = id;
+  return {
+    id,
+    params: study.params || {},
+    drawSeed: Number(study.drawSeed) || 0,
+    features: study.features || {},
+    /* Cohort-relative, because this is the number the ranking is done on and a
+     * novelty search hands every survivor the same absolute answer. See
+     * cohortNovelty; the earlier form here read `study.novelty`, which held the
+     * raw k-nearest distance, and clamping it pinned all 250 pool candidates to
+     * exactly 1.000. */
+    novelty: cohortNovelty(study),
+    // The absolute figure is kept rather than replaced. Cohort novelty ranks
+    // within a cycle and is meaningless between cycles; this one is comparable
+    // across the whole history of the archive, which is what reporting wants.
+    noveltyAbsolute: noveltyUnit(study.score),
+    taste: clamp01(study.taste ?? study.tasteScore),
+    textMode: study.textMode || "seed",
+    seedText: study.seedText || "",
+    brush: study.brush || study.params?.__hexfieldBrush || null,
+    grammar: study.grammar || study.params?.__hexfieldGrammar || null,
+    aesthetics: study.aesthetics || null,
+    harvest: study.harvest || null,
+    renderHash: study.renderHash || null,
+    createdAt: Number(study.createdAt) || Date.now(),
+    source,
+  };
+}
+
+async function shareCuratorStudy(study, source = "visitor") {
+  if (!study?.params || !CURATOR_URL) return null;
+  if (!studyIsScorable(study.features)) {
+    // Reported rather than swallowed: a field that never produces the chromatic
+    // features would otherwise vanish from the museum with no symptom at all,
+    // which is the state billiard and moire have been in.
+    curatorStatus = "shared learning: skipped a " + (study.params.field || "field") +
+                    " study the model cannot score";
+    renderTasteLab(current);
+    return null;
+  }
+  const payload = curatorPayload(study, source);
+  try {
+    const session = await ensureTasteSession();
+    const response = await fetch(CURATOR_URL + "/v1/studies", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + session.access_token,
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    curatorStatus = "shared learning: study accepted";
+    renderTasteLab(current);
+    return payload.id;
+  } catch {
+    curatorStatus = "shared learning: this run stays local";
+    renderTasteLab(current);
     return null;
   }
 }
 
-function savePridePreferences(preferences) {
-  writeFirstPartyCookie(PRIDE_CONSENT_COOKIE, "yes");
-  writeFirstPartyCookie(PRIDE_PREFERENCE_COOKIE, JSON.stringify(preferences));
+
+function museumCycleId(studies) {
+  const raw = JSON.stringify((studies || []).map((study) => ({
+    id: study?.curatorId || curatorIdFor(study || {}),
+    at: Number(study?.createdAt) || 0,
+  })));
+  const left = (hashText(raw) >>> 0).toString(36).padStart(8, "0");
+  const right = (hashText(raw + "|museum") >>> 0).toString(36).padStart(8, "0");
+  return "cycle_" + left + right;
 }
 
-function preferredPrideTopic(preferences = pridePreferences()) {
-  if (!preferences) return null;
-  return Object.entries(preferences.topics || {}).sort((left, right) => right[1] - left[1])[0]?.[0] || null;
+
+let museumSnapshot = null;
+
+/* --- editions: what the studio has actually chosen, week by week -------
+ *
+ * The live top ten is what the model thinks right now and the nightly
+ * re-curation rewrites it. An edition is a curation that was kept: which
+ * designs, in what order, at what score, cut from a pool of a known size by a
+ * model with a known number of samples behind it. Reading them in order is the
+ * only way to see whether the taste is going anywhere, which is the question
+ * this panel exists to answer.
+ *
+ * Rendered from each entry's own stored recipe rather than by joining back to
+ * the candidate pool. That is not an optimisation - the pool is trimmed to the
+ * newest 250, so the designs an old edition names are usually gone. Week One
+ * was briefly deleted for exactly that reason.
+ *
+ * The diagnostic line is the point of the whole thing. A week made entirely of
+ * one field, or whose best and worst are separated by less than the scorer can
+ * resolve, is a week the ranking did not really choose - and neither is visible
+ * from the pictures, because ten good-looking fractals look like a good week. */
+const EDITIONS_URL = SUPABASE_URL + "/rest/v1/hexfield_museum_editions";
+const EDITION_ENTRIES_URL = SUPABASE_URL + "/rest/v1/hexfield_museum_edition_entries";
+/* Below this the scorer cannot tell two designs apart. Measured, not guessed:
+ * check-top10.mjs reports the museum re-score agreeing with the page to 3.3e-16
+ * on the arithmetic, but the *model* moves between retrains, and the observed
+ * spread between adjacent ranks in a settled edition runs to about 0.01. A week
+ * whose whole top ten sits inside that is a week chosen by noise. */
+const EDITION_NOISE = 0.01;
+let museumEditions = null;
+
+async function fetchMuseumEditions() {
+  const headers = { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY };
+  const [editionsRes, entriesRes] = await Promise.all([
+    fetch(EDITIONS_URL + "?select=id,slug,title,note,pool_size,model_samples,curated_at&order=curated_at.asc", { headers }),
+    fetch(EDITION_ENTRIES_URL + "?select=edition_id,rank,field,recipe,taste_score,novelty,rank_score&order=rank.asc", { headers }),
+  ]);
+  if (!editionsRes.ok || !entriesRes.ok) throw new Error("editions HTTP " + editionsRes.status + "/" + entriesRes.status);
+  const editions = await editionsRes.json();
+  const entries = await entriesRes.json();
+  const byEdition = new Map();
+  for (const entry of entries) {
+    if (!byEdition.has(entry.edition_id)) byEdition.set(entry.edition_id, []);
+    byEdition.get(entry.edition_id).push(entry);
+  }
+  return editions.map((edition) => ({
+    ...edition,
+    entries: (byEdition.get(edition.id) || []).sort((a, b) => a.rank - b.rank),
+  }));
 }
 
-function renderPrideContextAd() {
-  const topic = preferredPrideTopic();
-  const variants = {
-    painting: ["Creative men near you", "A handsome new profile is watching Rob Boss paint", "SEE WHAT HE LIKES"],
-    museum: ["Art lovers near you", "This week's Museum taste has a handsome new fan", "VIEW THE TOP TEN"],
-    prints: ["Print collectors near you", "A handsome new profile wants tonight's field on the wall", "MAKE IT A PRINT"],
+/* What this week is, in one line, including the ways it can be disappointing.
+ * Written to be read by someone asking "is it working" rather than by someone
+ * admiring the pictures. */
+function readEdition(edition) {
+  const entries = edition.entries || [];
+  const counts = {};
+  let screened = 0;
+  for (const entry of entries) {
+    counts[entry.field || "?"] = (counts[entry.field || "?"] || 0) + 1;
+    if (entry.recipe?.params?.halftone) screened++;
+  }
+  const fields = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const scores = entries.map((entry) => Number(entry.taste_score)).filter(Number.isFinite);
+  const spread = scores.length ? Math.max(...scores) - Math.min(...scores) : 0;
+  const novelties = entries.map((entry) => Number(entry.novelty)).filter(Number.isFinite);
+  const noveltyPinned = novelties.length && novelties.every((value) => value >= 0.9999);
+  return {
+    fields, screened, spread, noveltyPinned,
+    monoculture: fields.length === 1 && entries.length > 1,
+    withinNoise: scores.length > 1 && spread < EDITION_NOISE,
   };
-  const variant = variants[topic] || ["Local men near you", "A handsome new profile is online now", "VIEW PROFILES"];
-  if ($("prideAdHeadline")) $("prideAdHeadline").textContent = variant[0];
-  if ($("prideAdDetail")) $("prideAdDetail").textContent = variant[1];
-  if ($("prideAdCta")) $("prideAdCta").textContent = variant[2];
-  if ($("prideAdDisclosure")) {
-    $("prideAdDisclosure").textContent = topic
-      ? `visual demo · tuned from ${topic} choices on Hexfield only · no link`
-      : "visual demo only · no link, tracking, or dating service";
+}
+
+function renderMuseumEditions(editions = museumEditions) {
+  const host = $("museumEditions");
+  if (!host) return;
+  museumEditions = editions || museumEditions;
+  host.innerHTML = "";
+  if (!Array.isArray(editions)) return;
+  if (!editions.length) {
+    const empty = document.createElement("div");
+    empty.className = "museum-lock";
+    empty.textContent = "No editions have been cut yet.";
+    host.appendChild(empty);
+    return;
+  }
+
+  for (const edition of editions) {
+    const read = readEdition(edition);
+    const box = document.createElement("section");
+    box.className = "edition";
+
+    const head = document.createElement("div");
+    head.className = "edition-head";
+    const title = document.createElement("h3");
+    title.textContent = edition.title || edition.slug;
+    const when = document.createElement("span");
+    when.className = "edition-when";
+    when.textContent = [
+      String(edition.curated_at || "").slice(0, 10),
+      "from " + (Number(edition.pool_size) || 0) + " designs",
+      Number(edition.model_samples) ? Number(edition.model_samples).toLocaleString() + " samples of taste" : null,
+    ].filter(Boolean).join(" · ");
+    head.append(title, when);
+    box.appendChild(head);
+
+    if (edition.note) {
+      const note = document.createElement("p");
+      note.className = "edition-note";
+      note.textContent = edition.note;
+      box.appendChild(note);
+    }
+
+    const read_ = document.createElement("div");
+    read_.className = "edition-read";
+    const parts = [];
+    parts.push("<b>" + read.fields.map(([field, n]) => n + " " + field).join(", ") + "</b>");
+    parts.push(read.screened ? "<b>" + read.screened + "</b> screened" : "none screened");
+    parts.push("taste spread <b>" + read.spread.toFixed(3) + "</b>");
+    const warnings = [];
+    if (read.monoculture) warnings.push("every rank is the same field - the ranking is not choosing between them");
+    if (read.withinNoise) warnings.push("the whole top ten sits inside " + EDITION_NOISE + " of taste, which is under what the scorer can resolve - this week was decided by noise");
+    if (read.noveltyPinned) warnings.push("novelty is pinned at 1.000 for every entry, so it contributed nothing and taste ranked this alone");
+    read_.innerHTML = parts.join(" · ")
+      + (warnings.length ? '<br><span class="edition-warn">' + warnings.map((w) => "⚠ " + w).join("<br>") + "</span>" : "");
+    box.appendChild(read_);
+
+    const row = document.createElement("div");
+    row.className = "edition-row";
+    for (const entry of edition.entries) {
+      const cell = document.createElement("figure");
+      cell.className = "edition-cell";
+      const canvas = document.createElement("canvas");
+      canvas.width = 200;
+      canvas.height = 240;
+      const recipe = entry.recipe || {};
+      try {
+        const params = { ...(recipe.params || {}) };
+        renderComposite(canvas.getContext("2d"), canvas.width, canvas.height, params,
+                        mulberry32(Number(recipe.drawSeed) || 0), "", "seed");
+      } catch {
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#08080c";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      const caption = document.createElement("figcaption");
+      const left = document.createElement("span");
+      left.textContent = "#" + entry.rank + " " + (entry.field || "?");
+      const right = document.createElement("span");
+      if (recipe.params?.halftone) right.className = "screened";
+      right.textContent = (recipe.params?.halftone ? "◐ " : "") + (Number(entry.taste_score) || 0).toFixed(3);
+      caption.append(left, right);
+      cell.append(canvas, caption);
+      row.appendChild(cell);
+    }
+    box.appendChild(row);
+    host.appendChild(box);
   }
 }
 
-function recordPrideActivity(topic) {
-  const preferences = pridePreferences();
-  if (!preferences || !Object.hasOwn(preferences.topics || {}, topic)) return;
-  preferences.topics[topic] = Math.min(99, (Number(preferences.topics[topic]) || 1) + 1);
-  savePridePreferences(preferences);
-  renderPrideContextAd();
+async function loadMuseumEditions() {
+  const host = $("museumEditions");
+  if (!host) return;
+  if (museumEditions) { renderMuseumEditions(museumEditions); return; }
+  host.innerHTML = '<div class="museum-lock">reading the editions…</div>';
+  try {
+    renderMuseumEditions(await fetchMuseumEditions());
+  } catch (error) {
+    /* Said out loud rather than left blank. An empty gallery and an unreachable
+     * one look identical, and this studio has spent enough of its life on
+     * things that failed quietly. */
+    host.innerHTML = '<div class="museum-lock">could not read the editions: '
+      + String(error.message || error).slice(0, 120) + "</div>";
+  }
 }
 
-// Museum/curator sharing (curatorVisitorId, curatorIdFor, studyIsScorable,
-// curatorPayload, shareCuratorStudy, museumCycleId) has been removed: it only
-// ever talked to a Supabase project that no longer resolves in DNS, so every
-// call always failed. shareTasteCycle below is now a local-only no-op.
+function renderMuseum(payload = museumSnapshot) {
+  const state = $("museumState");
+  const grid = $("museumGrid");
+  if (!state || !grid) return;
+  museumSnapshot = payload || museumSnapshot;
+  const complete = Number(payload?.totalEvaluated) || 0;
+  const target = Number(payload?.activationThreshold) || 1000000;
+  const remaining = Math.max(0, target - complete);
+  grid.innerHTML = "";
 
-// Museum editions (fetchMuseumEditions, readEdition, renderMuseumEditions,
-// loadMuseumEditions) have been removed along with the rest of the museum
-// panel - same dead Supabase project.
+  if (!payload || !payload.unlocked) {
+    state.textContent = "locked · " + complete.toLocaleString() + " / " + target.toLocaleString() + " real field attempts";
+    const lock = document.createElement("div");
+    lock.className = "museum-lock";
+    lock.textContent = remaining
+      ? remaining.toLocaleString() + " more evaluated fields until the archive chooses its first ten."
+      : "The archive is choosing its first ten designs.";
+    grid.appendChild(lock);
+    return;
+  }
 
-// renderMuseum, openMuseum, closeMuseum, setMuseumStatus, refreshMuseumStatus,
-// shareMuseumCycle and museumPayload have been removed with the museum panel
-// and its button. shareTasteCycle stays as the entry point runTasteCycle
-// calls, now a local-only no-op instead of a call to a dead backend.
-function shareTasteCycle(studies) {
+  const top10 = Array.isArray(payload.top10) ? payload.top10 : [];
+  state.textContent = "unlocked · top " + top10.length + " recipes, reconstructed from their saved field parameters";
+  if (!top10.length) {
+    const empty = document.createElement("div");
+    empty.className = "museum-lock";
+    empty.textContent = "Curation is running. The first ten recipes will appear here shortly.";
+    grid.appendChild(empty);
+    return;
+  }
+
+  for (const item of top10) {
+    const card = document.createElement("article");
+    card.className = "museum-card";
+    const canvas = document.createElement("canvas");
+    canvas.width = 360;
+    canvas.height = 432;
+    const recipe = item?.recipe || {};
+    try {
+      const museumMode = recipe.textMode || (recipe.brush ? "evolving" : "seed");
+      const museumParams = { ...(recipe.params || {}) };
+      if (recipe.brush) museumParams.__hexfieldBrushProgram = recipe.brush;
+      renderComposite(canvas.getContext("2d"), canvas.width, canvas.height, museumParams,
+        mulberry32(Number(recipe.drawSeed) || 0), recipe.seedText || "", museumMode);
+      delete museumParams.__hexfieldBrushProgram;
+    } catch {
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#08080c";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    const meta = document.createElement("div");
+    meta.className = "museum-card-meta";
+    const rank = item?.museum_rank || "?";
+    const score = Number(item?.rank_score);
+    meta.innerHTML = "<span>#" + rank + " · " + String(item?.field || "field") + "</span><span>" +
+      (Number.isFinite(score) ? Math.round(score * 100) + "%" : "—") + "</span>";
+    card.append(canvas, meta);
+    grid.appendChild(card);
+  }
+}
+
+function openMuseum() {
+  const panel = $("museumPanel");
+  if (!panel) return;
+  panel.classList.add("on");
+  panel.setAttribute("aria-hidden", "false");
+  renderMuseum(museumSnapshot);
+  /* Fetched on open rather than at startup: an edition does not change once it
+   * is cut, and nobody arriving at the site is owed two extra requests before
+   * their first render. Cached after the first open. */
+  loadMuseumEditions();
+  refreshMuseumStatus();
+  // Read from live state rather than fetched, so it shows what this browser's
+  // studio currently believes rather than what the shared archive last cut.
+  renderVisualLexicon();
+}
+
+function closeMuseum() {
+  const panel = $("museumPanel");
+  if (!panel) return;
+  panel.classList.remove("on");
+  panel.setAttribute("aria-hidden", "true");
+}
+
+function setMuseumStatus(payload) {
+  museumSnapshot = payload || null;
+  renderMuseum(payload);
+  const complete = Number(payload?.totalEvaluated) || 0;
+  const target = Number(payload?.activationThreshold) || 1000000;
+  if (payload?.unlocked) {
+    museumStatus = "museum unlocked · " + (payload?.top10?.length || 10) + " strongest designs are live";
+    return;
+  }
+  museumStatus = "museum: " + complete.toLocaleString() + " / " + target.toLocaleString() + " field attempts";
+}
+
+async function refreshMuseumStatus() {
+  try {
+    const session = await ensureTasteSession();
+    const response = await fetch(CURATOR_URL + "/v1/top10", {
+      headers: {
+        Authorization: "Bearer " + session.access_token,
+      },
+    });
+    if (!response.ok) throw new Error("museum HTTP " + response.status);
+    setMuseumStatus(await response.json());
+  } catch {
+    museumStatus = "museum: local cycle still counts when connection returns";
+  }
+  renderTasteLab(current);
+}
+
+async function shareMuseumCycle(studies, evaluated, source = "visitor") {
+  if (!Array.isArray(studies) || !studies.length) return null;
+  museumStatus = "museum: adding " + Math.max(1, Math.floor(Number(evaluated) || studies.length)) + " real field attempts";
+  renderTasteLab(current);
+  try {
+    const session = await ensureTasteSession();
+    const response = await fetch(MUSEUM_FUNCTION_URL, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_KEY,
+        Authorization: "Bearer " + session.access_token,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        cycleId: museumCycleId(studies),
+        evaluated: Math.max(1, Math.min(144, Math.floor(Number(evaluated) || studies.length))),
+        // Sent so the ledger can tell a server cycle from a visitor's. The
+        // deployed function currently pins p_source to "visitor" and ignores
+        // this, which is why it is safe to send ahead of that deploy: an older
+        // function records the cycle exactly as it does today.
+        source,
+        studies: studies.map((study) => museumPayload(study, source)),
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || ("museum HTTP " + response.status));
+    setMuseumStatus(payload);
+    renderTasteLab(current);
+    return payload;
+  } catch {
+    museumStatus = "museum: this cycle stays local until it can sync";
+    renderTasteLab(current);
+    return null;
+  }
+}
+
+/* What the museum actually reads, and nothing else.
+ *
+ * The museum was being sent curatorPayload, which is the *curator's* shape -
+ * grammar, harvest, aesthetics, brush, the seed text, a render hash. The museum
+ * function's parseCandidate reads six fields and discards the rest, and the
+ * discarded part was 85% of the request: measured, one study was 23.6KB of
+ * which grammar was 8.5KB and harvest 11.4KB, and ten of them came to 231,705
+ * bytes against the function's 100,000 byte cap.
+ *
+ * So every taste cycle this studio has ever run was refused with a 413, and the
+ * catch in shareMuseumCycle turned that into a status line nobody reads. The
+ * ledger has never held a row - not because the path was broken, but because
+ * the payload was three times too big with data the far end throws away.
+ *
+ * Kept deliberately narrow rather than trimmed to fit: a size cap satisfied by
+ * luck is one field away from failing again, and check-museum-payload.mjs holds
+ * this to the function's own parse. */
+function museumPayload(study, source = "visitor") {
+  const id = study.curatorId || curatorIdFor({ ...study, source });
+  study.curatorId = id;
+  return {
+    id,
+    params: study.params || {},
+    drawSeed: Number(study.drawSeed) || 0,
+    features: study.features || {},
+    /* Cohort-relative. The museum reads six fields and this is the one that
+     * decides 45% of rank_score, so an absolute novelty - identical for every
+     * candidate a novelty search produces - deletes that share of the ranking
+     * without changing anything visible. The absolute value is not sent here
+     * because the far end does not parse it; it stays on the stored study and
+     * goes to the curator, which does. */
+    novelty: cohortNovelty(study),
+    taste: clamp01(study.taste ?? study.tasteScore),
+  };
+}
+
+function shareTasteCycle(studies, evaluated, source = "visitor") {
   if (!Array.isArray(studies) || !studies.length) return Promise.resolve(null);
-  return Promise.resolve(null);
+  curatorStatus = "shared learning: sending " + studies.length + " studies";
+  renderTasteLab(current);
+  Promise.all(studies.map((study) => shareCuratorStudy(study, source))).then((ids) => {
+    const accepted = ids.filter(Boolean).length;
+    curatorStatus = accepted
+      ? "shared learning: " + accepted + " studies added"
+      : "shared learning: this run stays local";
+    renderTasteLab(current);
+  });
+  /* Returned rather than fired and forgotten. runTasteCycle used to increment
+   * `runs` immediately after this call, so a cycle whose share was refused
+   * still reported success - which is exactly how a 413 on every cycle ever run
+   * stayed invisible, and how the explorer reported healthy runs while the
+   * ledger stayed empty. */
+  return shareMuseumCycle(studies, evaluated, source);
 }
 
 function loadArchive() {
@@ -21294,15 +22093,43 @@ function mergeArchive(signatures) {
   return { added, size: archive.length };
 }
 
-// The cross-visitor novelty archive lived on the same dead Supabase project;
-// the read always failed (caller already has an honest "unavailable"
-// fallback message for this) and the fire-and-forget write is now skipped
-// outright rather than attempted and silently dropped.
 async function fetchRemoteArchive() {
-  throw new Error("shared archive is offline");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REMOTE_FETCH_TIMEOUT_MS);
+  try {
+    // Half the budget is the newest work, half is a uniform sample of
+    // everything older. Ordering by created_at desc alone made the no-repeat
+    // rule a rolling recency window: with thousands of signatures stored, the
+    // search could drift back into territory it had already explored simply
+    // because those runs had scrolled out of the newest ARCHIVE_CAP.
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/rpc/sample_hexfield_signatures`,
+      { method: "POST",
+        headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`,
+                   "Content-Type": "application/json" },
+        body: JSON.stringify({ p_limit: ARCHIVE_CAP }),
+        signal: controller.signal }
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const rows = await res.json();
+    return rows.map((r) => r.signature).filter((s) => Array.isArray(s) && s.length === 64);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
-function pushRemoteSignature() {}
+function pushRemoteSignature(field, sig) {
+  // Fire-and-forget: a slow or failed write should never block the render
+  // the visitor is looking at. Local cache already has it either way.
+  fetch(`${SUPABASE_URL}/rest/v1/hexfield_signatures`, {
+    method: "POST",
+    headers: {
+      apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ field, signature: Array.from(sig) }),
+  }).catch(() => { /* offline or blocked; local archive still has this run */ });
+}
 
 let archive = loadArchive();
 let remoteConnected = false;
@@ -22307,13 +23134,69 @@ let simProgressPushed = { cycles: 0, trials: 0, improvements: 0, learning: 0 };
 let simProgressSyncAt = 0;
 const SIM_PROGRESS_SYNC_MS = 20000;
 
-// Shared sim progress lived on the same dead Supabase project; both the
-// hydrate read and the bump write always failed, so the counters have
-// always actually been per-browser only. Made explicit instead of relying
-// on every call quietly failing.
-async function hydrateSimProgress() {}
+async function hydrateSimProgress() {
+  try {
+    const res = await fetch(
+      SUPABASE_URL + "/rest/v1/hexfield_sim_progress?select=total_cycles,total_trials,total_improvements,learning_events,best_score&id=eq.true",
+      { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } });
+    if (!res.ok) throw new Error("sim progress HTTP " + res.status);
+    const row = (await res.json())[0];
+    if (!row) return;
+    // The shared pool is the source of truth; a local cache that ran ahead
+    // while offline keeps its higher count rather than being pulled backwards.
+    headlessSim.totalCycles = Math.max(headlessSim.totalCycles, Number(row.total_cycles) || 0);
+    headlessSim.totalTrials = Math.max(headlessSim.totalTrials, Number(row.total_trials) || 0);
+    headlessSim.totalImprovements = Math.max(headlessSim.totalImprovements, Number(row.total_improvements) || 0);
+    headlessSim.learningEvents = Math.max(headlessSim.learningEvents, Number(row.learning_events) || 0);
+    const remoteBest = Number(row.best_score) || 0;
+    if (!Number.isFinite(headlessSim.bestScore) || remoteBest > headlessSim.bestScore) {
+      headlessSim.bestScore = remoteBest;
+    }
+    simProgressPushed = {
+      cycles: Number(row.total_cycles) || 0,
+      trials: Number(row.total_trials) || 0,
+      improvements: Number(row.total_improvements) || 0,
+      learning: Number(row.learning_events) || 0,
+    };
+    renderHeadlessSim();
+  } catch { /* the sim still runs and still counts locally */ }
+}
 
-function pushSimProgress() {}
+function pushSimProgress(force = false) {
+  const now = Date.now();
+  if (!force && now - simProgressSyncAt < SIM_PROGRESS_SYNC_MS) return;
+  const delta = {
+    p_cycles: Math.max(0, (Number(headlessSim.totalCycles) || 0) - simProgressPushed.cycles),
+    p_trials: Math.max(0, (Number(headlessSim.totalTrials) || 0) - simProgressPushed.trials),
+    p_improvements: Math.max(0, (Number(headlessSim.totalImprovements) || 0) - simProgressPushed.improvements),
+    p_learning: Math.max(0, (Number(headlessSim.learningEvents) || 0) - simProgressPushed.learning),
+    p_best_score: clamp01(Number(headlessSim.bestScore) || 0),
+    p_last_field: String(headlessSim.lastField || "").slice(0, 32),
+    p_last_lever: String(headlessSim.lastLever || "").slice(0, 64),
+  };
+  if (!force && !delta.p_cycles && !delta.p_trials && !delta.p_improvements && !delta.p_learning) return;
+  if (!tasteSession?.access_token) {
+    ensureTasteSession().then(() => pushSimProgress(force)).catch(() => {});
+    return;
+  }
+  simProgressSyncAt = now;
+  const claimed = {
+    cycles: Number(headlessSim.totalCycles) || 0,
+    trials: Number(headlessSim.totalTrials) || 0,
+    improvements: Number(headlessSim.totalImprovements) || 0,
+    learning: Number(headlessSim.learningEvents) || 0,
+  };
+  fetch(SUPABASE_URL + "/rest/v1/rpc/bump_hexfield_sim", {
+    method: "POST",
+    headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + tasteSession.access_token,
+               "Content-Type": "application/json" },
+    body: JSON.stringify(delta),
+  }).then((res) => {
+    // Only mark the delta as banked once the write actually landed, so a failed
+    // sync is retried on the next tick instead of being silently dropped.
+    if (res.ok) simProgressPushed = claimed;
+  }).catch(() => { /* retried on the next cycle */ });
+}
 
 // A refresh is exactly when this used to lose everything, so flush on the way
 // out. visibilitychange is the reliable one on mobile; pagehide covers reloads.
@@ -22360,9 +23243,24 @@ let visiblePaintTrace = {
  * advertises a prettier picture that the main painter is not using. */
 let livePaintPreview = { params: null, drawSeed: null, key: "", reason: "waiting", project: false };
 let renderedLiveLogoKey = "";
+/* The winning 440×100 image is evidence, not a disposable thumbnail. Keeping
+ * its actual pixels lets the easel begin from the composition the search
+ * measured, rather than asking a size-sensitive renderer to approximate it
+ * again at a different resolution. */
+const measuredMiniMasters = new Map();
+
+function retainMeasuredMiniMaster(candidate) {
+  const pixels = candidate?.__probePixels;
+  if (!pixels?.length || pixels.length !== probe.width * probe.height * 4) return;
+  const key = canonicalMasterKey(candidate.params, candidate.drawSeed, candidate.text ?? seedText(), textMode());
+  measuredMiniMasters.delete(key);
+  measuredMiniMasters.set(key, { pixels: new Uint8ClampedArray(pixels), width: probe.width, height: probe.height });
+  while (measuredMiniMasters.size > 8) measuredMiniMasters.delete(measuredMiniMasters.keys().next().value);
+}
 
 function setLivePaintPreview(candidate, reason = "continuation") {
   if (!candidate?.params) return;
+  retainMeasuredMiniMaster(candidate);
   const key = String(candidate.id || "candidate") + ":" + String(candidate.drawSeed || 0) + ":" +
     String(candidate.params.__hexfieldStroke?.id || candidate.params.__hexfieldRefinement?.path || "held");
   livePaintPreview = {
@@ -22721,6 +23619,7 @@ let pendingSimulationArtifact = simulationArtifactLineage[0]?.recipe ? {
   attempts: 0,
 } : null;
 let lastSimulationStrokeEvidence = null;
+let lastSceneContinuationEvidence = null;
 
 function saveStrokeAudit() {
   try { localStorage.setItem(STROKE_AUDIT_KEY, JSON.stringify(strokeAudit)); } catch {}
@@ -23354,7 +24253,7 @@ function attachStrokeProposal(params, proposal = {}) {
   if (!params || typeof params !== "object") return params;
   const changes = Array.isArray(proposal.changes) ? proposal.changes
     .filter((change) => change && typeof change.path === "string")
-    .slice(0, 4)
+    .slice(0, sceneChangeLimit(proposal))
     .map((change) => ({ path: change.path, before: change.before, after: change.after })) : [];
   const value = Object.freeze({
     version: Number(proposal.version) || STROKE_CONTRACT_VERSION,
@@ -23364,7 +24263,7 @@ function attachStrokeProposal(params, proposal = {}) {
     kind: STROKE_KINDS.includes(proposal.kind) ? proposal.kind : "scene-object",
     targetMetric: STROKE_TARGET_METRICS.includes(proposal.targetMetric)
       ? proposal.targetMetric : "subject",
-    origin: ["dislike-counterfactual", "simulation-artifact", "autonomous-critique", "structural-editor"]
+    origin: ["dislike-counterfactual", "simulation-artifact", "autonomous-critique", "structural-editor", "scene-continuation"]
       .includes(proposal.origin) ? proposal.origin : "autonomous-critique",
     dislikeId: proposal.dislikeId ? String(proposal.dislikeId).slice(0, 96) : null,
     dislikedFeature: proposal.dislikedFeature ? String(proposal.dislikedFeature).slice(0, 80) : null,
@@ -23634,7 +24533,7 @@ function evaluateStrokeCandidate(anchor, candidate) {
   const candidateParams = strokeComparableParams(candidate?.params, proposal);
   const actualPaths = strokeChangedPaths(anchorParams, candidateParams);
   const claimedPaths = (proposal?.changes || []).map((change) => change.path).sort();
-  const maxPaths = proposal?.kind === "recipe-gene" ? 1 : 4;
+  const maxPaths = proposal?.kind === "recipe-gene" ? 1 : sceneChangeLimit(proposal);
   if (!claimedPaths.length || claimedPaths.length > maxPaths) reasons.push("change-count");
   if (JSON.stringify(actualPaths.slice().sort()) !== JSON.stringify(claimedPaths)) reasons.push("unattributed-change");
   for (const change of proposal?.changes || []) {
@@ -25107,9 +26006,10 @@ function makeSearchCandidate(text, forcedField, index, plan = null, fieldBitmap 
    * invalid semantic measurement. */
   const score = poorlyComposed && !plan?.humanReject && !interpretationControl
     ? -1 : novelty(sig, archive);
-  const probePixels = loopMode === "refine"
-    ? new Uint8ClampedArray(pctx.getImageData(0, 0, probe.width, probe.height).data)
-    : null;
+  /* Keep the exact small image that was scored. The chosen candidate later
+   * gives these pixels to the easel as its master, so the large canvas cannot
+   * lose structure by independently re-rendering the recipe at another scale. */
+  const probePixels = new Uint8ClampedArray(pctx.getImageData(0, 0, probe.width, probe.height).data);
   // Measuring pixels is the expensive half of a candidate - tasteFeatures and
   // canvasGrammar are full passes over the probe, and running them on every
   // candidate meant the search paid for analysis of images that could never
@@ -25328,6 +26228,25 @@ async function simulateGenerateSearch(text, forcedField, effort, overlay, reques
   return { candidates: ranked, rejected: Math.max(0, ranked.length - 1), cancelled: false };
 }
 
+/* A picture can be quiet, but it must give the next pass something observable
+ * to work with. This does not ask for a recognised subject, a particular
+ * palette, or a preferred mark. It only reads whether the measured image has
+ * separable changes of region, edge, and space. The value is a ranking nudge,
+ * never a rejection: an unfamiliar minimal work can still win, but a flat
+ * wash no longer beats an available picture merely because it is tidy. */
+function observableStructure(candidate) {
+  const features = candidate?.features || {};
+  const grammar = candidate?.grammar || {};
+  const composition = grammar.composition || {};
+  const edge = clamp01(Number(features.edgeDensity) || Number(grammar?.rules?.edgeRate) || 0);
+  const complexity = clamp01(Number(features.complexity) || Number(composition.complexity) || 0);
+  const boundary = clamp01(Number(composition.boundary) || Number(features.boundary) || 0);
+  const spacing = clamp01(Number(composition.spacing) || Number(features.spacing) || 0);
+  const regionalDifference = clamp01(1 - (Number(composition.uniformity) || Number(features.regionalUniformity) || 0));
+  return clamp01(edge * 0.27 + complexity * 0.28 + boundary * 0.22 +
+    spacing * 0.11 + regionalDifference * 0.12);
+}
+
 function rankTastePopulation(candidates) {
   const cohort = cohortNoveltyUnits(candidates.map((cand) => cand.score));
   assignNonRedundancy(candidates, cohort);
@@ -25408,13 +26327,20 @@ function rankTastePopulation(candidates) {
     cand.threadGain = tasteThreadGain(cand.threadTraits);
     cand.threadBias = tasteThreadBias(cand.threadTraits);
     cand.rejectPatternPenalty = rejectPatternPenalty(cand.params);
+    cand.observableStructure = observableStructure(cand);
+    cand.features.observableStructure = cand.observableStructure;
+    /* This is deliberately a gentle admission curve rather than a minimum.
+     * The studio can still make a field whose interest is restraint; it just
+     * cannot treat an almost featureless one as equivalent to an otherwise
+     * equally strong candidate with real internal relationships. */
+    cand.structureAdmission = 0.55 + 0.45 * clamp01(cand.observableStructure / 0.42);
     const resolved = guided * 0.78 + cand.fundamentalBalance.score * 0.12 +
       cand.nonRedundancy * NON_REDUNDANCY_RANK_WEIGHT;
     cand.rankScore = cand.score < 0
       ? -1
       : Math.max(0, resolved * (1 - steer) + cand.resolutionGain * steer
           + cand.threadGain * tasteThreadSteer() + cand.threadBias * THREAD_BIAS_MAX
-          - dislikePenalty(cand.features) - cand.rejectPatternPenalty);
+          - dislikePenalty(cand.features) - cand.rejectPatternPenalty) * cand.structureAdmission;
   }
   const heldSeedPopulation = loopMode === "refine" && candidates.some((cand) => cand.id === "c0");
   if (heldSeedPopulation) {
@@ -25470,6 +26396,9 @@ function rankTastePopulation(candidates) {
       if (cand.strokeEvidence?.origin === "simulation-artifact") {
         lastSimulationStrokeEvidence = cand.strokeEvidence;
       }
+      if (cand.strokeEvidence?.origin === "scene-continuation") {
+        lastSceneContinuationEvidence = cand.strokeEvidence;
+      }
       try {
         Object.defineProperty(cand.params, "__hexfieldStrokeEvidence", {
           value: cand.strokeEvidence, writable: true, configurable: true,
@@ -25490,11 +26419,14 @@ function rankTastePopulation(candidates) {
       /* A dislike-counterfactual is not eligible for the lighter local bar.
        * It was born from negative evidence and must independently pass the full
        * stroke verdict before it can touch the restored canvas. */
+      const sceneContinuation = evidence?.origin === "scene-continuation";
       const locallyBounded = evidence?.origin === "atmospheric-continuation" ||
-        evidence?.origin === "structural-editor";
+        evidence?.origin === "structural-editor" || sceneContinuation;
       return evidence?.accepted !== true && locallyBounded &&
         evidence.targetGain >= 0.001 && evidence.meritGain >= -0.002 && evidence.identity >= 0.80 &&
-        evidence.probeChangeRatio >= 0.0002 && evidence.probeChangeRatio <= 0.24 &&
+        /* A contextual addition gets less image area than an ordinary local
+         * fix: it may connect to a form, but it may not repaint that form. */
+        evidence.probeChangeRatio >= 0.0002 && evidence.probeChangeRatio <= (sceneContinuation ? 0.16 : 0.24) &&
         evidence.collateralLoss <= 0.05 && evidence.worstCollateralDrop <= 0.10 &&
         evidence.fundamentalGain >= -BETTER_BALANCE_MIN_GAIN && evidence.nonRedundancyGain >= -0.04 &&
         evidence.parameterNovelty?.score >= 0.01 && evidence.hierarchy?.passed;
@@ -25690,7 +26622,7 @@ function simulationSeedParams(field, rng, fallback) {
   for (const key of [
     "seed", "subject", "growthMode", "chromaMode", "saturation", "dimension", "count",
     "horizon", "vanishX", "focus", "farSaturation", "nearSaturation",
-    "farLightness", "nearLightness",
+    "farLightness", "nearLightness", "paletteBudget", "colourSubstitution", "finishTreatment",
   ]) {
     /* `subject: null` is an instruction, not missing data. The old truthy gate
      * silently retained a legacy landscape/flower parent here and reintroduced
@@ -25700,11 +26632,9 @@ function simulationSeedParams(field, rng, fallback) {
     }
   }
   if (fallback?.palette) {
-    seeded.palette = {
-      ...(seeded.palette || {}),
-      sat: fallback.palette.sat,
-      colourTheory: fallback.palette.colourTheory,
-    };
+    /* A parent can lend visual technique, but its old palette compression and
+     * two/three-role theory must not override the fresh colour experiment. */
+    seeded.palette = { ...fallback.palette };
   }
   delete seeded.artifact.objects;
   return seeded;
@@ -26991,8 +27921,140 @@ const MINI_DESIGN_ASPECT = MASTER_DESIGN_ASPECT;
  * one authoritative master a little larger, then reducing it once into the
  * fitted rectangle. This is supersampling, not a second composition: the
  * aspect and placement are still decided by miniDesignLayout. */
-const MASTER_RENDER_SUPERSAMPLE = 1.28;
-const MASTER_RENDER_PIXEL_BUDGET = 8000000;
+const MASTER_RENDER_SUPERSAMPLE = 1.75;
+const MASTER_RENDER_PIXEL_BUDGET = 12000000;
+/* The mini is the composition judge, so it and the easel must sample one
+ * master painting—not independently re-render the same recipe at two canvas
+ * sizes. Several renderers make scale-sensitive material choices (edge
+ * thresholds, harvest size and screen spacing); two separate renders therefore
+ * looked related but not identical, with the large one often losing the small
+ * canvas's best structure. Keep one high-detail source and scale it once for
+ * every surface. */
+const CANONICAL_MASTER_WIDTH = 4400;
+const CANONICAL_MASTER_HEIGHT = 1000;
+let canonicalMaster = { key: "", canvas: null, width: 0, height: 0 };
+
+function canonicalMasterKey(params, drawSeed, text, mode) {
+  const publicParams = Object.fromEntries(Object.entries(params || {})
+    .filter(([key]) => !key.startsWith("__hexfield")));
+  return String(hashText(stableRecipeJson({
+    publicParams,
+    words: params?.__hexfieldWords || null,
+    stroke: params?.__hexfieldStroke || null,
+    sceneProposal: params?.__hexfieldSceneProposal || null,
+    drawSeed: Number(drawSeed) || 0,
+    text: String(text || ""), mode: String(mode || "seed"),
+  })) >>> 0);
+}
+
+/* Add resolution without asking a second renderer to redesign the winner.
+ *
+ * The mini image is the picture that actually won the comparison. A larger
+ * render contains potentially useful fine material, but it is not entitled to
+ * replace that composition merely because a texture threshold changes at a
+ * new size. We therefore use it only as a residual: where its own miniature
+ * agrees with the chosen mini, a small amount of its high-frequency variation
+ * can enrich the corresponding region. Where it disagrees, the winner stays
+ * exactly as it was. This is a detail pass, not a style preset. */
+const MEASURED_DETAIL_SCALE = 4;
+function measuredMiniEdge(data, width, height, x, y) {
+  const at = (px, py) => (Math.max(0, Math.min(height - 1, py)) * width +
+    Math.max(0, Math.min(width - 1, px))) * 4;
+  const centre = at(x, y);
+  let strongest = 0;
+  for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+    const other = at(x + dx, y + dy);
+    strongest = Math.max(strongest, Math.abs(data[centre] - data[other]) +
+      Math.abs(data[centre + 1] - data[other + 1]) + Math.abs(data[centre + 2] - data[other + 2]));
+  }
+  return clamp01((strongest - 18) / 300);
+}
+
+function enrichMeasuredMiniMaster(ctx, width, height, measured, params, drawSeed, text, mode) {
+  const detailWidth = Math.max(measured.width, Math.round(measured.width * MEASURED_DETAIL_SCALE));
+  const detailHeight = Math.max(measured.height, Math.round(measured.height * MEASURED_DETAIL_SCALE));
+  const detail = paintBuffer(detailWidth, detailHeight);
+  const low = paintBuffer(measured.width, measured.height);
+  try {
+    const detailCtx = detail.getContext("2d", { willReadFrequently: true });
+    renderComposite(detailCtx, detailWidth, detailHeight, params,
+      mulberry32(Number(drawSeed) || 0), text, mode);
+    const lowCtx = low.getContext("2d", { willReadFrequently: true });
+    lowCtx.imageSmoothingEnabled = true;
+    lowCtx.imageSmoothingQuality = "high";
+    lowCtx.drawImage(detail, 0, 0, detailWidth, detailHeight, 0, 0, measured.width, measured.height);
+    const detailPixels = detailCtx.getImageData(0, 0, detailWidth, detailHeight).data;
+    const lowPixels = lowCtx.getImageData(0, 0, measured.width, measured.height).data;
+    const basePixels = measured.pixels;
+    const edgeMap = new Float32Array(measured.width * measured.height);
+    for (let miniY = 0; miniY < measured.height; miniY++) {
+      for (let miniX = 0; miniX < measured.width; miniX++) {
+        edgeMap[miniY * measured.width + miniX] = measuredMiniEdge(
+          basePixels, measured.width, measured.height, miniX, miniY);
+      }
+    }
+    const output = ctx.createImageData(width, height);
+    const out = output.data;
+    for (let y = 0; y < height; y++) {
+      const miniY = Math.min(measured.height - 1, Math.floor(y * measured.height / height));
+      const detailY = Math.min(detailHeight - 1, Math.floor(y * detailHeight / height));
+      for (let x = 0; x < width; x++) {
+        const miniX = Math.min(measured.width - 1, Math.floor(x * measured.width / width));
+        const detailX = Math.min(detailWidth - 1, Math.floor(x * detailWidth / width));
+        const miniOffset = (miniY * measured.width + miniX) * 4;
+        const detailOffset = (detailY * detailWidth + detailX) * 4;
+        const outOffset = (y * width + x) * 4;
+        const disagreement = Math.abs(basePixels[miniOffset] - lowPixels[miniOffset]) +
+          Math.abs(basePixels[miniOffset + 1] - lowPixels[miniOffset + 1]) +
+          Math.abs(basePixels[miniOffset + 2] - lowPixels[miniOffset + 2]);
+        const agreement = clamp01(1 - disagreement / 320);
+        const edge = edgeMap[miniY * measured.width + miniX];
+        /* A quiet region can take only a whisper of its matching material;
+         * a resolved edge gets enough to reveal its grain. The residual is
+         * clipped before mixing so a scale-specific render cannot introduce a
+         * new object through one dramatic colour jump. */
+        const weight = agreement * (0.08 + edge * 0.24);
+        for (let channel = 0; channel < 3; channel++) {
+          const residual = Math.max(-72, Math.min(72,
+            detailPixels[detailOffset + channel] - lowPixels[miniOffset + channel]));
+          out[outOffset + channel] = Math.max(0, Math.min(255,
+            Math.round(basePixels[miniOffset + channel] + residual * weight)));
+        }
+        out[outOffset + 3] = basePixels[miniOffset + 3];
+      }
+    }
+    ctx.putImageData(output, 0, 0);
+  } finally {
+    detail.width = 0;
+    low.width = 0;
+  }
+}
+
+function canonicalMasterCanvas(params, drawSeed, text, mode, minimumWidth = 0, minimumHeight = 0) {
+  const key = canonicalMasterKey(params, drawSeed, text, mode);
+  const requestedWidth = Math.max(CANONICAL_MASTER_WIDTH, Math.round(minimumWidth) || 0);
+  const requestedHeight = Math.max(CANONICAL_MASTER_HEIGHT, Math.round(minimumHeight) || 0);
+  if (canonicalMaster.canvas && canonicalMaster.key === key &&
+      canonicalMaster.width >= requestedWidth && canonicalMaster.height >= requestedHeight) {
+    return canonicalMaster.canvas;
+  }
+  if (canonicalMaster.canvas) {
+    canonicalMaster.canvas.width = 0;
+    canonicalMaster.canvas.height = 0;
+  }
+  const source = paintBuffer(requestedWidth, requestedHeight);
+  const sourceCtx = source.getContext("2d", { willReadFrequently: true });
+  const measured = measuredMiniMasters.get(key);
+  if (measured) {
+    enrichMeasuredMiniMaster(sourceCtx, requestedWidth, requestedHeight, measured,
+      params, drawSeed, text, mode);
+  } else {
+    renderComposite(sourceCtx, requestedWidth, requestedHeight, params,
+      mulberry32(Number(drawSeed) || 0), text, mode);
+  }
+  canonicalMaster = { key, canvas: source, width: requestedWidth, height: requestedHeight };
+  return source;
+}
 
 function miniDesignLayout(width, height) {
   const targetWidth = Math.max(1, Math.round(Number(width) || 1));
@@ -27047,19 +28109,16 @@ function miniDesignMatte(ctx, width, height, sourceCtx, sourceWidth, sourceHeigh
 
 function renderMiniBasedTarget(ctx, width, height, params, drawSeed, text, mode) {
   const layout = miniDesignLayout(width, height);
-  const source = paintBuffer(layout.sourceWidth, layout.sourceHeight);
+  const source = canonicalMasterCanvas(params, drawSeed, text, mode,
+    layout.sourceWidth, layout.sourceHeight);
   const sourceCtx = source.getContext("2d", { willReadFrequently: true });
-  renderComposite(sourceCtx, layout.sourceWidth, layout.sourceHeight, params,
-    mulberry32(Number(drawSeed) || 0), text, mode);
-  miniDesignMatte(ctx, width, height, sourceCtx, layout.sourceWidth, layout.sourceHeight);
+  miniDesignMatte(ctx, width, height, sourceCtx, source.width, source.height);
   ctx.save();
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(source, 0, 0, layout.sourceWidth, layout.sourceHeight,
+  ctx.drawImage(source, 0, 0, source.width, source.height,
     layout.x, layout.y, layout.contentWidth, layout.contentHeight);
   ctx.restore();
-  source.width = 0;
-  source.height = 0;
   return layout;
 }
 
@@ -27094,7 +28153,10 @@ const PAINT_STROKE_FRAMES = 14;
  * The whole composite is still rendered and still measured offscreen. This
  * changes what reaches the canvas, never what the search scored, so a candidate
  * is ranked on the finished picture it would become. */
-const SEED_STARTING_POINT_SHARE = 0.38;
+/* A visitor should see a credible painting immediately. Detail can accumulate
+ * afterwards, but the broad image must never remain an empty rough-in while
+ * the small master beside it is already resolved. */
+const SEED_STARTING_POINT_SHARE = 0.72;
 
 /* ── How much of itself a seed should lay in, learned ────────────────────────
  *
@@ -27117,8 +28179,8 @@ const SEED_STARTING_POINT_SHARE = 0.38;
  * Bounded well inside the range, because the ends are the two failures being
  * steered away from and letting the learner reach them defeats the point. */
 const SEED_OPENING_KEY = "hexfield.seed-opening.v1";
-const SEED_OPENING_MIN = 0.12;
-const SEED_OPENING_MAX = 0.68;
+const SEED_OPENING_MIN = 0.55;
+const SEED_OPENING_MAX = 0.82;
 const SEED_OPENING_STEP = 0.04;
 // Only the first few passes of a painting say anything about its opening.
 const SEED_OPENING_WINDOW = 4;
@@ -29687,30 +30749,30 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
       updatePainterStatus(result);
       return false;
     }
-    /* A requested new seed begins with atmosphere and then has to paint.
-     *
-     * renderField used to go down whole here. In this studio the field carries
-     * most of the picture, so calling it an underpainting did not change what a
-     * visitor saw: a complete design appeared instantly, followed by a fancy
-     * transition to another complete design. The new ground is only a broad
-     * tonal wash sampled from the proposal. It cannot contain the proposal's
-     * geometry; every shape, boundary and letter has to arrive as pigment. */
+    /* The selected master is the artwork.  It was the exact picture assessed
+     * in the mini canvas, so replacing it with a tonal wash and re-creating it
+     * through coarse deposits destroyed the very structure the critic chose.
+     * Commit that master intact; later accepted moves remain incremental and
+     * have to prove that they improve on this preserved base. */
     vctx.globalCompositeOperation = "source-over";
     vctx.globalAlpha = 1;
     vctx.clearRect(0, 0, width, height);
     visibleBrushHistory = [];
     paintDetailCursor = 0;
     paintOpening = null;
-    view.dataset.paintCoverage = "0.000";
-    view.dataset.paintCanvasFilled = "0";
+    view.dataset.paintCoverage = "1.000";
+    view.dataset.paintCanvasFilled = "1";
     result.paintCommit = result?.action === "change-seed" ? "seed" : "redraw";
-    const ground = paintUnderpainting(width, height, after.data, result.drawSeed);
-    vctx.drawImage(ground, 0, 0);
-    const base = ground.getContext("2d").getImageData(0, 0, width, height).data;
-    visiblePaintCompletion = animatePaintCommit(
-      result, base, after.data, width, height, false, { startingPoints: true });
+    result.paintCanvasCoverage = 1;
+    result.paintCanvasFilled = true;
+    result.paintProgress = 1;
+    vctx.drawImage(target, 0, 0);
+    paintRevision++;
+    view.dataset.paintRevision = String(paintRevision);
+    visiblePaintCompletion = Promise.resolve(true);
   }
-  paintProgressStatus(result, 0, 0, 0);
+  const seedMasterCommitted = !refinement && result.paintCanvasFilled === true;
+  paintProgressStatus(result, seedMasterCommitted ? 1 : 0, seedMasterCommitted ? 1 : 0, 1);
   return true;
 }
 
@@ -30068,6 +31130,7 @@ function generate() {
         };
       }
       const best = candidates[0];
+      retainMeasuredMiniMaster(best);
       /* Preserve the exact visible control before the winner is put on the
        * easel. `bestRun` is updated after drawing, so it cannot reconstruct
        * what REJECT must return to. */
@@ -30165,7 +31228,11 @@ function generate() {
        * the timer after a committed image, so the first rejection used to
        * consume the one outstanding timeout and stop the painter forever.
        * Keep asking; the canvas itself still changes only on sure/better. */
-      if (current) scheduleAutoAdvance();
+      /* An error before the first committed frame used to leave `current`
+       * empty and therefore leave no timer behind.  Scheduling from every
+       * settled owner lets the autonomous path recover with a fresh search
+       * instead of silently becoming a static page. */
+      scheduleAutoAdvance();
       // Show where the climb is rather than a fixed slogan: this line is the
       // only outward sign that the loop is accumulating anything.
       updateLoopStatus();
@@ -30578,9 +31645,9 @@ function autonomousReseed(auto = false) {
    *
    * This is a milestone, not an exit. filePaintingMaturity writes the artifact
    * and the lineage entry and returns; the pass then continues into its
-   * ordinary refinement below, on the same seed, at the same drawSeed. There is
-   * no path from here to a new painting - the studio develops one seed until a
-   * person presses CHANGE SEED, without qualification. */
+   * ordinary refinement below, on the same seed, at the same drawSeed.  The
+   * scheduler starts a new composition only after that bounded local search is
+   * genuinely exhausted, so motion has both persistence and a way forward. */
   if (auto) filePaintingMaturity();
   loopMode = bestRun ? "refine" : "explore";
   // Always walk from the best picture seen on this seed. A proposed stroke is
@@ -30612,7 +31679,7 @@ function autonomousReseed(auto = false) {
  * in the same event turn. */
 let pendingSeedChange = false;
 
-function changeSeed() {
+function changeSeed(auto = false) {
   /* An explicit seed request owns the next pass.  Cancel the unattended
    * refinement timer before looking at the overlay; otherwise a timer that
    * was armed by the old painting can wake during the queue/watchdog window
@@ -30631,9 +31698,9 @@ function changeSeed() {
   $("overlay")?.classList.remove("on");
   pendingHumanReject = false;
   try {
-    recordCurrentDwellPreference();
+    if (!auto) recordCurrentDwellPreference();
   lastReseedAt = Date.now();
-  lastReseedWasAuto = false;
+  lastReseedWasAuto = auto === true;
   loopMode = "explore";
   stagnation = 0;
   pendingHumanReject = false;
@@ -30659,7 +31726,9 @@ function changeSeed() {
   resetDeviationStyle();
   unattendedAdvances = 0;
     const painterStatus = document.getElementById("painterStatus");
-    if (painterStatus) painterStatus.textContent = "changing seed · keeping this canvas until the first new pass is ready";
+    if (painterStatus) painterStatus.textContent = auto
+      ? "local search exhausted · starting a fresh composition"
+      : "changing seed · keeping this canvas until the first new pass is ready";
     const reseed = document.getElementById("reseedNow");
     if (reseed) {
       reseed.dataset.waiting = "1";
@@ -30680,7 +31749,7 @@ function changeSeed() {
   carryLineageForward(inherited);
   glyphSpriteCache.clear();
   glyphCachePixels = 0;
-  pendingAction = "change-seed";
+  pendingAction = auto ? "autonomous-new-composition" : "change-seed";
     updateLoopStatus();
   } catch (error) {
     /* A damaged local preference or optional catalogue must never turn a
@@ -30696,9 +31765,11 @@ function changeSeed() {
     bestRun = null;
     lastHumanKeptRun = null;
     lastHumanKeptCanvas = null;
-    pendingAction = "change-seed";
+    pendingAction = auto ? "autonomous-new-composition" : "change-seed";
     const painterStatus = document.getElementById("painterStatus");
-    if (painterStatus) painterStatus.textContent = "changing seed · local preference skipped, rendering a fresh pass";
+    if (painterStatus) painterStatus.textContent = auto
+      ? "starting a fresh composition · local preference skipped"
+      : "changing seed · local preference skipped, rendering a fresh pass";
     const reseed = document.getElementById("reseedNow");
     if (reseed) {
       reseed.dataset.waiting = "1";
@@ -31176,11 +32247,18 @@ function updateLoopStatus() {
   const label = document.getElementById("autonomousStatus");
   if (!label) return;
   const best = bestRun ? Math.round(bestRun.fitness * 100) + "%" : "—";
+  const sceneEvidence = lastSceneContinuationEvidence;
+  const sceneNote = !sceneEvidence ? ""
+    : sceneEvidence.accepted ? " · scene move admitted"
+      : (sceneEvidence.reasons || []).length
+        ? " · scene move held: " + (sceneEvidence.reasons || []).slice(0, 2).join(", ")
+        : " · scene move still being measured";
   label.textContent = (loopMode === "refine"
     ? `same seed · pass ${Math.max(1, painterPass)} · best ${best} · ${stagnation} exploratory strokes since a gain · ${refinementStrategyLabel()}`
     : `new seed · finding its first composition · best ${best}`) + " · " + describePaintingLife() +
     (loopMode === "refine" ? " · " + describeVisualProcessBelief() : "") +
-    (AUTO_PERTURB_ENABLED && loopMode === "refine" ? " · auto perturb" : "");
+    (AUTO_PERTURB_ENABLED && loopMode === "refine" ? " · auto perturb" : "") +
+    (loopMode === "refine" ? sceneNote : "");
   label.dataset.generation = String(paintingGeneration);
   label.dataset.lineage = String(paintingLineage.length);
   label.dataset.lifeState = paintingLifeVerdict({
@@ -31220,15 +32298,27 @@ function scheduleAutoAdvance() {
      * search/paint is active: its finally block schedules exactly one next
      * advance after the pass settles.  This prevents auto-perturb from
      * competing with CHANGE SEED and makes a queued seed deterministic. */
-    if (document.hidden) { scheduleAutoAdvance(); return; }
-    if ($("overlay")?.classList.contains("on")) return;
+    /* Background tabs are throttled by the browser, but they must not be
+     * deliberately paused here. This is an unattended painter: when the tab
+     * wakes it should still have a next move ready. */
+    if ($("overlay")?.classList.contains("on")) { scheduleAutoAdvance(); return; }
     const interacted = lastInteractionAt > lastReseedAt;
     unattendedAdvances = interacted ? 0 : unattendedAdvances + 1;
     if (unattendedAdvances > AUTO_ADVANCE_MAX_UNATTENDED) {
       // Still exploring, no longer claiming a person approved of it.
       dwellClock = { result: null, key: null, activeMs: 0, activeSince: null };
     }
-    if (current && AUTO_PERTURB_ENABLED) {
+    /* A mature canvas has had both narrow and wide local detail searches. If
+       neither changes it after a further bounded run, archive the learned
+       material and start a genuinely new composition instead of pretending a
+       repeated perturbation is progress. */
+    const exhausted = paintingMatured && stagnation >= LIFECYCLE_MATURE_PASSES * 2;
+    if (exhausted) {
+      // A bounded local climb has tried fine, structural, and wide moves. Keep
+      // its archive, then begin a genuinely new composition rather than
+      // re-asking the already rejected neighbourhood forever.
+      changeSeed(true);
+    } else if (current && AUTO_PERTURB_ENABLED) {
       lastReseedAt = Date.now();
       lastReseedWasAuto = true;
       filePaintingMaturity();
@@ -31256,44 +32346,6 @@ $("again").addEventListener("click", () => { counter++; pendingAction = "vary"; 
 $("perturbNow").addEventListener("click", perturb);
 $("reseedNow").addEventListener("click", changeSeed);
 $("captureLogo").addEventListener("click", () => { captureLiveLogoLoop(); });
-
-function openPridePreferencePanel() {
-  const preferences = pridePreferences();
-  for (const topic of PRIDE_TOPICS) {
-    const checkbox = $("pref" + topic[0].toUpperCase() + topic.slice(1));
-    if (checkbox && preferences) checkbox.checked = Object.hasOwn(preferences.topics || {}, topic);
-  }
-  if ($("prideConsent")) $("prideConsent").hidden = false;
-}
-
-$("pridePrefsOpen")?.addEventListener("click", openPridePreferencePanel);
-$("prideRemember")?.addEventListener("click", () => {
-  const topics = {};
-  for (const topic of PRIDE_TOPICS) {
-    const checkbox = $("pref" + topic[0].toUpperCase() + topic.slice(1));
-    if (checkbox?.checked) topics[topic] = Math.max(1, pridePreferences()?.topics?.[topic] || 1);
-  }
-  savePridePreferences({ version: 1, topics });
-  $("prideConsent").hidden = true;
-  renderPrideContextAd();
-});
-$("prideDecline")?.addEventListener("click", () => {
-  writeFirstPartyCookie(PRIDE_CONSENT_COOKIE, "no");
-  writeFirstPartyCookie(PRIDE_PREFERENCE_COOKIE, "", 0);
-  $("prideConsent").hidden = true;
-  renderPrideContextAd();
-});
-
-document.addEventListener("click", (event) => {
-  const id = event.target?.closest?.("[id]")?.id;
-  if (["reseedNow", "perturbNow", "captureLogo"].includes(id)) recordPrideActivity("painting");
-  if (["buy", "export", "shopLink"].includes(id)) recordPrideActivity("prints");
-});
-
-renderPrideContextAd();
-if (readFirstPartyCookie(PRIDE_CONSENT_COOKIE) == null) {
-  setTimeout(openPridePreferencePanel, 700);
-}
 
 /* Reading is immediate; drawing is not.
  *
@@ -32637,10 +33689,46 @@ function mergeVisualSymbolMemories(local, remote) {
  * restarts. This is deliberately a bounded recent window. Exact ownership is
  * still enforced against the complete table by the claim transaction, so a
  * material outside the read window is rejected safely rather than forgotten. */
-// The shared visual lexicon lived on the same dead Supabase project; the
-// read always failed, so this is now a direct no-op instead.
 async function pullSharedVisualSymbols() {
-  return 0;
+  try {
+    const session = await ensureTasteSession();
+    const res = await fetch(SUPABASE_URL +
+      "/rest/v1/hexfield_visual_symbols?select=material_id,word,role,profile,context,evidence_count,created_at&order=created_at.desc&limit=320", {
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token },
+    });
+    if (!res.ok) return 0;
+    const rows = await res.json();
+    const remote = { version: VISUAL_SYMBOL_MEMORY_VERSION, words: {}, collisions: [] };
+    const entries = new Map();
+    for (const row of rows) {
+      const word = visualSymbolWord(row.word);
+      const profile = normalizeVisualSymbolProfile({
+        id: row.material_id, role: row.role, vector: row.profile,
+      });
+      if (!word || !profile) continue;
+      const context = row.context && typeof row.context === "object" ? row.context : {};
+      const exampleId = String(context.exampleId || "shared_" + row.material_id).slice(0, 120);
+      const key = word + "|" + exampleId;
+      if (!entries.has(key)) {
+        const entry = {
+          id: exampleId, at: Date.parse(row.created_at || "") || 0,
+          context: {
+            field: context.field, mode: context.mode, relation: context.relation,
+            role: context.role || row.role, companions: context.companions,
+            depth: context.depth,
+          },
+          symbols: [],
+        };
+        entries.set(key, entry);
+        (remote.words[word] ||= []).push(entry);
+      }
+      entries.get(key).symbols.push(profile);
+    }
+    visualSymbolMemory = mergeVisualSymbolMemories(visualSymbolMemory, remote);
+    sharedVisualSymbolCount = rows.length;
+    saveVisualSymbolMemory();
+    return rows.length;
+  } catch { return 0; }
 }
 
 function sharedVisualSymbolContext(entry) {
@@ -32703,12 +33791,39 @@ function applySharedVisualSymbolCollision(result, claim) {
   return true;
 }
 
-// Claiming lexicon ownership lived on the same dead Supabase project; the
-// call always failed, so queued claims are now dropped outright rather than
-// retried forever against a host that will never answer.
 async function pushSharedVisualSymbolClaims() {
-  visualSymbolClaimQueue = [];
-  return 0;
+  if (!visualSymbolClaimQueue.length) return 0;
+  const batch = visualSymbolClaimQueue.splice(0, 20);
+  try {
+    const session = await ensureTasteSession();
+    const response = await fetch(LEXICON_FUNCTION_URL, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ claims: batch.map(({ attempts, ...claim }) => claim) }),
+    });
+    if (!response.ok) throw new Error("lexicon claim HTTP " + response.status);
+    const body = await response.json();
+    const byKey = new Map(batch.map((claim) => [claim.word + "|" + claim.materialId, claim]));
+    for (const result of body.results || []) {
+      if (result.status !== "exact_collision" && result.status !== "near_collision") continue;
+      applySharedVisualSymbolCollision(result, byKey.get(result.word + "|" + result.materialId));
+    }
+    sharedVisualSymbolCount += (body.results || [])
+      .filter((result) => result.status === "accepted").length;
+  } catch {
+    // A temporary offline spell does not erase a learned claim, and does not
+    // become an infinite hot retry loop either.
+    const retry = batch.filter((claim) => claim.attempts < 2)
+      .map((claim) => ({ ...claim, attempts: claim.attempts + 1 }));
+    visualSymbolClaimQueue = [...retry, ...visualSymbolClaimQueue].slice(-80);
+    scheduleVisualSymbolClaims(15000);
+    return 0;
+  }
+  scheduleVisualSymbolClaims(0);
+  return batch.length;
 }
 
 /* ── Blob bases: topology is a candidate before it is a meaning ────────────
@@ -33598,12 +34713,16 @@ function startHumanTasteRefinement(liked) {
   return true;
 }
 
+$("voteUp").addEventListener("click", () => castHumanTasteDecision(true));
+$("voteDown").addEventListener("click", () => castHumanTasteDecision(false));
 $("perturb").addEventListener("click", perturb);
 // Wrapped, not passed directly: a listener is handed the MouseEvent as its
 // first argument, which would arrive as runTasteCycle's source and tag every
 // visitor cycle with an event object.
 $("learn").addEventListener("click", () => runTasteCycle());
 $("closeFineTune").addEventListener("click", () => { $("finetune").open = false; });
+$("museumOpen").addEventListener("click", openMuseum);
+$("museumClose").addEventListener("click", closeMuseum);
 $("format").addEventListener("change", applyFormat);
 function updateNeuralStatus() {
   const status = $("neuralStatus");
@@ -33993,6 +35112,17 @@ async function connectAndStart() {
   // informed.
   fetchKnownFieldHashes();
   startHeadlessSim();
+  /* The manual controls that used to trigger a taste cycle (and, with it, the
+   * museum submission) are permanently hidden by the autonomous blackout
+   * above - "the autonomous presentation is the point" - so nothing has
+   * called runTasteCycle() since that CSS went in. Given its own clock
+   * instead: the exact same guarded, reentrant function a click used to
+   * call (it already no-ops if one is running), just on a timer, so the
+   * museum keeps hearing from real visitors without asking them to find a
+   * control that was never meant to be found. */
+  const AUTONOMOUS_TASTE_CYCLE_MS = 6 * 60 * 1000;
+  setTimeout(() => runTasteCycle("autonomous"), 30000);
+  setInterval(() => runTasteCycle("autonomous"), AUTONOMOUS_TASTE_CYCLE_MS);
 }
 
 /* The autonomous studio blacks out the whole sidebar, which also took EXPORT
@@ -34222,7 +35352,7 @@ window.__hexfield = {
   paintLetterWord, brushProgram, mutateBrushProgram,
   publishAutonomousTaste, recordSharedTasteObservation, pullGlobalTaste,
   autoHarvestFromCanvas, rememberHarvestIteration,
-  shareTasteCycle,
+  shareCuratorStudy, shareTasteCycle, refreshMuseumStatus, openMuseum,
   getTaste: () => taste, getTasteStudies: () => tasteStudies,
   exportDurableLearningBridge, acceleratorDecisionProbe, sharedHumanVoteCount, getHumanDirectionSnapshot,
   learningContract: learningContractSnapshot,
@@ -34236,7 +35366,8 @@ window.__hexfield = {
   // completed advances for a finished local cycle; runs advances only when the
   // museum ledger accepts it. Terminal drivers choose the clock matching their
   // explicit --share mode rather than confusing computation with publication.
-  getTasteCycleState: () => tasteCycleState,
+  getTasteCycleState: () => tasteCycleState, getMuseumSnapshot: () => museumSnapshot,
+  fetchMuseumEditions, renderMuseumEditions, readEdition,
   sceneGraph: { read: sceneRead, get: sceneGet, bounds: sceneBounds, apply: sceneApply },
   critique: { propose: critiquePropose, metricsFor: sceneMetricsFor },
   getHarvestLibrary: () => harvestLibrary, getBrushSimulation: () => brushSimulation,
@@ -34304,5 +35435,5 @@ window.__hexfield = {
  * though the canvas itself was visibly alive. */
 connectAndStart();
 </script>
-<script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a38eb6302d8869ab',t:'MTc4OTA0NjIzMw=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+<script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a38eb6302d8869ab',t:'MTc4OTA0NjIzMw=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a3fd458a5e23057d',t:'MTc5MDIwNTUzOA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
