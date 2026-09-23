@@ -6,13 +6,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>🌈 GAY DAY — Hexfield Pride Celebration</title>
-<meta name="description" content="Hexfield is a queer-led digital art and gay pride hub where Rob Boss paints evolving generative fields, visitors shape the taste, and weekly work enters the Museum.">
+<meta name="description" content="Hexfield is a queer-led digital art and gay pride hub where Rob Boss paints evolving generative fields and weekly work becomes a print.">
 <meta name="keywords" content="gay pride, LGBTQIA+, queer art, digital art, generative art, pride community, Hexfield, Rob Boss">
 <meta name="theme-color" content="#ff1493">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Hexfield">
 <meta property="og:title" content="GAY DAY — Hexfield Pride Hub">
-<meta property="og:description" content="A loud, joyful queer generative-art studio, weekly museum, and print shop.">
+<meta property="og:description" content="A loud, joyful queer generative-art studio and print shop.">
 <meta property="og:url" content="https://hexfield.org/">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="GAY DAY — Hexfield Pride Hub">
@@ -27,7 +27,7 @@
   "name": "Hexfield",
   "alternateName": "GAY DAY — Hexfield Pride Hub",
   "url": "https://hexfield.org/",
-  "description": "A queer-led gay pride and generative-art hub with a live resident painter, weekly museum, and print studio.",
+  "description": "A queer-led gay pride and generative-art hub with a live resident painter and print studio.",
   "inLanguage": "en-AU",
   "about": [
     { "@type": "Thing", "name": "Gay pride" },
@@ -248,20 +248,6 @@
   .brush-sim-log { max-height: 82px; overflow: auto; margin-top: 4px; color: var(--dim); font-size: 8px; line-height: 1.3; }
   .brush-sim-log div { display: flex; justify-content: space-between; gap: 6px; }
   .brush-sim-log b { color: var(--ink); font-weight: 500; }
-  .museum-panel { position: fixed; inset: 12px; z-index: 80; display: none; flex-direction: column;
-    padding: 14px; background: #0b0b12; border: 1px solid var(--accent); border-radius: 7px;
-    box-shadow: 0 18px 70px #000c; }
-  .museum-panel.on { display: flex; }
-  .museum-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-  .museum-head h2 { margin: 0; font-size: 14px; letter-spacing: .11em; color: var(--accent); }
-  .museum-head button { width: auto; min-width: 64px; padding: 4px 7px; font-size: 10px; }
-  #museumState { margin: 8px 0; color: var(--dim); font-size: 11px; }
-  #museumGrid { flex: 1; min-height: 0; overflow: auto; display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 9px; align-content: start; }
-  .museum-card { padding: 6px; border: 1px solid var(--line); background: #101018; border-radius: 4px; }
-  .museum-card canvas { width: 100%; height: auto; aspect-ratio: 5 / 6; border-color: #303042; }
-  .museum-card-meta { display: flex; justify-content: space-between; gap: 6px; margin-top: 4px; color: var(--dim); font-size: 9px; }
-  #museumEditions { flex: 0 0 auto; max-height: 62vh; overflow: auto; margin-bottom: 8px; }
   .edition { border: 1px solid var(--line); border-radius: 4px; margin-bottom: 10px; padding: 8px; background: #0d0d14; }
   .edition-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
   .edition-head h3 { margin: 0; font-size: 12px; letter-spacing: 0.06em; }
@@ -750,7 +736,6 @@
   <p>One first-party cookie can remember the art you choose on this site and tune this demo ad. It never reads other websites or infers sexuality.</p>
   <div class="preferenceTopics">
     <label><input id="prefPainting" type="checkbox" checked> live painting</label>
-    <label><input id="prefMuseum" type="checkbox"> weekly museum</label>
     <label><input id="prefPrints" type="checkbox"> prints</label>
   </div>
   <div class="preferenceActions">
@@ -923,7 +908,6 @@
   </div>
   <div class="row">
     <button id="learn">TASTE CYCLE</button>
-    <button id="museumOpen">MUSEUM</button>
     <button id="export">EXPORT PNG</button>
   </div>
 
@@ -989,21 +973,6 @@
   </div>
 </div>
 
-<section id="museumPanel" class="museum-panel" aria-hidden="true" aria-label="Hexfield museum">
-  <div class="museum-head"><h2>HEXFIELD MUSEUM</h2><button id="museumClose" type="button">CLOSE</button></div>
-  <div id="museumState">museum is waiting for the first learning cycle.</div>
-  <!-- Editions come first, deliberately. The live top ten is what the studio
-       thinks today and is rewritten nightly; the editions are what it has
-       actually chosen, kept, and can be held to. Reading them in order is the
-       only way to see whether the taste is going anywhere. -->
-  <div id="museumEditions"></div>
-  <div id="museumGrid"></div>
-  <!-- What the studio currently believes words mean, and which of those beliefs
-       it arrived at itself. Placed after the editions because the editions are
-       the record and this is the working state behind them. -->
-  <div id="lexiconState"></div>
-</section>
-
 <script src="neural/runtime.js"></script>
 <script src="iso/hexfield-iso.js"></script>
 <script src="words/hexfield-words.js"></script>
@@ -1068,11 +1037,12 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") refreshForNewHexfieldBuild();
 });
 
-/* Local and hosted pages use one render path. The old localhost-only bridge
- * injected terminal learning into the page and made a local browser appear to
- * be a different build. Learning now comes from the same Supabase path (with
- * the normal browser fallback if the network is unavailable). */
-const HEXFIELD_LOCAL_ONLY = false;
+/* The shared Supabase project this used to sync against no longer resolves
+ * in DNS - every remote call below always failed. Rather than let each one
+ * discover that separately through its own catch block, this flag is now
+ * true: the studio runs fully local-only, same as the designed offline
+ * fallback, made permanent and honest instead of accidental. */
+const HEXFIELD_LOCAL_ONLY = true;
 window.__hexfieldLocalOnly = HEXFIELD_LOCAL_ONLY;
 
 /* ------------------------------------------------------------------ *
@@ -11178,36 +11148,15 @@ function styleVectorOf(shapeCanvas) {
   return { skew, aspect: w / h, roundness };
 }
 
+// The shared style table lived on the same dead Supabase project as
+// everything else here; both calls always failed, so both are now direct
+// local answers instead of a network round trip that never landed.
 async function fetchSharedStyle() {
-  try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/hexfield_style?select=skew,aspect,roundness&id=eq.1`, {
-      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` },
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const rows = await res.json();
-    return rows[0] || { skew: 0, aspect: 1, roundness: 0.5 };
-  } catch {
-    return { skew: 0, aspect: 1, roundness: 0.5 };
-  }
+  return { skew: 0, aspect: 1, roundness: 0.5 };
 }
 
-async function relaxStyle(vec) {
-  try {
-    const session = await ensureTasteSession();
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/relax_style`, {
-      method: "POST",
-      headers: {
-        apikey: SUPABASE_KEY, Authorization: `Bearer ${session.access_token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ p_skew: vec.skew, p_aspect: vec.aspect, p_roundness: vec.roundness }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const rows = await res.json();
-    return rows[0] || null;
-  } catch {
-    return null;
-  }
+async function relaxStyle() {
+  return null;
 }
 
 /* ------------------------------------------------------------------ *
@@ -14272,54 +14221,15 @@ function trimTasteSamples(samples) {
   return chosen.sort((a, b) => (Number(a.at) || 0) - (Number(b.at) || 0)).slice(-TASTE_CAP);
 }
 
-async function publishHarvestMaterials(entry) {
-  if (!entry?.id) return false;
-  const selected = [
-    ...(entry.sourceShapes || []).slice(0, 4).map((shape) => ({ shape, stage: "source" })),
-    ...(entry.finishedShapes || []).slice(0, 4).map((shape) => ({ shape, stage: "finished" })),
-  ].filter((item) => item.shape?.id && item.shape?.material);
-  if (!selected.length) return false;
-  try {
-    const session = await ensureTasteSession();
-    const rows = selected.map(({ shape, stage }) => ({
-      material_id: shape.id, visitor_id: session.user.id,
-      iteration_id: entry.id, field: entry.field, stage,
-      material: shape.material,
-      descriptor: {
-        area: shape.area, width: shape.width, height: shape.height,
-        orientation: shape.orientation, edge: shape.edge,
-        topology: shape.topology, axioms: shape.axioms,
-        descriptor: shape.descriptor,
-      },
-    }));
-    const res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_shape_materials?on_conflict=material_id", {
-      method: "POST",
-      headers: {
-        apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token,
-        "Content-Type": "application/json", Prefer: "resolution=ignore-duplicates,return=minimal",
-      },
-      body: JSON.stringify(rows),
-    });
-    return res.ok;
-  } catch { return false; }
+// Shared harvest-materials sync lived on the same dead Supabase project;
+// both calls always failed, so both are now no-ops. sharedHarvestMaterials
+// stays local-only (whatever this browser session has harvested itself).
+async function publishHarvestMaterials() {
+  return false;
 }
 
 async function pullHarvestMaterials() {
-  try {
-    const session = await ensureTasteSession();
-    const res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_shape_materials?select=material_id,field,stage,material,descriptor,created_at&order=created_at.desc&limit=120", {
-      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token },
-    });
-    if (!res.ok) return 0;
-    const rows = await res.json();
-    sharedHarvestMaterials = rows.map((row) => ({
-      id: row.material_id, field: row.field, stage: row.stage,
-      material: row.material,
-      ...(row.descriptor || {}),
-      at: Date.parse(row.created_at || "") || Date.now(),
-    }));
-    return sharedHarvestMaterials.length;
-  } catch { return 0; }
+  return sharedHarvestMaterials.length;
 }
 
 /* Taste answers "do I like it?"; canon answers "does it belong to this hand?"
@@ -15294,57 +15204,12 @@ function mergeTasteSamples(localSamples, remoteSamples) {
     }));
 }
 
-async function pullRemoteTaste() {
-  const session = await ensureTasteSession();
-  const res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_taste_profiles?select=model,sample_count&limit=1", {
-    headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token },
-  });
-  if (!res.ok) throw new Error("taste read HTTP " + res.status);
-  const rows = await res.json();
-  const remote = rows[0]?.model;
-  if (!remote) return;
+// The shared taste profile and global taste prior lived on the same dead
+// Supabase project; both reads always failed, so both are now no-ops and
+// the model stays exactly what it was: local-only.
+async function pullRemoteTaste() {}
 
-  const remoteModel = { ...newTasteModel(), ...remote, weights: { ...newTasteModel().weights, ...(remote.weights || {}) } };
-  taste.samples = mergeTasteSamples(taste.samples, remoteModel.samples);
-  taste.weights = remoteModel.weights;
-  if (remote.canon && Number(remote.canon.count) > artistCanon.count && remote.canon.mean) {
-    artistCanon = {
-      version: 1, count: Number(remote.canon.count), mean: remote.canon.mean,
-      m2: remote.canon.m2 || {},
-      exemplars: Array.isArray(remote.canon.exemplars) ? remote.canon.exemplars.slice(-16) : [],
-    };
-    saveArtistCanon();
-  }
-  if (remote.visualProcess && typeof remote.visualProcess === "object") {
-    visualProcessMemory = mergeVisualProcessMemories(visualProcessMemory, remote.visualProcess);
-    saveVisualProcessMemory();
-  }
-  // The pool can change wholesale here rather than by one observation, and the
-  // held-out split is drawn from it, so the hidden layer is due a reassessment
-  // regardless of where its cadence had got to.
-  tasteHiddenFittedAt = -Infinity;
-  if (taste.samples.length >= 6) fitTasteModel();
-  saveTasteModel();
-}
-
-async function pullGlobalTaste() {
-  const session = await ensureTasteSession();
-  const headers = { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token };
-  let res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_global_taste?select=model,sample_count,effective_sample_count&id=eq.true", { headers });
-  // Build 61 may reach the CDN before its migration is applied. Keep the
-  // existing shared prior readable during that window; autonomous writes do
-  // not get the same fallback because the old trigger would over-weight them.
-  if (!res.ok) res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_global_taste?select=model,sample_count&id=eq.true", { headers });
-  if (!res.ok) throw new Error("global taste read HTTP " + res.status);
-  const row = (await res.json())[0];
-  if (!row?.model) return;
-  globalTaste = {
-    ready: true,
-    sampleCount: Math.max(0, Number(row.sample_count) || 0),
-    effectiveSampleCount: Math.max(0, Number(row.effective_sample_count ?? row.sample_count) || 0),
-    model: { ...newTasteModel(), ...row.model, weights: { ...newTasteModel().weights, ...(row.model.weights || {}) } },
-  };
-}
+async function pullGlobalTaste() {}
 
 function globalTasteInfluence() {
   if (!globalTaste.ready || globalTaste.effectiveSampleCount < 6) return 0;
@@ -15374,107 +15239,25 @@ function activeTasteModel() {
   return { weights };
 }
 
-async function pushRemoteTaste() {
-  if (tasteSyncing) return;
-  tasteSyncing = true;
-  try {
-    const session = await ensureTasteSession();
-    const res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_taste_profiles?on_conflict=user_id", {
-      method: "POST",
-      headers: {
-        apikey: SUPABASE_KEY,
-        Authorization: "Bearer " + session.access_token,
-        "Content-Type": "application/json",
-        Prefer: "resolution=merge-duplicates,return=minimal",
-      },
-      body: JSON.stringify({
-        user_id: session.user.id,
-        model: {
-          version: 4,
-          weights: taste.weights,
-          samples: trimTasteSamples(taste.samples),
-          canon: artistCanon,
-          // Bounded, anonymous and evidence-only: no screenshots or prompt
-          // prose. This lets the same visitor keep their visual relationships
-          // across devices without introducing a new schema or public memory.
-          visualProcess: compactVisualProcessMemory(),
-        },
-        sample_count: taste.samples.length,
-      }),
-    });
-    if (!res.ok) throw new Error("taste write HTTP " + res.status);
-  } finally {
-    tasteSyncing = false;
-  }
-}
+// Pushing the taste profile always failed against the same dead project;
+// queueTasteSync (its only caller) is already gated behind
+// HEXFIELD_LOCAL_ONLY, so this is now a plain no-op.
+async function pushRemoteTaste() {}
 
 /* Durable causal provenance. The local sensitivity model stays the hot path;
  * this append-only table lets a cleared browser recover named experiments and
  * lets several accelerator pages learn from one another without copying an
  * opaque fitted model. A missing table degrades to localStorage. */
-async function publishCausalExperiment(experiment) {
-  if (!experiment?.id || !experiment?.gene || !experiment?.baseKey) return false;
-  try {
-    const session = await ensureTasteSession();
-    const res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_causal_experiments?on_conflict=experiment_id", {
-      method: "POST",
-      headers: {
-        apikey: SUPABASE_KEY,
-        Authorization: "Bearer " + session.access_token,
-        "Content-Type": "application/json",
-        Prefer: "resolution=ignore-duplicates,return=minimal",
-      },
-      body: JSON.stringify({
-        experiment_id: experiment.id,
-        visitor_id: session.user.id,
-        field: experiment.field || String(experiment.gene).split(":")[0],
-        gene: experiment.gene,
-        base_key: experiment.baseKey,
-        target_feature: experiment.targetFeature || null,
-        direction: Number(experiment.direction) || 0,
-        applied: Number(experiment.applied) || 0,
-        deltas: experiment.deltas || {},
-        composition: Number(experiment.composition) || 0,
-        outcome: {
-          variantWon: experiment.variantWon ?? null,
-          controlScore: Number(experiment.controlScore) || 0,
-          variantScore: Number(experiment.variantScore) || 0,
-        },
-      }),
-    });
-    return res.ok;
-  } catch { return false; }
+// Durable causal-experiment provenance lived on the same dead Supabase
+// project; both calls always failed, so both are now no-ops. The comment
+// this replaced said "a missing table degrades to localStorage" - that is
+// now the only path, made explicit instead of discovered through a catch.
+async function publishCausalExperiment() {
+  return false;
 }
 
 async function pullCausalExperiments() {
-  try {
-    const session = await ensureTasteSession();
-    const res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_causal_experiments?select=experiment_id,field,gene,base_key,target_feature,direction,applied,deltas,composition,outcome,created_at&order=created_at.desc&limit=240", {
-      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token },
-    });
-    if (!res.ok) return 0;
-    const rows = await res.json();
-    let merged = 0;
-    for (const row of rows.reverse()) {
-      const deltas = row.deltas && typeof row.deltas === "object" ? row.deltas : {};
-      const worst = Math.max(0, ...Object.values(deltas).map((value) => Math.abs(Number(value) || 0)));
-      if (recordSensitivity({
-        experimentId: row.experiment_id, gene: row.gene,
-        baseKey: row.base_key, applied: Number(row.applied),
-        deltas, worst, composition: Number(row.composition) || 0,
-      })) merged++;
-      causalExperiments = [...causalExperiments.filter((item) => item.id !== row.experiment_id), {
-        id: row.experiment_id, at: Date.parse(row.created_at || "") || Date.now(),
-        field: row.field, gene: row.gene, baseKey: row.base_key,
-        targetFeature: row.target_feature, direction: Number(row.direction) || 0,
-        applied: Number(row.applied) || 0, deltas,
-        composition: Number(row.composition) || 0,
-        variantWon: row.outcome?.variantWon ?? null,
-      }].slice(-CAUSAL_EXPERIMENTS_CAP);
-    }
-    saveCausalExperiments();
-    return merged;
-  } catch { return 0; }
+  return 0;
 }
 
 function queueTasteSync() {
@@ -15496,7 +15279,7 @@ async function connectTaste() {
     await Promise.allSettled([
       pullGlobalTaste(), pullStyleCatalogue(), pullCausalExperiments(),
       pullHarvestMaterials(), pullSharedVisualSymbols(),
-      pullVisualSourceCorpus(), fetchKnownCreationHashes(), refreshMuseumStatus(),
+      pullVisualSourceCorpus(), fetchKnownCreationHashes(),
     ]);
     queueTasteSync();
   } catch {
@@ -15509,37 +15292,10 @@ let styleCatalogueSyncTimer = null;
 let styleCatalogueSyncing = false;
 let styleCatalogueSyncQueue = [];
 
+// The shared style catalogue lived on the same dead Supabase project; the
+// read always failed, so this always took its local-only fallback anyway.
 async function pullStyleCatalogue() {
-  try {
-    const session = await ensureTasteSession();
-    const res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_style_catalogue?select=style_hash,mode,program,edge_profile,grammar,score,critic,seen_count,parent_style_hash,lever,learning,updated_at&order=score.desc&limit=" + STYLE_CATALOGUE_CAP, {
-      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token },
-    });
-    if (!res.ok) throw new Error("catalogue read HTTP " + res.status);
-    const remote = await res.json();
-    const localById = new Map(styleCatalogue.entries.map((entry) => [entry.id, entry]));
-    for (const row of remote) {
-      const id = row.style_hash;
-      const known = localById.get(id);
-      localById.set(id, {
-        id, mode: row.mode, program: row.program || {}, profile: row.edge_profile || [],
-        score: Number(row.score) || 0, critic: Number(row.critic) || 0,
-        seen: Math.max(Number(row.seen_count) || 1, known?.seen || 1),
-        grammar: row.grammar || known?.grammar || null, parentStyleHash: row.parent_style_hash || known?.parentStyleHash || null,
-        lever: row.lever || known?.lever || null, learning: row.learning || known?.learning || null,
-        at: Date.parse(row.updated_at || "") || known?.at || Date.now(),
-      });
-    }
-    styleCatalogue.entries = [...localById.values()].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, STYLE_CATALOGUE_CAP);
-    try { localStorage.setItem(STYLE_CATALOGUE_KEY, JSON.stringify(styleCatalogue)); } catch {}
-    const restored = seedFontTemplatesFromCatalogue();
-    styleCatalogueStatus = "catalogue: " + styleCatalogue.entries.length + " shared edge families"
-      + (restored ? " · " + restored + " template" + (restored === 1 ? "" : "s") + " restored" : "");
-  } catch {
-    // The table is optional while a studio is being set up. Local curation is
-    // still useful and a missing table must never stop the canvas.
-    styleCatalogueStatus = "catalogue: local edge memory";
-  }
+  styleCatalogueStatus = "catalogue: local edge memory";
 }
 
 function queueStyleCatalogueSync(entry) {
@@ -21337,85 +21093,21 @@ async function ensureFieldHash(result) {
   return hash;
 }
 
-async function fetchKnownFieldHashes() {
-  try {
-    const session = await ensureTasteSession();
-    const res = await fetch(SUPABASE_URL + "/rest/v1/rpc/known_hexfield_fields", {
-      method: "POST",
-      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token,
-                 "Content-Type": "application/json" },
-      body: JSON.stringify({ p_limit: 4000 }),
-    });
-    if (!res.ok) throw new Error("field hashes HTTP " + res.status);
-    for (const row of await res.json()) {
-      if (row?.field_hash) knownFieldHashes.add(row.field_hash);
-    }
-  } catch { /* dedup falls back to this session's own fields */ }
-}
+// The shared creation ledger (dedup across every visitor) lived on the same
+// dead Supabase project; every read and write always failed, so dedup has
+// always actually run on this session's own hashes only. Made explicit.
+async function fetchKnownFieldHashes() {}
 
 async function fetchKnownCreationHashes() {
-  try {
-    const session = await ensureTasteSession();
-    /* The unique constraint remains the authority. Pulling ten thousand hashes
-     * on every visit cost far more data than the image being painted and only
-     * avoided harmless conflict-ignored inserts. A recent window catches the
-     * repeats a live session can realistically make; the server still rejects
-     * an older duplicate correctly. */
-    const res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_creations?select=render_hash&order=created_at.desc&limit=1200", {
-      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token },
-    });
-    if (!res.ok) throw new Error("creation read HTTP " + res.status);
-    knownCreationHashes = new Set((await res.json()).map((row) => row.render_hash).filter(Boolean));
-    creationLedgerStatus = "creation memory: " + knownCreationHashes.size + " unique recipes";
-  } catch {
-    creationLedgerStatus = "creation memory: offline local check";
-  }
+  creationLedgerStatus = "creation memory: this session only";
 }
 
 async function claimCreation(result) {
   const renderHash = await ensureRenderHash(result);
   if (knownCreationHashes.has(renderHash)) return false;
-  try {
-    const session = await ensureTasteSession();
-    /* Bounded, because this sits between a visitor's click and their image.
-     *
-     * chooseFreshCandidate awaits one of these per candidate, up to
-     * MAX_CREATION_CLAIMS of them, and this fetch carried no timeout at all -
-     * so a slow or unreachable Supabase stalled the render for as long as the
-     * browser was willing to wait, three times over. fetchRemoteArchive already
-     * establishes the pattern; there was no reason for the path a person is
-     * actually waiting on to be the unbounded one. */
-    const controller = new AbortController();
-    const claimTimeout = setTimeout(() => controller.abort(), CREATION_CLAIM_TIMEOUT_MS);
-    let res;
-    try {
-      res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_creations?on_conflict=render_hash", {
-        method: "POST",
-        headers: {
-          apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token,
-          "Content-Type": "application/json", Prefer: "resolution=ignore-duplicates,return=representation",
-        },
-        body: JSON.stringify({
-          render_hash: renderHash, visitor_id: session.user.id,
-          field: result.params.field, signature: Array.from(result.sig || []),
-          field_hash: await ensureFieldHash(result),
-        }),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(claimTimeout);
-    }
-    if (!res.ok) throw new Error("creation write HTTP " + res.status);
-    const rows = await res.json();
-    knownCreationHashes.add(renderHash);
-    if (rows.length) creationLedgerStatus = "creation memory: new recipe claimed";
-    else creationLedgerStatus = "creation memory: exact recipe already existed";
-    return rows.length > 0;
-  } catch {
-    // Never block a visitor's render because the shared ledger is unavailable.
-    creationLedgerStatus = "creation memory: offline local check";
-    return true;
-  }
+  knownCreationHashes.add(renderHash);
+  creationLedgerStatus = "creation memory: new recipe claimed this session";
+  return true;
 }
 
 // Each claim that misses the local known-hash set is a network round trip, and
@@ -21459,12 +21151,12 @@ async function chooseFreshCandidate(candidates) {
   return candidates[0];
 }
 
-const CURATOR_URL = "https://hexfield-curator.ranbondyenkendy.workers.dev";
-const CURATOR_VISITOR_KEY = "hexfield.curator.visitor.v1";
-const MUSEUM_FUNCTION_URL = SUPABASE_URL + "/functions/v1/hexfield-museum";
-const LEXICON_FUNCTION_URL = SUPABASE_URL + "/functions/v1/hexfield-lexicon";
-let curatorStatus = "shared learning: waiting for a study";
-let museumStatus = "museum: waiting for a taste cycle";
+// The curator worker, the museum function and the lexicon function all lived
+// behind the same dead Supabase project and have been retired along with the
+// museum panel and its voting UI; these two stay only because the taste lab
+// diagnostic line below still reads them.
+let curatorStatus = "shared learning: retired (local only)";
+let museumStatus = "museum: retired (local only)";
 
 /* Pride-hub preference memory is deliberately first-party and narrow. It sees
  * only three explicit Hexfield interests and clicks inside this document. It
@@ -21473,7 +21165,7 @@ let museumStatus = "museum: waiting for a taste cycle";
  * visitor asked to see. */
 const PRIDE_PREFERENCE_COOKIE = "hexfield_pride_taste_v1";
 const PRIDE_CONSENT_COOKIE = "hexfield_pride_consent_v1";
-const PRIDE_TOPICS = ["painting", "museum", "prints"];
+const PRIDE_TOPICS = ["painting", "prints"];
 
 function readFirstPartyCookie(name) {
   const prefix = name + "=";
@@ -21536,508 +21228,22 @@ function recordPrideActivity(topic) {
   renderPrideContextAd();
 }
 
-function curatorVisitorId() {
-  try {
-    const existing = localStorage.getItem(CURATOR_VISITOR_KEY);
-    if (/^visitor_[A-Za-z0-9_-]{8,80}$/.test(existing || "")) return existing;
-    const bytes = new Uint32Array(3);
-    crypto.getRandomValues(bytes);
-    const id = "visitor_" + Array.from(bytes, (n) => n.toString(36)).join("_");
-    localStorage.setItem(CURATOR_VISITOR_KEY, id);
-    return id;
-  } catch {
-    return "visitor_" + Math.random().toString(36).slice(2, 14);
-  }
-}
+// Museum/curator sharing (curatorVisitorId, curatorIdFor, studyIsScorable,
+// curatorPayload, shareCuratorStudy, museumCycleId) has been removed: it only
+// ever talked to a Supabase project that no longer resolves in DNS, so every
+// call always failed. shareTasteCycle below is now a local-only no-op.
 
-function curatorIdFor(study) {
-  const raw = JSON.stringify({
-    params: study?.params || {},
-    drawSeed: Number(study?.drawSeed) || 0,
-    createdAt: Number(study?.createdAt) || Date.now(),
-    source: study?.source || "visitor",
-  });
-  return "study_" + (hashText(raw) >>> 0).toString(36).padStart(8, "0");
-}
+// Museum editions (fetchMuseumEditions, readEdition, renderMuseumEditions,
+// loadMuseumEditions) have been removed along with the rest of the museum
+// panel - same dead Supabase project.
 
-/* Can the shared model actually score this study?
- *
- * A candidate is only ever ranked on the features it was stored with, and both
- * refresh_hexfield_museum() and recurate_hexfield_museum() exclude any row
- * missing a feature the model weights - because featureValue falls back to 0.5
- * for an absent key, and against a strongly negative weight that fallback beats
- * every real value. Scoring an incomplete row would promote it for having less
- * data, so excluding it is right.
- *
- * The consequence is that filing an incomplete study is filing a row that can
- * never be curated, and nothing reports it. 60 of the 210 stored candidates are
- * in exactly that state, and they are not spread evenly: 46 of 54 billiard rows
- * and every one of the 10 moire rows, against 1 of 111 fractal. Those two
- * fields are not losing on taste, they are absent from the ranking entirely,
- * which is most of why a re-curated top ten came back as ten fractals.
- *
- * So the check is here, at the door. A study that cannot be scored is kept out
- * of the pool and said out loud, rather than accepted and silently unrankable. */
-const TASTE_REQUIRED_FEATURES = ["chromaticContrast", "chromaticComplement", "complementaryClarity"];
-
-function studyIsScorable(features) {
-  if (!features || typeof features !== "object") return false;
-  return TASTE_REQUIRED_FEATURES.every((key) => Number.isFinite(Number(features[key])));
-}
-
-function curatorPayload(study, source = "visitor") {
-  const id = study.curatorId || curatorIdFor({ ...study, source });
-  study.curatorId = id;
-  return {
-    id,
-    params: study.params || {},
-    drawSeed: Number(study.drawSeed) || 0,
-    features: study.features || {},
-    /* Cohort-relative, because this is the number the ranking is done on and a
-     * novelty search hands every survivor the same absolute answer. See
-     * cohortNovelty; the earlier form here read `study.novelty`, which held the
-     * raw k-nearest distance, and clamping it pinned all 250 pool candidates to
-     * exactly 1.000. */
-    novelty: cohortNovelty(study),
-    // The absolute figure is kept rather than replaced. Cohort novelty ranks
-    // within a cycle and is meaningless between cycles; this one is comparable
-    // across the whole history of the archive, which is what reporting wants.
-    noveltyAbsolute: noveltyUnit(study.score),
-    taste: clamp01(study.taste ?? study.tasteScore),
-    textMode: study.textMode || "seed",
-    seedText: study.seedText || "",
-    brush: study.brush || study.params?.__hexfieldBrush || null,
-    grammar: study.grammar || study.params?.__hexfieldGrammar || null,
-    aesthetics: study.aesthetics || null,
-    harvest: study.harvest || null,
-    renderHash: study.renderHash || null,
-    createdAt: Number(study.createdAt) || Date.now(),
-    source,
-  };
-}
-
-async function shareCuratorStudy(study, source = "visitor") {
-  if (!study?.params || !CURATOR_URL) return null;
-  if (!studyIsScorable(study.features)) {
-    // Reported rather than swallowed: a field that never produces the chromatic
-    // features would otherwise vanish from the museum with no symptom at all,
-    // which is the state billiard and moire have been in.
-    curatorStatus = "shared learning: skipped a " + (study.params.field || "field") +
-                    " study the model cannot score";
-    renderTasteLab(current);
-    return null;
-  }
-  const payload = curatorPayload(study, source);
-  try {
-    const session = await ensureTasteSession();
-    const response = await fetch(CURATOR_URL + "/v1/studies", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer " + session.access_token,
-      },
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) throw new Error("HTTP " + response.status);
-    curatorStatus = "shared learning: study accepted";
-    renderTasteLab(current);
-    return payload.id;
-  } catch {
-    curatorStatus = "shared learning: this run stays local";
-    renderTasteLab(current);
-    return null;
-  }
-}
-
-
-function museumCycleId(studies) {
-  const raw = JSON.stringify((studies || []).map((study) => ({
-    id: study?.curatorId || curatorIdFor(study || {}),
-    at: Number(study?.createdAt) || 0,
-  })));
-  const left = (hashText(raw) >>> 0).toString(36).padStart(8, "0");
-  const right = (hashText(raw + "|museum") >>> 0).toString(36).padStart(8, "0");
-  return "cycle_" + left + right;
-}
-
-
-let museumSnapshot = null;
-
-/* --- editions: what the studio has actually chosen, week by week -------
- *
- * The live top ten is what the model thinks right now and the nightly
- * re-curation rewrites it. An edition is a curation that was kept: which
- * designs, in what order, at what score, cut from a pool of a known size by a
- * model with a known number of samples behind it. Reading them in order is the
- * only way to see whether the taste is going anywhere, which is the question
- * this panel exists to answer.
- *
- * Rendered from each entry's own stored recipe rather than by joining back to
- * the candidate pool. That is not an optimisation - the pool is trimmed to the
- * newest 250, so the designs an old edition names are usually gone. Week One
- * was briefly deleted for exactly that reason.
- *
- * The diagnostic line is the point of the whole thing. A week made entirely of
- * one field, or whose best and worst are separated by less than the scorer can
- * resolve, is a week the ranking did not really choose - and neither is visible
- * from the pictures, because ten good-looking fractals look like a good week. */
-const EDITIONS_URL = SUPABASE_URL + "/rest/v1/hexfield_museum_editions";
-const EDITION_ENTRIES_URL = SUPABASE_URL + "/rest/v1/hexfield_museum_edition_entries";
-/* Below this the scorer cannot tell two designs apart. Measured, not guessed:
- * check-top10.mjs reports the museum re-score agreeing with the page to 3.3e-16
- * on the arithmetic, but the *model* moves between retrains, and the observed
- * spread between adjacent ranks in a settled edition runs to about 0.01. A week
- * whose whole top ten sits inside that is a week chosen by noise. */
-const EDITION_NOISE = 0.01;
-let museumEditions = null;
-
-async function fetchMuseumEditions() {
-  const headers = { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY };
-  const [editionsRes, entriesRes] = await Promise.all([
-    fetch(EDITIONS_URL + "?select=id,slug,title,note,pool_size,model_samples,curated_at&order=curated_at.asc", { headers }),
-    fetch(EDITION_ENTRIES_URL + "?select=edition_id,rank,field,recipe,taste_score,novelty,rank_score&order=rank.asc", { headers }),
-  ]);
-  if (!editionsRes.ok || !entriesRes.ok) throw new Error("editions HTTP " + editionsRes.status + "/" + entriesRes.status);
-  const editions = await editionsRes.json();
-  const entries = await entriesRes.json();
-  const byEdition = new Map();
-  for (const entry of entries) {
-    if (!byEdition.has(entry.edition_id)) byEdition.set(entry.edition_id, []);
-    byEdition.get(entry.edition_id).push(entry);
-  }
-  return editions.map((edition) => ({
-    ...edition,
-    entries: (byEdition.get(edition.id) || []).sort((a, b) => a.rank - b.rank),
-  }));
-}
-
-/* What this week is, in one line, including the ways it can be disappointing.
- * Written to be read by someone asking "is it working" rather than by someone
- * admiring the pictures. */
-function readEdition(edition) {
-  const entries = edition.entries || [];
-  const counts = {};
-  let screened = 0;
-  for (const entry of entries) {
-    counts[entry.field || "?"] = (counts[entry.field || "?"] || 0) + 1;
-    if (entry.recipe?.params?.halftone) screened++;
-  }
-  const fields = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-  const scores = entries.map((entry) => Number(entry.taste_score)).filter(Number.isFinite);
-  const spread = scores.length ? Math.max(...scores) - Math.min(...scores) : 0;
-  const novelties = entries.map((entry) => Number(entry.novelty)).filter(Number.isFinite);
-  const noveltyPinned = novelties.length && novelties.every((value) => value >= 0.9999);
-  return {
-    fields, screened, spread, noveltyPinned,
-    monoculture: fields.length === 1 && entries.length > 1,
-    withinNoise: scores.length > 1 && spread < EDITION_NOISE,
-  };
-}
-
-function renderMuseumEditions(editions = museumEditions) {
-  const host = $("museumEditions");
-  if (!host) return;
-  museumEditions = editions || museumEditions;
-  host.innerHTML = "";
-  if (!Array.isArray(editions)) return;
-  if (!editions.length) {
-    const empty = document.createElement("div");
-    empty.className = "museum-lock";
-    empty.textContent = "No editions have been cut yet.";
-    host.appendChild(empty);
-    return;
-  }
-
-  for (const edition of editions) {
-    const read = readEdition(edition);
-    const box = document.createElement("section");
-    box.className = "edition";
-
-    const head = document.createElement("div");
-    head.className = "edition-head";
-    const title = document.createElement("h3");
-    title.textContent = edition.title || edition.slug;
-    const when = document.createElement("span");
-    when.className = "edition-when";
-    when.textContent = [
-      String(edition.curated_at || "").slice(0, 10),
-      "from " + (Number(edition.pool_size) || 0) + " designs",
-      Number(edition.model_samples) ? Number(edition.model_samples).toLocaleString() + " samples of taste" : null,
-    ].filter(Boolean).join(" · ");
-    head.append(title, when);
-    box.appendChild(head);
-
-    if (edition.note) {
-      const note = document.createElement("p");
-      note.className = "edition-note";
-      note.textContent = edition.note;
-      box.appendChild(note);
-    }
-
-    const read_ = document.createElement("div");
-    read_.className = "edition-read";
-    const parts = [];
-    parts.push("<b>" + read.fields.map(([field, n]) => n + " " + field).join(", ") + "</b>");
-    parts.push(read.screened ? "<b>" + read.screened + "</b> screened" : "none screened");
-    parts.push("taste spread <b>" + read.spread.toFixed(3) + "</b>");
-    const warnings = [];
-    if (read.monoculture) warnings.push("every rank is the same field - the ranking is not choosing between them");
-    if (read.withinNoise) warnings.push("the whole top ten sits inside " + EDITION_NOISE + " of taste, which is under what the scorer can resolve - this week was decided by noise");
-    if (read.noveltyPinned) warnings.push("novelty is pinned at 1.000 for every entry, so it contributed nothing and taste ranked this alone");
-    read_.innerHTML = parts.join(" · ")
-      + (warnings.length ? '<br><span class="edition-warn">' + warnings.map((w) => "⚠ " + w).join("<br>") + "</span>" : "");
-    box.appendChild(read_);
-
-    const row = document.createElement("div");
-    row.className = "edition-row";
-    for (const entry of edition.entries) {
-      const cell = document.createElement("figure");
-      cell.className = "edition-cell";
-      const canvas = document.createElement("canvas");
-      canvas.width = 200;
-      canvas.height = 240;
-      const recipe = entry.recipe || {};
-      try {
-        const params = { ...(recipe.params || {}) };
-        renderComposite(canvas.getContext("2d"), canvas.width, canvas.height, params,
-                        mulberry32(Number(recipe.drawSeed) || 0), "", "seed");
-      } catch {
-        const ctx = canvas.getContext("2d");
-        ctx.fillStyle = "#08080c";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-      }
-      const caption = document.createElement("figcaption");
-      const left = document.createElement("span");
-      left.textContent = "#" + entry.rank + " " + (entry.field || "?");
-      const right = document.createElement("span");
-      if (recipe.params?.halftone) right.className = "screened";
-      right.textContent = (recipe.params?.halftone ? "◐ " : "") + (Number(entry.taste_score) || 0).toFixed(3);
-      caption.append(left, right);
-      cell.append(canvas, caption);
-      row.appendChild(cell);
-    }
-    box.appendChild(row);
-    host.appendChild(box);
-  }
-}
-
-async function loadMuseumEditions() {
-  const host = $("museumEditions");
-  if (!host) return;
-  if (museumEditions) { renderMuseumEditions(museumEditions); return; }
-  host.innerHTML = '<div class="museum-lock">reading the editions…</div>';
-  try {
-    renderMuseumEditions(await fetchMuseumEditions());
-  } catch (error) {
-    /* Said out loud rather than left blank. An empty gallery and an unreachable
-     * one look identical, and this studio has spent enough of its life on
-     * things that failed quietly. */
-    host.innerHTML = '<div class="museum-lock">could not read the editions: '
-      + String(error.message || error).slice(0, 120) + "</div>";
-  }
-}
-
-function renderMuseum(payload = museumSnapshot) {
-  const state = $("museumState");
-  const grid = $("museumGrid");
-  if (!state || !grid) return;
-  museumSnapshot = payload || museumSnapshot;
-  const complete = Number(payload?.totalEvaluated) || 0;
-  const target = Number(payload?.activationThreshold) || 1000000;
-  const remaining = Math.max(0, target - complete);
-  grid.innerHTML = "";
-
-  if (!payload || !payload.unlocked) {
-    state.textContent = "locked · " + complete.toLocaleString() + " / " + target.toLocaleString() + " real field attempts";
-    const lock = document.createElement("div");
-    lock.className = "museum-lock";
-    lock.textContent = remaining
-      ? remaining.toLocaleString() + " more evaluated fields until the archive chooses its first ten."
-      : "The archive is choosing its first ten designs.";
-    grid.appendChild(lock);
-    return;
-  }
-
-  const top10 = Array.isArray(payload.top10) ? payload.top10 : [];
-  state.textContent = "unlocked · top " + top10.length + " recipes, reconstructed from their saved field parameters";
-  if (!top10.length) {
-    const empty = document.createElement("div");
-    empty.className = "museum-lock";
-    empty.textContent = "Curation is running. The first ten recipes will appear here shortly.";
-    grid.appendChild(empty);
-    return;
-  }
-
-  for (const item of top10) {
-    const card = document.createElement("article");
-    card.className = "museum-card";
-    const canvas = document.createElement("canvas");
-    canvas.width = 360;
-    canvas.height = 432;
-    const recipe = item?.recipe || {};
-    try {
-      const museumMode = recipe.textMode || (recipe.brush ? "evolving" : "seed");
-      const museumParams = { ...(recipe.params || {}) };
-      if (recipe.brush) museumParams.__hexfieldBrushProgram = recipe.brush;
-      renderComposite(canvas.getContext("2d"), canvas.width, canvas.height, museumParams,
-        mulberry32(Number(recipe.drawSeed) || 0), recipe.seedText || "", museumMode);
-      delete museumParams.__hexfieldBrushProgram;
-    } catch {
-      const ctx = canvas.getContext("2d");
-      ctx.fillStyle = "#08080c";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
-    const meta = document.createElement("div");
-    meta.className = "museum-card-meta";
-    const rank = item?.museum_rank || "?";
-    const score = Number(item?.rank_score);
-    meta.innerHTML = "<span>#" + rank + " · " + String(item?.field || "field") + "</span><span>" +
-      (Number.isFinite(score) ? Math.round(score * 100) + "%" : "—") + "</span>";
-    card.append(canvas, meta);
-    grid.appendChild(card);
-  }
-}
-
-function openMuseum() {
-  const panel = $("museumPanel");
-  if (!panel) return;
-  panel.classList.add("on");
-  panel.setAttribute("aria-hidden", "false");
-  renderMuseum(museumSnapshot);
-  /* Fetched on open rather than at startup: an edition does not change once it
-   * is cut, and nobody arriving at the site is owed two extra requests before
-   * their first render. Cached after the first open. */
-  loadMuseumEditions();
-  refreshMuseumStatus();
-  // Read from live state rather than fetched, so it shows what this browser's
-  // studio currently believes rather than what the shared archive last cut.
-  renderVisualLexicon();
-}
-
-function closeMuseum() {
-  const panel = $("museumPanel");
-  if (!panel) return;
-  panel.classList.remove("on");
-  panel.setAttribute("aria-hidden", "true");
-}
-
-function setMuseumStatus(payload) {
-  museumSnapshot = payload || null;
-  renderMuseum(payload);
-  const complete = Number(payload?.totalEvaluated) || 0;
-  const target = Number(payload?.activationThreshold) || 1000000;
-  if (payload?.unlocked) {
-    museumStatus = "museum unlocked · " + (payload?.top10?.length || 10) + " strongest designs are live";
-    return;
-  }
-  museumStatus = "museum: " + complete.toLocaleString() + " / " + target.toLocaleString() + " field attempts";
-}
-
-async function refreshMuseumStatus() {
-  try {
-    const session = await ensureTasteSession();
-    const response = await fetch(CURATOR_URL + "/v1/top10", {
-      headers: {
-        Authorization: "Bearer " + session.access_token,
-      },
-    });
-    if (!response.ok) throw new Error("museum HTTP " + response.status);
-    setMuseumStatus(await response.json());
-  } catch {
-    museumStatus = "museum: local cycle still counts when connection returns";
-  }
-  renderTasteLab(current);
-}
-
-async function shareMuseumCycle(studies, evaluated, source = "visitor") {
-  if (!Array.isArray(studies) || !studies.length) return null;
-  museumStatus = "museum: adding " + Math.max(1, Math.floor(Number(evaluated) || studies.length)) + " real field attempts";
-  renderTasteLab(current);
-  try {
-    const session = await ensureTasteSession();
-    const response = await fetch(MUSEUM_FUNCTION_URL, {
-      method: "POST",
-      headers: {
-        apikey: SUPABASE_KEY,
-        Authorization: "Bearer " + session.access_token,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        cycleId: museumCycleId(studies),
-        evaluated: Math.max(1, Math.min(144, Math.floor(Number(evaluated) || studies.length))),
-        // Sent so the ledger can tell a server cycle from a visitor's. The
-        // deployed function currently pins p_source to "visitor" and ignores
-        // this, which is why it is safe to send ahead of that deploy: an older
-        // function records the cycle exactly as it does today.
-        source,
-        studies: studies.map((study) => museumPayload(study, source)),
-      }),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || ("museum HTTP " + response.status));
-    setMuseumStatus(payload);
-    renderTasteLab(current);
-    return payload;
-  } catch {
-    museumStatus = "museum: this cycle stays local until it can sync";
-    renderTasteLab(current);
-    return null;
-  }
-}
-
-/* What the museum actually reads, and nothing else.
- *
- * The museum was being sent curatorPayload, which is the *curator's* shape -
- * grammar, harvest, aesthetics, brush, the seed text, a render hash. The museum
- * function's parseCandidate reads six fields and discards the rest, and the
- * discarded part was 85% of the request: measured, one study was 23.6KB of
- * which grammar was 8.5KB and harvest 11.4KB, and ten of them came to 231,705
- * bytes against the function's 100,000 byte cap.
- *
- * So every taste cycle this studio has ever run was refused with a 413, and the
- * catch in shareMuseumCycle turned that into a status line nobody reads. The
- * ledger has never held a row - not because the path was broken, but because
- * the payload was three times too big with data the far end throws away.
- *
- * Kept deliberately narrow rather than trimmed to fit: a size cap satisfied by
- * luck is one field away from failing again, and check-museum-payload.mjs holds
- * this to the function's own parse. */
-function museumPayload(study, source = "visitor") {
-  const id = study.curatorId || curatorIdFor({ ...study, source });
-  study.curatorId = id;
-  return {
-    id,
-    params: study.params || {},
-    drawSeed: Number(study.drawSeed) || 0,
-    features: study.features || {},
-    /* Cohort-relative. The museum reads six fields and this is the one that
-     * decides 45% of rank_score, so an absolute novelty - identical for every
-     * candidate a novelty search produces - deletes that share of the ranking
-     * without changing anything visible. The absolute value is not sent here
-     * because the far end does not parse it; it stays on the stored study and
-     * goes to the curator, which does. */
-    novelty: cohortNovelty(study),
-    taste: clamp01(study.taste ?? study.tasteScore),
-  };
-}
-
-function shareTasteCycle(studies, evaluated, source = "visitor") {
+// renderMuseum, openMuseum, closeMuseum, setMuseumStatus, refreshMuseumStatus,
+// shareMuseumCycle and museumPayload have been removed with the museum panel
+// and its button. shareTasteCycle stays as the entry point runTasteCycle
+// calls, now a local-only no-op instead of a call to a dead backend.
+function shareTasteCycle(studies) {
   if (!Array.isArray(studies) || !studies.length) return Promise.resolve(null);
-  curatorStatus = "shared learning: sending " + studies.length + " studies";
-  renderTasteLab(current);
-  Promise.all(studies.map((study) => shareCuratorStudy(study, source))).then((ids) => {
-    const accepted = ids.filter(Boolean).length;
-    curatorStatus = accepted
-      ? "shared learning: " + accepted + " studies added"
-      : "shared learning: this run stays local";
-    renderTasteLab(current);
-  });
-  /* Returned rather than fired and forgotten. runTasteCycle used to increment
-   * `runs` immediately after this call, so a cycle whose share was refused
-   * still reported success - which is exactly how a 413 on every cycle ever run
-   * stayed invisible, and how the explorer reported healthy runs while the
-   * ledger stayed empty. */
-  return shareMuseumCycle(studies, evaluated, source);
+  return Promise.resolve(null);
 }
 
 function loadArchive() {
@@ -22085,43 +21291,15 @@ function mergeArchive(signatures) {
   return { added, size: archive.length };
 }
 
+// The cross-visitor novelty archive lived on the same dead Supabase project;
+// the read always failed (caller already has an honest "unavailable"
+// fallback message for this) and the fire-and-forget write is now skipped
+// outright rather than attempted and silently dropped.
 async function fetchRemoteArchive() {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REMOTE_FETCH_TIMEOUT_MS);
-  try {
-    // Half the budget is the newest work, half is a uniform sample of
-    // everything older. Ordering by created_at desc alone made the no-repeat
-    // rule a rolling recency window: with thousands of signatures stored, the
-    // search could drift back into territory it had already explored simply
-    // because those runs had scrolled out of the newest ARCHIVE_CAP.
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/rpc/sample_hexfield_signatures`,
-      { method: "POST",
-        headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`,
-                   "Content-Type": "application/json" },
-        body: JSON.stringify({ p_limit: ARCHIVE_CAP }),
-        signal: controller.signal }
-    );
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const rows = await res.json();
-    return rows.map((r) => r.signature).filter((s) => Array.isArray(s) && s.length === 64);
-  } finally {
-    clearTimeout(timeout);
-  }
+  throw new Error("shared archive is offline");
 }
 
-function pushRemoteSignature(field, sig) {
-  // Fire-and-forget: a slow or failed write should never block the render
-  // the visitor is looking at. Local cache already has it either way.
-  fetch(`${SUPABASE_URL}/rest/v1/hexfield_signatures`, {
-    method: "POST",
-    headers: {
-      apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ field, signature: Array.from(sig) }),
-  }).catch(() => { /* offline or blocked; local archive still has this run */ });
-}
+function pushRemoteSignature() {}
 
 let archive = loadArchive();
 let remoteConnected = false;
@@ -23126,69 +22304,13 @@ let simProgressPushed = { cycles: 0, trials: 0, improvements: 0, learning: 0 };
 let simProgressSyncAt = 0;
 const SIM_PROGRESS_SYNC_MS = 20000;
 
-async function hydrateSimProgress() {
-  try {
-    const res = await fetch(
-      SUPABASE_URL + "/rest/v1/hexfield_sim_progress?select=total_cycles,total_trials,total_improvements,learning_events,best_score&id=eq.true",
-      { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY } });
-    if (!res.ok) throw new Error("sim progress HTTP " + res.status);
-    const row = (await res.json())[0];
-    if (!row) return;
-    // The shared pool is the source of truth; a local cache that ran ahead
-    // while offline keeps its higher count rather than being pulled backwards.
-    headlessSim.totalCycles = Math.max(headlessSim.totalCycles, Number(row.total_cycles) || 0);
-    headlessSim.totalTrials = Math.max(headlessSim.totalTrials, Number(row.total_trials) || 0);
-    headlessSim.totalImprovements = Math.max(headlessSim.totalImprovements, Number(row.total_improvements) || 0);
-    headlessSim.learningEvents = Math.max(headlessSim.learningEvents, Number(row.learning_events) || 0);
-    const remoteBest = Number(row.best_score) || 0;
-    if (!Number.isFinite(headlessSim.bestScore) || remoteBest > headlessSim.bestScore) {
-      headlessSim.bestScore = remoteBest;
-    }
-    simProgressPushed = {
-      cycles: Number(row.total_cycles) || 0,
-      trials: Number(row.total_trials) || 0,
-      improvements: Number(row.total_improvements) || 0,
-      learning: Number(row.learning_events) || 0,
-    };
-    renderHeadlessSim();
-  } catch { /* the sim still runs and still counts locally */ }
-}
+// Shared sim progress lived on the same dead Supabase project; both the
+// hydrate read and the bump write always failed, so the counters have
+// always actually been per-browser only. Made explicit instead of relying
+// on every call quietly failing.
+async function hydrateSimProgress() {}
 
-function pushSimProgress(force = false) {
-  const now = Date.now();
-  if (!force && now - simProgressSyncAt < SIM_PROGRESS_SYNC_MS) return;
-  const delta = {
-    p_cycles: Math.max(0, (Number(headlessSim.totalCycles) || 0) - simProgressPushed.cycles),
-    p_trials: Math.max(0, (Number(headlessSim.totalTrials) || 0) - simProgressPushed.trials),
-    p_improvements: Math.max(0, (Number(headlessSim.totalImprovements) || 0) - simProgressPushed.improvements),
-    p_learning: Math.max(0, (Number(headlessSim.learningEvents) || 0) - simProgressPushed.learning),
-    p_best_score: clamp01(Number(headlessSim.bestScore) || 0),
-    p_last_field: String(headlessSim.lastField || "").slice(0, 32),
-    p_last_lever: String(headlessSim.lastLever || "").slice(0, 64),
-  };
-  if (!force && !delta.p_cycles && !delta.p_trials && !delta.p_improvements && !delta.p_learning) return;
-  if (!tasteSession?.access_token) {
-    ensureTasteSession().then(() => pushSimProgress(force)).catch(() => {});
-    return;
-  }
-  simProgressSyncAt = now;
-  const claimed = {
-    cycles: Number(headlessSim.totalCycles) || 0,
-    trials: Number(headlessSim.totalTrials) || 0,
-    improvements: Number(headlessSim.totalImprovements) || 0,
-    learning: Number(headlessSim.learningEvents) || 0,
-  };
-  fetch(SUPABASE_URL + "/rest/v1/rpc/bump_hexfield_sim", {
-    method: "POST",
-    headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + tasteSession.access_token,
-               "Content-Type": "application/json" },
-    body: JSON.stringify(delta),
-  }).then((res) => {
-    // Only mark the delta as banked once the write actually landed, so a failed
-    // sync is retried on the next tick instead of being silently dropped.
-    if (res.ok) simProgressPushed = claimed;
-  }).catch(() => { /* retried on the next cycle */ });
-}
+function pushSimProgress() {}
 
 // A refresh is exactly when this used to lose everything, so flush on the way
 // out. visibilitychange is the reliable one on mobile; pagehide covers reloads.
@@ -32162,7 +31284,6 @@ $("prideDecline")?.addEventListener("click", () => {
 document.addEventListener("click", (event) => {
   const id = event.target?.closest?.("[id]")?.id;
   if (["reseedNow", "perturbNow", "captureLogo"].includes(id)) recordPrideActivity("painting");
-  if (id === "museumOpen") recordPrideActivity("museum");
   if (["buy", "export", "shopLink"].includes(id)) recordPrideActivity("prints");
 });
 
@@ -33513,46 +32634,10 @@ function mergeVisualSymbolMemories(local, remote) {
  * restarts. This is deliberately a bounded recent window. Exact ownership is
  * still enforced against the complete table by the claim transaction, so a
  * material outside the read window is rejected safely rather than forgotten. */
+// The shared visual lexicon lived on the same dead Supabase project; the
+// read always failed, so this is now a direct no-op instead.
 async function pullSharedVisualSymbols() {
-  try {
-    const session = await ensureTasteSession();
-    const res = await fetch(SUPABASE_URL +
-      "/rest/v1/hexfield_visual_symbols?select=material_id,word,role,profile,context,evidence_count,created_at&order=created_at.desc&limit=320", {
-      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token },
-    });
-    if (!res.ok) return 0;
-    const rows = await res.json();
-    const remote = { version: VISUAL_SYMBOL_MEMORY_VERSION, words: {}, collisions: [] };
-    const entries = new Map();
-    for (const row of rows) {
-      const word = visualSymbolWord(row.word);
-      const profile = normalizeVisualSymbolProfile({
-        id: row.material_id, role: row.role, vector: row.profile,
-      });
-      if (!word || !profile) continue;
-      const context = row.context && typeof row.context === "object" ? row.context : {};
-      const exampleId = String(context.exampleId || "shared_" + row.material_id).slice(0, 120);
-      const key = word + "|" + exampleId;
-      if (!entries.has(key)) {
-        const entry = {
-          id: exampleId, at: Date.parse(row.created_at || "") || 0,
-          context: {
-            field: context.field, mode: context.mode, relation: context.relation,
-            role: context.role || row.role, companions: context.companions,
-            depth: context.depth,
-          },
-          symbols: [],
-        };
-        entries.set(key, entry);
-        (remote.words[word] ||= []).push(entry);
-      }
-      entries.get(key).symbols.push(profile);
-    }
-    visualSymbolMemory = mergeVisualSymbolMemories(visualSymbolMemory, remote);
-    sharedVisualSymbolCount = rows.length;
-    saveVisualSymbolMemory();
-    return rows.length;
-  } catch { return 0; }
+  return 0;
 }
 
 function sharedVisualSymbolContext(entry) {
@@ -33615,39 +32700,12 @@ function applySharedVisualSymbolCollision(result, claim) {
   return true;
 }
 
+// Claiming lexicon ownership lived on the same dead Supabase project; the
+// call always failed, so queued claims are now dropped outright rather than
+// retried forever against a host that will never answer.
 async function pushSharedVisualSymbolClaims() {
-  if (!visualSymbolClaimQueue.length) return 0;
-  const batch = visualSymbolClaimQueue.splice(0, 20);
-  try {
-    const session = await ensureTasteSession();
-    const response = await fetch(LEXICON_FUNCTION_URL, {
-      method: "POST",
-      headers: {
-        apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ claims: batch.map(({ attempts, ...claim }) => claim) }),
-    });
-    if (!response.ok) throw new Error("lexicon claim HTTP " + response.status);
-    const body = await response.json();
-    const byKey = new Map(batch.map((claim) => [claim.word + "|" + claim.materialId, claim]));
-    for (const result of body.results || []) {
-      if (result.status !== "exact_collision" && result.status !== "near_collision") continue;
-      applySharedVisualSymbolCollision(result, byKey.get(result.word + "|" + result.materialId));
-    }
-    sharedVisualSymbolCount += (body.results || [])
-      .filter((result) => result.status === "accepted").length;
-  } catch {
-    // A temporary offline spell does not erase a learned claim, and does not
-    // become an infinite hot retry loop either.
-    const retry = batch.filter((claim) => claim.attempts < 2)
-      .map((claim) => ({ ...claim, attempts: claim.attempts + 1 }));
-    visualSymbolClaimQueue = [...retry, ...visualSymbolClaimQueue].slice(-80);
-    scheduleVisualSymbolClaims(15000);
-    return 0;
-  }
-  scheduleVisualSymbolClaims(0);
-  return batch.length;
+  visualSymbolClaimQueue = [];
+  return 0;
 }
 
 /* ── Blob bases: topology is a candidate before it is a meaning ────────────
@@ -34543,8 +33601,6 @@ $("perturb").addEventListener("click", perturb);
 // visitor cycle with an event object.
 $("learn").addEventListener("click", () => runTasteCycle());
 $("closeFineTune").addEventListener("click", () => { $("finetune").open = false; });
-$("museumOpen").addEventListener("click", openMuseum);
-$("museumClose").addEventListener("click", closeMuseum);
 $("format").addEventListener("change", applyFormat);
 function updateNeuralStatus() {
   const status = $("neuralStatus");
@@ -35163,7 +34219,7 @@ window.__hexfield = {
   paintLetterWord, brushProgram, mutateBrushProgram,
   publishAutonomousTaste, recordSharedTasteObservation, pullGlobalTaste,
   autoHarvestFromCanvas, rememberHarvestIteration,
-  shareCuratorStudy, shareTasteCycle, refreshMuseumStatus, openMuseum,
+  shareTasteCycle,
   getTaste: () => taste, getTasteStudies: () => tasteStudies,
   exportDurableLearningBridge, acceleratorDecisionProbe, sharedHumanVoteCount, getHumanDirectionSnapshot,
   learningContract: learningContractSnapshot,
@@ -35177,8 +34233,7 @@ window.__hexfield = {
   // completed advances for a finished local cycle; runs advances only when the
   // museum ledger accepts it. Terminal drivers choose the clock matching their
   // explicit --share mode rather than confusing computation with publication.
-  getTasteCycleState: () => tasteCycleState, getMuseumSnapshot: () => museumSnapshot,
-  fetchMuseumEditions, renderMuseumEditions, readEdition,
+  getTasteCycleState: () => tasteCycleState,
   sceneGraph: { read: sceneRead, get: sceneGet, bounds: sceneBounds, apply: sceneApply },
   critique: { propose: critiquePropose, metricsFor: sceneMetricsFor },
   getHarvestLibrary: () => harvestLibrary, getBrushSimulation: () => brushSimulation,
