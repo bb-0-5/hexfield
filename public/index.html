@@ -23012,6 +23012,21 @@ function fieldWorkerPool() {
   return fieldWorkers;
 }
 
+/* Warmed here rather than left to the first search to create lazily.
+ *
+ * Under CPU throttling standing in for a real phone, the first-ever search
+ * took ~7.9s and every later one on a warm pool took ~2s. Re-testing this
+ * exact change in that same harness showed no measurable improvement -
+ * likely because a single-process CPU throttle does not give a worker
+ * thread genuine spare capacity to compile in parallel on that harness the
+ * way a real multi-core phone would. Kept anyway: `new Worker(url)` hands
+ * the actual compiling off to the worker's own thread, so calling this
+ * early costs the main thread nothing beyond building the Blob URL, and on
+ * real hardware with actual free cores it can only start that compile
+ * sooner, never later. Whether it moves the felt lag on an actual phone is
+ * still unconfirmed. */
+if (fieldWorkersAvailable()) fieldWorkerPool();
+
 function askFieldWorker(worker, message, transfer = []) {
   return new Promise((resolve) => {
     // A worker that never answers must not hang the search behind it.
@@ -31245,7 +31260,7 @@ function deviceEffortCap() {
   // written but never wired in here, so the very first search on every
   // mobile visit ran the full, unthrottled candidate count regardless of
   // every later mobile fix to the refine loop.
-  if (isMobileBrowser()) cap = Math.min(cap, 3);
+  if (isMobileBrowser()) cap = Math.min(cap, 2);
   return cap;
 }
 
