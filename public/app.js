@@ -21915,11 +21915,25 @@ const MASTER_DESIGN_WIDTH = 440;
 const MASTER_DESIGN_HEIGHT = 100;
 const MASTER_DESIGN_ASPECT = MASTER_DESIGN_WIDTH / MASTER_DESIGN_HEIGHT;
 
+/* The on-screen "master" backing store, sized for a desktop viewport (see
+ * the comment on FORMATS below) - a CPU profile of a cold mobile load found
+ * every per-pixel pass in the render/measure pipeline (signature, grammar,
+ * edge analysis, halftone, ...) paying for that full 1.1MP on a phone whose
+ * actual CSS display width is commonly 340-420px. 1100x250 is still roughly
+ * 3x that width, sharp on real device pixel ratios, at a quarter of the
+ * pixels of the desktop size - and it must stay in step with
+ * CANONICAL_MASTER_WIDTH/HEIGHT below: that constant is the supersampled
+ * source this target is downscaled from, and letting the target exceed the
+ * source would upsample a lower-detail image instead of saving anything. */
+const MOBILE_MASTER_WIDTH = 1100;
+const MOBILE_MASTER_HEIGHT = 250;
 const FORMATS = {
   /* Five times the mini in each dimension. At 1.1MP it costs roughly the same
    * as the old 900×1080 portrait canvas, but a desktop never enlarges a soft
    * 1320px bitmap to fill a 1920px viewport. */
-  master: { w: 2200, h: 500, ew: 4400, eh: 1000, aspect: "22 / 5" },
+  master: isMobileBrowser()
+    ? { w: MOBILE_MASTER_WIDTH, h: MOBILE_MASTER_HEIGHT, ew: 4400, eh: 1000, aspect: "22 / 5" }
+    : { w: 2200, h: 500, ew: 4400, eh: 1000, aspect: "22 / 5" },
   print: { w: 900, h: 1080, ew: 4500, eh: 5400, aspect: "5 / 6" },
   /* 3600, not 2400. The square is printed at 12x12 inches, and 2400px across
    * that is 200dpi - visibly soft for artwork whose whole subject is fine
@@ -27208,9 +27222,13 @@ const MASTER_RENDER_PIXEL_BUDGET = 12000000;
  * one-shared-master consistency guarantee (still one cache slot, same key),
  * just at the on-screen "master" format's own resolution instead of a
  * print-quality floor neither the phone's screen nor any mobile caller asked
- * for. */
-const CANONICAL_MASTER_WIDTH = isMobileBrowser() ? 2200 : 4400;
-const CANONICAL_MASTER_HEIGHT = isMobileBrowser() ? 500 : 1000;
+ * for. Kept equal to MOBILE_MASTER_WIDTH/HEIGHT (the FORMATS.master target
+ * on mobile) rather than some other smaller number - this is the
+ * supersampled source that target is downscaled from, so it must never end
+ * up below it, or the "one high-detail source" this whole cache exists for
+ * stops being high-detail. */
+const CANONICAL_MASTER_WIDTH = isMobileBrowser() ? MOBILE_MASTER_WIDTH : 4400;
+const CANONICAL_MASTER_HEIGHT = isMobileBrowser() ? MOBILE_MASTER_HEIGHT : 1000;
 let canonicalMaster = { key: "", canvas: null, width: 0, height: 0 };
 
 function canonicalMasterKey(params, drawSeed, text, mode) {
