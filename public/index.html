@@ -29896,6 +29896,31 @@ function animatePaintCommit(result, beforePixels, afterPixels, width, height, re
     view.dataset.paintOpening = planned.length ? "brush-block-in" : "picture-is-its-own-field";
   }
 
+  /* The frame-by-frame reveal is real per-pixel canvas compositing work,
+   * repeated on every accepted pass, forever - continuous cost from the
+   * first render, not something that accumulates. Fine for a desktop GPU;
+   * reported as laggy immediately on a fresh phone load, which is what a
+   * weaker mobile GPU repeatedly compositing this many marks looks like.
+   * The animation is a "watch it get painted" effect, not the picture
+   * itself - painting every mark in one pass and settling immediately
+   * produces the exact same final canvas without the sustained per-frame
+   * cost. */
+  if (marks.length && isMobileBrowser()) {
+    paintPigmentMarks(vctx, marks, beforePixels, afterPixels, width, height, result, 0);
+    result.paintProgress = 1;
+    markPaintTimingCompleted(result);
+    if (activePaintAnimation === animation) activePaintAnimation = 0;
+    if (Number.isFinite(Number(result.paintCanvasCoverage))) {
+      view.dataset.paintCoverage = clamp01(Number(result.paintCanvasCoverage)).toFixed(3);
+      view.dataset.paintCanvasFilled = result.paintCanvasFilled ? "1" : "0";
+    }
+    if (result.paintCanvasFilled) paintVisibleGlyphOverlay(result);
+    paintRevision++;
+    view.dataset.paintRevision = String(paintRevision);
+    updatePainterStatus(result);
+    return Promise.resolve(true);
+  }
+
   const wantedFrames = refinement ? PAINT_STROKE_FRAMES : PAINT_INITIAL_FRAMES;
   const perFrame = Math.max(1, Math.ceil(marks.length / Math.max(1, wantedFrames)));
   let cursor = 0;
@@ -31171,6 +31196,13 @@ function showCandidates(candidates) {
  * already chose and never silently raises one. Where nothing is reported the
  * slider is honoured in full, so no capable device is punished for being
  * unmeasurable. */
+/* Reused wherever "is this a phone" needs a real answer rather than a
+ * memory/core-count guess. deviceEffortCap() below misses a phone with
+ * decent specs entirely, which is exactly the device this exists for. */
+function isMobileBrowser() {
+  return /Mobi|Android/i.test(navigator.userAgent);
+}
+
 function deviceEffortCap() {
   const memory = Number(navigator.deviceMemory) || 0;
   const cores = Number(navigator.hardwareConcurrency) || 0;
@@ -35388,8 +35420,7 @@ async function connectAndStart() {
    * is background learning for the shared museum/taste model, not
    * anything the visible canvas needs - so it is worth simply not starting
    * on a phone rather than tuning its budget yet again. */
-  const isMobileBrowser = /Mobi|Android/i.test(navigator.userAgent);
-  if (!isMobileBrowser) startHeadlessSim();
+  if (!isMobileBrowser()) startHeadlessSim();
   /* The manual controls that used to trigger a taste cycle (and, with it, the
    * museum submission) are permanently hidden by the autonomous blackout
    * above - "the autonomous presentation is the point" - so nothing has
