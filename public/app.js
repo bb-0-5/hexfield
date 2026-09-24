@@ -27194,9 +27194,23 @@ const MASTER_RENDER_PIXEL_BUDGET = 12000000;
  * thresholds, harvest size and screen spacing); two separate renders therefore
  * looked related but not identical, with the large one often losing the small
  * canvas's best structure. Keep one high-detail source and scale it once for
- * every surface. */
-const CANONICAL_MASTER_WIDTH = 4400;
-const CANONICAL_MASTER_HEIGHT = 1000;
+ * every surface.
+ *
+ * This floor is what a CPU profile of a cold mobile load found dominating
+ * the whole search: composing+enriching a fresh master is the single most
+ * expensive step of any accepted render (confirmed independent of candidate
+ * count - cutting candidates did not move this cost, because it isn't paid
+ * per candidate). None of the three on-screen callers (the easel, its
+ * mini-logo, the lay-in/detail passes) need print resolution - only the
+ * explicit PNG/print export does, and it renders its own canvas directly
+ * with renderComposite() rather than going through this cache at all, so it
+ * is untouched by this constant. Mobile keeps exactly the same
+ * one-shared-master consistency guarantee (still one cache slot, same key),
+ * just at the on-screen "master" format's own resolution instead of a
+ * print-quality floor neither the phone's screen nor any mobile caller asked
+ * for. */
+const CANONICAL_MASTER_WIDTH = isMobileBrowser() ? 2200 : 4400;
+const CANONICAL_MASTER_HEIGHT = isMobileBrowser() ? 500 : 1000;
 let canonicalMaster = { key: "", canvas: null, width: 0, height: 0 };
 
 function canonicalMasterKey(params, drawSeed, text, mode) {
