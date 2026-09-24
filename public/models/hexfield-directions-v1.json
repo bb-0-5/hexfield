@@ -1,0 +1,89 @@
+{
+  "schema": "hexfield-directions-v1",
+  "version": "v1-rebuilt-2026-09-24",
+  "directions": [
+    {
+      "key": "heavier",
+      "moves": {
+        "penWeight": 0.369
+      },
+      "cosine": 1
+    },
+    {
+      "key": "lighter",
+      "moves": {
+        "penWeight": -0.461
+      },
+      "cosine": 1
+    },
+    {
+      "key": "short",
+      "moves": {
+        "penWeight": -0.046,
+        "widthAxis": -0.113,
+        "xHeight": -0.465,
+        "skeletonExtend": -0.007
+      },
+      "cosine": 0.996
+    },
+    {
+      "key": "extended",
+      "moves": {
+        "penWeight": 0.092,
+        "widthAxis": 0.707,
+        "skeletonExtend": 0.153
+      },
+      "cosine": 0.993
+    },
+    {
+      "key": "italic",
+      "moves": {
+        "penWeight": -0.046,
+        "widthAxis": 0.023,
+        "xHeight": 0.01,
+        "skeletonShear": 0.181,
+        "skeletonExtend": 0.046
+      },
+      "cosine": 0.991
+    },
+    {
+      "key": "upright",
+      "moves": {
+        "penWeight": -0.046,
+        "widthAxis": 0.023,
+        "skeletonShear": -0.039,
+        "skeletonExtend": -0.061
+      },
+      "cosine": 0.979
+    },
+    {
+      "key": "tall",
+      "moves": {
+        "penWeight": -0.046,
+        "xHeight": 0.105,
+        "skeletonShear": 0.034,
+        "skeletonExtend": -0.007
+      },
+      "cosine": 0.956
+    },
+    {
+      "key": "wildstyle",
+      "moves": {
+        "penWeight": -0.185,
+        "widthAxis": -0.113,
+        "skeletonExtend": 0.206
+      },
+      "cosine": 0.902
+    },
+    {
+      "key": "condensed",
+      "moves": {
+        "penWeight": -0.323,
+        "xHeight": -0.085
+      },
+      "cosine": 0.732
+    }
+  ],
+  "inert": [],
+  "notes": "Rebuilt after the original file (never committed to git, deployed outside version control) was lost. Each direction's target is defined by pushing one gene to a typographically meaningful extreme (e.g. italic = max skeletonShear), measured through this repo's own generatedLetterformVector-equivalent pipeline (paintLetterWord + shapeDescriptorOf + letterformMetrics, unmodified). The move for each direction is a genuine coordinate-ascent search over the five allowed genes (penWeight, widthAxis, xHeight, skeletonShear, skeletonExtend), maximizing cosine similarity against that measured target - not hand-assigned."
+}
