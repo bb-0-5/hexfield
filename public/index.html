@@ -31450,6 +31450,33 @@ function perturbParams(p, rng, amount = 0.16) {
   return out;
 }
 
+let definitionSimPerturbCount = 0;
+// Every sixth perturb, roughly the pace a manual/auto pass already advances
+// at, not a new cadence of its own.
+const DEFINITION_SIM_PERTURB_INTERVAL = 6;
+/* The relationship/divergence layer (definitionSim, fed only by
+ * runDefinitionSimCycle) used to live entirely inside the background
+ * headless-sim loop - the same loop that got turned off on mobile for the
+ * paint lag. That starved it there, not because it is hardcoded, but because
+ * its only data source went quiet. runDefinitionSimCycle does no canvas or
+ * pixel work at all - it is parameter-space math over the lexicon and stats
+ * over verdicts already recorded - so instead of restarting a background
+ * thread, it rides along on the visitor's own perturb cycle: no separate
+ * loop, no continuous cost, just an occasional measurement between passes
+ * that already happen. Left out entirely when the full headless sim is
+ * running (desktop) since that loop already feeds it faster than this would. */
+function maybeAdvanceDefinitionSimFromPerturb() {
+  if (headlessSim.running || !headlessCtx) return;
+  definitionSimPerturbCount++;
+  if (definitionSimPerturbCount % DEFINITION_SIM_PERTURB_INTERVAL !== 0) return;
+  const run = () => {
+    const definition = runDefinitionSimCycle(headlessCtx, headlessProbe.width, headlessProbe.height);
+    if (definition) renderHeadlessSim();
+  };
+  if (typeof requestIdleCallback === "function") requestIdleCallback(run, { timeout: 1500 });
+  else setTimeout(run, 0);
+}
+
 function perturb() {
   if (!current) return;
   if ($("overlay")?.classList.contains("on")) {
@@ -31482,6 +31509,7 @@ function perturb() {
   if (painterStatus) painterStatus.textContent = "perturb heard · same seed · testing bounded brush continuations";
   updateLoopStatus();
   generate();
+  maybeAdvanceDefinitionSimFromPerturb();
 }
 
 let autonomousGeneration = 0;
