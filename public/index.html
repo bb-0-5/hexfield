@@ -35183,6 +35183,16 @@ function mountShopEssentials() {
   const exportBtn = document.getElementById("export");
   if (exportBtn) host.appendChild(exportBtn);
 
+  /* MUSEUM survived in the source but not on screen for the same reason
+   * EXPORT didn't: it sat in the blacked-out sidebar row alongside TASTE
+   * CYCLE, and display:none on that row hides everything inside it
+   * regardless of the button's own styling. Relocated rather than left
+   * hidden - the panel it opens (and the pipeline behind it) works now,
+   * so the one control that reaches it should too. TASTE CYCLE stays
+   * behind: the autonomous loop already runs it on its own clock. */
+  const museumBtn = document.getElementById("museumOpen");
+  if (museumBtn) host.appendChild(museumBtn);
+
   take("neuralStatus");
 
   if (!HEXFIELD_LOCAL_ONLY) {
