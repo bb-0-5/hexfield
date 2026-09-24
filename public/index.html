@@ -23414,7 +23414,16 @@ function traceVisiblePaintVerdict(result) {
   renderHeadlessSim();
 }
 
-const seedText = () => $("seed").value.trim() || "hexfield";
+/* No fallback to the studio's own name any more. That was fine for exactly
+ * one render - the comment by the #seed textarea still describes the
+ * cold-start override a few hundred lines down, which clears the box and
+ * forces textmode to "seed" so arrival never spells anything out - but every
+ * later autonomous reseed left the box empty too and this filled it back in,
+ * so an unattended tab spent its whole life painting "hexfield" in whatever
+ * lettering mode it landed on. The lettering paths already guard on
+ * `!seedText()` and skip drawing letters when it's empty; #liveLogo keeps its
+ * own independent "HEXFIELD" fallback for the actual logo and is unaffected. */
+const seedText = () => $("seed").value.trim();
 const textMode = () => $("textmode").value;
 const fontMode = () => $("fontmode").value;
 
@@ -35144,7 +35153,7 @@ $("export").addEventListener("click", async () => {
 
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    const slug = seedText().toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40);
+    const slug = (seedText() || "field").toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40);
     a.href = url;
     a.download = `hexfield-${slug}-${current.params.field}.png`;
     a.click();
