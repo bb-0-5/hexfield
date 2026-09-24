@@ -30419,41 +30419,62 @@ function deviceEffort(requested) {
 const LIVE_SEED_CANDIDATE_CAP = 6;
 
 function generate() {
-  const requestToken = ++renderRequestToken;
-  nextFieldVariation(pendingAction || "generate");
-  const text = seedText();
-  const explicitSeedChange = pendingAction === "change-seed";
-  const requestedEffort = Math.min(LIVE_SEED_CANDIDATE_CAP,
-    deviceEffort(Number($("effort").value)));
-  /* One held control, two locally-visible paint continuations, and one
-   * specialist critique/simulation experiment. They are field-rendered and
-   * measured in parallel, so this increases useful directions rather than
-   * returning to a serial parade of nearly identical whole canvases. */
-  /* A person pressing CHANGE SEED is asking for a visible new direction, not
-   * the full unattended frontier. The old six-candidate pass made the click
-   * look dead because the button stayed on the old canvas until every worker,
-   * pixel measurement and first paint had settled. Keep the normal search
-   * unchanged, but make this explicit action resolve on a bounded two-candidate
-   * search; novelty and non-redundancy still rank both candidates. */
-  const effort = explicitSeedChange
-    ? Math.max(1, Math.min(2, requestedEffort))
-    : loopMode === "refine" ? (isMobileBrowser() ? MOBILE_REFINE_CANDIDATE_COUNT : REFINE_CANDIDATE_COUNT) : requestedEffort;
-  const overlay = $("overlay");
-  const autonomousStatus = document.getElementById("autonomousStatus");
-  const reseed = document.getElementById("reseedNow");
-  /* Left enabled on purpose. A disabled button never fires its handler, so
-   * disabling it here is what made the request unrecoverable rather than merely
-   * delayed - there was no click to queue. The button now stays live for the
-   * whole pass and marks itself as waiting; changeSeed decides whether to act
-   * now or hold, which is a decision about intent rather than about the DOM. */
-  if (reseed) reseed.dataset.waiting = "1";
-  if (autonomousStatus) autonomousStatus.textContent = explicitSeedChange
-    ? `finding a fresh seed · ${effort} fast candidates`
-    : loopMode === "refine"
-    ? `testing ${Math.max(0, effort - 1)} local continuations on the held seed`
-    : `choosing a new field · ${effort} live candidates`;
-  overlay.classList.add("on");
-  overlay.textContent = "searching…";
+  /* Everything from here through the search kickoff used to run unguarded:
+   * a manual CHANGE SEED press calls straight into changeSeed() -> generate()
+   * with no try/catch anywhere above it (scheduleAutoAdvance's own try/catch
+   * only protects the autonomous path, not a direct click), so a throw
+   * anywhere in this setup - before the async body's own try/catch even
+   * starts - left the button on "SEEDING..." forever with nothing left to
+   * recover it. That is exactly the shape of "seeds a style, then doesn't
+   * continue": randomizeAutonomousControls() just picked a new field/style
+   * for this pass, and if reading it back out anywhere here ever throws,
+   * this was the gap that turned it into a dead page instead of a retried
+   * one. */
+  let requestToken;
+  try {
+    requestToken = ++renderRequestToken;
+    nextFieldVariation(pendingAction || "generate");
+    var text = seedText();
+    const explicitSeedChange = pendingAction === "change-seed";
+    const requestedEffort = Math.min(LIVE_SEED_CANDIDATE_CAP,
+      deviceEffort(Number($("effort").value)));
+    /* One held control, two locally-visible paint continuations, and one
+     * specialist critique/simulation experiment. They are field-rendered and
+     * measured in parallel, so this increases useful directions rather than
+     * returning to a serial parade of nearly identical whole canvases. */
+    /* A person pressing CHANGE SEED is asking for a visible new direction, not
+     * the full unattended frontier. The old six-candidate pass made the click
+     * look dead because the button stayed on the old canvas until every worker,
+     * pixel measurement and first paint had settled. Keep the normal search
+     * unchanged, but make this explicit action resolve on a bounded two-candidate
+     * search; novelty and non-redundancy still rank both candidates. */
+    var effort = explicitSeedChange
+      ? Math.max(1, Math.min(2, requestedEffort))
+      : loopMode === "refine" ? (isMobileBrowser() ? MOBILE_REFINE_CANDIDATE_COUNT : REFINE_CANDIDATE_COUNT) : requestedEffort;
+    var overlay = $("overlay");
+    const autonomousStatus = document.getElementById("autonomousStatus");
+    var reseed = document.getElementById("reseedNow");
+    /* Left enabled on purpose. A disabled button never fires its handler, so
+     * disabling it here is what made the request unrecoverable rather than merely
+     * delayed - there was no click to queue. The button now stays live for the
+     * whole pass and marks itself as waiting; changeSeed decides whether to act
+     * now or hold, which is a decision about intent rather than about the DOM. */
+    if (reseed) reseed.dataset.waiting = "1";
+    if (autonomousStatus) autonomousStatus.textContent = explicitSeedChange
+      ? `finding a fresh seed · ${effort} fast candidates`
+      : loopMode === "refine"
+      ? `testing ${Math.max(0, effort - 1)} local continuations on the held seed`
+      : `choosing a new field · ${effort} live candidates`;
+    overlay.classList.add("on");
+    overlay.textContent = "searching…";
+  } catch (error) {
+    console.warn("generate() setup failed; recovering instead of leaving the button stuck", error);
+    const reseed = document.getElementById("reseedNow");
+    if (reseed) { delete reseed.dataset.waiting; reseed.textContent = "CHANGE SEED"; }
+    $("overlay")?.classList.remove("on");
+    scheduleAutoAdvance();
+    return;
+  }
 
   // Generate now exposes the actual candidate simulation. It measures each
   // candidate, yields the trace to the UI, then ranks without auto-voting.
