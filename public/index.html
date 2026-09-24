@@ -3,6 +3,14 @@
 <!-- hexfield build 163 (2026-09-11) -->
 <html lang="en">
 <head>
+<script>
+  // Set before the stylesheet below paints anything, so .is-mobile is already
+  // on <html> for the very first frame. The blur it gates costs the GPU
+  // compositor a re-blur of whatever is changing underneath it every frame -
+  // real work a JS main-thread profile never shows - and on a phone-width
+  // viewport the panel this sits on sits directly over the live canvas.
+  if (/Mobi|Android/i.test(navigator.userAgent)) document.documentElement.classList.add("is-mobile");
+</script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hexfield — Pride Studio</title>
@@ -379,6 +387,18 @@
     display: block !important; padding: 7px; border: 1px solid rgba(110,231,255,.32);
     border-radius: 7px; background: rgba(8,8,12,.62); box-shadow: 0 8px 28px #0009;
     backdrop-filter: blur(10px);
+  }
+  /* On a phone-width viewport this fixed panel sits directly over the live
+   * canvas (confirmed: both share the same x/y range at 390px wide), so the
+   * blur above is re-composited by the GPU on every canvas repaint - a
+   * continuous cost no JS-side fix touches. The isometric ground the blur
+   * was written to show through is gone (see isoField = null above), so
+   * there is nothing left to justify paying for it on a phone; a solid panel
+   * reads fine there. */
+  html.is-mobile aside > div#shopEssentials,
+  html.is-mobile #autonomousControls {
+    backdrop-filter: none;
+    background: rgba(8,8,12,.94);
   }
   #liveLogo {
     width: 100%; height: auto; aspect-ratio: 4.4 / 1; border: 0;
