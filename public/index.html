@@ -25957,11 +25957,15 @@ function wordReferenceOrder(pool, params, focusWord = null) {
     // shortlist. Both remain present, so an association helps but cannot turn
     // into a hard-coded visual synonym.
     const denominator = Math.max(1, lexical.length - 1);
+    // variety carries weight taken from similarity/index rather than added on
+    // top, so a word with no history yet (similarity and variety both neutral)
+    // ranks the same as before this existed; only a word that already has a
+    // most-recent claim to repeat is affected.
     visual.scored.sort((left, right) => {
-      const leftScore = (1 - left.index / denominator) * 0.30 + left.similarity * 0.30 +
-        left.distinctiveness * 0.32 + left.complexity * 0.08;
-      const rightScore = (1 - right.index / denominator) * 0.30 + right.similarity * 0.30 +
-        right.distinctiveness * 0.32 + right.complexity * 0.08;
+      const leftScore = (1 - left.index / denominator) * 0.22 + left.similarity * 0.22 +
+        left.distinctiveness * 0.28 + left.variety * 0.20 + left.complexity * 0.08;
+      const rightScore = (1 - right.index / denominator) * 0.22 + right.similarity * 0.22 +
+        right.distinctiveness * 0.28 + right.variety * 0.20 + right.complexity * 0.08;
       return rightScore - leftScore || left.index - right.index;
     });
     return {
@@ -31391,6 +31395,7 @@ let liveLogoTimer = null;
 const manuallyHeldControls = new Set();
 const autonomousControlIds = [
   "style", "textmode", "fontmode", "fontFamily", "fontAssembly", "palette", "format", "effort",
+  "wordPrompt",
 ];
 function watchManualControl(id) {
   const control = document.getElementById(id);
@@ -31415,6 +31420,40 @@ function setAutonomousControl(id, value) {
   if (control) control.value = String(value);
 }
 
+/* A handful of candidate sentences per call, in the same three shapes a
+ * person's own typing produces - a bare noun, an adjective plus a noun, or a
+ * real subject/verb/object sentence - drawn from hexfield-words.js's own
+ * LEXICON rather than a second word list kept here that could drift out of
+ * sync with it. chooseFresh then rotates through these the same way it
+ * already rotates style/palette/font, instead of the box only ever holding
+ * whatever a person once typed into it. */
+function autonomousWordPhraseCandidates() {
+  const lexicon = wordEngine()?.LEXICON;
+  if (!lexicon) return [""];
+  const byPos = { n: [], a: [], v: [] };
+  for (const [word, entry] of Object.entries(lexicon)) {
+    const pos = Array.isArray(entry) ? entry[0] : null;
+    if (byPos[pos]) byPos[pos].push(word);
+  }
+  if (!byPos.n.length) return [""];
+  const pick = (list) => list[Math.floor(autonomousRandom() * list.length)];
+  const phrases = new Set();
+  for (let i = 0; i < 6; i++) {
+    const roll = autonomousRandom();
+    if (roll < 0.3 || !byPos.v.length) {
+      phrases.add(pick(byPos.n));
+    } else if (roll < 0.6 && byPos.a.length) {
+      phrases.add(`${pick(byPos.a)} ${pick(byPos.n)}`);
+    } else {
+      const subject = pick(byPos.n);
+      let object = pick(byPos.n);
+      for (let tries = 0; tries < 4 && object === subject && byPos.n.length > 1; tries++) object = pick(byPos.n);
+      phrases.add(`${subject} ${pick(byPos.v)} ${object}`);
+    }
+  }
+  return [...phrases];
+}
+
 function randomizeAutonomousControls() {
   autonomousGeneration++;
   const heldValues = Object.fromEntries([...manuallyHeldControls]
@@ -31427,6 +31466,18 @@ function randomizeAutonomousControls() {
     autonomousChoices[key] = value;
     return value;
   };
+  /* Nobody types into #wordPrompt any more, so it sat empty on every
+   * autonomous pass - which meant currentWordComposition() was always null
+   * and the entire word engine (applyWordRecipe's palette/density/artifact
+   * deltas, and everything downstream that depends on __hexfieldWords: the
+   * visual-symbol claim ledger, blob-base word context, the relationship map)
+   * never ran outside a human's own typing. That is a wide silent gap, not a
+   * subtle one, and it reads as "always the same sort of thing" because a
+   * whole documented axis of variation was simply never exercised. Draw the
+   * studio's own short subject/verb/object sentence from the same LEXICON the
+   * word engine already ships, the way style/palette/font already draw their
+   * own choice below. */
+  setAutonomousControl("wordPrompt", chooseFresh("wordPhrase", autonomousWordPhraseCandidates()));
   /* Full-size fractals remain an explicit study, never a surprise live pass.
    * Sampling FIELDS here bypassed LIVE_AUTO_FIELDS and let CHANGE SEED choose
    * the one synchronous renderer deliberately excluded above, pinning the tab
@@ -34243,6 +34294,22 @@ function visualSymbolsForWords(named) {
   return symbols;
 }
 
+/* Just the newest kept claim per word, not the whole history. words[word] is
+ * unshifted on every remembered vote (rememberVisualSymbolsFromVote), so
+ * entries[0] is always the most recent. Kept apart from
+ * visualSymbolsForWords() because a repeat check and a family-resemblance
+ * check are different questions: the first is "did we just do this", the
+ * second is "does this still belong to this word at all". */
+function visualSymbolMostRecentForWords(named) {
+  const words = [named?.subject, named?.object].map(visualSymbolWord).filter(Boolean);
+  const symbols = [];
+  for (const word of words) {
+    const newest = (visualSymbolMemory.words[word] || [])[0];
+    if (newest) symbols.push(...(newest.symbols || []));
+  }
+  return symbols;
+}
+
 function visualSymbolAssociations(named) {
   const queryWords = [named?.subject, named?.object].map(visualSymbolWord).filter(Boolean);
   const query = visualSymbolsForWords(named);
@@ -34281,6 +34348,7 @@ function visualSymbolStatus(composed) {
 function visualSymbolReferenceOrder(pool, named) {
   const queryWords = [named?.subject, named?.object].map(visualSymbolWord).filter(Boolean);
   const remembered = visualSymbolsForWords(named);
+  const mostRecent = visualSymbolMostRecentForWords(named);
   const ownershipSeparation = typeof VISUAL_SYMBOL_OWNERSHIP_SEPARATION === "number"
     ? VISUAL_SYMBOL_OWNERSHIP_SEPARATION : 0.24;
   if (!Array.isArray(pool) || !pool.length || !queryWords.length) return { scored: null, strength: 0 };
@@ -34289,10 +34357,21 @@ function visualSymbolReferenceOrder(pool, named) {
     const ownSimilarity = profile && remembered.length
       ? remembered.reduce((best, symbol) => Math.max(best, 1 - visualSymbolDistance(profile, symbol)), 0)
       : 0;
+    /* Family resemblance says a candidate still reads as this word; on its
+     * own that converges every future pick onto whichever one candidate is
+     * closest to the whole remembered set, which is one frozen look, not a
+     * word with several kept representations. variety is the same
+     * similarity measured against only the single newest claim, then
+     * inverted, so a candidate that would just repeat what this word looked
+     * like last time is marked down even while a candidate that still
+     * resembles its OLDER claims is not. */
+    const variety = profile && mostRecent.length
+      ? clamp01(1 - mostRecent.reduce((best, symbol) => Math.max(best, 1 - visualSymbolDistance(profile, symbol)), 0))
+      : 1;
     const collision = profile ? visualSymbolCollision(profile, queryWords) : null;
     const distinctiveness = collision ? clamp01(collision.distance / ownershipSeparation) : 1;
     return {
-      shape, index, profile, similarity: ownSimilarity, distinctiveness,
+      shape, index, profile, similarity: ownSimilarity, distinctiveness, variety,
       complexity: visualSymbolComplexity(profile),
       /* Exact IDs and near visual claims are both unavailable. A foreign
        * look-alike must perturb to a new harvested shape, not keep entering the
@@ -35484,6 +35563,9 @@ window.__hexfield = {
   recordCurrentDwellPreference, getDwellTaste: () => dwellTaste,
   renderLiveTasteLogo, scheduleLiveTasteLogo, captureLiveLogoLoop, pingPongSequence, bestLogoMimeType,
   randomizeAutonomousControls, autonomousReseed, changeSeed,
+  autonomousWordPhraseCandidates, wordEngine, currentWordComposition,
+  visualSymbolReferenceOrder, visualSymbolsForWords, visualSymbolMostRecentForWords,
+  wordReferenceOrder, rememberVisualSymbolsFromVote, getVisualSymbolMemory: () => visualSymbolMemory,
   getPainterState: () => ({ pass: painterPass, loopMode, stagnation, bestRun,
     painting: !!($("overlay")?.classList.contains("on") || activePaintAnimation),
     strategy: refinementStrategyLabel(), queuedPerturb: pendingPerturb,
