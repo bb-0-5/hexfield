@@ -34137,7 +34137,19 @@ function blobBaseProfile(shape, role = "subject") {
   const descriptor = shape?.descriptor || shape?.__hexfieldDescriptor || canvas?.__hexfieldDescriptor ||
     (canvas?.width ? shapeDescriptorOf(canvas) : null);
   if (!descriptor) return null;
+  /* shapeDescriptorOf and analyzeHarvestShapeEdges are real pixel scans, and
+   * the same handful of harvested shapes get profiled over and over: once
+   * per word role every render, forever, for as long as this shape stays in
+   * the pool. Measured at ~7-10ms per shape at a 32-shape pool - the exact
+   * lag this activated once the word engine started actually running every
+   * render instead of being dormant. The read side of this cache already
+   * existed (the checks just above); nothing ever wrote to it. Written onto
+   * the canvas rather than the wrapper object because a shape gets rewrapped
+   * with a fresh {id, canvas} object in more than one place, but the same
+   * underlying canvas is the thing that is actually expensive to re-read. */
+  if (canvas && !canvas.__hexfieldDescriptor) canvas.__hexfieldDescriptor = descriptor;
   const edge = shape?.edge || canvas?.__hexfieldEdge || (canvas?.width ? analyzeHarvestShapeEdges(canvas) : {});
+  if (canvas && !canvas.__hexfieldEdge) canvas.__hexfieldEdge = edge;
   const topology = descriptor.topology || emptyShapeTopology();
   const directions = descriptor.directions || {};
   const colour = blobColourFeatures(blobInkOf(shape));
@@ -34311,8 +34323,13 @@ function visualSymbolProfile(shape, role = "subject") {
   const canvas = shape?.canvas || shape;
   const descriptor = shape?.descriptor || shape?.__hexfieldDescriptor || canvas?.__hexfieldDescriptor ||
     (canvas?.width ? shapeDescriptorOf(canvas) : null);
-  const edge = shape?.edge || canvas?.__hexfieldEdge || (canvas?.width ? analyzeHarvestShapeEdges(canvas) : null) || {};
   if (!descriptor) return null;
+  // See the matching cache-write in blobBaseProfile: same descriptor/edge,
+  // same expensive pixel scan, so the call below hits this immediately
+  // instead of redoing it a second time in the same profile.
+  if (canvas && !canvas.__hexfieldDescriptor) canvas.__hexfieldDescriptor = descriptor;
+  const edge = shape?.edge || canvas?.__hexfieldEdge || (canvas?.width ? analyzeHarvestShapeEdges(canvas) : null) || {};
+  if (canvas && !canvas.__hexfieldEdge) canvas.__hexfieldEdge = edge;
   const directions = descriptor.directions || {};
   const aspect = Math.atan(Math.max(0.05, Number(descriptor.aspect) || 1)) / (Math.PI / 2);
   const blobBase = typeof blobBaseProfile === "function" ? blobBaseProfile(shape, role) : null;
