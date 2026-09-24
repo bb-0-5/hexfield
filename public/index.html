@@ -35376,7 +35376,20 @@ async function connectAndStart() {
   // back to the fields this session has seen, which is still correct, just less
   // informed.
   fetchKnownFieldHashes();
-  startHeadlessSim();
+  /* The background sim is a continuous, unbounded second workload sharing
+   * this one main thread with everything the visitor is actually looking
+   * at - by the loop's own design ("its cost is felt directly as input
+   * lag", a few hundred lines down). Its duty-cycle throttling was tuned
+   * and measured against a desktop CPU. A phone has no such headroom: it
+   * throttles its own clock speed under sustained load, so the same fixed
+   * background cost gets slower to run the longer the tab stays open,
+   * which is exactly "gets worse over time" rather than a one-off cost.
+   * The studio still runs, still paints, still perturbs without this - it
+   * is background learning for the shared museum/taste model, not
+   * anything the visible canvas needs - so it is worth simply not starting
+   * on a phone rather than tuning its budget yet again. */
+  const isMobileBrowser = /Mobi|Android/i.test(navigator.userAgent);
+  if (!isMobileBrowser) startHeadlessSim();
   /* The manual controls that used to trigger a taste cycle (and, with it, the
    * museum submission) are permanently hidden by the autonomous blackout
    * above - "the autonomous presentation is the point" - so nothing has
