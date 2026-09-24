@@ -23629,6 +23629,14 @@ const REFINEMENT_SHARED_GENES = [
 // every nearby experiment through the nine-way object-stroke contract left no
 // route for a modest but measurably better brush mark to reach the canvas.
 const REFINE_CANDIDATE_COUNT = 5;
+// This runs unattended, forever, on every device - it is the dominant
+// continuous main-thread cost, not the paint-reveal animation that got fixed
+// earlier. deviceEffort()/deviceEffortCap() never applied to it at all
+// (loopMode === "refine" used REFINE_CANDIDATE_COUNT directly, skipping the
+// cap entirely), so a phone rendered five full candidate composites on every
+// autonomous pass exactly like a desktop. Two keeps the loop honestly
+// searching - a control and one continuation - at under half the cost.
+const MOBILE_REFINE_CANDIDATE_COUNT = 2;
 
 /* Build 64 integration seam: a proposed stroke is data, not permission.
  *
@@ -31246,7 +31254,7 @@ function generate() {
    * search; novelty and non-redundancy still rank both candidates. */
   const effort = explicitSeedChange
     ? Math.max(1, Math.min(2, requestedEffort))
-    : loopMode === "refine" ? REFINE_CANDIDATE_COUNT : requestedEffort;
+    : loopMode === "refine" ? (isMobileBrowser() ? MOBILE_REFINE_CANDIDATE_COUNT : REFINE_CANDIDATE_COUNT) : requestedEffort;
   const overlay = $("overlay");
   const autonomousStatus = document.getElementById("autonomousStatus");
   const reseed = document.getElementById("reseedNow");
@@ -32608,7 +32616,10 @@ function scheduleAutoAdvance() {
       console.warn("auto-advance step failed; retrying", error);
       scheduleAutoAdvance();
     }
-  }, REFINE_ADVANCE_MS * paintingCadenceScale());
+    // Fewer candidates per pass (MOBILE_REFINE_CANDIDATE_COUNT) cuts the cost
+    // of each pass; wider spacing on top of that keeps the passes themselves
+    // from landing back-to-back and leaves room for a tap/scroll in between.
+  }, REFINE_ADVANCE_MS * paintingCadenceScale() * (isMobileBrowser() ? 2.2 : 1));
 }
 
 function applyFormat() {
