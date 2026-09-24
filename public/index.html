@@ -53,6 +53,24 @@
     --ink: #e8e8f0;
     --dim: #8a8a9c;
     --accent: #6ee7ff;
+    /* Horizontal space #stage/main must leave clear for the floating aside
+     * (position: fixed, left: 10px, width: 270px - see its own rule) so the
+     * canvas is sized and centered in the space actually free of it, rather
+     * than computed from the raw viewport and then covered by aside on top.
+     * Zero on a phone: the max-width: 820px block puts aside back into
+     * normal flow above the canvas instead of floating over it, so there is
+     * nothing to reserve room for. */
+    --stage-x-reserve: 0px;
+    /* Same reasoning, vertically: #headlessSim floats bottom-right
+     * (position: fixed, bottom: 12px, width: 232px, height driven by its
+     * own content) and otherwise overlaps the canvas's bottom-right corner
+     * the same way aside overlapped its left side. Zero on a phone: put
+     * back into normal flow below the canvas instead (see its own mobile
+     * rule), nothing to reserve there either. */
+    --stage-y-reserve: 0px;
+  }
+  @media (min-width: 821px) {
+    :root { --stage-x-reserve: 300px; --stage-y-reserve: 430px; }
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
@@ -486,26 +504,45 @@
   #painterStatus, #robBossMood { min-height: 22px; max-height: 22px; }
   main {
     width: 100vw; height: 100dvh; padding: 8px; overflow: hidden;
+    /* Longhand after the shorthand above, so it wins for these sides: the
+     * left/bottom insets need the floating panels' reserves added, the
+     * other two don't. */
+    padding-left: calc(8px + var(--stage-x-reserve));
+    padding-bottom: calc(8px + var(--stage-y-reserve));
   }
   #stage {
-     /* Size from the viewport, never from the sidebar or its changing text. */
-     flex: 0 0 auto; width: min(calc(100vw - 16px), calc((100dvh - 16px) * 22 / 5));
-     height: min(calc(100dvh - 16px), calc((100vw - 16px) * 5 / 22));
-     max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px);
+     /* Size from the viewport (minus whatever aside/#headlessSim's floating
+      * footprints reserve), never from the sidebar's changing text. */
+     flex: 0 0 auto;
+     width: min(calc(100vw - 16px - var(--stage-x-reserve)), calc((100dvh - 16px - var(--stage-y-reserve)) * 22 / 5));
+     height: min(calc(100dvh - 16px - var(--stage-y-reserve)), calc((100vw - 16px - var(--stage-x-reserve)) * 5 / 22));
+     max-width: calc(100vw - 16px - var(--stage-x-reserve)); max-height: calc(100dvh - 16px - var(--stage-y-reserve));
      aspect-ratio: 22 / 5; contain: layout paint;
    }
   #cands, #overlay { display: none !important; }
   @media (max-aspect-ratio: 22 / 5) {
-    #stage { width: calc(100vw - 16px); height: auto; }
+    #stage { width: calc(100vw - 16px - var(--stage-x-reserve)); height: auto; }
   }
   @media (max-width: 820px) {
-    body { height: 100dvh; min-height: 100dvh; overflow: hidden; }
-    main { height: 100dvh; padding: 8px; overflow: hidden; }
-    aside { left: 8px; top: 8px; width: min(226px, calc(100vw - 16px)); }
+    /* The floating aside (position: fixed, full viewport height) was measured
+     * overlapping the canvas directly: at 390px wide, aside spans x 8-234 and
+     * the whole viewport height, while #stage/#view - centered across the
+     * full width because nothing reserved room for aside once it left grid
+     * flow - sits at x 8-382, squarely underneath it. A phone doesn't have
+     * the spare width a floating corner widget assumes; putting aside back
+     * into normal flow above the canvas, with the page scrolling to reach
+     * both, is what actually avoids the overlap rather than just narrowing
+     * it. */
+    body { height: auto; min-height: 100dvh; overflow: visible; }
+    main { height: auto; padding: 8px; overflow: visible; }
+    aside {
+      position: static; width: 100%; max-height: none; overflow: visible;
+      margin: 0 0 10px;
+    }
     #autonomousControls { padding: 5px; }
     .autonomous-action { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
     #reseedNow { font-size: 10px; padding: 6px; }
-    #headlessSim { opacity: .82; }
+    #headlessSim { position: static; width: 100%; opacity: .82; margin-top: 10px; }
   }
 
   /* Pride is a quiet prismatic signal around the working painter, never baked
@@ -581,6 +618,20 @@
   @media (max-width: 680px) {
     #prideBanner { left: auto; right: 8px; transform: none; max-width: calc(100vw - 16px); font-size: 10px; }
     #prideBanner small { display: none; }
+  }
+  /* Fixed, always pinned top-right regardless of scroll - it stayed over
+   * whatever page content had scrolled underneath it (measured overlapping
+   * the BUY THIS PRINT button once aside/canvas/headlessSim were put back
+   * into normal flow below). In flow instead, at the top of the page where
+   * it already sits first in DOM order. This has to come after the base
+   * #prideBanner rule above (same specificity, later wins) rather than in
+   * that other mobile block above main/aside, or the unconditional
+   * position: fixed there would keep winning regardless of this override. */
+  @media (max-width: 820px) {
+    #prideBanner {
+      position: static; left: auto; right: auto; top: auto; transform: none;
+      max-width: none; margin: 0 0 10px; display: block;
+    }
   }
   /* Controls are working tools, not a costume. */
   button {
