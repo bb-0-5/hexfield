@@ -1178,6 +1178,33 @@ function sampleHalftone(rng) {
   };
 }
 
+/* Munker-White colour assimilation.
+ *
+ * A grid of dots painted in one single, uniform colour, laid over a fine
+ * grating of two other palette hues. The illusion is not something drawn -
+ * it is a real property of human colour vision at this spatial scale: dots
+ * sitting on the lighter/warmer stripe are perceived as shifted toward it,
+ * and the same fill colour sitting on the other stripe reads shifted the
+ * other way, so two rows of physically identical dots look like different
+ * colours. This only works fine - a handful of pixels of stripe, small
+ * dots - coarse versions of the same layout produce ordinary simultaneous
+ * contrast instead, which is a different and much more familiar illusion.
+ *
+ * Counts, not pixel pitches, for the reason sampleHalftone's `across` is:
+ * this recipe draws at a small probe size and at full print resolution, and
+ * a fixed pixel width would be invisible at one end and a solid block at
+ * the other. */
+function sampleMunkerIllusion(rng) {
+  if (rng() > 0.22) return null;
+  return {
+    orientation: rng() < 0.5 ? "horizontal" : "vertical",
+    stripesAcross: Math.round(40 + rng() * 90),
+    dotsAlong: Math.round(10 + rng() * 14),
+    dotRadiusScale: 0.3 + rng() * 0.22,
+    strength: 0.5 + rng() * 0.35,
+  };
+}
+
 function sampleParams(field, rng) {
   const params = sampleFieldParams(field, rng);
   params.artifact = sampleArtifactProgram(field, rng, params.palette);
@@ -1192,6 +1219,8 @@ function sampleParams(field, rng) {
   else params.palette.sat = Math.max(36, Math.min(100, params.palette.sat * saturation));
   const halftone = sampleHalftone(rng);
   if (halftone) params.halftone = halftone;
+  const munkerIllusion = sampleMunkerIllusion(rng);
+  if (munkerIllusion) params.munkerIllusion = munkerIllusion;
   return params;
 }
 
@@ -10161,6 +10190,50 @@ function screenIfPrinted(ctx, W, H, p) {
   if (p?.halftone && p.halftone.mode !== "off") applyHalftone(ctx, W, H, p.halftone);
 }
 
+/* Munker-White colour assimilation, drawn.
+ *
+ * One uniform dot colour laid over a two-hue grating. After the palette
+ * budget has already reduced the picture, so the grating's two hues and the
+ * dot fill are exactly the flat colours the eye is meant to compare - a
+ * later quantization pass could otherwise nudge the dot rows toward
+ * slightly different final colours and turn a perceptual illusion into a
+ * literal one. Dot centres are pinned to stripe centres (offset by half a
+ * stripe width) so a dot never straddles two bands, which is what would
+ * wash the effect out. */
+function drawMunkerIllusion(ctx, W, H, cfg, palette) {
+  if (!cfg) return;
+  const horizontal = cfg.orientation !== "vertical";
+  const across = horizontal ? H : W;
+  const along = horizontal ? W : H;
+  const stripeWidth = Math.max(1, across / (Number(cfg.stripesAcross) || 60));
+  const dotStep = Math.max(1, along / (Number(cfg.dotsAlong) || 16));
+  const radius = Math.max(1.1, dotStep * (Number(cfg.dotRadiusScale) || 0.4) * 0.5);
+  const strength = Math.max(0.35, Math.min(0.95, Number(cfg.strength) || 0.7));
+
+  const stripeA = paletteRoleHsl(palette, "dominant", strength, 0);
+  const stripeB = paletteRoleHsl(palette, "counterpoint", strength, 0);
+  const dotColour = paletteRoleHsl(palette, "accent", 1, 0);
+
+  ctx.save();
+  for (let pos = 0, band = 0; pos < across; pos += stripeWidth, band++) {
+    ctx.fillStyle = band % 2 === 0 ? stripeA : stripeB;
+    if (horizontal) ctx.fillRect(0, pos, W, Math.ceil(stripeWidth));
+    else ctx.fillRect(pos, 0, Math.ceil(stripeWidth), H);
+  }
+
+  ctx.fillStyle = dotColour;
+  for (let acrossPos = stripeWidth / 2; acrossPos < across; acrossPos += stripeWidth) {
+    for (let alongPos = dotStep / 2; alongPos < along; alongPos += dotStep) {
+      const x = horizontal ? alongPos : acrossPos;
+      const y = horizontal ? acrossPos : alongPos;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
 /* A finish is an experiment made after the image has established its own
  * masses. It is never a compulsory outline. The candidate recipe chooses
  * whether to leave edges alone, echo them continuously, or let a broken line
@@ -10450,6 +10523,10 @@ function renderComposite(ctx, W, H, p, rng, text, mode) {
    * material pass, preserving its focus without letting anti-aliasing explode
    * the scene's selected budget. */
   applyPaletteBudget(ctx, W, H, p);
+  /* After the palette budget, not before: the illusion depends on the dot
+   * rows being one exact, unquantized fill colour, which a reduction pass
+   * run afterward could otherwise split apart. */
+  drawMunkerIllusion(ctx, W, H, p.munkerIllusion, p.palette);
   if (typeof vctx !== "undefined" && ctx === vctx) snapshotSourceField(ctx, W, H);
 }
 
@@ -35283,7 +35360,7 @@ window.__hexfield = {
   // that does not go through renderComposite and so does not screen itself.
   // Anything driving it has to apply the treatment afterwards or it will list a
   // glossy picture for a design the studio chose in newsprint.
-  renderFractalChunked, screenIfPrinted, mulberry32,
+  renderFractalChunked, screenIfPrinted, drawMunkerIllusion, sampleMunkerIllusion, mulberry32,
   paletteBudgetOf, applyPaletteBudget, paletteDisciplineOf, paletteFeaturePatch,
   getArchive: () => archive, mergeArchive, getCurrent: () => current,
   /* The control is intentionally exposed for the local browser probe and for
