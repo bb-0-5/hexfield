@@ -18565,8 +18565,18 @@ function brushForCanvas(grammar, field = null) {
      * ones it measured - is a change in how the studio paints that nothing
      * would have said out loud. */
     const learned = learnedBrushGenes(want, field);
+    /* direction: 1 here, not brush.direction. learnedBrushGenes's own filter
+     * (raises !== measure.wantUp -> skip) already only keeps genes whose
+     * measured effect achieves the want when the gene itself is INCREASED -
+     * that is what "raises === wantUp" means. So increase is the only
+     * direction a measured gene can be reached for; the authored direction
+     * was asserted for the authored genes; it is not evidence about a
+     * different, measured set. For "resolved" specifically that authored
+     * direction is -1, so applying it to measured genes was inverting every
+     * negative-space pass that had real evidence to work with, pushing
+     * clutter up while believing it was resolving it. */
     return learned
-      ? { want, ...brush, genes: learned, genesFrom: "measured" }
+      ? { want, ...brush, genes: learned, genesFrom: "measured", direction: 1 }
       : { want, ...brush, genesFrom: "authored" };
   }
   return null;
