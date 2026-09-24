@@ -7200,6 +7200,18 @@ function paintHarvestArtifacts(ctx, W, H, p) {
             epoch: Number(sceneMaterialEpoch) + index })
       : heldMaterial || sampledMaterial);
     const chosenShapeId = String(over.materialId || sceneMaterialIdentity(chosenShape));
+    /* The same reference shape read back for this word again, close enough
+     * to count as a repeat of its most recent kept claim rather than a fresh
+     * pick (visualSymbolReferenceOrder's variety near 0). Push it toward the
+     * far plane instead of discarding the pick outright: subjectDefinition-
+     * AtDepth and subjectDepthPigment already turn a higher z into a
+     * smaller, softer, less saturated mark - the same shape read as further
+     * away is a real visual difference for a word that already has a kept
+     * identity, without demanding an actually different shape every time it
+     * appears. A word with no reference pool (varietyById absent) or a
+     * genuinely fresh pick (variety near 1) leaves z untouched. */
+    const wordRepeatVariety = objectReference?.varietyById?.get(chosenShapeId);
+    const wordRepeatDepthPush = Number.isFinite(wordRepeatVariety) ? (1 - wordRepeatVariety) * 0.4 : 0;
     if (sceneDiversity && chosenShape && !requestedMaterial) {
       const chosenId = sceneMaterialIdentity(chosenShape);
       usedSceneMaterialIds.add(chosenId);
@@ -7235,7 +7247,7 @@ function paintHarvestArtifacts(ctx, W, H, p) {
       id: over.id || (typeof sceneObjectId === "function"
         ? sceneObjectId(seed, index, chosenShapeId)
         : "o" + index + "-" + (seed >>> 0).toString(36) + "-" + chosenShapeId.slice(0, 8)),
-      z: clamp01(z + (Number(over.depth) || 0)),
+      z: clamp01(z + wordRepeatDepthPush + (Number(over.depth) || 0)),
       index,
       // Offsets are fractions of the canvas, so a nudge means the same thing on
       // a 288px probe and a 4500px print.
@@ -25972,6 +25984,12 @@ function wordReferenceOrder(pool, params, focusWord = null) {
       pool: visual.scored.map((entry) => entry.shape),
       strength: clamp01(selection.strength * 0.62 + visual.strength * 0.38),
       ownershipReady: visual.ownershipReady !== false,
+      /* Keyed the same way paintHarvestArtifacts already identifies a chosen
+       * shape (sceneMaterialIdentity), so it can look up how fresh THIS
+       * particular candidate is relative to the word's most recent claim
+       * without re-deriving visual symbol profiles a second time. */
+      varietyById: new Map(visual.scored.map((entry) =>
+        [sceneMaterialIdentity(entry.shape), entry.variety])),
     };
   } catch (error) {
     console.warn("word reference selection skipped", error);
