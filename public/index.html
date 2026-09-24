@@ -32456,37 +32456,54 @@ function scheduleAutoAdvance() {
   if (autoAdvanceTimer) clearTimeout(autoAdvanceTimer);
   autoAdvanceTimer = setTimeout(() => {
     autoAdvanceTimer = null;
-    /* A render owns the overlay.  Do not keep re-arming a timer while the
-     * search/paint is active: its finally block schedules exactly one next
-     * advance after the pass settles.  This prevents auto-perturb from
-     * competing with CHANGE SEED and makes a queued seed deterministic. */
-    /* Background tabs are throttled by the browser, but they must not be
-     * deliberately paused here. This is an unattended painter: when the tab
-     * wakes it should still have a next move ready. */
-    if ($("overlay")?.classList.contains("on")) { scheduleAutoAdvance(); return; }
-    const interacted = lastInteractionAt > lastReseedAt;
-    unattendedAdvances = interacted ? 0 : unattendedAdvances + 1;
-    if (unattendedAdvances > AUTO_ADVANCE_MAX_UNATTENDED) {
-      // Still exploring, no longer claiming a person approved of it.
-      dwellClock = { result: null, key: null, activeMs: 0, activeSince: null };
+    /* generate() protects its own async work with a try/catch/finally that
+     * re-arms this timer no matter what happens inside a pass - but this
+     * callback's own SYNCHRONOUS body (everything before perturb()/
+     * autonomousReseed() actually hands off to that protected code) had no
+     * such guard. Anything throwing here - filePaintingMaturity, a scene/
+     * word computation reached from perturb()'s own setup before its async
+     * generate() call, anything - killed this timer permanently with nothing
+     * left to ever call scheduleAutoAdvance() again: the exact shape of "the
+     * canvas shows a seed and then never changes again," silently, with no
+     * error a viewer could report beyond that. Caught and re-armed here so a
+     * bug in one pass costs one skipped advance rather than the rest of the
+     * session. */
+    try {
+      /* A render owns the overlay.  Do not keep re-arming a timer while the
+       * search/paint is active: its finally block schedules exactly one next
+       * advance after the pass settles.  This prevents auto-perturb from
+       * competing with CHANGE SEED and makes a queued seed deterministic. */
+      /* Background tabs are throttled by the browser, but they must not be
+       * deliberately paused here. This is an unattended painter: when the tab
+       * wakes it should still have a next move ready. */
+      if ($("overlay")?.classList.contains("on")) { scheduleAutoAdvance(); return; }
+      const interacted = lastInteractionAt > lastReseedAt;
+      unattendedAdvances = interacted ? 0 : unattendedAdvances + 1;
+      if (unattendedAdvances > AUTO_ADVANCE_MAX_UNATTENDED) {
+        // Still exploring, no longer claiming a person approved of it.
+        dwellClock = { result: null, key: null, activeMs: 0, activeSince: null };
+      }
+      /* A mature canvas that stops finding gains stays exactly that: mature. The
+       * lineage invariant a few hundred lines up is explicit that changeSeed
+       * only ever runs when a person asks for a new painting, so a bounded
+       * local climb running dry is not licence to replace the canvas out from
+       * under whoever is watching it - it is licence to keep holding the seed
+       * and let the widened, slower search in refinementAmount/paintingCadenceScale
+       * keep trying. */
+      if (current && AUTO_PERTURB_ENABLED) {
+        lastReseedAt = Date.now();
+        lastReseedWasAuto = true;
+        filePaintingMaturity();
+        perturb();
+      } else {
+        autonomousReseed(true);
+      }
+      /* Mature work still keeps moving. The cadence scale widens the pause after
+       * filing, but it never turns the loop into a terminal state. */
+    } catch (error) {
+      console.warn("auto-advance step failed; retrying", error);
+      scheduleAutoAdvance();
     }
-    /* A mature canvas that stops finding gains stays exactly that: mature. The
-     * lineage invariant a few hundred lines up is explicit that changeSeed
-     * only ever runs when a person asks for a new painting, so a bounded
-     * local climb running dry is not licence to replace the canvas out from
-     * under whoever is watching it - it is licence to keep holding the seed
-     * and let the widened, slower search in refinementAmount/paintingCadenceScale
-     * keep trying. */
-    if (current && AUTO_PERTURB_ENABLED) {
-      lastReseedAt = Date.now();
-      lastReseedWasAuto = true;
-      filePaintingMaturity();
-      perturb();
-    } else {
-      autonomousReseed(true);
-    }
-    /* Mature work still keeps moving. The cadence scale widens the pause after
-     * filing, but it never turns the loop into a terminal state. */
   }, REFINE_ADVANCE_MS * paintingCadenceScale());
 }
 
