@@ -27662,7 +27662,14 @@ function runTasteCycle(source = "visitor") {
         overlay.textContent = "syncing human direction…";
         await getHumanDirectionSnapshot();
       }
-      let population = makeTastePopulation(populationSize, 0);
+      /* Seeded from what's already on screen when there is one, so a taste
+       * cycle explores mutations of the current composition instead of
+       * abandoning it for an unrelated random field. makeTastePopulation
+       * only takes that branch when it receives a parent; passing none (the
+       * prior behaviour) is what made every cycle look like a hard reseed. */
+      let population = current?.params
+        ? makeTastePopulation(populationSize, 0, [{ params: current.params }])
+        : makeTastePopulation(populationSize, 0);
       let ranked = [];
       const seen = archive.slice();
       for (let generation = 0; generation < generations; generation++) {
