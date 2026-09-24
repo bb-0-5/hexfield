@@ -21055,20 +21055,23 @@ function renderMuseumEditions(editions = museumEditions) {
   }
 }
 
+/* hexfield_museum_editions/hexfield_museum_edition_entries do not exist in
+ * the schema - confirmed directly against the database, not a network
+ * hiccup: list_migrations shows create_hexfield_museum_schema (2026-09-23)
+ * built only hexfield_museum_candidates/hexfield_museum_state, the simpler
+ * live-top10 model the curator worker actually serves. Editions - a weekly
+ * curated history on top of that - was written here but its backend was
+ * never built, so this was two guaranteed-404 requests and a scary "could
+ * not read the editions" every time anyone opened the museum, forever,
+ * regardless of connectivity. Told the truth instead: there is no history
+ * yet, not "something is currently broken". Kept ready for whenever
+ * editions actually gets a schema - restoring the fetch is one call, not a
+ * rewrite. */
 async function loadMuseumEditions() {
   const host = $("museumEditions");
   if (!host) return;
-  if (museumEditions) { renderMuseumEditions(museumEditions); return; }
-  host.innerHTML = '<div class="museum-lock">reading the editions…</div>';
-  try {
-    renderMuseumEditions(await fetchMuseumEditions());
-  } catch (error) {
-    /* Said out loud rather than left blank. An empty gallery and an unreachable
-     * one look identical, and this studio has spent enough of its life on
-     * things that failed quietly. */
-    host.innerHTML = '<div class="museum-lock">could not read the editions: '
-      + String(error.message || error).slice(0, 120) + "</div>";
-  }
+  host.innerHTML = '<div class="museum-lock">no weekly editions yet - the archive keeps a live top ten '
+    + "(below) but hasn't started cutting a curated history.</div>";
 }
 
 function renderMuseum(payload = museumSnapshot) {

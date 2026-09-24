@@ -282,12 +282,26 @@
   .museum-head h2 { margin: 0; font-size: 14px; letter-spacing: .11em; color: var(--accent); }
   .museum-head button { width: auto; min-width: 64px; padding: 4px 7px; font-size: 10px; }
   #museumState { margin: 8px 0; color: var(--dim); font-size: 11px; }
-  #museumGrid { flex: 1; min-height: 0; overflow: auto; display: grid;
+  /* min-height: 0 (flexbox's own shrink-to-zero default) let this collapse
+   * to literally 0px whenever its siblings' combined natural height exceeded
+   * the panel - which #lexiconState guaranteed, having no bound of its own
+   * and growing forever as the word engine learns more. Measured directly:
+   * 10 real museum-card children, each a real ~167x216px, inside a grid
+   * container computed at 0px tall. A floor big enough for one row keeps
+   * the point of a "museum" panel visible regardless of what else is on
+   * the page; flex: 1 still lets it grow into any extra room there is. */
+  #museumGrid { flex: 1; min-height: 240px; overflow: auto; display: grid;
     grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 9px; align-content: start; }
   .museum-card { padding: 6px; border: 1px solid var(--line); background: #101018; border-radius: 4px; }
   .museum-card canvas { width: 100%; height: auto; aspect-ratio: 5 / 6; border-color: #303042; }
   .museum-card-meta { display: flex; justify-content: space-between; gap: 6px; margin-top: 4px; color: var(--dim); font-size: 9px; }
   #museumEditions { flex: 0 0 auto; max-height: 62vh; overflow: auto; margin-bottom: 8px; }
+  /* Unbounded before this: a plain div with no rule of its own, so it took
+   * its full natural height (and grows over time as the word engine learns
+   * more words and relations) while #museumGrid - the only sibling flexbox
+   * was allowed to shrink - absorbed the deficit down to 0px. Same bounded-
+   * scroll treatment as #museumEditions above, for the same reason. */
+  #lexiconState { flex: 0 0 auto; max-height: 34vh; overflow: auto; margin-top: 8px; }
   .edition { border: 1px solid var(--line); border-radius: 4px; margin-bottom: 10px; padding: 8px; background: #0d0d14; }
   .edition-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
   .edition-head h3 { margin: 0; font-size: 12px; letter-spacing: 0.06em; }
