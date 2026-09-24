@@ -29902,8 +29902,52 @@ function animatePaintCommit(result, beforePixels, afterPixels, width, height, re
   result.paintProgress = marks.length ? 0 : 1;
 
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = (committed) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(watchdog);
+      resolve(committed);
+    };
+    /* requestAnimationFrame does not fire in a backgrounded/hidden tab - the
+     * browser suspends it outright, not merely slows it - and this is the
+     * only paint-reveal promise in the file without a ceiling on it. A tab
+     * backgrounded mid-reveal (trivially easy on mobile: switch app, lock
+     * screen, answer a call) left this Promise permanently unsettled, which
+     * left beginRenderDwell/scheduleAutoAdvance permanently unreached - the
+     * whole autonomous loop waiting on one paint that would never finish.
+     * Nothing throws, so nothing ever reached the console: exactly a canvas
+     * that "just sits there" with no error to report. Same defensive shape
+     * askFieldWorker already uses for the same reason ("a worker that never
+     * answers must not hang the search behind it") - if the reveal has not
+     * finished on its own well past any plausible frame-timing explanation,
+     * apply every remaining mark in one pass and settle anyway. */
+    const watchdog = setTimeout(() => {
+      if (settled) return;
+      const remaining = marks.slice(cursor);
+      if (remaining.length) paintPigmentMarks(vctx, remaining, beforePixels, afterPixels, width, height, result, cursor);
+      cursor = marks.length;
+      result.paintProgress = 1;
+      markPaintTimingCompleted(result);
+      if (animation === activePaintAnimation) activePaintAnimation = 0;
+      if (Number.isFinite(Number(result.paintCanvasCoverage))) {
+        view.dataset.paintCoverage = clamp01(Number(result.paintCanvasCoverage)).toFixed(3);
+        view.dataset.paintCanvasFilled = result.paintCanvasFilled ? "1" : "0";
+      }
+      if (result.paintCanvasFilled) paintVisibleGlyphOverlay(result);
+      paintRevision++;
+      view.dataset.paintRevision = String(paintRevision);
+      updatePainterStatus(result);
+      console.warn("paint reveal watchdog fired; finished the pass in one pass instead of hanging");
+      finish(true);
+      // perFrame is chosen so the reveal takes about wantedFrames frames
+      // regardless of how many marks there are - marks.length says nothing
+      // about wall-clock time and scaling the ceiling by it directly turned
+      // a ~1.5s reveal's watchdog into one that could take minutes to fire.
+    }, Math.max(4000, wantedFrames * PAINT_FRAME_MS * 6 + 4000));
     const frame = () => {
-      if (animation !== activePaintAnimation) { resolve(false); return; }
+      if (settled) return;
+      if (animation !== activePaintAnimation) { finish(false); return; }
       if (cursor >= marks.length) {
         result.paintProgress = 1;
         markPaintTimingCompleted(result);
@@ -29921,7 +29965,7 @@ function animatePaintCommit(result, beforePixels, afterPixels, width, height, re
         paintRevision++;
         view.dataset.paintRevision = String(paintRevision);
         updatePainterStatus(result);
-        resolve(true);
+        finish(true);
         return;
       }
       const batch = marks.slice(cursor, cursor + perFrame);
