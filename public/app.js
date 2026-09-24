@@ -30606,6 +30606,11 @@ function generate() {
         perturb();
         return;
       }
+      if (pendingAutonomousReseed) {
+        pendingAutonomousReseed = false;
+        autonomousReseed(true);
+        return;
+      }
       /* A held stroke is still a completed pass. beginRenderDwell only resets
        * the timer after a committed image, so the first rejection used to
        * consume the one outstanding timeout and stop the painter forever.
@@ -31090,8 +31095,18 @@ function scheduleLiveTasteLogo(reason = "taste") {
   }, 90);
 }
 
+let pendingAutonomousReseed = false;
+
 function autonomousReseed(auto = false) {
-  if ($("overlay")?.classList.contains("on")) return;
+  /* Unlike perturb()'s matching guard, this one used to just return - no
+   * pending flag, nothing to make generate()'s finally retry it. Only
+   * reachable while nothing has rendered yet (this is scheduleAutoAdvance's
+   * !current branch, and every other caller of generate() takes over from
+   * there), so another pass finishing was normally what re-armed the loop
+   * anyway - but "normally" is exactly the gap: queue it the same way
+   * perturb() does, so a collision here can't silently drop a cold start's
+   * only path to a first render. */
+  if ($("overlay")?.classList.contains("on")) { pendingAutonomousReseed = true; return; }
   lastReseedAt = Date.now();
   lastReseedWasAuto = auto === true;
   // Timers are not people and must not manufacture approval. A real click or
