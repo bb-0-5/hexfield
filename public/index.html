@@ -32392,17 +32392,14 @@ function scheduleAutoAdvance() {
       // Still exploring, no longer claiming a person approved of it.
       dwellClock = { result: null, key: null, activeMs: 0, activeSince: null };
     }
-    /* A mature canvas has had both narrow and wide local detail searches. If
-       neither changes it after a further bounded run, archive the learned
-       material and start a genuinely new composition instead of pretending a
-       repeated perturbation is progress. */
-    const exhausted = paintingMatured && stagnation >= LIFECYCLE_MATURE_PASSES * 2;
-    if (exhausted) {
-      // A bounded local climb has tried fine, structural, and wide moves. Keep
-      // its archive, then begin a genuinely new composition rather than
-      // re-asking the already rejected neighbourhood forever.
-      changeSeed(true);
-    } else if (current && AUTO_PERTURB_ENABLED) {
+    /* A mature canvas that stops finding gains stays exactly that: mature. The
+     * lineage invariant a few hundred lines up is explicit that changeSeed
+     * only ever runs when a person asks for a new painting, so a bounded
+     * local climb running dry is not licence to replace the canvas out from
+     * under whoever is watching it - it is licence to keep holding the seed
+     * and let the widened, slower search in refinementAmount/paintingCadenceScale
+     * keep trying. */
+    if (current && AUTO_PERTURB_ENABLED) {
       lastReseedAt = Date.now();
       lastReseedWasAuto = true;
       filePaintingMaturity();
@@ -35529,5 +35526,5 @@ window.__hexfield = {
  * though the canvas itself was visibly alive. */
 connectAndStart();
 </script>
-<script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a38eb6302d8869ab',t:'MTc4OTA0NjIzMw=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a3fd458a5e23057d',t:'MTc5MDIwNTUzOA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</body>
 </html>
