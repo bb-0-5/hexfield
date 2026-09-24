@@ -31234,10 +31234,19 @@ function isMobileBrowser() {
 function deviceEffortCap() {
   const memory = Number(navigator.deviceMemory) || 0;
   const cores = Number(navigator.hardwareConcurrency) || 0;
-  if (memory && memory <= 2) return 6;
-  if (memory && memory <= 4) return 12;
-  if (cores && cores <= 4) return 16;
-  return Infinity;
+  let cap = Infinity;
+  if (memory && memory <= 2) cap = Math.min(cap, 6);
+  if (memory && memory <= 4) cap = Math.min(cap, 12);
+  if (cores && cores <= 4) cap = Math.min(cap, 16);
+  // The memory/core heuristics above report generously on a modern phone (an
+  // 8GB/8-core Android reads exactly like a desktop) and miss it entirely,
+  // which is the gap isMobileBrowser() exists to close - see the comment
+  // above it. This is what actually reaches the cold-start render: it was
+  // written but never wired in here, so the very first search on every
+  // mobile visit ran the full, unthrottled candidate count regardless of
+  // every later mobile fix to the refine loop.
+  if (isMobileBrowser()) cap = Math.min(cap, 3);
+  return cap;
 }
 
 function deviceEffort(requested) {
