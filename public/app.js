@@ -14391,11 +14391,27 @@ function writeTasteSession(session) {
 }
 
 async function authRequest(path, body) {
-  const res = await fetch(SUPABASE_URL + path, {
-    method: "POST",
-    headers: { apikey: SUPABASE_KEY, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  /* ensureTasteSession() gates nearly every Supabase call in this file, and
+   * every one of those calls sits on some pass's critical path - a reseed's
+   * chooseFreshCandidate/claimCreation loop among them. This fetch carried no
+   * timeout at all: a slow or momentarily unreachable network on a real phone
+   * (a flaky signal, a wifi/cellular handoff) left it pending indefinitely,
+   * which stalled that pass forever with nothing to throw and nothing for any
+   * try/catch around it to catch - the same unbounded-await shape documented
+   * at claimCreation, but upstream of it and reached far more often. */
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 7000);
+  let res;
+  try {
+    res = await fetch(SUPABASE_URL + path, {
+      method: "POST",
+      headers: { apikey: SUPABASE_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!res.ok) throw new Error("auth HTTP " + res.status);
   return res.json();
 }
@@ -14424,10 +14440,28 @@ async function acquireTasteSession() {
   return session;
 }
 
+// A failed acquisition already costs up to two bounded fetches in a row
+// (refresh, then signup) before it rejects. Concurrent callers within one
+// pass already share a single in-flight attempt via tasteSessionPending, but
+// nothing stopped the *next* pass, or the next candidate after this one
+// resolved, from immediately paying that cost again - so a real stretch of
+// bad mobile network turned one slow connection into a chain of ~14s retries,
+// one per candidate, that could run for the length of the outage. Cooling
+// down after a failure means one bad patch costs one real attempt; every
+// caller in between fails fast off the network entirely.
+let tasteSessionFailedUntil = 0;
+const TASTE_SESSION_RETRY_COOLDOWN_MS = 15000;
+
 function ensureTasteSession() {
   if (tasteSession?.access_token && tasteSession?.user?.id) return Promise.resolve(tasteSession);
+  if (Date.now() < tasteSessionFailedUntil) return Promise.reject(new Error("taste session on cooldown"));
   if (!tasteSessionPending) {
-    tasteSessionPending = acquireTasteSession().finally(() => { tasteSessionPending = null; });
+    tasteSessionPending = acquireTasteSession()
+      .catch((error) => {
+        tasteSessionFailedUntil = Date.now() + TASTE_SESSION_RETRY_COOLDOWN_MS;
+        throw error;
+      })
+      .finally(() => { tasteSessionPending = null; });
   }
   return tasteSessionPending;
 }
