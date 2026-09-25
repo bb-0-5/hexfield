@@ -21207,15 +21207,39 @@ function setMuseumStatus(payload) {
 async function refreshMuseumStatus() {
   try {
     const session = await ensureTasteSession();
-    const response = await fetch(CURATOR_URL + "/v1/top10", {
-      headers: {
-        Authorization: "Bearer " + session.access_token,
-      },
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    let response;
+    try {
+      response = await fetch(CURATOR_URL + "/v1/top10", {
+        headers: { Authorization: "Bearer " + session.access_token },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
     if (!response.ok) throw new Error("museum HTTP " + response.status);
     setMuseumStatus(await response.json());
   } catch {
     museumStatus = "museum: local cycle still counts when connection returns";
+    /* A failed session/fetch here left renderMuseum() never called - the
+     * panel just kept whatever static placeholder was in the page markup
+     * ("museum is waiting for the first learning cycle"), which is actively
+     * wrong once the archive has real unlocked data: a person opening the
+     * museum on a bad connection saw an empty grid and a message implying
+     * nothing exists yet, with no indication anything had failed or any way
+     * to know a reopen might work. Only speak up when there is nothing
+     * already on screen - a snapshot from an earlier successful open should
+     * stay visible rather than being replaced by an error about this one. */
+    if (!museumSnapshot) {
+      const state = $("museumState");
+      const grid = $("museumGrid");
+      if (state) state.textContent = "couldn't reach the archive - check your connection and reopen the museum";
+      if (grid && !grid.children.length) {
+        grid.innerHTML = '<div class="museum-lock">the live top ten needs a connection to load - '
+          + "reopen the museum once you're back online.</div>";
+      }
+    }
   }
   renderTasteLab(current);
 }
