@@ -30394,8 +30394,29 @@ function showCandidates(candidates) {
 /* Reused wherever "is this a phone" needs a real answer rather than a
  * memory/core-count guess. deviceEffortCap() below misses a phone with
  * decent specs entirely, which is exactly the device this exists for. */
+/* The UA check alone missed exactly the phone it exists for: Chrome's
+ * "Request Desktop Site" (on by default for this page on at least one real
+ * device this session traced) rewrites the user-agent string to drop
+ * "Mobile"/"Android" entirely, which made every mobile-gated fix this
+ * session - effort, resolution, the background sim, all of it - silently
+ * never engage. Confirmed directly: a phone screenshot showed the desktop
+ * candidate count ("testing 4 local continuations", not mobile's "testing
+ * 1") and the desktop floating-panel layout shrunk to fit a phone screen.
+ * window.screen and touch capability come from the OS, not the page, so
+ * "Request Desktop Site" cannot spoof them - a coarse-pointer device whose
+ * real physical screen is phone-sized is a phone regardless of what UA
+ * string Chrome decided to send for this one site. */
 function isMobileBrowser() {
-  return /Mobi|Android/i.test(navigator.userAgent);
+  if (/Mobi|Android/i.test(navigator.userAgent)) return true;
+  try {
+    const coarsePointer = matchMedia("(pointer: coarse)").matches;
+    const smallPhysicalScreen = Math.min(
+      Number(window.screen?.width) || Infinity,
+      Number(window.screen?.height) || Infinity) <= 500;
+    return coarsePointer && smallPhysicalScreen;
+  } catch {
+    return false;
+  }
 }
 
 function deviceEffortCap() {

@@ -9,7 +9,20 @@
   // compositor a re-blur of whatever is changing underneath it every frame -
   // real work a JS main-thread profile never shows - and on a phone-width
   // viewport the panel this sits on sits directly over the live canvas.
-  if (/Mobi|Android/i.test(navigator.userAgent)) document.documentElement.classList.add("is-mobile");
+  //
+  // UA sniffing alone misses a phone with "Request Desktop Site" on, which
+  // rewrites the user-agent to drop "Mobile"/"Android" - confirmed on a real
+  // device this session, where it also silently disabled every mobile
+  // performance fix gated the same way (see isMobileBrowser() in app.js,
+  // which this mirrors). window.screen and pointer type come from the OS,
+  // not the page, so they survive that spoofing.
+  const isMobileDevice = /Mobi|Android/i.test(navigator.userAgent) || (() => {
+    try {
+      return matchMedia("(pointer: coarse)").matches &&
+        Math.min(Number(window.screen?.width) || Infinity, Number(window.screen?.height) || Infinity) <= 500;
+    } catch { return false; }
+  })();
+  if (isMobileDevice) document.documentElement.classList.add("is-mobile");
 </script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
