@@ -31816,6 +31816,29 @@ function updateLoopStatus() {
  * as fast as the current device can finish without overlapping generations. */
 const REFINE_ADVANCE_MS = 900;
 const AUTO_PERTURB_ENABLED = true;
+/* A flat cadence multiplier assumes a phone's CPU runs at one constant
+ * speed - true of a CPU-throttling *simulation*, not of a real phone under
+ * sustained continuous load. Measured against a real device this session:
+ * even a 20x DevTools throttle (its own maximum) produced an ~18s pass,
+ * nowhere near the ~80s/pass the device actually showed after several
+ * minutes of continuous autonomous painting - a gap a fixed slowdown factor
+ * cannot produce, but progressive thermal throttling can, and it gets worse
+ * the longer the load stays continuous. Bursting a handful of passes and
+ * then resting for a real stretch - the same pattern mobile games use to
+ * manage their thermal budget - gives the SoC an actual cooldown window
+ * instead of near-continuous elevated load. */
+let mobileAutoAdvanceBurstCount = 0;
+const MOBILE_AUTO_ADVANCE_BURST_SIZE = 6;
+const MOBILE_AUTO_ADVANCE_REST_MS = 20000;
+
+function nextAutoAdvanceDelay() {
+  const base = REFINE_ADVANCE_MS * paintingCadenceScale() * (isMobileBrowser() ? 2.2 : 1);
+  if (!isMobileBrowser()) return base;
+  mobileAutoAdvanceBurstCount++;
+  if (mobileAutoAdvanceBurstCount < MOBILE_AUTO_ADVANCE_BURST_SIZE) return base;
+  mobileAutoAdvanceBurstCount = 0;
+  return base + MOBILE_AUTO_ADVANCE_REST_MS;
+}
 
 function scheduleAutoAdvance() {
   if (autoAdvanceTimer) clearTimeout(autoAdvanceTimer);
@@ -31871,8 +31894,10 @@ function scheduleAutoAdvance() {
     }
     // Fewer candidates per pass (MOBILE_REFINE_CANDIDATE_COUNT) cuts the cost
     // of each pass; wider spacing on top of that keeps the passes themselves
-    // from landing back-to-back and leaves room for a tap/scroll in between.
-  }, REFINE_ADVANCE_MS * paintingCadenceScale() * (isMobileBrowser() ? 2.2 : 1));
+    // from landing back-to-back and leaves room for a tap/scroll in between;
+    // the periodic longer rest (nextAutoAdvanceDelay) is what actually lets a
+    // phone's CPU cool down instead of staying under near-continuous load.
+  }, nextAutoAdvanceDelay());
 }
 
 function applyFormat() {
