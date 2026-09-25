@@ -22820,8 +22820,19 @@ const MOBILE_REFINE_CANDIDATE_COUNT = 2;
  *
  * The contract's own overall-merit threshold, reused deliberately: an unnamed
  * move is held to the same standard of improvement as a named stroke, it just
- * answers in the only terms it has. */
-const REFINE_MERIT_MARGIN = 0.006;
+ * answers in the only terms it has.
+ *
+ * Lower on mobile, deliberately loosened rather than left at the desktop
+ * standard. Holding the same seed until something measurably better comes
+ * along is the intended design ("an indefinitely refining canvas is heat
+ * with no output... the answer is not to stop, it is to stop hurrying" -
+ * see paintingLifeVerdict above), not a bug - but that design was tuned
+ * against a desktop's pass rate. Mobile passes are now deliberately rarer
+ * (the thermal burst/rest cadence), so the same acceptance bar means far
+ * longer real-world stretches with no visible change than it was tuned
+ * for. Easier to clear compensates for fewer chances to clear it, without
+ * touching desktop's tuning at all. */
+const REFINE_MERIT_MARGIN = isMobileBrowser() ? 0.002 : 0.006;
 const STROKE_CONTRACT_VERSION = 1;
 const STROKE_TARGET_METRICS = Object.freeze([
   "subject", "clutter", "deadSpace", "depth", "colour", "lettering", "nonRedundancy", "meaning",
