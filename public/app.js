@@ -22895,6 +22895,18 @@ let visualProcessMemory = (() => {
 let lastVisualProcessBelief = Object.values(visualProcessMemory.beliefs || {})
   .sort((left, right) => Number(right.updatedAt || 0) - Number(left.updatedAt || 0))[0] || null;
 let pendingDislikeCounterfactual = null;
+/* A rejection-escape stroke ("rejected-topology" / blob-rebirth) is judged by
+ * a strict contract nothing else on the easel answers to: it must prove a
+ * categorical family change AND a minimum genome distance from the exact
+ * genome that got rejected. The ordinary stagnation safety net a few hundred
+ * lines down (the one that lets an unnamed brush move win after a few stalled
+ * passes) never applies here - it only ever looks at brush moves, and this is
+ * always a named stroke. Left uncapped, a rejection whose replacement keeps
+ * landing in the same family (or just short of the distance floor) held the
+ * canvas hostage with no way out: every later pass re-proposed the same kind
+ * of escape and failed the same gate, forever. Matches the cap already
+ * documented above for pendingSimulationArtifact. */
+const DISLIKE_COUNTERFACTUAL_MAX_ATTEMPTS = 8;
 let pendingSimulationArtifact = simulationArtifactLineage[0]?.recipe ? {
   sourceArtifactId: simulationArtifactLineage[0].id,
   sourceCycle: simulationArtifactLineage[0].cycle,
@@ -31746,8 +31758,14 @@ function recordAutonomousProgress(result) {
     // A refinement that failed the sure/better contract is not allowed to win
     // through another aggregate score. It remains evidence, not a new parent.
     stagnation++;
-    if (pendingDislikeCounterfactual) pendingDislikeCounterfactual.attempts++;
-    else if (pendingSimulationArtifact) {
+    if (pendingDislikeCounterfactual) {
+      pendingDislikeCounterfactual.attempts++;
+      // Give up proving separation past the cap and let ordinary refinement
+      // resume - it has its own stagnation escape hatch for brush moves.
+      if (pendingDislikeCounterfactual.attempts >= DISLIKE_COUNTERFACTUAL_MAX_ATTEMPTS) {
+        pendingDislikeCounterfactual = null;
+      }
+    } else if (pendingSimulationArtifact) {
       /* Attempts used to clamp at eight. targetedSimulationRefinement indexes
        * its gene walk by this number, so from that point onward it rendered the
        * exact same eighth proposal forever unless the background loop happened
