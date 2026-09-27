@@ -14,6 +14,36 @@ window.addEventListener("unhandledrejection", (event) => {
   window.__hexfieldBoot.errors = window.__hexfieldBoot.errors.slice(-8);
 });
 
+/* Every one of this file's ~40 localStorage stores is capped in count
+ * (an explicit _CAP constant per store), but count is not size: a store of
+ * richly-nested per-entry objects (learned styles, harvested materials,
+ * simulation artifacts) can sit at its own cap and still be a meaningfully
+ * large JSON string, and there is no cap at all on the CUMULATIVE total
+ * across every store a long session keeps writing to. Measured directly -
+ * a single ~2MB store of nested objects added roughly ten seconds to page
+ * load under a throttled mobile CPU, entirely inside the synchronous
+ * JSON.parse/reconstruct work every one of those ~40 initializers does
+ * before the page can do anything else. That is "reload freezes," not a
+ * metaphor for it. A read this cheap (string length, not a parse) run once,
+ * before any of those ~40 initializers get a chance to touch a store this
+ * large, is worth doing even though it can only ever help: normal stores
+ * are nowhere near this ceiling and are untouched. */
+try {
+  const HEXFIELD_STORAGE_KEY_PREFIX = "hexfield.";
+  const HEXFIELD_STORE_SAFETY_BYTES = 400000;
+  const oversized = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith(HEXFIELD_STORAGE_KEY_PREFIX)) continue;
+    const value = localStorage.getItem(key);
+    if (value && value.length > HEXFIELD_STORE_SAFETY_BYTES) oversized.push(key);
+  }
+  for (const key of oversized) localStorage.removeItem(key);
+  if (oversized.length) {
+    console.warn("cleared oversized localStorage entries before boot", oversized);
+  }
+} catch {}
+
 /* Remove the old localhost offline cache. It could keep serving an earlier
  * index.html after the bridge was removed, which is precisely the two-build
  * confusion this page is meant to avoid. */
