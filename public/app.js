@@ -5,14 +5,35 @@
  * diagnostic surface so the browser check and the on-page status can name the
  * fault instead of mistaking a dead canvas for a slow render. */
 window.__hexfieldBoot = { errors: [], startedAt: Date.now() };
+/* The comment above always described this as "a tiny public diagnostic
+ * surface", but nothing ever actually rendered it anywhere a viewer could
+ * see it - it only ever lived in window.__hexfieldBoot, reachable from a
+ * devtools console a phone does not have. Every "still doesn't work" this
+ * session had to be chased blind, one hypothesis at a time, with no way to
+ * ask the page itself what actually happened. Wire it to something visible:
+ * whatever this array holds gets shown, plainly, right under the build
+ * number, so the next report can start from a real error instead of a guess. */
+function renderBootErrors() {
+  const host = document.getElementById("bootErrors");
+  if (!host) return;
+  const errors = window.__hexfieldBoot?.errors || [];
+  if (!errors.length) { host.style.display = "none"; host.textContent = ""; return; }
+  host.style.display = "block";
+  host.textContent = errors.length + " page error" + (errors.length === 1 ? "" : "s") + ":\n" +
+    errors.slice(-3).join("\n---\n");
+}
 window.addEventListener("error", (event) => {
   window.__hexfieldBoot.errors.push(String(event?.error?.stack || event?.message || "page error").slice(0, 2000));
   window.__hexfieldBoot.errors = window.__hexfieldBoot.errors.slice(-8);
+  renderBootErrors();
 });
 window.addEventListener("unhandledrejection", (event) => {
   window.__hexfieldBoot.errors.push(String(event?.reason?.stack || event?.reason || "rejected promise").slice(0, 2000));
   window.__hexfieldBoot.errors = window.__hexfieldBoot.errors.slice(-8);
+  renderBootErrors();
 });
+document.addEventListener("DOMContentLoaded", renderBootErrors);
+renderBootErrors();
 
 /* Every one of this file's ~40 localStorage stores is capped in count
  * (an explicit _CAP constant per store), but count is not size: a store of
