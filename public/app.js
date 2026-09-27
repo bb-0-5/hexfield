@@ -29797,6 +29797,7 @@ function rejectPaintEvidence(result, reason) {
 }
 
 function updatePainterStatus(result) {
+  lastPassCompletedAt = Date.now();
   const label = document.getElementById("painterStatus");
   if (!label) return;
   const state = result?.params?.__hexfieldArtifactState;
@@ -31444,6 +31445,14 @@ let stagnation = 0;
 let controlDegenerateStreak = 0;
 const CONTROL_DEGENERATE_RESEED_LIMIT = 3;
 let loopMode = "explore";
+/* Every specific stall this session has turned out to have a findable cause
+ * (an unbounded fetch, a stuck rejection-escape stroke, a control below the
+ * composition floor) and each one is now fixed - but each was found only
+ * after a viewer reported "it just stopped" and a screenshot, one at a time.
+ * This is the backstop for the next one, whatever it turns out to be: a
+ * timestamp updated at the end of every real completed pass, and a watchdog
+ * a good deal below to notice when it stops moving. */
+let lastPassCompletedAt = Date.now();
 
 function snapshotRun(result) {
   if (!result?.params) return null;
@@ -34858,6 +34867,34 @@ async function connectAndStart() {
   const AUTONOMOUS_TASTE_CYCLE_MS = 6 * 60 * 1000;
   setTimeout(() => runTasteCycle("autonomous"), 30000);
   setInterval(() => runTasteCycle("autonomous"), AUTONOMOUS_TASTE_CYCLE_MS);
+
+  /* A general backstop, not a diagnosis. Every specific stall found this
+   * session had a real, fixable cause - but each was found only after a
+   * viewer watched a frozen canvas for minutes and sent a screenshot. No
+   * amount of individually-fixed causes proves there is no next one, so this
+   * one watches for the *symptom* directly: no pass has completed in a long
+   * time despite a painting being held. Generous enough that no legitimate
+   * state - a mature painting's slower cadence, an unusually heavy search -
+   * comes anywhere close to it; if it ever fires, something upstream is
+   * genuinely stuck. Recovery mirrors CHANGE SEED's own reset exactly, so a
+   * stale async chain that eventually does settle finds its token superseded
+   * instead of clobbering the fresh attempt this starts. */
+  const PAINTER_WATCHDOG_INTERVAL_MS = 15000;
+  const PAINTER_WATCHDOG_STALL_MS = 45000;
+  setInterval(() => {
+    if (!current || document.hidden) return;
+    if (Date.now() - lastPassCompletedAt < PAINTER_WATCHDOG_STALL_MS) return;
+    console.warn("painter watchdog: no completed pass in " +
+      Math.round((Date.now() - lastPassCompletedAt) / 1000) + "s; forcing recovery");
+    lastPassCompletedAt = Date.now();
+    controlDegenerateStreak = 0;
+    renderRequestToken++;
+    if (activePaintAnimation) activePaintAnimation++;
+    $("overlay")?.classList.remove("on");
+    const reseedBtn = $("reseedNow");
+    if (reseedBtn) { reseedBtn.dataset.waiting = ""; reseedBtn.textContent = "CHANGE SEED"; }
+    autonomousReseed(true);
+  }, PAINTER_WATCHDOG_INTERVAL_MS);
 }
 
 /* The autonomous studio blacks out the whole sidebar, which also took EXPORT
