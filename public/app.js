@@ -31,16 +31,40 @@ window.addEventListener("unhandledrejection", (event) => {
 try {
   const HEXFIELD_STORAGE_KEY_PREFIX = "hexfield.";
   const HEXFIELD_STORE_SAFETY_BYTES = 400000;
-  const oversized = [];
+  // A per-key ceiling alone missed the case that actually matters most: many
+  // stores that are each individually fine but never trimmed relative to
+  // each other, so the SUM across all ~40 keeps climbing for the life of a
+  // long session. Sort by size and drop the largest first until the total is
+  // back under budget, exactly like every one of this file's own per-store
+  // _CAP eviction policies already do to a single store's entry count.
+  const HEXFIELD_CUMULATIVE_SAFETY_BYTES = 2500000;
+  const entries = [];
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
     if (!key || !key.startsWith(HEXFIELD_STORAGE_KEY_PREFIX)) continue;
     const value = localStorage.getItem(key);
-    if (value && value.length > HEXFIELD_STORE_SAFETY_BYTES) oversized.push(key);
+    entries.push({ key, size: value ? value.length : 0 });
   }
-  for (const key of oversized) localStorage.removeItem(key);
-  if (oversized.length) {
-    console.warn("cleared oversized localStorage entries before boot", oversized);
+  const cleared = [];
+  for (const entry of entries) {
+    if (entry.size > HEXFIELD_STORE_SAFETY_BYTES) {
+      localStorage.removeItem(entry.key);
+      cleared.push(entry.key);
+      entry.size = 0;
+    }
+  }
+  let total = entries.reduce((sum, entry) => sum + entry.size, 0);
+  if (total > HEXFIELD_CUMULATIVE_SAFETY_BYTES) {
+    const bySize = entries.filter((entry) => entry.size > 0).sort((a, b) => b.size - a.size);
+    for (const entry of bySize) {
+      if (total <= HEXFIELD_CUMULATIVE_SAFETY_BYTES) break;
+      localStorage.removeItem(entry.key);
+      cleared.push(entry.key);
+      total -= entry.size;
+    }
+  }
+  if (cleared.length) {
+    console.warn("cleared oversized localStorage entries before boot", cleared);
   }
 } catch {}
 
@@ -64,8 +88,19 @@ async function refreshForNewHexfieldBuild() {
   const now = Date.now();
   if (buildCheckInFlight || now - lastBuildCheckAt < 30000) return false;
   buildCheckInFlight = true; lastBuildCheckAt = now;
+  /* This runs unprompted 12s after every load and again on every
+   * visibilitychange - unlike the rest of this file's network calls, nothing
+   * a person does ever waits on it, so its own hang was invisible right up
+   * until it wasn't: a bad connection left this fetch pending forever, which
+   * left buildCheckInFlight true forever, which silently disabled every
+   * later check for the life of the tab - and reload's own re-fetch of this
+   * same build.txt, moments after a background tab exactly like this one
+   * left the connection in whatever state it left it in, was exactly the
+   * shape of "the reload itself freezes" this session kept reporting. */
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
   try {
-    const response = await fetch(`/build.txt?check=${now}`, { cache: "no-store" });
+    const response = await fetch(`/build.txt?check=${now}`, { cache: "no-store", signal: controller.signal });
     const available = Number((await response.text()).trim()) || 0;
     window.__hexfieldBuild = { current: HEXFIELD_BUILD, available, checkedAt: now };
     if (available > HEXFIELD_BUILD) {
@@ -80,7 +115,7 @@ async function refreshForNewHexfieldBuild() {
       return true;
     }
   } catch {}
-  finally { buildCheckInFlight = false; }
+  finally { clearTimeout(timeout); buildCheckInFlight = false; }
   return false;
 }
 setTimeout(refreshForNewHexfieldBuild, 12000);
