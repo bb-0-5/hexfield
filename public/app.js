@@ -25724,6 +25724,20 @@ function rankTastePopulation(candidates) {
         (cand.rejectPatternPenalty || 0));
     }
     const anchor = candidates.find((cand) => cand.id === "c0");
+    /* c0 (the control) itself scoring below zero means the picture currently
+     * on the easel has fallen below the structural-composition floor - a
+     * different situation from "held because nothing beat a good painting".
+     * Every successor here is a local deposit on top of that same degenerate
+     * base, so it almost never regains enough contrast in one stroke to
+     * clear the floor either: control and every candidate lock at -1 pass
+     * after pass, and neither the ordinary better-gate nor the exploratory
+     * fallback a little further down (which still demands real identity/
+     * hierarchy evidence measured FROM that same broken base) can climb out
+     * of it. Tracked here so the autonomous scheduler can tell "still
+     * searching a fine painting" apart from "stuck on one that cannot be
+     * measured at all" and reseed instead of holding forever - this is
+     * exactly the "control -100% -> brush move -100% - held" trap. */
+    controlDegenerateStreak = anchor && anchor.score < 0 ? controlDegenerateStreak + 1 : 0;
     const variants = candidates.filter((cand) => cand !== anchor);
     /* Only a named stroke is judged as one.
      *
@@ -31422,6 +31436,13 @@ let bestRun = null;
 let lastHumanKeptRun = null;
 let lastHumanKeptCanvas = null;
 let stagnation = 0;
+// Consecutive refine passes where the held control itself scored below the
+// structural-composition floor (rankTastePopulation's "anchor.score < 0").
+// Unlike ordinary stagnation, more search time cannot fix this - the base
+// picture cannot be locally perturbed back above the floor - so past
+// CONTROL_DEGENERATE_RESEED_LIMIT the scheduler reseeds instead of holding.
+let controlDegenerateStreak = 0;
+const CONTROL_DEGENERATE_RESEED_LIMIT = 3;
 let loopMode = "explore";
 
 function snapshotRun(result) {
@@ -31965,7 +31986,14 @@ function scheduleAutoAdvance() {
        * under whoever is watching it - it is licence to keep holding the seed
        * and let the widened, slower search in refinementAmount/paintingCadenceScale
        * keep trying. */
-      if (current && AUTO_PERTURB_ENABLED) {
+      /* A held control stuck below the structural-composition floor cannot
+       * be fixed by another local perturbation - see controlDegenerateStreak
+       * above. Past the limit, treat it the same as running out of local
+       * search: reseed instead of holding on a picture nothing can measure. */
+      if (controlDegenerateStreak >= CONTROL_DEGENERATE_RESEED_LIMIT) {
+        controlDegenerateStreak = 0;
+        autonomousReseed(true);
+      } else if (current && AUTO_PERTURB_ENABLED) {
         lastReseedAt = Date.now();
         lastReseedWasAuto = true;
         filePaintingMaturity();
