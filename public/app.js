@@ -31924,28 +31924,22 @@ function updateLoopStatus() {
  * as fast as the current device can finish without overlapping generations. */
 const REFINE_ADVANCE_MS = 900;
 const AUTO_PERTURB_ENABLED = true;
-/* A flat cadence multiplier assumes a phone's CPU runs at one constant
- * speed - true of a CPU-throttling *simulation*, not of a real phone under
- * sustained continuous load. Measured against a real device this session:
- * even a 20x DevTools throttle (its own maximum) produced an ~18s pass,
- * nowhere near the ~80s/pass the device actually showed after several
- * minutes of continuous autonomous painting - a gap a fixed slowdown factor
- * cannot produce, but progressive thermal throttling can, and it gets worse
- * the longer the load stays continuous. Bursting a handful of passes and
- * then resting for a real stretch - the same pattern mobile games use to
- * manage their thermal budget - gives the SoC an actual cooldown window
- * instead of near-continuous elevated load. */
-let mobileAutoAdvanceBurstCount = 0;
-const MOBILE_AUTO_ADVANCE_BURST_SIZE = 6;
-const MOBILE_AUTO_ADVANCE_REST_MS = 20000;
-
+/* A burst-then-rest cadence (6 passes, then a real 20s pause) used to sit
+ * here as a thermal-throttling mitigation - a hypothesis, never confirmed
+ * against the actual device, and it cost exactly what it looks like: a
+ * mobile viewer staring at a canvas that visibly stops for 20 real seconds
+ * out of every ~15, on top of an already-slower-than-desktop multiplier.
+ * Reported as "still laggy" through every other fix this session, because
+ * this mechanism was never the bug - it was a deliberate slowdown large
+ * enough to read as one. Removed rather than tuned: the actual freezes had
+ * real, findable causes (an unbounded auth fetch, a stuck rejection-escape
+ * stroke, a control that fell below the composition floor with no way back)
+ * and are fixed elsewhere; this was working as designed and the design was
+ * wrong for what a person watching the page actually wants. What real
+ * profiling on this session's real device DID show - warm-perturb genuinely
+ * costs more on a phone - stays as a modest multiplier, not a stop-and-wait. */
 function nextAutoAdvanceDelay() {
-  const base = REFINE_ADVANCE_MS * paintingCadenceScale() * (isMobileBrowser() ? 2.2 : 1);
-  if (!isMobileBrowser()) return base;
-  mobileAutoAdvanceBurstCount++;
-  if (mobileAutoAdvanceBurstCount < MOBILE_AUTO_ADVANCE_BURST_SIZE) return base;
-  mobileAutoAdvanceBurstCount = 0;
-  return base + MOBILE_AUTO_ADVANCE_REST_MS;
+  return REFINE_ADVANCE_MS * paintingCadenceScale() * (isMobileBrowser() ? 1.3 : 1);
 }
 
 function scheduleAutoAdvance() {
