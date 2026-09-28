@@ -3294,7 +3294,6 @@ function updateHarvestEdgeLearning(previousShapes, currentShapes, previousGramma
   target.overlap = Number(((Number(old.overlap) || comparison.overlap) * 0.78 + comparison.overlap * 0.22).toFixed(3));
   harvestEdgeLearning.target = target;
   comparison.action = action;
-  comparison.frequency = comparison.frequency;
   harvestEdgeLearning.last = comparison;
   harvestEdgeLearning.history.push({ at: Date.now(), action, harmony: comparison.harmony, eventRate: comparison.eventRate, events: comparison.events, frequency: comparison.frequency });
   harvestEdgeLearning.history = harvestEdgeLearning.history.slice(-24);
@@ -18723,7 +18722,7 @@ function canvasGrammar(ctx, W, H, seedShapes = [], edges = null) {
       topBias: 0, topPrior: 0.08, intersectionRate: 0, colourChangeRate: 0, edgeRate: 0,
       blend: "mixed", hardBlendRatio: 0, softBlendRatio: 0, lineHardEdgeRatio: 0, lineSoftEdgeRatio: 0,
       colourHardEdgeRatio: 0, colourSoftEdgeRatio: 0, groupedHardLines: 0, regularSpacing: 0, crosshatchSoftness: 0,
-      blend: "mixed", hardBlendRatio: 0, softBlendRatio: 0, symbol: "varied", symbolRhythm: 0,
+      symbol: "varied", symbolRhythm: 0,
     },
     needs: { harmony: 0.5, contrast: 0.5, novelty: 0.5, beauty: 0.5, abstractness: 0.5, creativity: 0.5 },
     aesthetics: { harmony: 0.5, contrast: 0.5, novelty: 0.5, beauty: 0.5, abstractness: 0.5, creativity: 0.5 },
@@ -25288,6 +25287,28 @@ function mergeWordRecipe(params, composed) {
 
   const next = { ...params };
   next.palette = { ...(params.palette || {}), ...(delta.palette || {}) };
+  /* colourTheory's support/accent/counterpoint hues are absolute, sampled
+   * around the random palette hue - and every layer after the first paints in
+   * one of them (paletteRoleHue). Replacing only palette.hue recoloured the
+   * first layer and left the rest on the random seed's colours, so a word's
+   * colour barely showed. Re-anchor them on the word's hue, keeping the same
+   * harmony offsets the sampler chose. */
+  const theory = params.palette?.colourTheory;
+  if (theory && delta.palette && Number.isFinite(Number(delta.palette.hue))) {
+    const wrap = (value) => Number((((value % 360) + 360) % 360).toFixed(3));
+    const oldHue = Number(params.palette.hue) || 0;
+    const oldSupport = Number(theory.supportHue);
+    const hue = Number(next.palette.hue);
+    const support = hue + (Number(next.palette.hueStep) || 0);
+    next.palette.colourTheory = {
+      ...theory,
+      supportHue: wrap(support),
+      accentHue: Number.isFinite(Number(theory.accentHue))
+        ? wrap(hue + (Number(theory.accentHue) - oldHue)) : theory.accentHue,
+      counterpointHue: Number.isFinite(Number(theory.counterpointHue)) && Number.isFinite(oldSupport)
+        ? wrap(support + (Number(theory.counterpointHue) - oldSupport)) : theory.counterpointHue,
+    };
+  }
   if (Number.isFinite(Number(delta.density))) next.density = Number(delta.density);
   if (typeof delta.symmetry === "boolean") next.symmetry = delta.symmetry;
   next.drift = { ...(params.drift || {}), ...(delta.drift || {}) };
@@ -35229,9 +35250,17 @@ async function refreshBrainStatus() {
   }
   try {
     const session = await ensureTasteSession();
-    const res = await fetch(
-      SUPABASE_URL + "/rest/v1/hexfield_global_taste?select=sample_count&id=eq.true",
-      { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token } });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    let res;
+    try {
+      res = await fetch(
+        SUPABASE_URL + "/rest/v1/hexfield_global_taste?select=sample_count&id=eq.true",
+        { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token },
+          signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
     if (!res.ok) throw new Error("HTTP " + res.status);
     const shared = Number((await res.json())[0]?.sample_count) || 0;
     const local = taste.samples.length;
@@ -35246,6 +35275,11 @@ async function refreshBrainStatus() {
 }
 
 mountShopEssentials();
+// refreshBrainStatus was written and never called, so the page said
+// "brain: checking…" forever and there was no visible sign the shared
+// learning was working.
+refreshBrainStatus();
+setInterval(refreshBrainStatus, 60000);
 
 const HEXFIELD_LEARNING_CONTRACT = 2;
 function learningContractSnapshot() {
@@ -35403,7 +35437,7 @@ window.__hexfield = {
   }),
   recordCurrentDwellPreference, getDwellTaste: () => dwellTaste,
   renderLiveTasteLogo, scheduleLiveTasteLogo, captureLiveLogoLoop, pingPongSequence, bestLogoMimeType,
-  randomizeAutonomousControls, autonomousReseed, changeSeed,
+  randomizeAutonomousControls, autonomousReseed,
   autonomousWordPhraseCandidates, wordEngine, currentWordComposition,
   visualSymbolReferenceOrder, visualSymbolsForWords, visualSymbolMostRecentForWords,
   wordReferenceOrder, rememberVisualSymbolsFromVote, getVisualSymbolMemory: () => visualSymbolMemory,

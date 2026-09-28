@@ -172,6 +172,13 @@
     green:    ["a", { val: 0.5, ene: -0.2, con: 0.3 }],
     black:    ["a", { val: -0.4, pot: 0.6, ver: -0.6, ene: -0.3 }],
     white:    ["a", { val: 0.3, pot: -0.2, ver: 0.5, bnd: -0.2 }],
+    orange:   ["a", { ene: 0.6, val: 0.4, pot: 0.3 }],
+    yellow:   ["a", { ene: 0.5, val: 0.6, ver: 0.4 }],
+    purple:   ["a", { ene: -0.1, pot: 0.4, val: 0.2, con: -0.2 }],
+    pink:     ["a", { ene: 0.2, val: 0.6, pot: -0.4, bnd: -0.1 }],
+    grey:     ["a", { ene: -0.6, val: -0.2, pot: -0.2, bnd: -0.3 }],
+    gray:     ["a", { ene: -0.6, val: -0.2, pot: -0.2, bnd: -0.3 }],
+    brown:    ["a", { ene: -0.4, con: 0.5, val: 0.1, ver: -0.4 }],
     big:      ["a", { pot: 0.8, con: 0.2, bnd: -0.2 }],
     small:    ["a", { pot: -0.8, bnd: 0.5, con: 0.2 }],
     old:      ["a", { ene: -0.6, pot: 0.2, val: 0.1, ver: -0.3 }],
@@ -790,6 +797,57 @@
     };
   }
 
+  /* ── Literal colour ──────────────────────────────────────────────────────
+   *
+   * The palette hue used to come from valence alone - how good a word feels -
+   * which put "red" at hue 164 (cyan) and "fire" on blue. A colour word, or a
+   * thing everybody knows the colour of, names its colour outright; stance
+   * still decides everything else about the picture. `hue` is omitted for the
+   * achromatic ones, which then keep the stance hue but lose its saturation. */
+  const LITERAL_COLOUR = {
+    red: { hue: 2, sat: 84, light: 46 }, orange: { hue: 26, sat: 90, light: 52 },
+    yellow: { hue: 52, sat: 90, light: 58 }, gold: { hue: 44, sat: 80, light: 50 },
+    green: { hue: 122, sat: 62, light: 42 }, blue: { hue: 218, sat: 74, light: 48 },
+    purple: { hue: 280, sat: 58, light: 42 }, violet: { hue: 268, sat: 60, light: 50 },
+    pink: { hue: 332, sat: 72, light: 70 }, brown: { hue: 26, sat: 48, light: 30 },
+    black: { sat: 10, light: 9 }, white: { sat: 8, light: 92 },
+    grey: { sat: 6, light: 52 }, gray: { sat: 6, light: 52 }, silver: { hue: 210, sat: 10, light: 74 },
+    fire: { hue: 14, sat: 92, light: 50 }, flame: { hue: 18, sat: 92, light: 54 },
+    lava: { hue: 10, sat: 90, light: 42 }, blood: { hue: 358, sat: 80, light: 32 },
+    sun: { hue: 44, sat: 92, light: 58 }, sunset: { hue: 18, sat: 86, light: 54 },
+    dawn: { hue: 28, sat: 72, light: 70 }, sky: { hue: 205, sat: 66, light: 62 },
+    sea: { hue: 200, sat: 68, light: 36 }, ocean: { hue: 205, sat: 70, light: 32 },
+    water: { hue: 196, sat: 58, light: 46 }, river: { hue: 196, sat: 56, light: 44 },
+    rain: { hue: 210, sat: 26, light: 56 }, ice: { hue: 192, sat: 42, light: 82 },
+    snow: { hue: 205, sat: 10, light: 92 }, cloud: { hue: 210, sat: 12, light: 84 },
+    storm: { hue: 225, sat: 24, light: 28 }, night: { hue: 232, sat: 42, light: 14 },
+    moon: { hue: 50, sat: 14, light: 84 }, grass: { hue: 104, sat: 60, light: 42 },
+    leaf: { hue: 110, sat: 58, light: 40 }, tree: { hue: 118, sat: 46, light: 34 },
+    forest: { hue: 130, sat: 48, light: 26 }, rose: { hue: 348, sat: 72, light: 50 },
+    sand: { hue: 40, sat: 48, light: 70 }, earth: { hue: 28, sat: 42, light: 30 },
+    mud: { hue: 30, sat: 36, light: 26 }, stone: { hue: 30, sat: 8, light: 48 },
+    rock: { hue: 30, sat: 8, light: 44 }, mountain: { hue: 215, sat: 16, light: 44 },
+    smoke: { hue: 220, sat: 6, light: 48 }, ash: { sat: 4, light: 40 },
+    coal: { sat: 4, light: 12 }, bone: { hue: 40, sat: 20, light: 86 },
+    glass: { hue: 190, sat: 22, light: 80 },
+  };
+  const LIGHT_SHIFT = { bright: 16, dark: -18 };
+
+  /* An adjective beats its noun - a "green fire" is green - and the nearest
+   * adjective wins. bright/dark shift the lightness of whatever colour won. */
+  function literalColourOf(item) {
+    if (!item) return null;
+    const modifiers = Array.isArray(item.modifiers) ? item.modifiers : [];
+    let colour = null;
+    for (let i = modifiers.length - 1; i >= 0 && !colour; i--) colour = LITERAL_COLOUR[modifiers[i]] || null;
+    colour = colour || LITERAL_COLOUR[item.root] || LITERAL_COLOUR[item.word] || null;
+    const shift = modifiers.reduce((sum, word) => sum + (LIGHT_SHIFT[word] || 0), 0);
+    if (!colour && !shift) return null;
+    const out = { ...(colour || {}) };
+    if (shift) out.lightShift = shift;
+    return out;
+  }
+
   /* ── Onto the canvas ─────────────────────────────────────────────────────
    *
    * Deltas on a recipe rather than a recipe, so this steers the studio's own
@@ -848,6 +906,20 @@
       sat: Math.round(18 + unit(axes.ene) * 74),
       light: Math.round(22 + unit(axes.ver) * 56),
     };
+    // The subject's colour first, then the object's: "fire burns city" is a
+    // red picture, "city under fire" leads with the city's own stance.
+    const literal = literalColourOf(composition.subject) || literalColourOf(composition.object);
+    if (literal) {
+      if (Number.isFinite(literal.hue)) {
+        palette.hue = literal.hue;
+        // A wide multiplicity step would alternate a named red with a cyan;
+        // keep the supporting hues in the named colour's own family.
+        palette.hueStep = Math.min(palette.hueStep, 40);
+      }
+      if (Number.isFinite(literal.sat)) palette.sat = Math.round(literal.sat * 0.8 + palette.sat * 0.2);
+      if (Number.isFinite(literal.light)) palette.light = Math.round(literal.light * 0.8 + palette.light * 0.2);
+      if (literal.lightShift) palette.light = Math.max(4, Math.min(96, palette.light + literal.lightShift));
+    }
 
     const objects = [];
     const place = (item, slot) => {
@@ -867,7 +939,9 @@
         // to lift the thing it acts on.
         dy: Number(dy.toFixed(4)),
         depth: Number((item.axes.con * 0.4).toFixed(4)),
-        hue: Math.round(((1 - unit(item.axes.val)) * 320 + 20) % 360),
+        hue: Number.isFinite(literalColourOf(item)?.hue)
+          ? literalColourOf(item).hue
+          : Math.round(((1 - unit(item.axes.val)) * 320 + 20) % 360),
         saturation: Number((0.35 + unit(item.axes.ene) * 0.9).toFixed(4)),
         opacity: Number((0.35 + unit(item.axes.bnd) * 0.5 - vague * 0.2).toFixed(4)),
         visible: true,
