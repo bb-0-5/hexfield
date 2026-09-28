@@ -28340,6 +28340,98 @@ function paintColourEnergy(colours) {
   return { value: meanValue, spread, chroma };
 }
 
+/* The words' hand.
+ *
+ * The description already set the palette, density and layout, but every mark
+ * was still chosen by the field's authored brush and a coin flip - "fire" and
+ * "stone" painted with the same hand. A painting carries its words' stance in
+ * __hexfieldWords.axes (-1..1 each), so read the handful that describe a way of
+ * painting rather than a thing painted:
+ *
+ *   energy       calm -> violent      mop/smudge, soft, low pressure -> knife/dry/flat, hard
+ *   boundedness  diffuse -> contained soft/broken edges, stipple      -> clean edges, loaded body
+ *   potency      weak -> strong       smaller marks                   -> larger marks
+ *   multiplicity one -> many          broad passages                  -> many small, detailed marks
+ *   concreteness abstract -> concrete less detail                     -> more detail
+ *
+ * A bias, never a lock: the field's authored family, the smudge/lift evidence
+ * and the non-redundancy chooser all still run, and a vague reading (low
+ * confidence) pulls less. No words, no hand - behaviour is unchanged. */
+const WORD_FAMILY_AFFINITY = Object.freeze({
+  knife: { ene: 1, bnd: 0.5 },
+  flat: { ene: 0.6, bnd: 0.6 },
+  dry: { ene: 0.7, bnd: -0.5 },
+  filbert: { ene: -0.2, bnd: 0.6 },
+  mop: { ene: -1, bnd: -0.4 },
+  smudge: { ene: -0.6, bnd: -0.7 },
+});
+const WORD_TEXTURE_AFFINITY = Object.freeze({
+  loaded: { bnd: 0.7, ene: 0.3 },
+  smooth: { bnd: 0.4, ene: -0.6 },
+  bristled: { ene: 0.7 },
+  dry: { ene: 0.5, bnd: -0.5 },
+  stipple: { mul: 0.8, bnd: -0.3 },
+  broken: { bnd: -0.7, ene: 0.2 },
+  blotted: { ene: -0.6 },
+  scraped: { ene: 0.3 },
+});
+const WORD_EDGE_AFFINITY = Object.freeze({
+  clean: { bnd: 1 },
+  loaded: { ene: 0.6, bnd: 0.3 },
+  broken: { ene: 0.4, bnd: -0.6 },
+  soft: { ene: -0.6, bnd: -0.5 },
+});
+
+function wordBrushHand(params) {
+  const named = params?.__hexfieldWords;
+  const axes = named?.axes;
+  if (!axes || typeof axes !== "object") return null;
+  const axis = (key) => Math.max(-1, Math.min(1, Number(axes[key]) || 0));
+  const hand = {
+    ene: axis("ene"), bnd: axis("bnd"), pot: axis("pot"), mul: axis("mul"), con: axis("con"),
+    strength: clamp01(0.35 + 0.65 * clamp01(Number(named.confidence) || 0)),
+  };
+  const lean = (value, low, high) => value > 0.25 ? high : value < -0.25 ? low : "";
+  hand.label = [lean(hand.ene, "calm", "energetic"), lean(hand.bnd, "diffuse", "contained"),
+    lean(hand.pot, "light", "heavy"), lean(hand.mul, "broad", "many-marked")]
+    .filter(Boolean).join(" · ") || "even";
+  return hand;
+}
+
+function wordAffinity(hand, table, key) {
+  const weights = table[key];
+  if (!hand || !weights) return 0;
+  return Math.max(-1, Math.min(1, Object.entries(weights)
+    .reduce((sum, [axis, weight]) => sum + weight * (hand[axis] || 0), 0)));
+}
+
+/* Weighted pick from a list, or a plain uniform pick without a hand. The same
+ * single rng() draw either way, so seeded replays stay deterministic. */
+function wordWeightedPick(hand, table, options, rng) {
+  if (!options.length) return undefined;
+  const roll = rng();
+  if (!hand) return options[Math.floor(roll * options.length) % options.length];
+  const weights = options.map((option) => Math.exp(hand.strength * 1.6 * wordAffinity(hand, table, option)));
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  let target = roll * total;
+  for (let index = 0; index < options.length; index++) {
+    target -= weights[index];
+    if (target <= 0) return options[index];
+  }
+  return options[options.length - 1];
+}
+
+// How well one resolved mark matches the words' hand, 0..1.
+function wordBrushFit(hand, profile) {
+  if (!hand || !profile) return 0.5;
+  const parts = [
+    wordAffinity(hand, WORD_FAMILY_AFFINITY, profile.family),
+    wordAffinity(hand, WORD_TEXTURE_AFFINITY, profile.texture),
+    wordAffinity(hand, WORD_EDGE_AFFINITY, profile.edge),
+  ];
+  return clamp01(0.5 + parts.reduce((sum, value) => sum + value, 0) / (parts.length * 2));
+}
+
 /* Pick a material operation, not a cosmetic preset.
  *
  * The first visible-paint version used the same round path three times for
@@ -28391,7 +28483,8 @@ function paintBrushProfile(mark, under, proposal, identity, result = null) {
   const familySet = rng() < 0.34
     ? PAINT_BRUSH_FAMILIES.filter((candidate) => candidate !== "lift")
     : authoredFamily;
-  let family = familySet[Math.floor(rng() * familySet.length) % familySet.length];
+  const hand = wordBrushHand(params);
+  let family = wordWeightedPick(hand, WORD_FAMILY_AFFINITY, familySet, rng);
   /* Opaque proposal pigment meeting a substantially different under-layer is
    * the exact condition that creates the cut-paper edge visible in the petal
    * screenshot. Smudge is a local material response to that boundary, not a
@@ -28406,14 +28499,17 @@ function paintBrushProfile(mark, under, proposal, identity, result = null) {
 
   const area = Math.max(1, Number(mark?.region?.width) * Number(mark?.region?.height));
   const density = clamp01(Number(mark?.region?.changed) / area);
-  const pressure = clamp01(0.12 + density * 0.58 + rng() * 0.46);
+  const pressure = clamp01(0.12 + density * 0.58 + rng() * 0.46 +
+    (hand ? hand.strength * 0.18 * hand.ene : 0));
   const familyScale = { filbert: 0.92, flat: 1.18, rake: 0.78, knife: 0.68,
     mop: 1.52, dry: 0.74, smudge: 0.88, lift: 1.12 }[family];
   const recipeScale = Math.max(0.20, Math.min(1.48,
     Number(program.strokeScale) || Math.max(0.34, (Number(program.brushScale) || 1) * 0.72)));
-  const detail = Math.max(0.64, Math.min(2.10, Number(program.detailScale) || 1.18));
+  const handScale = hand ? 1 + hand.strength * (0.28 * hand.pot - 0.22 * hand.mul) : 1;
+  const handDetail = hand ? 1 + hand.strength * (0.25 * hand.mul + 0.15 * hand.con) : 1;
+  const detail = Math.max(0.64, Math.min(2.10, (Number(program.detailScale) || 1.18) * handDetail));
   let size = Math.max(0.16, Math.min(1.75,
-    familyScale * recipeScale * (0.56 + rng() * 0.86) * (0.82 + pressure * 0.32)));
+    familyScale * recipeScale * handScale * (0.56 + rng() * 0.86) * (0.82 + pressure * 0.32)));
   /* A continuation earns resolution as it matures. The operation can still be
    * a mop, knife or rake, but its footprint shrinks across later detail passes
    * instead of a fixed brush redrawing the same scale forever. */
@@ -28427,7 +28523,7 @@ function paintBrushProfile(mark, under, proposal, identity, result = null) {
     : authoredTexture === "hatch" ? ["broken", "dry", "bristled"]
       : authoredTexture === "solid" ? ["loaded", "smooth"]
         : ["bristled", "dry", "stipple", "smooth", "loaded"];
-  let texture = textures[Math.floor(rng() * textures.length) % textures.length];
+  let texture = wordWeightedPick(hand, WORD_TEXTURE_AFFINITY, textures, rng);
   if (family === "dry") texture = "dry";
   if (family === "smudge") texture = rng() < 0.54 ? "smooth" : "blotted";
   if (family === "lift") texture = rng() < 0.55 ? "scraped" : "blotted";
@@ -28436,7 +28532,7 @@ function paintBrushProfile(mark, under, proposal, identity, result = null) {
   const edge = authoredEdge === "faded" ? "soft"
     : authoredEdge === "dotted" ? "broken"
       : authoredEdge === "continuous" ? "clean"
-        : ["clean", "soft", "broken", "loaded"][Math.floor(rng() * 4)];
+        : wordWeightedPick(hand, WORD_EDGE_AFFINITY, ["clean", "soft", "broken", "loaded"], rng);
   const signature = params.field === "ruliad" ? "cellular"
     : params.field === "iso" ? "isometric"
     : params.field === "moire" ? "interference"
@@ -28448,6 +28544,7 @@ function paintBrushProfile(mark, under, proposal, identity, result = null) {
     dryness: clamp01((texture === "dry" || edge === "broken" ? 0.5 : 0.08) + rng() * 0.42),
     lift: family === "lift" ? clamp01(0.34 + pressure * 0.44 + rng() * 0.16) : 0,
     blendNeed,
+    wordHand: hand?.label || "",
   };
   /* Defensive migration: an old held brush program or localStorage record
    * cannot resurrect rake/raked by bypassing the sampler above. */
@@ -28510,8 +28607,16 @@ function chooseNonRedundantPaintBrush(mark, under, proposal, identity, result = 
       Math.max(1, Math.min(6, distances.length));
     candidate.nonRedundancy = clamp01(nearest * 0.72 + recentMean * 0.28);
   }
+  /* Sorting on distinctness alone washed the words' hand straight back out:
+   * after a few knife marks for "fire", the most distinct next mark is a mop.
+   * Variety still leads; the words' fit gets a share scaled by how sure the
+   * reading was. */
+  const hand = wordBrushHand(result?.params);
+  const wordShare = hand ? 0.45 * hand.strength : 0;
+  const score = (profile) => (1 - wordShare) * Number(profile.nonRedundancy || 0) +
+    wordShare * wordBrushFit(hand, profile);
   return candidates.sort((left, right) =>
-    Number(right.nonRedundancy) - Number(left.nonRedundancy) ||
+    score(right) - score(left) ||
     Math.abs(Number(left.size) - 0.72) - Math.abs(Number(right.size) - 0.72))[0];
 }
 
@@ -29191,7 +29296,9 @@ function paintPigmentMarks(ctx, marks, beforePixels, proposalPixels, width, heig
     nonRedundancy: ((Number(previous.nonRedundancy) || 0) * priorCount + nonRedundancy * profiles.length) /
       Math.max(1, priorCount + profiles.length),
     count: priorCount + profiles.length,
+    wordHand: profiles.find((profile) => profile.wordHand)?.wordHand || previous.wordHand || "",
   };
+  view.dataset.paintWordHand = result.paintBrush.wordHand;
   view.dataset.paintBrushFamily = allFamilies.join(",");
   view.dataset.paintBrushTexture = allTextures.join(",");
   view.dataset.paintFieldSignature = allSignatures.join(",");
@@ -29241,7 +29348,7 @@ function paintProgressStatus(result, progress, tile, totalTiles) {
         : result?.paintCommit === "detail" ? "resolving the mini master at full size" : "establishing the seed");
   const brush = result?.paintBrush;
   const brushLabel = brush?.families?.length
-    ? ` · ${brush.signatures?.length ? brush.signatures.join("+") + " · " : ""}${brush.families.join("+")} · ${brush.textures.join("+")}${brush.lifts ? ` · ${brush.lifts} lift${brush.lifts === 1 ? "" : "s"}` : ""}${brush.smudges ? ` · ${brush.smudges} smudge${brush.smudges === 1 ? "" : "s"}` : ""}`
+    ? ` · ${brush.wordHand ? "hand: " + brush.wordHand + " · " : ""}${brush.signatures?.length ? brush.signatures.join("+") + " · " : ""}${brush.families.join("+")} · ${brush.textures.join("+")}${brush.lifts ? ` · ${brush.lifts} lift${brush.lifts === 1 ? "" : "s"}` : ""}${brush.smudges ? ` · ${brush.smudges} smudge${brush.smudges === 1 ? "" : "s"}` : ""}`
     : "";
   label.textContent = `seed held · pass ${Math.max(1, painterPass)} · painting ${Math.round(progress * 100)}% · ${intent}${brushLabel}`;
   label.dataset.commit = "painting";
