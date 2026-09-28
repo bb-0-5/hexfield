@@ -20553,11 +20553,20 @@ function recordRuleVerdict(result) {
    * turns "this one is wrong" into one bounded gene move against the weakest
    * fundamental rather than a reroll. A human dislike was its only feeder, so
    * without this the whole repair path would still be there, still tested, and
-   * never once invoked. */
+   * never once invoked.
+   *
+   * But this runs on nearly every render and rejects most of them, and each
+   * reject used to replace the pending repair with a fresh one - resetting its
+   * attempt count, so DISLIKE_COUNTERFACTUAL_MAX_ATTEMPTS never released it and
+   * the painter lived in permanent "rebuild that blob" mode. A self-reject now
+   * only starts a repair when none is running, and never displaces or cancels a
+   * repair a person asked for with REJECT. */
+  const humanRepairPending = pendingDislikeCounterfactual && !pendingDislikeCounterfactual.autonomous;
   if (verdict.keep) {
-    pendingDislikeCounterfactual = null;
-  } else {
+    if (!humanRepairPending) pendingDislikeCounterfactual = null;
+  } else if (!pendingDislikeCounterfactual) {
     pendingDislikeCounterfactual = buildDislikeCounterfactual(result);
+    if (pendingDislikeCounterfactual) pendingDislikeCounterfactual.autonomous = true;
     result.dislikeCounterfactual = pendingDislikeCounterfactual;
   }
   taste.samples.push({
@@ -22749,7 +22758,11 @@ function traceVisiblePaintVerdict(result) {
  * `!seedText()` and skip drawing letters when it's empty; #liveLogo keeps its
  * own independent "HEXFIELD" fallback for the actual logo and is unaffected. */
 const seedText = () => $("seed").value.trim();
-const textMode = () => $("textmode").value;
+/* The live painter no longer draws lettering: the seed text shapes the field
+ * and the description steers its style, and neither appears as letters. The
+ * picker is gone; renderComposite still understands the retired lettering
+ * modes so archived museum recipes that recorded one keep rendering. */
+const textMode = () => "seed";
 const fontMode = () => $("fontmode").value;
 
 function renderConstructionFrame(result, stage = "constructing") {
@@ -24457,7 +24470,7 @@ function targetedDislikeRefinement(anchor, index) {
   });
 }
 
-function controlledRefinement(anchor, rng, index) {
+function controlledRefinement(anchor, rng, index, { fieldOnly = false } = {}) {
   /* A human dislike is allowed to edit the scene even when this field exposes
    * no numeric refinement genes.  The old early return made an empty gene list
    * silently bypass the remove/replace path and fall back to whichever other
@@ -24467,12 +24480,17 @@ function controlledRefinement(anchor, rng, index) {
   const fieldGenes = REFINEMENT_FIELD_GENES[anchor.field] || [];
   const genes = fieldGenes.concat(REFINEMENT_SHARED_GENES)
     .filter(([path]) => Number.isFinite(Number(paramAt(anchor, path))));
-  if (!genes.length) return carryRefinementBrush({ ...anchor }, anchor);
+  if (!genes.length) return fieldOnly ? null : carryRefinementBrush({ ...anchor }, anchor);
 
   const atlasRun = bestRun?.params
     ? { ...bestRun, params: anchor }
     : { params: anchor };
-  const questions = visualAtlasQuestions(atlasRun);
+  /* fieldOnly: the field and palette handles, none of artifact.* - used while
+   * the scene is planning, when the objects must hold still but the painting
+   * around them should keep developing. */
+  const questions = visualAtlasQuestions(atlasRun)
+    .filter((entry) => !fieldOnly || !String(entry.gene?.[0] || "").startsWith("artifact."));
+  if (!questions.length) return fieldOnly ? null : carryRefinementBrush({ ...anchor }, anchor);
   // Do not keep walking straight into a transition nearby visual phases have
   // marked worse in both directions. Unknown and contradictory handles remain
   // viable because they are precisely the questions that buy information.
@@ -24995,6 +25013,11 @@ function targetedSimulationRefinement(anchor, index) {
 // c0 is the held control; c1/c2 are visible atmospheric continuations; c3 is
 // reserved for the critique/simulator seam so its evidence remains attributable.
 const SCENE_VARIANT_INDEX = 3;
+// Which planSearchCandidate seat a phone's single proposal plays, by pass.
+// 5 is a plain brush move (controlledRefinement); 1 the atmospheric blob
+// nudge; 2 the visual-symbol edit; 3 the scene-need proposal; 4 the
+// structural editor (prune / replace / recompose once the climb stalls).
+const MOBILE_PROPOSAL_ROTATION = Object.freeze([5, 1, 5, 2, SCENE_VARIANT_INDEX, 5, 4]);
 
 /* The numbers the critique reads, taken from what the studio already measures
  * rather than invented here. Absent measurements fall back to values that read
@@ -25025,6 +25048,23 @@ function planSearchCandidate(text, forcedField, index) {
    * climb stalls. Nothing in this path can choose a new seed. */
   if (loopMode === "refine" && bestRun?.params) {
     const anchor = bestRun;
+    const candidateId = "c" + index;
+    /* A phone gets two candidates a pass (MOBILE_REFINE_CANDIDATE_COUNT): the
+     * control and one proposal. Every seat below is keyed by index, so that one
+     * proposal was always seat 1 - atmosphericSceneContinuation, which only
+     * nudges one existing blob's depth, size and brightness. On a phone that
+     * was the entire painter: the same blob, forever, and never a brush move,
+     * a symbol edit, a scene-need proposal or a structural edit. Rotate which
+     * seat the single proposal plays by pass, weighted toward real brush
+     * moves (seat 5 falls through to controlledRefinement). Desktop, which
+     * runs every seat every pass, is untouched. A REJECT a person tapped keeps
+     * seat 1, which is where its counterfactual is answered; the painter's
+     * own self-rejects take their turn in the rotation like everything else. */
+    const humanRepairPending = pendingAction === "human-reject" ||
+      (pendingDislikeCounterfactual && !pendingDislikeCounterfactual.autonomous);
+    if (index === 1 && isMobileBrowser() && !humanRepairPending) {
+      index = MOBILE_PROPOSAL_ROTATION[painterPass % MOBILE_PROPOSAL_ROTATION.length];
+    }
     const walkSeed = (anchor.drawSeed + index * 0x9e3779b9 + counter * 0x85ebca6b) >>> 0;
     const rng = mulberry32(walkSeed);
     const heldScene = sceneRead(anchor.params);
@@ -25041,10 +25081,15 @@ function planSearchCandidate(text, forcedField, index) {
       params = controlledRefinement(anchor.params, rng, index);
     } else if (planningScene && index !== SCENE_VARIANT_INDEX && index !== 0) {
       /* Once the root is classifiable, stop giving unrelated candidates a
-       * chance to polish or move it. The only live seat is the scene-need
-       * proposal below. A direct REJECT remains the exception above and
-       * reopens only the addressed object. */
-      params = anchor.params;
+       * chance to polish or move it - but only the objects. This used to hand
+       * every other seat an unchanged copy of the control, and planning starts
+       * almost as soon as a painting has shapes and rarely finishes: measured
+       * on a phone, 23 of 26 proposals were no-ops and the only live move was
+       * "what does this blob need", which is exactly "it keeps working the
+       * same blob". Field and palette moves touch no object, so they keep the
+       * painting around the plan developing. A direct REJECT remains the
+       * exception above and reopens only the addressed object. */
+      params = controlledRefinement(anchor.params, rng, index, { fieldOnly: true }) || anchor.params;
     } else if (index === 1) {
       params = atmosphericSceneContinuation(anchor.params, index)
         || controlledRefinement(anchor.params, rng, index);
@@ -25081,12 +25126,17 @@ function planSearchCandidate(text, forcedField, index) {
     /* A rejected mutation is never a candidate again. This checks the change
      * record, not just similar pixels, so another gene remains available. */
     if (index !== 0 && rejectedPerturbationBlocks(params)) {
+      // The planning-phase restriction has to survive the fallback too, or a
+      // rejected field move gets replaced by one that edits the held objects.
+      const fieldOnly = planningScene && index !== SCENE_VARIANT_INDEX;
       const alternatives = [index + 1, index + 2, index + 3]
-        .map((offset) => controlledRefinement(anchor.params, mulberry32(walkSeed + offset * 0x27d4eb2d), offset));
+        .map((offset) => controlledRefinement(anchor.params,
+          mulberry32(walkSeed + offset * 0x27d4eb2d), offset, { fieldOnly }))
+        .filter(Boolean);
       params = alternatives.find((candidate) => !rejectedPerturbationBlocks(candidate)) || params;
     }
     return {
-      id: "c" + index,
+      id: candidateId,
       // Rendering noise belongs to the seed too. Holding it is what makes a
       // changed mark attributable to the changed recipe instead of flicker.
       drawSeed: anchor.drawSeed,
@@ -30970,7 +31020,7 @@ let liveLogoTimer = null;
  * DOM event, so only a real input/change marks a control as hand-held. */
 const manuallyHeldControls = new Set();
 const autonomousControlIds = [
-  "style", "textmode", "fontmode", "fontFamily", "fontAssembly", "palette", "format", "effort",
+  "style", "fontmode", "fontFamily", "fontAssembly", "palette", "format", "effort",
   "wordPrompt",
 ];
 function watchManualControl(id) {
@@ -31059,25 +31109,6 @@ function randomizeAutonomousControls() {
    * the one synchronous renderer deliberately excluded above, pinning the tab
    * long enough for the new seed to look dead again. */
   setAutonomousControl("style", chooseFresh("field", LIVE_AUTO_FIELDS));
-  /* Every value here must exist in the #textmode select, or setting it is a
-   * silent no-op and the mode stops rotating. "evolving" was dropped as a
-   * user-facing choice - it is the engine behind throwup and wildstyle, not a
-   * look of its own - so the rotation names the looks instead.
-   *
-   * "fit" is gone with the other two stock-font modes, which means one reseed
-   * in six is no longer the operating system's font laid over the artwork.
-   *
-   * "seed" - a field with no lettering at all - earns one place. It went in
-   * with two, which put nearly a third of all reseeds on a blank-of-text render
-   * and made it look as though the letterforms had stopped working altogether.
-   * Reaching that outcome on purpose was the point; taking over the rotation
-   * was not. */
-  /* "grown" is implemented for ruliad, moire and iso, and the field is chosen
-   * independently of the text mode, so it will sometimes land on a field that
-   * cannot grow a word. renderComposite falls that case back to wildstyle
-   * rather than dropping the lettering, which is what makes it safe to put in
-   * the rotation before every field supports it. */
-  setAutonomousControl("textmode", chooseFresh("textmode", ["grown", "grown", "grown", "grown", "grown", "seed"]));
   setAutonomousControl("fontmode", choose(["direct", "lego"]));
   /* Founded families are in the rotation like any other. A family the studio
    * made and never picked would be a catalogue entry rather than a font, and
@@ -31699,7 +31730,7 @@ function fileMaturePainting() {
     // The control key, not the sampled object: it is what a new seed can be
     // told to reuse, and what a person would recognise as "the palette".
     palette: document.getElementById("palette")?.value || "random",
-    textMode: document.getElementById("textmode")?.value || "",
+    textMode: textMode(),
     drawSeed: Number(bestRun?.drawSeed ?? current?.drawSeed) || 0,
     passes: painterPass,
     fitness: Number(bestRun?.fitness) || 0,
@@ -32132,26 +32163,50 @@ $("perturbNow").addEventListener("click", perturb);
 $("reseedNow").addEventListener("click", changeSeed);
 $("captureLogo").addEventListener("click", () => { captureLiveLogoLoop(); });
 
-/* Reading is immediate; drawing is not.
+/* Reading is immediate; drawing waits for a pause.
  *
  * Typing shows what the studio made of the phrase straight away - including
  * "guessed from sound", which is the honest answer for a word it has never
- * seen and the thing worth knowing before you wait for a render. The recipe
- * itself only changes on the next seed, because a description describes a
- * painting rather than a brush move, and re-rendering on every keystroke would
- * take the canvas away from someone mid-sentence. Enter asks for it now. */
+ * seen. The recipe changes on a new seed, because a description describes a
+ * painting rather than a brush move.
+ *
+ * Enter was the only way to act on a description, and the seed box had no
+ * listener at all - so on a phone, where nobody presses Enter in a text field,
+ * typing "green bird" changed nothing: the held painting kept being refined
+ * and the words waited for a reseed the painter almost never makes on its own.
+ * Now a pause in typing (or leaving the box) builds a new painting from what
+ * was typed. Two seconds of idle is the guard against taking the canvas away
+ * mid-sentence; unchanged text never reseeds. */
 {
   const prompt = document.getElementById("wordPrompt");
-  if (prompt) {
-    prompt.addEventListener("input", updateWordStatus);
-    prompt.addEventListener("change", updateWordStatus);
-    prompt.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter") return;
-      event.preventDefault();
-      updateWordStatus();
-      changeSeed();
-    });
+  const seedBox = document.getElementById("seed");
+  const typed = () => wordPromptText() + "\u0000" + seedText();
+  let committed = typed();
+  let idleTimer = null;
+  const commit = (force = false) => {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+    const next = typed();
+    if (!force && next === committed) return;
+    committed = next;
+    updateWordStatus();
+    changeSeed();
+  };
+  const onInput = () => {
+    updateWordStatus();
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => commit(), 2000);
+  };
+  for (const box of [prompt, seedBox]) {
+    if (!box) continue;
+    box.addEventListener("input", onInput);
+    box.addEventListener("change", () => commit());
   }
+  prompt?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    commit(true);
+  });
 }
 
 /* What a kept verdict feeds, now that nobody is asked.
@@ -34554,24 +34609,6 @@ $("closeFineTune").addEventListener("click", () => { $("finetune").open = false;
 $("museumOpen").addEventListener("click", openMuseum);
 $("museumClose").addEventListener("click", closeMuseum);
 $("format").addEventListener("change", applyFormat);
-function updateNeuralStatus() {
-  const status = $("neuralStatus");
-  if (!status) return;
-  const selected = ["grown", "painted", "neural-painted"].includes(textMode());
-  status.hidden = !selected;
-  if (selected) status.textContent = window.HexfieldNeural?.status?.().label || "neural stroke model warming…";
-}
-
-$("textmode").addEventListener("change", () => {
-  updateNeuralStatus();
-  if (current) draw(current);
-});
-window.addEventListener("hexfield-neural-ready", () => {
-  updateNeuralStatus();
-  if (["grown", "painted", "neural-painted"].includes(textMode()) && current) draw(current);
-});
-window.addEventListener("hexfield-neural-error", updateNeuralStatus);
-updateNeuralStatus();
 $("fontmode").addEventListener("change", () => { if (current) draw(current); });
 $("fontFamily").addEventListener("change", () => {
   const spec = fontFamilySpec();
@@ -34880,17 +34917,7 @@ async function connectAndStart() {
    * same shape from frame one. */
   applyFormat();
   randomizeAutonomousControls();
-  /* The first render is the field on its own.
-   *
-   * randomizeAutonomousControls picks a text mode from a rotation that is five
-   * parts lettering to one part none, so five visitors in six arrived at a word
-   * across the artwork before they had asked for one. That rotation is right
-   * for the studio exploring by itself and wrong for the first thing a person
-   * sees, which is the only render that has to explain what this is. Overridden
-   * here rather than removed from the rotation: later reseeds still vary it,
-   * and lettering is a choice the visitor can now make. */
-  setAutonomousControl("textmode", "seed");
-  /* And the same for the box itself, which that call fills with "HEXFIELD".
+  /* The seed box starts empty, which that call fills with "HEXFIELD".
    * Constant text is right for the studio comparing its own lettering and
    * wrong on arrival: a box holding a word the visitor did not type has to be
    * cleared before it can be used, which makes typing a correction rather than
@@ -35011,7 +35038,6 @@ function mountShopEssentials() {
     host.appendChild(el);
   };
   take("seed");
-  take("textmode");
   /* And the description box, for exactly the reason the comment above gives.
    *
    * Left in the sidebar it was unreachable in studio mode - visible in the
@@ -35055,8 +35081,6 @@ function mountShopEssentials() {
    * behind: the autonomous loop already runs it on its own clock. */
   const museumBtn = document.getElementById("museumOpen");
   if (museumBtn) host.appendChild(museumBtn);
-
-  take("neuralStatus");
 
   if (!HEXFIELD_LOCAL_ONLY) {
     const shop = document.createElement("a");

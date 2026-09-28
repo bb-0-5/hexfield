@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- autodeploy-check: workers-builds-verify-8f2c1a -->
-<!-- hexfield build 177 (2026-09-28) -->
+<!-- hexfield build 178 (2026-09-28) -->
 <html lang="en">
 <head>
 <script>
@@ -755,7 +755,7 @@
     <div id="colourChoice">colour: choosing…</div>
     <div id="robBossMood" aria-live="polite">rob boss: waking up · show me 4–8 clear choices</div>
     <div id="painterStatus">seed held · preparing the first paint pass</div>
-    <div id="buildBadge">build 177</div>
+    <div id="buildBadge">build 178</div>
     <div id="bootErrors" style="display:none;color:#ff6b6b;font-size:10px;white-space:pre-wrap;margin-top:4px;"></div>
   </div>
   <div id="shopEssentials" aria-label="print controls"></div>
@@ -774,10 +774,9 @@
 
   <div>
     <label for="wordPrompt">describe it</label>
-    <!-- Separate from the seed text on purpose. The seed is what gets *drawn* -
-         a string hashed into a starting point and, in the lettering modes, laid
-         across the picture. This is what the picture should be *like*, and it
-         never appears as letters. Reading one box as both would mean a visitor
+    <!-- Separate from the seed text on purpose. The seed is a string hashed
+         into a starting point. This is what the picture should be *like*, and
+         it never appears as letters. Reading one box as both would mean a visitor
          could not ask for a calm picture without the word "calm" in it. -->
     <input type="text" id="wordPrompt" placeholder="a word or a short sentence">
     <p id="wordStatus" class="note">words: nothing to read</p>
@@ -797,22 +796,6 @@
       <option value="billiard">billiards — trajectory</option>
       <option value="iso">isometric — rule space, extruded</option>
     </select>
-  </div>
-
-  <div>
-    <label for="textmode">text placement</label>
-    <!-- "seed only" is first, and therefore the default, because it is the
-         field on its own. Lettering is a thing you ask for: a visitor who has
-         not chosen anything should be looking at the artwork, not at a word
-         over it. What used to be three separate learned-stroke modes (grown,
-         painted, neural-painted) is one option now - see renderComposite in
-         app.js, which always does both the mask and the overlay paint that
-         used to be split across them. -->
-    <select id="textmode">
-      <option value="seed">seed only — text shapes the field, stays invisible</option>
-      <option value="grown">learned strokes — shape the field, then paint outline, shadow and depth on top</option>
-    </select>
-    <p id="neuralStatus" class="note" hidden>neural stroke model warming…</p>
   </div>
 
   <div>
