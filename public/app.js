@@ -9707,7 +9707,12 @@ function renderComposite(ctx, W, H, p, rng, text, mode) {
   const maskIdentity = session
     ? session.metadata.model_version + ":" + session.metadata.latent_seed + ":" + mode
     : "procedural:" + mode;
-  const mask = mode === "grown" ? letterMask(W, H, text, program, strokeProvider, maskIdentity) : null;
+  /* Grown, painted and neural-painted used to split this into three separate
+   * modes - one that baked the word into the field as a mask, two that only
+   * painted it as an overlay afterward. They were always compositionally
+   * compatible (the comment below already said so), so a single learned
+   * mode now does both: mask the field AND paint the overlay on top. */
+  const mask = learnedMode ? letterMask(W, H, text, program, strokeProvider, maskIdentity) : null;
   const vetoedGround = renderRequiresSoftGround(p) || (typeof rejectPatternStructuralVeto === "function" &&
     rejectPatternStructuralVeto(p));
   if (vetoedGround) renderVetoedField(ctx, W, H, p, rng, mask);
@@ -9727,7 +9732,7 @@ function renderComposite(ctx, W, H, p, rng, text, mode) {
   // land. Before the snapshot, so the harvest and grammar passes read the same
   // picture a viewer sees - the same order "grown" already gets by having its
   // letters applied inside renderField.
-  if ((mode === "painted" || mode === "neural-painted") && program) {
+  if (learnedMode && program) {
     paintLetterWord(ctx, W, H, text, program, rng, strokeProvider);
   }
   if (!learnedMode) delete p.__hexfieldNeural;
@@ -14619,9 +14624,16 @@ async function pullGlobalTaste() {
 
 function globalTasteInfluence() {
   if (!globalTaste.ready || globalTaste.effectiveSampleCount < 6) return 0;
-  // New visitors begin with a bounded shared prior. Their own votes taper it
-  // down quickly, so a crowd cannot erase a person's distinct taste.
-  return Math.max(0.08, Math.min(0.32, 0.32 * (1 - Math.min(1, taste.samples.length / 28))));
+  /* This studio is not one person's personalised assistant - every browser
+   * tab runs the same autonomous painter, unattended, and what it learns
+   * about a stroke or a palette is exactly as true in one tab as another.
+   * Treating the shared model as a cold-start hint that a single session's
+   * local samples taper away meant the collective record a crowd of visitors
+   * had built kept getting outvoted by whatever one browser had seen most
+   * recently - learning that looked global but stayed local in practice.
+   * The pooled model is the primary signal now; a session's own recent
+   * KEEP/REJECT clicks still nudge it (this floor), but no longer replace it. */
+  return Math.max(0.55, Math.min(0.85, 0.85 - Math.min(1, taste.samples.length / 80) * 0.30));
 }
 
 function activeTasteModel() {
@@ -25414,7 +25426,7 @@ function makeSearchCandidate(text, forcedField, index, plan = null, fieldBitmap 
    * on "seed", and the alternative would be shipping the mask to every worker
    * to have it rendered there, which is a lot of machinery for a probe-sized
    * image the search is only ranking. */
-  const grown = textMode() === "grown";
+  const grown = textMode() === "grown" || textMode() === "painted" || textMode() === "neural-painted";
   /* A pure interpretation must be measured against the exact visible pixels it
    * claims to leave alone. Rendering its complete master here would measure
    * unfinished-detail differences as if the word `tree` had painted them, then
@@ -29197,7 +29209,7 @@ function paintProgressStatus(result, progress, tile, totalTiles) {
  * seed/program so later taste-led scene edits can continue underneath it. */
 function paintVisibleGlyphOverlay(result) {
   const mode = textMode();
-  if (!(mode === "painted" || mode === "neural-painted") || !seedText()) return;
+  if (!(mode === "painted" || mode === "grown" || mode === "neural-painted") || !seedText()) return;
   const params = result?.params || {};
   const program = params.__hexfieldBrushProgram || params.__hexfieldBrush || null;
   if (!program || !view?.width || !view?.height) return;
@@ -31065,7 +31077,7 @@ function randomizeAutonomousControls() {
    * cannot grow a word. renderComposite falls that case back to wildstyle
    * rather than dropping the lettering, which is what makes it safe to put in
    * the rotation before every field supports it. */
-  setAutonomousControl("textmode", chooseFresh("textmode", ["grown", "grown", "painted", "painted", "neural-painted", "seed"]));
+  setAutonomousControl("textmode", chooseFresh("textmode", ["grown", "grown", "grown", "grown", "grown", "seed"]));
   setAutonomousControl("fontmode", choose(["direct", "lego"]));
   /* Founded families are in the rotation like any other. A family the studio
    * made and never picked would be a catalogue entry rather than a font, and
@@ -34642,7 +34654,7 @@ async function renderPrintBlob(fmt) {
      * tab, and it draws the field itself - so the word has to reach it the same
      * way it reaches every other field, as a mask, or the print comes back
      * without the lettering that is on screen. */
-    const mask = textMode() === "grown"
+    const mask = (["grown", "painted", "neural-painted"].includes(textMode()))
       ? letterMask(out.width, out.height, seedText(), letterProgramForRender(current.params)) : null;
     await renderFractalChunked(octx, out.width, out.height, current.params, (frac) => {
       setExportStatus(`preparing print… ${Math.round(frac * 100)}%`);
@@ -34767,7 +34779,7 @@ $("export").addEventListener("click", async () => {
       // The chunked fractal renderer draws its own field, so the word has to
       // reach it as a mask exactly as it does on screen - otherwise the export
       // and the screen disagree and a wrong file goes to a printer.
-      const mask = textMode() === "grown"
+      const mask = (["grown", "painted", "neural-painted"].includes(textMode()))
         ? letterMask(out.width, out.height, seedText(), letterProgramForRender(current.params)) : null;
       await renderFractalChunked(octx, out.width, out.height, current.params, (frac) => {
         setExportStatus(`rendering… ${Math.round(frac * 100)}%`);

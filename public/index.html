@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- autodeploy-check: workers-builds-verify-8f2c1a -->
-<!-- hexfield build 176 (2026-09-27) -->
+<!-- hexfield build 177 (2026-09-28) -->
 <html lang="en">
 <head>
 <script>
@@ -755,7 +755,7 @@
     <div id="colourChoice">colour: choosing…</div>
     <div id="robBossMood" aria-live="polite">rob boss: waking up · show me 4–8 clear choices</div>
     <div id="painterStatus">seed held · preparing the first paint pass</div>
-    <div id="buildBadge">build 176</div>
+    <div id="buildBadge">build 177</div>
     <div id="bootErrors" style="display:none;color:#ff6b6b;font-size:10px;white-space:pre-wrap;margin-top:4px;"></div>
   </div>
   <div id="shopEssentials" aria-label="print controls"></div>
@@ -804,12 +804,13 @@
     <!-- "seed only" is first, and therefore the default, because it is the
          field on its own. Lettering is a thing you ask for: a visitor who has
          not chosen anything should be looking at the artwork, not at a word
-         over it. The other three stay in the order they were written. -->
+         over it. What used to be three separate learned-stroke modes (grown,
+         painted, neural-painted) is one option now - see renderComposite in
+         app.js, which always does both the mask and the overlay paint that
+         used to be split across them. -->
     <select id="textmode">
       <option value="seed">seed only — text shapes the field, stays invisible</option>
-      <option value="grown">grown — learned organic strokes shape the field</option>
-      <option value="painted">painted — learned controlled strokes with outline, shadow and depth</option>
-      <option value="neural-painted">neural painted — learned expressive strokes and structural variation</option>
+      <option value="grown">learned strokes — shape the field, then paint outline, shadow and depth on top</option>
     </select>
     <p id="neuralStatus" class="note" hidden>neural stroke model warming…</p>
   </div>
