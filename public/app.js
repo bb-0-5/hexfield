@@ -22373,33 +22373,51 @@ function scoreColourTreatment(candidate) {
   return tastePrediction(features);
 }
 
-function chooseColourTreatment(reason = "taste") {
-  // Seeded on the taste epoch for the same reason the pattern ballot is: the
-  // ballot is stable for a given state of the model, so re-running without new
-  // votes reaches the same answer instead of twitching on its own.
-  const candidates = colourTreatmentCandidates(hashText("colour-treatment|" + visibleTasteEpoch));
-  let best = null, low = Infinity, high = -Infinity;
-  for (const candidate of candidates) {
-    const score = scoreColourTreatment(candidate);
-    if (!Number.isFinite(score)) continue;
-    low = Math.min(low, score);
-    high = Math.max(high, score);
-    if (!best || score > best.score) best = { candidate, score };
-  }
-  if (!best) return null;
-
-  /* An argmax is only a choice if the model can tell the candidates apart, and
-   * indifference has to be reported as indifference. Undecided means the
-   * sampler keeps its own free hand rather than being steered by a coin toss -
-   * which is why the preference below reads `decided` and not `treatment`. */
-  const spread = high - low;
-  const decided = spread >= COLOUR_TREATMENT_MIN_SPREAD;
-  colourTreatmentChoice = {
-    treatment: best.candidate, score: best.score,
-    spread, decided, considered: candidates.length, reason,
-  };
-  renderColourTreatmentNote();
-  return colourTreatmentChoice;
+/* The ballot, off the critical path.
+ *
+ * The ballot renders every candidate treatment and scores it - about eighteen
+ * iso samples. It used to do that in one synchronous block: 2.8s of frozen page on a
+ * 4x-throttled CPU, paid at load and again inside every new seed's first draw.
+ * Nothing waits on the answer (an undecided ballot already leaves the sampler
+ * its own free hand), so this runs it one sample per task in the background,
+ * and not at all when the taste it would consult has not moved since the last
+ * ballot - the ballot is seeded on the taste epoch precisely so that the same
+ * state of the model reaches the same answer. */
+let colourBallotRun = null;
+let colourBallotKey = "";
+function scheduleColourTreatmentChoice(reason = "taste") {
+  const key = visibleTasteEpoch + "|" + (globalTaste.ready ? globalTaste.effectiveSampleCount : 0);
+  if (colourBallotRun) { colourBallotRun.pending = reason; return; }
+  if (key === colourBallotKey && colourTreatmentChoice) return;
+  const run = colourBallotRun = { pending: null };
+  (async () => {
+    try {
+      const candidates = colourTreatmentCandidates(hashText("colour-treatment|" + visibleTasteEpoch));
+      let best = null, low = Infinity, high = -Infinity;
+      for (const candidate of candidates) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const score = scoreColourTreatment(candidate);
+        if (!Number.isFinite(score)) continue;
+        low = Math.min(low, score);
+        high = Math.max(high, score);
+        if (!best || score > best.score) best = { candidate, score };
+      }
+      if (best) {
+        const spread = high - low;
+        colourTreatmentChoice = {
+          treatment: best.candidate, score: best.score,
+          spread, decided: spread >= COLOUR_TREATMENT_MIN_SPREAD, considered: candidates.length, reason,
+        };
+        colourBallotKey = key;
+        renderColourTreatmentNote();
+      }
+    } catch (error) {
+      console.warn("colour treatment ballot skipped", error);
+    } finally {
+      colourBallotRun = null;
+      if (run.pending) scheduleColourTreatmentChoice(run.pending);
+    }
+  })();
 }
 
 /* What the sampler should lean toward, or null. */
@@ -26970,7 +26988,7 @@ publishFoundedFamilyOptions();
 /* And the colour treatment, for the same reason one step further on: the first
  * iso candidate is sampled well before any print has been voted on, so without
  * this the studio's opening run of work carries a treatment nobody chose. */
-chooseColourTreatment("first look");
+scheduleColourTreatmentChoice("first look");
 
 /* Cadence, not throttle. This was 2500ms with a 400ms floor, capping the loop
  * at 0.4Hz however cheap a cycle became - a fair guard when a cycle cost over a
@@ -27550,12 +27568,18 @@ async function buildTerminalLearningBatch(ranked) {
  * pace itself against real work rather than a guessed timeout. Nothing on the
  * page awaits it; the button path is unchanged.
  */
+let tasteCycleCanvas = null;
+
 function runTasteCycle(source = "visitor") {
   if (tasteCycleState.running) return Promise.resolve(null);
   nextFieldVariation("taste-cycle");
   const overlay = $("overlay");
-  const populationSize = Math.max(12, Math.min(48, Number($("effort").value)));
-  const generations = 3;
+  /* A phone paints the visible canvas on the same thread. The full cycle - 36
+   * test renders, each with its own grammar and shape pass - measured 7-11s of
+   * frozen page on a 4x-throttled CPU. Two generations of eight still rank a
+   * population and still feed the museum; they cost a third as much. */
+  const populationSize = isMobileBrowser() ? 8 : Math.max(12, Math.min(48, Number($("effort").value)));
+  const generations = isMobileBrowser() ? 2 : 3;
   tasteCycleState = { ...tasteCycleState, running: true, last: "simulating " + generations + " generations" };
   renderTasteLab(current);
   overlay.classList.add("on");
@@ -27590,12 +27614,27 @@ function runTasteCycle(source = "visitor") {
          * versions of one picture. Seeded from the archive, so a design the
          * studio has already made is not novel just because this cycle has not
          * seen it yet. */
-        ranked = rankTastePopulation(population.map((candidate) => {
+        /* One study per task. The whole generation used to run as a single
+         * synchronous map, which is what froze the page for seconds at a time:
+         * nothing - not a tap, not a brush stroke - could run until the last
+         * study finished. Yielding between studies costs a few milliseconds and
+         * lets the painter and the buttons interleave. */
+        const studies = [];
+        /* Its own canvas, the probe's size. Now that the painter can run
+         * between studies, sharing the search's probe canvas would let one
+         * overwrite the other's pixels mid-measurement. */
+        if (!tasteCycleCanvas || tasteCycleCanvas.width !== probe.width || tasteCycleCanvas.height !== probe.height) {
+          tasteCycleCanvas = paintBuffer(probe.width, probe.height);
+        }
+        const cycleCtx = tasteCycleCanvas.getContext("2d", { willReadFrequently: true });
+        for (const candidate of population) {
           const study = evaluateTasteStudy(candidate.params, candidate.drawSeed,
-                                           pctx, probe.width, probe.height, null, seen);
+                                           cycleCtx, probe.width, probe.height, null, seen);
           if (study.sig) seen.push(study.sig);
-          return study;
-        }));
+          studies.push(study);
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        ranked = rankTastePopulation(studies);
         recordCausalCounterfactual(ranked);
         if (ranked[0]) renderConstructionFrame(ranked[0], "taste generation " + (generation + 1) + "/" + generations);
         await new Promise((resolve) => setTimeout(resolve, 80));
@@ -27798,9 +27837,13 @@ function draw(result, options = {}) {
   painted.then((completed) => {
     if (!completed) { analysisJobs.delete(key); return; }
     beginRenderDwell(result);
-    setTimeout(() => {
+    setTimeout(async () => {
       try {
-        analyseRender(result);
+        // One analysis at a time: they share the harvest and learning state,
+        // and each now yields between its measuring passes.
+        const run = analysisChain.then(() => analyseRender(result));
+        analysisChain = run.catch(() => {});
+        await run;
         const record = analysisJobs.get(key);
         if (record) {
           record.status = "done";
@@ -27893,7 +27936,12 @@ function canonicalMasterKey(params, drawSeed, text, mode) {
  * agrees with the chosen mini, a small amount of its high-frequency variation
  * can enrich the corresponding region. Where it disagrees, the winner stays
  * exactly as it was. This is a detail pass, not a style preset. */
-const MEASURED_DETAIL_SCALE = 4;
+/* How much finer than the measured mini the detail render is. Four times the
+ * 440px mini is 1760px, which feeds the 4400px desktop master. A phone's master
+ * is 1100px, so rendering detail at 1760 there was 2.6x the pixels anyone sees -
+ * and this render is the most expensive single step of every new picture
+ * (1.1-1.75s on a 4x-throttled CPU). 2.5x lands exactly on the phone master. */
+const MEASURED_DETAIL_SCALE = isMobileBrowser() ? MOBILE_MASTER_WIDTH / MASTER_DESIGN_WIDTH : 4;
 function measuredMiniEdge(data, width, height, x, y) {
   const at = (px, py) => (Math.max(0, Math.min(height - 1, py)) * width +
     Math.max(0, Math.min(width - 1, px))) * 4;
@@ -30946,7 +30994,7 @@ function drawImmediate(result, { refinement = false } = {}) {
   if (committed && (result?.action === "change-seed" || seedAppearanceRevision === 0)) {
     const reason = seedAppearanceRevision === 0 ? "first look" : "new seed";
     seedAppearanceRevision++;
-    chooseColourTreatment(reason);
+    scheduleColourTreatmentChoice(reason);
   }
   $("noveltyV").textContent =
     Number.isFinite(result.score) ? result.score.toFixed(3) : "first";
@@ -30960,7 +31008,17 @@ function drawImmediate(result, { refinement = false } = {}) {
 }
 
 
-function analyseRender(result) {
+let analysisChain = Promise.resolve();
+const yieldToPainter = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+/* Measured in steps, not one block. Each pass below is a full read of the
+ * visible canvas, and together they held a phone's page frozen for 1.5-2s on a
+ * 4x-throttled CPU after every finished painting. The live canvas can take new
+ * strokes while this yields, so everything after the harvest measures a
+ * snapshot taken in the same instant as that harvest - the passes still agree
+ * about which picture they are describing. Results are written onto `result`
+ * only at the end, so nothing reads a half-measured render. */
+async function analyseRender(result) {
   // This is deliberately after text/brush composition: every completed image
   // is harvested, then its pieces are available to the next reseed or vary.
   // The source set was captured at the start of renderComposite, before text
@@ -30987,15 +31045,26 @@ function analyseRender(result) {
    * describe some earlier call. Observed exactly that: components and tiles both
    * reported the same quality because the flag was stale. The shapes themselves
    * are the evidence, and they are already in hand. */
-  result.harvestQuality = harvestQualityOf(finishedShapes);
-  /* One edge analysis for both grammars below. The canvas does not change
-   * between them - nothing here draws - so the second call was re-deriving a
-   * result the first already had, over a million pixels. */
-  const canvasEdges = analyzeMultiScaleEdges(vctx, view.width, view.height);
-  const sourceGrammar = result.params.__hexfieldGrammar || compactCanvasGrammar(canvasGrammar(vctx, view.width, view.height, sourceShapes, canvasEdges));
-  const renderSig = signature(vctx, view.width, view.height);
-  const finalGrammar = canvasGrammar(vctx, view.width, view.height, finishedShapes, canvasEdges);
-  const finalFeatures = tasteFeatures(vctx, view.width, view.height, renderSig);
+  const harvestQuality = harvestQualityOf(finishedShapes);
+  const W = view.width, H = view.height;
+  const snapshot = paintBuffer(W, H);
+  const snap = snapshot.getContext("2d", { willReadFrequently: true });
+  snap.drawImage(view, 0, 0);
+  const sourceParamsGrammar = result.params.__hexfieldGrammar;
+  await yieldToPainter();
+  /* One edge analysis for both grammars below. The snapshot does not change
+   * between them, so the second call would only re-derive a result the first
+   * already had, over a million pixels. */
+  const canvasEdges = analyzeMultiScaleEdges(snap, W, H);
+  await yieldToPainter();
+  const sourceGrammar = sourceParamsGrammar || compactCanvasGrammar(canvasGrammar(snap, W, H, sourceShapes, canvasEdges));
+  await yieldToPainter();
+  const renderSig = signature(snap, W, H);
+  const finalGrammar = canvasGrammar(snap, W, H, finishedShapes, canvasEdges);
+  await yieldToPainter();
+  const finalFeatures = tasteFeatures(snap, W, H, renderSig);
+  snapshot.width = 0;
+  result.harvestQuality = harvestQuality;
   const edgeComparison = updateHarvestEdgeLearning(
     lastHarvestSnapshot?.finishedShapes || [], finishedShapes,
     lastHarvestSnapshot?.grammar || null, finalGrammar, result.action || "render",
