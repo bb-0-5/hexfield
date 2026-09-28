@@ -982,6 +982,12 @@
         object: composition.object ? composition.object.word : null,
         relation: composition.relation ? composition.relation.word : null,
         axes: Object.fromEntries(AXES.map((a) => [a, Number(axes[a].toFixed(3))])),
+        /* Whether the words named a colour, so treatments that would drain it
+         * (an ink-only print, a greyscale pass) can stand aside. "chromatic"
+         * for fire or grass, "achromatic" for black smoke or grey stone, where
+         * a monochrome treatment agrees with the words rather than fights them. */
+        namedColour: literal && Number.isFinite(literal.hue) ? "chromatic"
+          : literal && Number.isFinite(literal.sat) ? "achromatic" : null,
       },
     };
   }

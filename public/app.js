@@ -2209,9 +2209,11 @@ function sampleIsoColourTreatment(rng, preferred = colourTreatmentPreference()) 
 function isoColourTreatmentOf(p) {
   const colour = p?.colour;
   if (!colour || typeof colour !== "object") return null;
+  // Words that named a colour keep it: no greyscale pass, no key change.
+  const namedColour = p?.__hexfieldWords?.namedColour === "chromatic";
   const shadow = SHADOW_TINTS[colour.shadow] ? colour.shadow : null;
   const monetOn = colour.monet === "on" && Number(colour.monetBand) > 0;
-  const greyscale = colour.greyscale === "value" || colour.greyscale === "uniform"
+  const greyscale = !namedColour && (colour.greyscale === "value" || colour.greyscale === "uniform")
     ? colour.greyscale : null;
   /* An atmosphere on its own does nothing. It is the anchor the wash, the light
    * and the chroma falloff all read from, so it is only in force when one of
@@ -2228,9 +2230,9 @@ function isoColourTreatmentOf(p) {
    * key change would normalise to null and be dropped on the floor - the render
    * would look untreated and the stored recipe would still say it had chosen
    * something, which is the worst of both. */
-  const substituteHue = Number.isFinite(Number(colour.substituteHue))
+  const substituteHue = !namedColour && Number.isFinite(Number(colour.substituteHue))
     ? Math.max(-180, Math.min(180, Number(colour.substituteHue))) : 0;
-  const substituteChroma = Number.isFinite(Number(colour.substituteChroma))
+  const substituteChroma = !namedColour && Number.isFinite(Number(colour.substituteChroma))
     ? Math.max(0, Math.min(2, Number(colour.substituteChroma))) : 1;
   const substituting = substituteHue !== 0 || substituteChroma !== 1;
   if (!shadow && !monetOn && !greyscale && !substituting &&
@@ -9411,7 +9413,13 @@ function applyHalftone(ctx, W, H, cfg) {
  * newsprint fractal and posted the customer a glossy one. Fractals are ranks 1,
  * 2 and 5 of the museum, so that is most of the shop. */
 function screenIfPrinted(ctx, W, H, p) {
-  if (p?.halftone && p.halftone.mode !== "off") applyHalftone(ctx, W, H, p.halftone);
+  if (!p?.halftone || p.halftone.mode === "off") return;
+  // Words that named a colour are never printed in black ink only - see
+  // mergeWordRecipe. Checked here too, because a refinement can re-roll the
+  // screen after the words were merged.
+  const inkOnly = p.halftone.mode !== "cmyk";
+  const named = p.__hexfieldWords?.namedColour === "chromatic";
+  applyHalftone(ctx, W, H, inkOnly && named ? { ...p.halftone, mode: "cmyk", angle: 45 } : p.halftone);
 }
 
 /* Munker-White colour assimilation, drawn.
@@ -13291,6 +13299,11 @@ const TASTE_BASE_FEATURES = [
    * that read 0.5 from the pool and a real value from the main thread would be
    * two different features wearing one name. */
   "paletteFamiliarity",
+  /* Structure - effective complexity, measured by measureEffectiveComplexity.
+   * Near zero for a blank wash and for static alike, highest where coherent
+   * detail spreads across scales. It is the one feature here that answers
+   * "is this organised?" rather than "how much is there?". */
+  "effectiveComplexity",
 ];
 const TASTE_INTERACTIONS = [
   { key: "structuredComplexity", a: "complexity", b: "neatness", label: "structured complexity" },
@@ -13638,6 +13651,10 @@ function newTasteModel() {
     structuredComplexity: 0.05, complementaryClarity: 0.04,
     boundedComplexity: 0.07, breathingRoom: 0.08, transitionContrast: 0.05, restrainedNovelty: 0.04,
     disciplinedContrast: 0.05,
+    // The factory tuning: organised complexity is liked before anyone has
+    // voted, the way newborns already look longer at some faces. Votes trim it
+    // from here - the shared layer first, then each visitor's own.
+    effectiveComplexity: 0.40,
   });
   // `mlp` stays null until fitTasteHidden can show a hidden layer beating the
   // line on held-out samples. Null is the honest default: no layer is in the
@@ -13911,6 +13928,39 @@ let globalTaste = {
   ready: false, sampleCount: 0, effectiveSampleCount: 0,
   model: { ...newTasteModel(), weights: { ...newTasteModel().weights } },
 };
+
+/* Settings and state for the three taste layers - see "Taste in three layers"
+ * beside activeTasteModel. Declared here, beside the crowd model they weigh,
+ * so nothing that scores a canvas can reach them before they exist. */
+// Votes the factory tuning is worth when the crowd model is weighed against it.
+const CROWD_PRIOR_VOTES = 40;
+// Your own votes at which you hold half of the say you can have on a feature.
+const PERSONAL_HALF_VOTES = 10;
+// The say this browser's own model keeps before any vote - the autonomous
+// studio still learns locally, it just no longer outvotes people.
+const PERSONAL_FLOOR = 0.12;
+/* Prior agreement per feature, 0..1: how much people tend to share this
+ * preference. High where perception does the work (can you read it, is it mud,
+ * is it organised), low where culture and history do (which hues, how
+ * abstract, how busy - the sweet spot on complexity moves with expertise).
+ * Interaction terms inherit the mean of their two parts. */
+const TASTE_AGREEMENT_PRIOR = {
+  legibility: 0.80, messiness: 0.80, overload: 0.80, clutter: 0.75,
+  effectiveComplexity: 0.75, contrast: 0.70, balance: 0.70, tonalHierarchy: 0.70,
+  atmosphericDepth: 0.65, brightness: 0.60, boundary: 0.60, spacing: 0.60,
+  uniformity: 0.60, regionalUniformity: 0.60, beauty: 0.60, voids: 0.55,
+  accentDiscipline: 0.55, neatness: 0.50, novelty: 0.45, paletteFamiliarity: 0.40,
+  tonalFit: 0.40, placementTop: 0.40, placementX: 0.40, placementY: 0.40,
+  complexity: 0.35, randomness: 0.35, creativity: 0.35, chromaticContrast: 0.35,
+  warmCoolTension: 0.35, abstraction: 0.30, abstractness: 0.30, foreignness: 0.30,
+  chromaticComplement: 0.30, hueSpread: 0.30, analogousFit: 0.30,
+  complementaryFit: 0.30, triadFit: 0.30, hueX: 0.15, hueY: 0.15,
+};
+const TASTE_AGREEMENT_DEFAULT = 0.5;
+// Pseudo-visitors the prior table is worth against measured agreement.
+const TASTE_AGREEMENT_PRIOR_VISITORS = 8;
+let tasteAgreementMeasured = { ready: false, visitors: 0, features: {} };
+let tasteLayerCache = null;
 
 /* ------------------------------------------------------------------ *
  * The reference corpus: a starting opinion about colour, not a rule
@@ -14621,38 +14671,171 @@ async function pullGlobalTaste() {
   };
 }
 
-function globalTasteInfluence() {
-  if (!globalTaste.ready || globalTaste.effectiveSampleCount < 6) return 0;
-  /* This studio is not one person's personalised assistant - every browser
-   * tab runs the same autonomous painter, unattended, and what it learns
-   * about a stroke or a palette is exactly as true in one tab as another.
-   * Treating the shared model as a cold-start hint that a single session's
-   * local samples taper away meant the collective record a crowd of visitors
-   * had built kept getting outvoted by whatever one browser had seen most
-   * recently - learning that looked global but stayed local in practice.
-   * The pooled model is the primary signal now; a session's own recent
-   * KEEP/REJECT clicks still nudge it (this floor), but no longer replace it. */
-  return Math.max(0.55, Math.min(0.85, 0.85 - Math.min(1, taste.samples.length / 80) * 0.30));
+/* ------------------------------------------------------------------ *
+ * Taste in three layers: factory, crowd, you
+ *
+ * Beauty behaves less like mass, a property of the picture, and more like
+ * resonance - a match between a picture and a viewer that is factory-tuned and
+ * then trimmed by experience. And people agree far more about some things than
+ * others: faces and landscapes (where evolution did the tuning) much more than
+ * art and architecture (where culture did). So one global model is wrong for
+ * everyone a little, and one private model per visitor throws away everything
+ * the crowd has already taught.
+ *
+ * The layers:
+ *
+ *   factory  newTasteModel's weights. What the studio likes before anyone has
+ *            voted: organised complexity, readable contrast, no mud.
+ *   crowd    every visitor's KEEP/REJECT, folded server-side into one model.
+ *            It earns trust with votes (CROWD_PRIOR_VOTES is how many votes the
+ *            factory tuning is worth) and trims the factory where it is wrong.
+ *   you      this browser's own model. It only has to learn how you differ from
+ *            the crowd, so a handful of votes moves it, and it is fitted
+ *            leaning on the crowd rather than on zero, so where your votes say
+ *            nothing it simply agrees with everyone else.
+ *
+ * How much you get to steer is decided per feature, not once. Where people
+ * mostly agree (legibility, mud, overload, structure) the crowd keeps the say
+ * however many votes you cast; where they split (which hues, how abstract, how
+ * busy) your own votes take over as they accumulate. Agreement starts from
+ * TASTE_AGREEMENT_PRIOR (declared beside globalTaste) and is re-measured from
+ * real votes across devices once enough visitors have voted both ways
+ * (pullTasteAgreement).
+ *
+ * The old blend handed the crowd a flat 55-85% on every feature. With the
+ * shared model still young that made new visitors' taste nearly flat, since
+ * the crowd model starts from zero rather than from the factory tuning.
+ * ------------------------------------------------------------------ */
+
+function tasteAgreementPrior(key) {
+  if (Number.isFinite(TASTE_AGREEMENT_PRIOR[key])) return TASTE_AGREEMENT_PRIOR[key];
+  const link = TASTE_INTERACTIONS.find((item) => item.key === key);
+  if (link) return (tasteAgreementPrior(link.a) + tasteAgreementPrior(link.b)) / 2;
+  return TASTE_AGREEMENT_DEFAULT;
+}
+
+/* Measured agreement is a random-effects reading of per-visitor effects: how
+ * large the average like-vs-reject difference is, against how much visitors
+ * genuinely scatter around it once each visitor's own sampling noise is taken
+ * out. Few votes per visitor look like disagreement otherwise. */
+function tasteAgreement(key) {
+  const prior = tasteAgreementPrior(key);
+  const row = tasteAgreementMeasured.features?.[key];
+  const n = Number(row?.n);
+  if (!tasteAgreementMeasured.ready || !(n >= 3)) return prior;
+  const mean = Number(row.mean) || 0;
+  const between = Math.max(0, (Number(row.between) || 0) - (Number(row.within) || 0));
+  const measured = mean * mean / (mean * mean + between + 0.0004);
+  return clamp01((n * measured + TASTE_AGREEMENT_PRIOR_VISITORS * prior) / (n + TASTE_AGREEMENT_PRIOR_VISITORS));
+}
+
+async function pullTasteAgreement() {
+  const session = await ensureTasteSession();
+  const res = await fetch(SUPABASE_URL + "/rest/v1/rpc/hexfield_taste_agreement", {
+    method: "POST",
+    headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token, "Content-Type": "application/json" },
+    body: "{}",
+  });
+  // Absent until its migration is applied; the prior table stands in meanwhile.
+  if (!res.ok) return;
+  const body = await res.json();
+  if (!body || typeof body !== "object" || !body.features || typeof body.features !== "object") return;
+  tasteAgreementMeasured = { ready: true, visitors: Math.max(0, Number(body.visitors) || 0), features: body.features };
+  tasteLayerCache = null;
+}
+
+// How much of the crowd model to trust over the factory tuning.
+function crowdTasteTrust() {
+  if (!globalTaste.ready) return 0;
+  const votes = Math.max(0, Number(globalTaste.effectiveSampleCount) || 0);
+  return votes / (votes + CROWD_PRIOR_VOTES);
+}
+
+// Your own evidence: explicit votes, plus lingering, which is a quieter vote.
+// The studio's self-critic and rule verdicts are not you and do not count.
+function personalTasteEvidence() {
+  let votes = 0;
+  for (const sample of taste.samples) {
+    if (sample.source === "human") votes += 1;
+    else if (sample.source === "dwell-time") votes += 0.65;
+  }
+  return votes;
+}
+
+/* The factory tuning trimmed by the crowd: the base every visitor starts from
+ * and the point this browser's model leans on while it is fitted. */
+function tasteBaseWeights() {
+  const factory = newTasteModel().weights;
+  const trust = crowdTasteTrust();
+  if (!trust) return factory;
+  const crowd = globalTaste.model.weights;
+  const base = {};
+  for (const key of ["bias", ...TASTE_FEATURES]) {
+    const f = Number(factory[key]) || 0;
+    const c = Number(crowd[key]);
+    base[key] = Number.isFinite(c) ? f + trust * (c - f) : f;
+  }
+  return base;
+}
+
+/* The per-feature say this browser has, cached until something it depends on
+ * changes. activeTasteModel sits under every candidate's score, so rebuilding
+ * this on each call would redo the same arithmetic thousands of times. */
+function tasteLayers() {
+  const last = taste.samples[taste.samples.length - 1];
+  const key = [taste.weights === tasteLayerCache?.weightsRef, globalTaste.model?.weights === tasteLayerCache?.crowdRef,
+    taste.samples.length, last?.at || 0, globalTaste.ready, globalTaste.effectiveSampleCount].join("|");
+  if (tasteLayerCache && tasteLayerCache.key === key) return tasteLayerCache;
+  const evidence = personalTasteEvidence();
+  const ramp = Math.max(PERSONAL_FLOOR, evidence / (evidence + PERSONAL_HALF_VOTES));
+  const openness = { bias: ramp * 0.5 };
+  for (const feature of TASTE_FEATURES) openness[feature] = ramp * (1 - tasteAgreement(feature));
+  const base = tasteBaseWeights();
+  const weights = {};
+  for (const feature of ["bias", ...TASTE_FEATURES]) {
+    const shared = Number(base[feature]) || 0;
+    const own = Number(taste.weights[feature]);
+    weights[feature] = Number.isFinite(own) ? shared + openness[feature] * (own - shared) : shared;
+  }
+  tasteLayerCache = {
+    key: [true, true, taste.samples.length, last?.at || 0, globalTaste.ready, globalTaste.effectiveSampleCount].join("|"),
+    weightsRef: taste.weights, crowdRef: globalTaste.model?.weights,
+    evidence, ramp, trust: crowdTasteTrust(), openness, base, weights,
+  };
+  return tasteLayerCache;
+}
+
+/* One line for the taste panel: who is steering what, right now. */
+function describeTasteLayers() {
+  const layers = tasteLayers();
+  const votes = Math.round(layers.evidence);
+  const crowd = globalTaste.ready
+    ? "crowd " + globalTaste.sampleCount + " votes, trusted " + Math.round(layers.trust * 100) + "% over the built-in taste"
+    : "crowd not connected, built-in taste only";
+  const ranked = TASTE_BASE_FEATURES.map((feature) => ({ feature, open: layers.openness[feature] }))
+    .sort((a, b) => b.open - a.open);
+  const label = (item) => TASTE_LABELS[item.feature] || item.feature;
+  const yours = [...new Set(ranked.slice(0, 4).map((item) => label(item).replace(/ \(.*\)$/, "")))].slice(0, 3).join(", ");
+  const theirs = ranked.slice(-3).map(label).join(", ");
+  const most = Math.round((ranked[0]?.open || 0) * 100), least = Math.round((ranked[ranked.length - 1]?.open || 0) * 100);
+  const measured = tasteAgreementMeasured.ready && tasteAgreementMeasured.visitors >= 3
+    ? "agreement measured from " + tasteAgreementMeasured.visitors + " visitors"
+    : "agreement from the prior until 3+ visitors have voted both ways";
+  return "taste layers: " + crowd + " · you: " + votes + " vote" + (votes === 1 ? "" : "s") +
+    ", " + most + "% say on " + yours + "; " + least + "% on " + theirs + ", where people mostly agree · " + measured;
 }
 
 function activeTasteModel() {
-  const shared = globalTasteInfluence();
   const painterly = palettePriorInfluence();
-  if (!shared && !painterly) return taste;
-  const weights = {};
-  for (const key of ["bias", ...TASTE_FEATURES]) {
-    weights[key] = shared
-      ? (1 - shared) * (Number(taste.weights[key]) || 0) + shared * (Number(globalTaste.model.weights[key]) || 0)
-      : (Number(taste.weights[key]) || 0);
-  }
+  const weights = { ...tasteLayers().weights };
   /* The corpus gets one weight, on the one feature it can honestly speak to.
    *
-   * Blended after the shared prior rather than alongside it, because the two
-   * are different kinds of claim: a crowd's votes are evidence about taste and
-   * keep a permanent 8% say, while a corpus is an assumption and fades to
-   * nothing. Applying it to any other weight would be the corpus asserting
-   * things about clutter and placement that thirty paintings cannot support. */
-  weights.paletteFamiliarity = (1 - painterly) * weights.paletteFamiliarity + painterly * PALETTE_PRIOR_WEIGHT;
+   * Blended after the layers rather than inside them, because the two are
+   * different kinds of claim: votes are evidence about taste, while a corpus
+   * is an assumption and fades to nothing. Applying it to any other weight
+   * would be the corpus asserting things about clutter and placement that
+   * thirty paintings cannot support. */
+  if (painterly) weights.paletteFamiliarity = (1 - painterly) * weights.paletteFamiliarity + painterly * PALETTE_PRIOR_WEIGHT;
   return { weights };
 }
 
@@ -14776,7 +14959,7 @@ async function connectTaste() {
      * one fan-out; an optional catalogue being unavailable must not suppress
      * every other kind of memory. */
     await Promise.allSettled([
-      pullGlobalTaste(), pullStyleCatalogue(), pullCausalExperiments(),
+      pullGlobalTaste(), pullTasteAgreement(), pullStyleCatalogue(), pullCausalExperiments(),
       pullHarvestMaterials(), pullSharedVisualSymbols(),
       pullVisualSourceCorpus(), fetchKnownCreationHashes(), refreshMuseumStatus(),
     ]);
@@ -14976,6 +15159,11 @@ let tasteTravel = null;
 
 function fitTasteModel() {
   const w = { ...taste.weights };
+  /* Regularised toward the crowd-trimmed base, not toward zero. Where this
+   * browser's samples say nothing about a feature, its weight settles on what
+   * everyone else taught instead of decaying to "does not matter" - so the
+   * personal model only has to learn how this visitor differs. */
+  const lean = tasteBaseWeights();
   const early = taste.samples.length < 6;
   const large = taste.samples.length > 120;
   const rate = early ? 0.075 : 0.18;
@@ -15017,7 +15205,7 @@ function fitTasteModel() {
     const n = totalWeight || 1;
     w.bias = Math.max(-3, Math.min(3, w.bias + rate * grad.bias / n));
     for (const key of TASTE_FEATURES) {
-      w[key] = Math.max(-3, Math.min(3, w[key] + rate * (grad[key] / n - regularization * w[key])));
+      w[key] = Math.max(-3, Math.min(3, w[key] + rate * (grad[key] / n - regularization * (w[key] - (Number(lean[key]) || 0)))));
     }
   }
   /* Convergence: how far the model still moves when it is shown more.
@@ -17480,6 +17668,154 @@ function tonalCentre(hueBins) {
   };
 }
 
+/* Structure: how much of the picture is organised, as opposed to how much is
+ * there.
+ *
+ * Raw entropy does not track beauty. A blank wall has almost none and TV static
+ * has the most possible, and both are dull. What peaks in between is effective
+ * complexity - the length of the regularities, not of the noise - and this is a
+ * cheap, honest reading of it from pixels.
+ *
+ * The picture is coded as a Haar pyramid, which is a compression scheme: each
+ * octave stores only what the coarser level could not predict. How that detail
+ * spreads across octaves is the whole measurement.
+ *
+ *   - A blank wash needs no detail anywhere: amount ~ 0.
+ *   - Static puts all its detail in the finest octave, and none of it lines up
+ *     with the octave above, because noise does not persist when you step back.
+ *     Detail is only counted where it correlates with its parent, so static
+ *     scores ~ 0 however loud it is, and adding it to a picture cannot raise
+ *     the score.
+ *   - A gradient or one big edge puts everything in the coarsest octave.
+ *   - Stripes and checkerboards live in a single octave.
+ *   - Clouds, trees, crowds of shapes and real paintings spread coherent detail
+ *     across every octave with a gentle tilt toward the large forms - the
+ *     mid-range fractal band people reliably find easy and pleasant to look at.
+ *
+ * Richness is the Berlyne half: how much of the canvas carries that coherent
+ * structure. One blob on a flat ground is ordered but thin; a canvas where
+ * every cell is shouting is busy. Moderate coverage scores best.
+ *
+ * Measured on test images: blank, gradients, stripes, checkerboards and static
+ * all score under 0.03; one blob 0.22; soft clouds 0.35; clouds with static
+ * 0.21; forty shapes of mixed size 0.77. Luminance plus half-weight colour
+ * opponents, so a red/green edge of equal brightness still counts. Pure and
+ * DOM-free: it runs in the field worker pool with tasteFeatures. */
+function measureEffectiveComplexity(data, W, H) {
+  const empty = { score: 0, amount: 0, slope: 0, spread: 0, richness: 0, coherence: 0 };
+  /* The grid is 96 cells on the short side whatever the canvas size, so an
+   * octave means the same fraction of the picture on a 440px search probe as
+   * on the full phone canvas. Taste samples come from both; a finest octave
+   * of one pixel on one and ten on the other would be two different features
+   * wearing one name. */
+  const step = Math.max(1, Math.min(W, H) / 96);
+  let gw = Math.floor(W / step), gh = Math.floor(H / step);
+  if (gw < 16 || gh < 16) return empty;
+  // Up to a 3x3 sample per cell: the pyramid averages further anyway, and
+  // reading every pixel of a phone-sized canvas would cost more than the rest
+  // of tasteFeatures put together. A cell only a pixel or two across gets one
+  // or two taps - nine taps there read the same pixel nine times, which on a
+  // 440px search probe was most of this function's cost.
+  const TAPS = step < 2 ? [0.5] : step < 4 ? [0.25, 0.75] : [1 / 6, 0.5, 5 / 6];
+  const taps = TAPS.length;
+  const pixelX = new Int32Array(gw * taps), pixelY = new Int32Array(gh * taps);
+  for (let gx = 0; gx < gw; gx++) for (let t = 0; t < taps; t++) pixelX[gx * taps + t] = Math.min(W - 1, Math.floor((gx + TAPS[t]) * step));
+  for (let gy = 0; gy < gh; gy++) for (let t = 0; t < taps; t++) pixelY[gy * taps + t] = Math.min(H - 1, Math.floor((gy + TAPS[t]) * step));
+  let lum = new Float32Array(gw * gh), rg = new Float32Array(gw * gh), yb = new Float32Array(gw * gh);
+  const k = 1 / (taps * taps * 255);
+  for (let gy = 0; gy < gh; gy++) {
+    for (let gx = 0; gx < gw; gx++) {
+      let l = 0, a = 0, b = 0;
+      for (let ty = 0; ty < taps; ty++) {
+        const row = pixelY[gy * taps + ty] * W;
+        for (let tx = 0; tx < taps; tx++) {
+          const o = (row + pixelX[gx * taps + tx]) * 4, r = data[o], g = data[o + 1], bl = data[o + 2];
+          l += 0.2126 * r + 0.7152 * g + 0.0722 * bl; a += r - g; b += (r + g) * 0.5 - bl;
+        }
+      }
+      const i = gy * gw + gx;
+      lum[i] = l * k; rg[i] = a * k * 0.5; yb[i] = b * k * 0.5;
+    }
+  }
+  const levels = [];
+  for (let s = 0; s < 5 && gw >= 2 && gh >= 2; s++) {
+    const w = gw >> 1, h = gh >> 1;
+    const nl = new Float32Array(w * h), na = new Float32Array(w * h), nb = new Float32Array(w * h), mag = new Float32Array(w * h);
+    let energy = 0;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i0 = 2 * y * gw + 2 * x, i1 = i0 + 1, i2 = i0 + gw, i3 = i2 + 1, j = y * w + x;
+        const ml = (lum[i0] + lum[i1] + lum[i2] + lum[i3]) / 4;
+        const ma = (rg[i0] + rg[i1] + rg[i2] + rg[i3]) / 4;
+        const mb = (yb[i0] + yb[i1] + yb[i2] + yb[i3]) / 4;
+        const vl = (lum[i0] - ml) ** 2 + (lum[i1] - ml) ** 2 + (lum[i2] - ml) ** 2 + (lum[i3] - ml) ** 2;
+        const va = (rg[i0] - ma) ** 2 + (rg[i1] - ma) ** 2 + (rg[i2] - ma) ** 2 + (rg[i3] - ma) ** 2;
+        const vb = (yb[i0] - mb) ** 2 + (yb[i1] - mb) ** 2 + (yb[i2] - mb) ** 2 + (yb[i3] - mb) ** 2;
+        const v = (vl + 0.5 * (va + vb)) / 4;
+        nl[j] = ml; na[j] = ma; nb[j] = mb; mag[j] = Math.sqrt(v); energy += v;
+      }
+    }
+    levels.push({ mag, w, h, energy: energy / (w * h) });
+    lum = nl; rg = na; yb = nb; gw = w; gh = h;
+  }
+  const L = levels.length;
+  if (L < 3) return empty;
+  // Detail below this local deviation is invisible at phone size.
+  const TAU = 0.03;
+  const effective = [], coherence = [], coverage = [];
+  for (let s = 0; s < L; s++) {
+    const c = levels[s];
+    // The coarsest octave has no parent. What it holds is the layout itself,
+    // which is structure by definition, and static never reaches it.
+    let r = 1;
+    if (s + 1 < L) {
+      const p = levels[s + 1], w2 = Math.min(c.w, p.w * 2), h2 = Math.min(c.h, p.h * 2);
+      let mc = 0, mp = 0, n = 0, supported = 0;
+      for (let y = 0; y < h2; y++) {
+        for (let x = 0; x < w2; x++) { mc += c.mag[y * c.w + x]; mp += p.mag[(y >> 1) * p.w + (x >> 1)]; n++; }
+      }
+      mc /= n; mp /= n;
+      let sab = 0, saa = 0, sbb = 0;
+      for (let y = 0; y < h2; y++) {
+        for (let x = 0; x < w2; x++) {
+          const vc = c.mag[y * c.w + x], vp = p.mag[(y >> 1) * p.w + (x >> 1)];
+          const dc = vc - mc, dp = vp - mp;
+          sab += dc * dp; saa += dc * dc; sbb += dp * dp;
+          if (vc > TAU && vp > TAU) supported++;
+        }
+      }
+      r = saa > 1e-12 && sbb > 1e-12 ? sab / Math.sqrt(saa * sbb) : 0;
+      coverage.push(supported / n);
+      coherence.push(r);
+    }
+    effective.push(c.energy * Math.max(0, Math.min(1, r / 0.5)));
+  }
+  const total = effective.reduce((sum, value) => sum + value, 0);
+  if (!(total > 1e-9)) return empty;
+  const amount = 1 - Math.exp(-Math.sqrt(total) / 0.06);
+  // Tilt of coherent detail across octaves: 0 is equal detail at every scale,
+  // positive leans toward the large forms. The preferred band sits a little
+  // above 0, where natural scenes and most paintings land.
+  const logs = effective.map((value) => Math.log2(value + 1e-7));
+  const mx = (L - 1) / 2, my = logs.reduce((sum, value) => sum + value, 0) / L;
+  let num = 0, den = 0;
+  logs.forEach((value, i) => { num += (i - mx) * (value - my); den += (i - mx) ** 2; });
+  const slope = num / den;
+  const slopeFit = Math.exp(-((slope - 0.6) ** 2) / (2 * 0.9 * 0.9));
+  const spread = -effective.reduce((sum, value) => {
+    const p = value / total;
+    return p > 0 ? sum + p * Math.log(p) : sum;
+  }, 0) / Math.log(L);
+  const mid = coverage.slice(1, 4);
+  const richness = mid.length ? mid.reduce((sum, value) => sum + value, 0) / mid.length : 0;
+  const richFit = Math.exp(-(((richness - 0.45) / 0.32) ** 2));
+  return {
+    score: amount * slopeFit * spread * (0.35 + 0.65 * richFit),
+    amount, slope, spread, richness,
+    coherence: coherence.length ? coherence.reduce((sum, value) => sum + value, 0) / coherence.length : 0,
+  };
+}
+
 function tasteFeatures(ctx, W, H, sig) {
   // These terms come from observed pixels, not the generator's parameters.
   // Extremes define the vocabulary:
@@ -17639,8 +17975,16 @@ function tasteFeatures(ctx, W, H, sig) {
   const edgeDensity = clamp01(edgeCount / Math.max(1, n) * 3.2);
   const softEdgeRatio = softEdges / Math.max(1, edgeCount);
   const hardEdgeRatio = hardEdges / Math.max(1, edgeCount);
+  const effective = measureEffectiveComplexity(data, W, H);
   const base = {
     complexity,
+    // Order inside the complexity, which `complexity` alone cannot tell apart
+    // from noise. See measureEffectiveComplexity.
+    effectiveComplexity: clamp01(effective.score),
+    structureAmount: effective.amount,
+    structureSlope: effective.slope,
+    structureRichness: effective.richness,
+    structureCoherence: effective.coherence,
     // A messy image is not merely detailed: it is detailed everywhere with
     // no hierarchy. This is the requested "too messy = uniformity" anchor.
     messiness: clamp01(rawJitter * (0.38 + uniformity * 0.62)),
@@ -19504,12 +19848,17 @@ function canvasAestheticScores(grammar, features = {}, noveltyValue = null) {
   const balance = clamp01(Number.isFinite(balanceValue) ? balanceValue : 0.5);
   const abstractness = needValue("abstractness");
   const legibility = clamp01(Number(features.legibility) || 0.5);
+  /* Structure takes its share mostly from contrast, which had been standing in
+   * for it: contrast can tell a picture is loud, not whether the loudness is
+   * organised. Static has plenty of contrast and no structure. */
+  const structureValue = featureValue(features, "effectiveComplexity");
   const beautyBreakdown = {
-    contrast: contrast * 0.53,
-    balance: balance * 0.20,
+    contrast: contrast * 0.43,
+    structure: structureValue * 0.16,
+    balance: balance * 0.18,
     novelty: noveltyScore * 0.10,
-    abstractness: abstractness * 0.09,
-    legibility: legibility * 0.08,
+    abstractness: abstractness * 0.07,
+    legibility: legibility * 0.06,
   };
   const beauty = clamp01(Object.values(beautyBreakdown).reduce((sum, value) => sum + value, 0));
   const creativity = clamp01(noveltyScore * 0.45 + abstractness * 0.25 + (Number(grammar?.rules?.colourChangeRate) || 0) * 0.16 + (Number(grammar?.rules?.intersectionRate) || 0) * 0.14);
@@ -19678,6 +20027,7 @@ const TASTE_LABELS = {
   complementaryClarity: "complementary clarity", boundedComplexity: "bounded complexity",
   breathingRoom: "breathing room", transitionContrast: "transition contrast", restrainedNovelty: "restrained novelty",
   disciplinedContrast: "disciplined contrast",
+  effectiveComplexity: "structure",
 };
 
 function describeWeightShift(deltas, limit = 3) {
@@ -19726,7 +20076,9 @@ function renderWeightGraph() {
     });
     ctx.stroke();
   };
-  if (globalTaste.ready) stroke(globalTaste.model.weights, "#b18cff", 1);
+  // The crowd line is the base everyone starts from - the factory tuning as
+  // trimmed by the crowd so far - which is what "you" is measured against.
+  stroke(tasteBaseWeights(), "#b18cff", 1);
   stroke(taste.weights, "#6ee7ff", 1.5);
   stroke(activeTasteModel().weights, "#c4e9d5", 1);
 }
@@ -19786,7 +20138,7 @@ function renderTasteLab(result = current) {
     : "grammar: waiting for a completed render";
   const beautyParts = result?.aesthetics?.beautyBreakdown;
   const beautyNote = beautyParts
-    ? "beauty contributions: contrast (incl. harmony) " + Math.round(beautyParts.contrast * 100) + " · balance " + Math.round(beautyParts.balance * 100) + " · novelty " + Math.round(beautyParts.novelty * 100) + " · abstract " + Math.round(beautyParts.abstractness * 100) + " · legibility " + Math.round(beautyParts.legibility * 100)
+    ? "beauty contributions: contrast (incl. harmony) " + Math.round(beautyParts.contrast * 100) + " · structure " + Math.round((beautyParts.structure || 0) * 100) + " · balance " + Math.round(beautyParts.balance * 100) + " · novelty " + Math.round(beautyParts.novelty * 100) + " · abstract " + Math.round(beautyParts.abstractness * 100) + " · legibility " + Math.round(beautyParts.legibility * 100)
     : "beauty: waiting for pixel evidence";
   const balanceRead = result?.features ? fundamentalBalanceOf(result.features) : null;
   const betterNote = balanceRead
@@ -19822,13 +20174,10 @@ function renderTasteLab(result = current) {
     (paletteCorpus.ready ? ' · prior ' + Math.round(palettePriorInfluence() * 100) + '% and fading' : '') +
     '</div><div class="taste-impact">' + impact + '</div><div class="taste-guidance">' + mix + '% taste / ' +
     (100 - mix) + '% novelty · ' + cycle + '</div><div class="taste-guidance">' + wiringNote + '</div><div class="taste-guidance">' + curatorStatus + ' · ' + museumStatus + '</div><div class="taste-guidance">' + grammarNote + '</div><div class="taste-guidance">' + beautyNote + '</div><div class="taste-guidance">' + autoHarvest.status + '</div><div class="taste-guidance">' + harvestLibraryStatus + '</div><div class="taste-guidance">' + brushStatus + '</div>' + renderBrushSimulation();
-  const shared = Math.round(globalTasteInfluence() * 100);
-  const globalStatus = globalTaste.ready
-    ? "shared prior: " + globalTaste.sampleCount + " votes at " + shared + "% influence"
-    : "shared prior: waiting for Supabase";
+  const globalStatus = describeTasteLayers();
   const sim = "generate sim #" + generateSimulation.run + ": " + generateSimulation.status +
     (generateSimulation.total ? " · " + generateSimulation.scored + "/" + generateSimulation.total : "");
-  lab.insertAdjacentHTML("beforeend", '<div class="taste-guidance">' + globalStatus + '</div><canvas class="weight-graph" id="weightGraph" width="252" height="112" aria-label="Personal cyan, shared violet, active mint taste weights"></canvas><div class="graph-key"><span><i style="background:#6ee7ff"></i>personal</span><span><i style="background:#b18cff"></i>shared</span><span><i style="background:#c4e9d5"></i>active</span></div><div class="taste-guidance">' + sim + ' · score is foreign novelty + active self-critic; composition keeps the result legible.</div><div class="decision-trace">' + renderDecisionTrace() + '</div><div class="taste-guidance">' + creationLedgerStatus + '</div><div class="taste-guidance">' + sharedTasteStatus() + '</div>');
+  lab.insertAdjacentHTML("beforeend", '<div class="taste-guidance">' + globalStatus + '</div><canvas class="weight-graph" id="weightGraph" width="252" height="112" aria-label="Personal cyan, crowd violet, active mint taste weights"></canvas><div class="graph-key"><span><i style="background:#6ee7ff"></i>you</span><span><i style="background:#b18cff"></i>crowd</span><span><i style="background:#c4e9d5"></i>active</span></div><div class="taste-guidance">' + sim + ' · score is foreign novelty + active self-critic; composition keeps the result legible.</div><div class="decision-trace">' + renderDecisionTrace() + '</div><div class="taste-guidance">' + creationLedgerStatus + '</div><div class="taste-guidance">' + sharedTasteStatus() + '</div>');
   renderWeightGraph();
 }
 
@@ -22180,7 +22529,7 @@ const FIELD_WORKER_FNS = [
   // Measuring turned out to be the larger half once field rendering moved off
   // the main thread, so the same pool does both. All of these are pure.
   rgbToHsl, hueDelta, tonalCentre, structure, coverage, interactionFeatures,
-  analyzeMultiScaleEdges, tasteFeatures, canvasGrammar,
+  analyzeMultiScaleEdges, measureEffectiveComplexity, tasteFeatures, canvasGrammar,
 ];
 
 const FIELD_WORKER_GLUE = `
@@ -25342,6 +25691,20 @@ function mergeWordRecipe(params, composed) {
     }
   }
   next.__hexfieldWords = delta.__hexfieldWords;
+  /* A named colour outranks a colour-draining treatment. About one render in
+   * six is printed as a black-ink halftone, and some iso recipes carry a
+   * greyscale pass or a key substitution - each of which turned "fire" into a
+   * grey dot screen or a blue one. The print survives as a CMYK screen, so the
+   * newsprint look stays and the colour comes through it. Achromatic words
+   * (black smoke, grey stone) keep their monochrome treatments: those agree. */
+  if (delta.__hexfieldWords?.namedColour === "chromatic") {
+    if (next.halftone?.mode === "mono") next.halftone = { ...next.halftone, mode: "cmyk", angle: 45 };
+    if (next.colour && typeof next.colour === "object") {
+      next.colour = { ...next.colour, greyscale: "off" };
+      delete next.colour.substituteHue;
+      delete next.colour.substituteChroma;
+    }
+  }
   next.__hexfieldGrounding = {
     grounded: grounded.grounding.grounded,
     ungrounded: grounded.grounding.named.filter((word) =>
