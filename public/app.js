@@ -24728,6 +24728,13 @@ function targetedDislikeRefinement(anchor, index) {
    * comparison must not silently downgrade the edit to a numeric nudge. */
   if (!target || (!directHumanReject &&
       (bestRun?.drawSeed !== target.drawSeed || anchor.field !== target.field))) return null;
+  /* The painter's own rule verdict rejects most renders, and its repair used
+   * to take over every proposal seat that reached controlledRefinement.
+   * Measured on a phone: 28 of 61 proposals in 90s were these self-repairs and
+   * none was ever accepted, so the passes that could have developed the
+   * painting were spent on a counterfactual that never lands. A person's
+   * REJECT keeps the full repair path; the painter's own opinion does not. */
+  if (target.autonomous && !directHumanReject) return null;
 
   /* A human REJECT is an editing instruction, not merely another taste sample.
    * When the held render has a scene graph, spend that instruction on one
@@ -24971,15 +24978,22 @@ function evaluateBrushContinuation(anchor, candidate) {
   const candidateNonRedundancy = clamp01(Number(candidate?.nonRedundancy ?? candidate?.features?.nonRedundancy ?? 0.5));
   const nonRedundancyGain = candidateNonRedundancy - anchorNonRedundancy;
   const probeChangeRatio = probePixelChangeRatio(anchor?.__probePixels, candidate?.__probePixels);
+  const structureGain = featureValue(candidate?.features, "effectiveComplexity", 0) -
+    featureValue(anchor?.features, "effectiveComplexity", 0);
+  const boldness = painterBoldness();
+  /* A stalled painter may take a move that adds organised structure while
+   * leaving the overall score where it was. Only then, only within one margin
+   * of level, and every other gate below still applies. */
+  const boldStructure = boldness > 0 && structureGain >= 0.012 && meritGain >= -REFINE_MERIT_MARGIN;
   const reasons = [];
-  if (!(meritGain >= REFINE_MERIT_MARGIN)) reasons.push("overall-merit");
+  if (!(meritGain >= REFINE_MERIT_MARGIN) && !boldStructure) reasons.push("overall-merit");
   if (targetGain < -0.002) reasons.push("target-regressed");
   if (fundamental.delta < -BETTER_BALANCE_MIN_GAIN ||
       fundamental.worstRegression > BETTER_BALANCE_MAX_REGRESSION) reasons.push("fundamental-regression");
   if (!hierarchy.passed) reasons.push("recursive-surroundings");
   if (nonRedundancyGain < -0.04) reasons.push("redundancy-regression");
   if (!(parameterNovelty.score >= 0.02)) reasons.push("parameter-redundancy");
-  if (!(probeChangeRatio >= 0.0002 && probeChangeRatio <= paintScopeLimit("brush-merit"))) {
+  if (!(probeChangeRatio >= VISIBLE_STROKE_MIN && probeChangeRatio <= paintScopeLimit("brush-merit"))) {
     reasons.push("visual-scope");
   }
   const materiallyWorse = meritGain <= -REFINE_MERIT_MARGIN || targetGain <= -0.008 ||
@@ -24997,7 +25011,8 @@ function evaluateBrushContinuation(anchor, candidate) {
     gain: meritGain, margin: REFINE_MERIT_MARGIN,
     anchorMerit: Number(anchor?.refinementScore) || 0,
     fundamentalGain: fundamental.delta, hierarchy, nonRedundancyGain,
-    parameterNovelty, probeChangeRatio, changes,
+    parameterNovelty, probeChangeRatio, changes, structureGain,
+    bold: accepted && boldStructure && !(meritGain >= REFINE_MERIT_MARGIN),
     certainty: accepted || materiallyWorse ? "sure" : "unsure",
     verdict: accepted ? "better" : materiallyWorse ? "worse" : "inconclusive",
     beliefPrediction, reasons,
@@ -26267,11 +26282,27 @@ function rankTastePopulation(candidates) {
      * next pass. */
     for (const cand of candidates) {
       const composition = Number.isFinite(cand.compositionScore) ? cand.compositionScore : 0.5;
-      cand.refinementScore = cand.score < 0 ? -1 : Math.max(0,
-        cand.tasteScore * 0.34 + cand.canvasLogic * 0.30 + composition * 0.13 +
-        cand.canonScore * 0.11 + cand.fundamentalBalance.score * 0.10 +
+      /* Structure (effective complexity) is scored directly, not only through
+       * its taste weight. A stroke that adds organised detail - forms that
+       * hold together across scales - is the one kind of move a held painting
+       * most needs and the one the old blend could barely see: taste gave it a
+       * few thousandths, well inside the merit margin. */
+      const structure = featureValue(cand.features, "effectiveComplexity", 0);
+      /* Below the composition floor is a penalty, not a flat -1.
+       *
+       * Every candidate here was fully measured. Scoring the ones under the
+       * floor as exactly -1 meant that while the canvas was still a thin wash
+       * - the control and every stroke on top of it under the floor - every
+       * candidate tied with the control, no move could ever win, and the
+       * painter held until it gave up. Measured: 17 of 17 brush moves in that
+       * state had a gain of exactly zero. Now they compete on their real merit,
+       * and a move that lifts the canvas over the floor also sheds the penalty. */
+      const belowFloor = cand.score < 0 ? REFINE_BELOW_FLOOR_PENALTY : 0;
+      cand.refinementScore = Math.max(0,
+        cand.tasteScore * 0.30 + cand.canvasLogic * 0.26 + structure * 0.14 +
+        composition * 0.11 + cand.canonScore * 0.09 + cand.fundamentalBalance.score * 0.08 +
         cand.nonRedundancy * 0.02 - dislikePenalty(cand.features) -
-        (cand.rejectPatternPenalty || 0));
+        (cand.rejectPatternPenalty || 0)) - belowFloor;
     }
     const anchor = candidates.find((cand) => cand.id === "c0");
     /* c0 (the control) itself scoring below zero means the picture currently
@@ -26419,8 +26450,8 @@ function rankTastePopulation(candidates) {
       const exploratory = brushMoves
         .filter((cand) => {
           const evidence = cand.brushEvidence || {};
-          return evidence.probeChangeRatio >= 0.0005 &&
-            evidence.probeChangeRatio <= 0.18 &&
+          return evidence.probeChangeRatio >= VISIBLE_STROKE_MIN &&
+            evidence.probeChangeRatio <= paintScopeLimit("brush-merit") &&
             evidence.identity >= 0.72 &&
             evidence.collateralLoss <= 0.07 &&
             evidence.worstCollateralDrop <= 0.12 &&
@@ -30117,10 +30148,40 @@ function transitionEdgeField(pixels, width, height) {
   return edge;
 }
 
+/* Where the canvas is weakest: a coarse grid of how flat each area is.
+ *
+ * 1 for an area with no tonal variation at all - an untouched wash - falling
+ * to 0 where the local contrast is already strong. The deposit seed is chosen
+ * by change x weakness, so a clipped continuation lands where the picture has
+ * least going on instead of wherever the recipe change happened to be loudest,
+ * which was usually on top of the one form the painting already had. */
+function canvasWeaknessGrid(pixels, width, height) {
+  const gw = 24, gh = Math.max(4, Math.round(24 * height / Math.max(1, width)));
+  const sum = new Float32Array(gw * gh), sq = new Float32Array(gw * gh), n = new Float32Array(gw * gh);
+  const step = Math.max(1, Math.floor(Math.min(width, height) / 96));
+  for (let y = 0; y < height; y += step) {
+    const cy = Math.min(gh - 1, Math.floor(y * gh / height));
+    for (let x = 0; x < width; x += step) {
+      const o = (y * width + x) * 4;
+      const l = (0.2126 * pixels[o] + 0.7152 * pixels[o + 1] + 0.0722 * pixels[o + 2]) / 255;
+      const c = cy * gw + Math.min(gw - 1, Math.floor(x * gw / width));
+      sum[c] += l; sq[c] += l * l; n[c]++;
+    }
+  }
+  const weak = new Float32Array(gw * gh);
+  for (let i = 0; i < weak.length; i++) {
+    const mean = sum[i] / Math.max(1, n[i]);
+    const sd = Math.sqrt(Math.max(0, sq[i] / Math.max(1, n[i]) - mean * mean));
+    weak[i] = Math.max(0, 1 - sd / 0.12);
+  }
+  return { gw, gh, weak };
+}
+
 function styleTransitionRegion(beforePixels, afterPixels, width, height, budget, threshold = 30) {
   const total = width * height;
   const change = transitionBuffers(total).change;
   change.fill(0, 0, total);
+  const weakness = canvasWeaknessGrid(beforePixels, width, height);
   let seed = -1, strongest = 0, changed = 0;
   for (let pixel = 0; pixel < total; pixel++) {
     const offset = pixel * 4;
@@ -30131,7 +30192,10 @@ function styleTransitionRegion(beforePixels, afterPixels, width, height, budget,
     if (delta <= threshold) continue;
     change[pixel] = delta;
     changed++;
-    if (delta > strongest) { strongest = delta; seed = pixel; }
+    const cell = Math.min(weakness.gh - 1, Math.floor(((pixel / width) | 0) * weakness.gh / height)) * weakness.gw +
+      Math.min(weakness.gw - 1, Math.floor((pixel % width) * weakness.gw / width));
+    const score = delta * (0.35 + 0.65 * weakness.weak[cell]);
+    if (score > strongest) { strongest = score; seed = pixel; }
   }
   if (seed < 0) return { order: new Uint32Array(0), alpha: new Float32Array(total), changed: 0 };
 
@@ -30380,9 +30444,15 @@ function composeLocalPaintDeposit(beforePixels, afterPixels, width, height, maxR
  * exists to prevent. */
 function paintScopeLimit(kind) {
   if (kind === "rejection-escape") return 0.42;
+  // A stalled painter may lay down a bigger passage - see painterBoldness.
   return kind === "recipe-gene" || kind === "brush-merit" || kind === "local-continuation"
-    ? 0.18 : 0.24;
+    ? 0.18 + painterBoldness() * 0.14 : 0.24;
 }
+
+/* Below this share of the probe a stroke is invisible on a phone. Accepting it
+ * spent a whole pass on a change nobody could see - measured at 0-0.2% of the
+ * canvas for about a third of accepted strokes. */
+const VISIBLE_STROKE_MIN = 0.003;
 
 /* Two ways to earn the canvas, one standard of proof.
  *
@@ -30742,6 +30812,8 @@ function continuePaintOpening(result) {
  * same first region on every pass. */
 const MASTER_DETAIL_MIN_MARKS = 48;
 const MASTER_DETAIL_MAX_MARKS = 300;
+const MASTER_DETAIL_CONVERGED_MARKS = 24;
+let masterDetailState = { params: null, best: Infinity, stalls: 0 };
 
 function continueMasterDetail(result) {
   const source = bestRun?.params ? bestRun : current?.params ? current : result;
@@ -30791,7 +30863,22 @@ function continueMasterDetail(result) {
       result.paintSceneLifecycle = detailLifecycle.stage;
     }
   }
-  if (!marks.length) {
+  /* Converged: the canvas already holds the master. What is left is the
+   * difference between a brush and a renderer, which never closes - measured,
+   * the painter spent ~40 passes re-laying the same five marks. Stop when few
+   * marks remain or three detail passes in a row fail to shrink the remainder,
+   * and let the pass count as held so the painter moves on to bolder work. */
+  if (masterDetailState.params !== source.params) {
+    masterDetailState = { params: source.params, best: Infinity, stalls: 0 };
+  }
+  if (marks.length < masterDetailState.best * 0.9) {
+    masterDetailState.best = marks.length;
+    masterDetailState.stalls = 0;
+  } else {
+    masterDetailState.stalls++;
+  }
+  if (!marks.length || marks.length < MASTER_DETAIL_CONVERGED_MARKS || masterDetailState.stalls >= 3) {
+    result.paintDetailConverged = marks.length > 0;
     target.width = 0; target.height = 0;
     return false;
   }
@@ -32380,6 +32467,23 @@ function describePaintingLife() {
     : `generation ${paintingGeneration} · ${toGo} passes from filing · ${history}`;
 }
 
+/* How far past its last real gain the painter is, 0..1.
+ *
+ * Zero while moves are still landing. After BOLD_AFTER_STAGNATION passes with
+ * nothing accepted it starts rising, reaching 1 at BOLD_FULL_AT: mutations
+ * reach further, a stroke may cover more canvas, and a move that adds structure
+ * without hurting the rest is allowed through. Measured before this: after the
+ * first half-minute the painter made ~40 passes of five near-identical marks
+ * each and the canvas stopped developing at all. */
+const BOLD_AFTER_STAGNATION = 3;
+const BOLD_FULL_AT = 9;
+// See the refinementScore comment in rankTastePopulation.
+const REFINE_BELOW_FLOOR_PENALTY = 0.25;
+function painterBoldness() {
+  if (loopMode !== "refine") return 0;
+  return clamp01((stagnation - BOLD_AFTER_STAGNATION) / (BOLD_FULL_AT - BOLD_AFTER_STAGNATION));
+}
+
 function refinementAmount() {
   // Fraction of one gene's declared range. The old 5.5%-28% value was applied
   // to every numeric gene at once; even its smallest pass was a new scene. One
@@ -32390,7 +32494,7 @@ function refinementAmount() {
   // by the same ceiling: bolder, not different in kind.
   const reach = Math.min(8, stagnation) +
     (paintingMatured ? LIFECYCLE_MATURE_SEARCH_BONUS : 0);
-  return Math.min(0.04, 0.008 + reach * 0.004);
+  return Math.min(0.04, 0.008 + reach * 0.004) + painterBoldness() * 0.08;
 }
 
 function runFitness(result) {
@@ -32640,6 +32744,33 @@ function nextAutoAdvanceDelay() {
   return REFINE_ADVANCE_MS * paintingCadenceScale() * (isMobileBrowser() ? 1.3 : 1);
 }
 
+/* Knowing when a painting is done.
+ *
+ * Bold moves begin at BOLD_AFTER_STAGNATION; if they too stop landing for this
+ * many passes, more passes are only churn. The picture is held as finished for
+ * FINISHED_HOLD_MS - costing no work at all, which a phone notices - and then a
+ * new painting starts. Someone who has touched the page in the last 20s is
+ * watching it, so it is not finished on them; and a tap during the hold resumes
+ * painting instead. */
+const FINISH_AFTER_STAGNATION = 20;
+// And never before the painting has had this many passes of its own.
+const FINISH_MIN_PASSES = 40;
+const FINISHED_HOLD_MS = 40000;
+let paintingFinishedAt = 0;
+function checkPaintingFinished() {
+  const now = Date.now();
+  if (paintingFinishedAt && lastInteractionAt > paintingFinishedAt) {
+    paintingFinishedAt = 0;
+    stagnation = Math.min(stagnation, BOLD_AFTER_STAGNATION);
+  }
+  if (!paintingFinishedAt && loopMode === "refine" && current &&
+      stagnation >= FINISH_AFTER_STAGNATION && painterPass >= FINISH_MIN_PASSES &&
+      now - lastInteractionAt > 20000) {
+    paintingFinishedAt = now;
+  }
+  return paintingFinishedAt;
+}
+
 function scheduleAutoAdvance() {
   if (autoAdvanceTimer) clearTimeout(autoAdvanceTimer);
   autoAdvanceTimer = setTimeout(() => {
@@ -32671,18 +32802,29 @@ function scheduleAutoAdvance() {
         // Still exploring, no longer claiming a person approved of it.
         dwellClock = { result: null, key: null, activeMs: 0, activeSince: null };
       }
-      /* A mature canvas that stops finding gains stays exactly that: mature. The
-       * lineage invariant a few hundred lines up is explicit that changeSeed
-       * only ever runs when a person asks for a new painting, so a bounded
-       * local climb running dry is not licence to replace the canvas out from
-       * under whoever is watching it - it is licence to keep holding the seed
-       * and let the widened, slower search in refinementAmount/paintingCadenceScale
-       * keep trying. */
+      /* A canvas whose local climb has run dry used to be held and worked on
+       * forever - measured as ~40 passes of invisible churn. It is now held as
+       * finished and then succeeded (checkPaintingFinished), but never out
+       * from under someone who has touched the page in the last 20s, and any
+       * tap during the hold puts it back to work. */
       /* A held control stuck below the structural-composition floor cannot
        * be fixed by another local perturbation - see controlDegenerateStreak
        * above. Past the limit, treat it the same as running out of local
        * search: reseed instead of holding on a picture nothing can measure. */
-      if (controlDegenerateStreak >= CONTROL_DEGENERATE_RESEED_LIMIT) {
+      const finishedAt = checkPaintingFinished();
+      if (finishedAt) {
+        // Finished: hold the picture without working on it, then start a new
+        // one. Any tap or vote during the hold puts the painter back to work.
+        const left = FINISHED_HOLD_MS - (Date.now() - finishedAt);
+        if (left <= 0) {
+          paintingFinishedAt = 0;
+          changeSeed(true);
+        } else {
+          const label = document.getElementById("painterStatus");
+          if (label) label.textContent = "finished · holding this painting · new one in " + Math.ceil(left / 1000) + "s · tap KEEP or REJECT to keep working on it";
+          scheduleAutoAdvance();
+        }
+      } else if (controlDegenerateStreak >= CONTROL_DEGENERATE_RESEED_LIMIT) {
         controlDegenerateStreak = 0;
         autonomousReseed(true);
       } else if (current && AUTO_PERTURB_ENABLED) {
