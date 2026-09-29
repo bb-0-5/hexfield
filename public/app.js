@@ -30913,13 +30913,72 @@ function strokeReferenceGradient(ref, width, height) {
       gy[i] = (lum[i + gw - 1] + 2 * lum[i + gw] + lum[i + gw + 1]) - (lum[i - gw - 1] + 2 * lum[i - gw] + lum[i - gw + 1]);
     }
   }
-  return { gw, gh, gx, gy };
+  /* Where the subject is: the reference's densest contour energy, smoothed,
+   * with a slight pull toward the thirds. The finest brushes are kept for
+   * here (see planStrokeBatch), the way a painter resolves the focus and
+   * leaves the rest of the canvas loose. */
+  const cw = 32, ch = Math.max(4, Math.round(32 * gh / gw));
+  const energy = new Float32Array(cw * ch);
+  for (let y = 1; y < gh - 1; y++) {
+    const cy = Math.min(ch - 1, Math.floor(y * ch / gh));
+    for (let x = 1; x < gw - 1; x++) {
+      const i = y * gw + x;
+      energy[cy * cw + Math.min(cw - 1, Math.floor(x * cw / gw))] += Math.abs(gx[i]) + Math.abs(gy[i]);
+    }
+  }
+  let best = -1, focus = { fx: 0.5, fy: 0.5 };
+  for (let j = 0; j < ch; j++) {
+    for (let i = 0; i < cw; i++) {
+      let sum = 0;
+      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+        const jj = j + dj, ii = i + di;
+        if (jj >= 0 && jj < ch && ii >= 0 && ii < cw) sum += energy[jj * cw + ii];
+      }
+      const fx = (i + 0.5) / cw, fy = (j + 0.5) / ch;
+      const thirds = 1 - Math.min(1, Math.min(Math.abs(fx - 1 / 3), Math.abs(fx - 2 / 3)) * 4);
+      const score = sum * (1 + 0.3 * thirds);
+      if (score > best) { best = score; focus = { fx, fy }; }
+    }
+  }
+  return { gw, gh, gx, gy, focus };
+}
+
+/* A painter's eye on the reference: the value range stretched to its 2nd-98th
+ * percentiles and the colour lifted a little, blended at 60%. Generated
+ * references are often flat and grey-ish; painters exaggerate what they see. */
+function enhanceStrokeReference(ref) {
+  const hist = new Uint32Array(256);
+  const count = ref.length / 4;
+  for (let o = 0; o < ref.length; o += 4 * 7) {
+    hist[Math.round(0.2126 * ref[o] + 0.7152 * ref[o + 1] + 0.0722 * ref[o + 2])]++;
+  }
+  const total = hist.reduce((a, b) => a + b, 0);
+  let acc = 0, lo = 0, hi = 255;
+  for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= total * 0.02) { lo = v; break; } }
+  acc = 0;
+  for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc >= total * 0.02) { hi = v; break; } }
+  const span = Math.max(24, hi - lo);
+  const out = new Uint8ClampedArray(ref.length);
+  for (let i = 0; i < count; i++) {
+    const o = i * 4;
+    const r = ref[o], g = ref[o + 1], b = ref[o + 2];
+    const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    const stretched = (l - lo) * 255 / span;
+    const k = l > 0.5 ? stretched / l : 1;
+    for (let c = 0; c < 3; c++) {
+      const v = ref[o + c];
+      const lifted = l + (v - l) * 1.12;
+      out[o + c] = v * 0.4 + Math.max(0, Math.min(255, lifted * k)) * 0.6;
+    }
+    out[o + 3] = ref[o + 3];
+  }
+  return out;
 }
 
 /* Plan one batch of strokes: where the canvas is furthest from the reference
  * at this brush size, and which way each stroke runs. Pure; nothing is drawn. */
 function planStrokeBatch(current, ref, gradient, width, height, radius, rng, hand = null, limit = STROKE_BATCH,
-                         tolerance = STROKE_ERROR_TOLERANCE) {
+                         tolerance = STROKE_ERROR_TOLERANCE, layer = 0) {
   const cell = Math.max(2, Math.round(radius));
   // Sparse enough that a fine layer does not read every pixel of the canvas.
   const sample = Math.max(2, Math.floor(cell / 2));
@@ -30943,6 +31002,17 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
         }
       }
       if (n && sum / n > tolerance) starts.push({ x: wx, y: wy, error: sum / n });
+    }
+  }
+  /* The two finest brushes work mostly at the focus; elsewhere a start
+   * survives only occasionally, so the ground keeps its broad strokes. */
+  const focus = gradient.focus;
+  if (focus && layer >= 2) {
+    const sigma = layer === 2 ? 0.7 : 0.4, aspect = width / height;
+    for (let i = starts.length - 1; i >= 0; i--) {
+      const dx = (starts[i].x / width - focus.fx) * aspect, dy = starts[i].y / height - focus.fy;
+      const w = Math.exp(-(dx * dx + dy * dy) / (2 * sigma * sigma));
+      if (rng() > Math.max(0.06, w)) starts.splice(i, 1);
     }
   }
   // Worst first, then shuffled within the batch so strokes do not march in rows.
@@ -31041,8 +31111,19 @@ function drawPaintStroke(ctx, stroke) {
  * Resolves true when strokes landed, false when there was nothing to paint at
  * this layer (or a newer pass cancelled it). Advances the layer when the
  * current brush has run out of places it can improve. */
-function paintTowardReference(result, ref, width, height, { layer = null, limit = STROKE_BATCH, refKey = null } = {}) {
+function paintTowardReference(result, ref, width, height,
+                              { layer = null, limit = STROKE_BATCH, refKey = null, enhance = false } = {}) {
   markPaintTimingStarted(result);
+  if (enhance) {
+    // The same master enhances to the same picture; only a new one is redone.
+    if (refKey && strokePainter.enhancedKey === refKey && strokePainter.enhanced?.length === ref.length) {
+      ref = strokePainter.enhanced;
+    } else {
+      ref = enhanceStrokeReference(ref);
+      strokePainter.enhanced = ref;
+      strokePainter.enhancedKey = refKey;
+    }
+  }
   const animation = ++activePaintAnimation;
   // The reference's contours are reused while it is the same picture - a
   // detail pass re-reads the held master every time, but it has not changed.
@@ -31058,14 +31139,15 @@ function paintTowardReference(result, ref, width, height, { layer = null, limit 
   const rng = mulberry32(((Number(result?.drawSeed) || 0) ^ (painterPass * 0x9e3779b9) ^ paintRevision) >>> 0);
   let useLayer = layer ?? strokePainter.layer;
   let current = vctx.getImageData(0, 0, width, height).data;
+  strokeLogBegin(current, width, height);
   const toleranceFor = (l) => l === 0 ? STROKE_ERROR_TOLERANCE * 0.35 : STROKE_ERROR_TOLERANCE;
   let plan = planStrokeBatch(current, ref, strokePainter.gradient, width, height,
-    strokeRadiusForLayer(useLayer, height), rng, hand, limit, toleranceFor(useLayer));
+    strokeRadiusForLayer(useLayer, height), rng, hand, limit, toleranceFor(useLayer), useLayer);
   // A layer with (almost) nothing left to fix hands over to the next, finer one.
   while (plan.candidates < Math.max(3, plan.cells * 0.01) && useLayer < STROKE_LAYER_FRACTIONS.length - 1) {
     useLayer++;
     plan = planStrokeBatch(current, ref, strokePainter.gradient, width, height,
-      strokeRadiusForLayer(useLayer, height), rng, hand, limit, toleranceFor(useLayer));
+      strokeRadiusForLayer(useLayer, height), rng, hand, limit, toleranceFor(useLayer), useLayer);
   }
   if (layer == null) {
     /* One layer is a fixed number of passes, as in Hertzmann's layering: the
@@ -31102,10 +31184,13 @@ function paintTowardReference(result, ref, width, height, { layer = null, limit 
     return Promise.resolve(false);
   }
   strokePainter.strokes += strokes.length;
+  strokeLog.drawing = true;
+  const logEpoch = strokeLog.epoch;
   result.paintProgress = 0;
   return new Promise((resolve) => {
     let cursor = 0;
     const finish = (landed) => {
+      strokeLogEnd(animation === activePaintAnimation, logEpoch);
       if (animation === activePaintAnimation) activePaintAnimation = 0;
       result.paintProgress = 1;
       markPaintTimingCompleted(result);
@@ -31119,7 +31204,10 @@ function paintTowardReference(result, ref, width, height, { layer = null, limit 
       const end = Math.min(strokes.length, cursor + STROKES_PER_FRAME);
       vctx.save();
       vctx.globalCompositeOperation = "source-over";
-      for (; cursor < end; cursor++) drawPaintStroke(vctx, strokes[cursor]);
+      for (; cursor < end; cursor++) {
+        drawPaintStroke(vctx, strokes[cursor]);
+        if (logEpoch === strokeLog.epoch) strokeLog.strokes.push(strokes[cursor]);
+      }
       vctx.restore();
       result.paintProgress = cursor / strokes.length;
       if (cursor >= strokes.length) { finish(true); return; }
@@ -31151,6 +31239,179 @@ function paintTonedGround(target, width, height) {
   vctx.drawImage(tiny, 0, 0, width, height);
   vctx.restore();
   tiny.width = 0;
+}
+
+/* The painting on screen, as something EXPORT can redraw at print size: the
+ * last raster the strokes were laid over (the toned ground, or whatever else
+ * last changed the canvas) and every stroke painted since, in order. A stroke
+ * is a few points and a colour, so the file gets the same brushwork with
+ * crisp edges instead of an enlarged screenshot. */
+const STROKE_LOG_MAX = 60000;
+const STROKE_LOG_TILE = 16;
+const strokeLog = { base: null, strokes: [], mark: null, pixels: null, width: 0, height: 0, checkpoints: 0, patches: 0,
+  drawing: false, epoch: 0 };
+
+function pixelMark(pixels) {
+  const words = new Uint32Array(pixels.buffer, pixels.byteOffset, pixels.byteLength >> 2);
+  let h = 2166136261;
+  for (let i = 0; i < words.length; i++) h = Math.imul(h ^ words[i], 16777619);
+  return h >>> 0;
+}
+
+/* The parts of the canvas that differ from what the log last described, as
+ * screen-size patches in the log's order: a pigment commit or a KEEP changes
+ * some of the picture, and only that part loses stroke-level detail in print.
+ * Null when there is nothing to compare against or most of it changed. */
+function strokeLogPatches(pixels, width, height) {
+  if (!strokeLog.pixels || strokeLog.mark === null || strokeLog.pixels.length !== pixels.length) return null;
+  const T = STROKE_LOG_TILE, tw = Math.ceil(width / T), th = Math.ceil(height / T);
+  const a = new Uint32Array(pixels.buffer, pixels.byteOffset, pixels.byteLength >> 2);
+  const b = new Uint32Array(strokeLog.pixels.buffer, strokeLog.pixels.byteOffset, strokeLog.pixels.byteLength >> 2);
+  const changed = new Uint8Array(tw * th);
+  let count = 0;
+  for (let y = 0; y < height; y++) {
+    const row = y * width, trow = ((y / T) | 0) * tw;
+    for (let x = 0; x < width; x++) {
+      if (a[row + x] !== b[row + x]) {
+        const t = trow + ((x / T) | 0);
+        if (!changed[t]) { changed[t] = 1; count++; }
+        x = Math.min(width, (((x / T) | 0) + 1) * T) - 1;
+      }
+    }
+  }
+  if (count > tw * th * 0.6) return null;
+  // One patch per run of changed tiles along a row, cut with a 2px margin so
+  // the enlargement blends into its neighbours instead of leaving seams.
+  const patches = [];
+  for (let j = 0; j < th; j++) {
+    for (let i = 0; i < tw; i++) {
+      if (!changed[j * tw + i]) continue;
+      let k = i;
+      while (k + 1 < tw && changed[j * tw + k + 1]) k++;
+      const x = i * T, y = j * T, w = Math.min(width, (k + 1) * T) - x, h = Math.min(height, (j + 1) * T) - y;
+      const m = 2, sx = Math.max(0, x - m), sy = Math.max(0, y - m);
+      const cw = Math.min(width, x + w + m) - sx, ch = Math.min(height, y + h + m) - sy;
+      const canvas = paintBuffer(cw, ch);
+      canvas.getContext("2d").drawImage(view, sx, sy, cw, ch, 0, 0, cw, ch);
+      patches.push({ patch: canvas, ox: x - sx, oy: y - sy, x, y, w, h });
+      i = k;
+    }
+  }
+  return patches;
+}
+
+/* Before a batch: if anything but a logged stroke changed the canvas since the
+ * last batch, what changed is logged as patches - or, when most of the canvas
+ * changed, the canvas as it is now becomes the new base. */
+function strokeLogBegin(pixels, width, height) {
+  const mark = pixelMark(pixels);
+  if (strokeLog.base && strokeLog.width === width && strokeLog.height === height &&
+      strokeLog.mark === mark && strokeLog.strokes.length < STROKE_LOG_MAX) return;
+  const patches = strokeLog.base && strokeLog.width === width && strokeLog.height === height &&
+    strokeLog.strokes.length < STROKE_LOG_MAX ? strokeLogPatches(pixels, width, height) : null;
+  strokeLog.pixels = pixels;
+  strokeLog.mark = mark;
+  if (patches) {
+    for (const patch of patches) strokeLog.strokes.push(patch);
+    strokeLog.patches++;
+    return;
+  }
+  // Always a fresh canvas: a REJECT snapshot may still hold the old base.
+  const base = paintBuffer(width, height);
+  base.getContext("2d").drawImage(view, 0, 0);
+  strokeLog.base = base;
+  strokeLog.width = width;
+  strokeLog.height = height;
+  strokeLog.strokes = [];
+  strokeLog.checkpoints++;
+}
+
+function strokeLogEnd(completed, epoch) {
+  // A batch that a REJECT rolled back past has nothing left to say.
+  if (epoch !== strokeLog.epoch) return;
+  strokeLog.drawing = false;
+  // A cancelled batch may have been overtaken by any kind of paint; the next
+  // batch checks again from scratch.
+  strokeLog.pixels = completed && view.width === strokeLog.width && view.height === strokeLog.height
+    ? vctx.getImageData(0, 0, view.width, view.height).data : null;
+  strokeLog.mark = strokeLog.pixels ? pixelMark(strokeLog.pixels) : null;
+}
+
+/* REJECT puts back an earlier canvas; the log goes back with it. A snapshot
+ * records how far the log had got. When the restored pixels are exactly the
+ * pixels that log state described, it is restored too; otherwise the restored
+ * canvas simply becomes the new base. */
+function strokeLogSnapshot() {
+  return strokeLog.base && !strokeLog.drawing && strokeLog.mark !== null
+    ? { base: strokeLog.base, strokes: strokeLog.strokes, count: strokeLog.strokes.length, mark: strokeLog.mark,
+        width: strokeLog.width, height: strokeLog.height }
+    : null;
+}
+
+function strokeLogRestore(state) {
+  strokeLog.epoch++;
+  strokeLog.drawing = false;
+  const pixels = vctx.getImageData(0, 0, view.width, view.height).data;
+  const mark = pixelMark(pixels);
+  if (state && state.mark === mark && state.width === view.width && state.height === view.height) {
+    strokeLog.base = state.base;
+    strokeLog.strokes = state.strokes.slice(0, state.count);
+    strokeLog.width = state.width;
+    strokeLog.height = state.height;
+  }
+  // Without a matching state the mark still differs from the log's, so the
+  // next batch starts a new base from the restored canvas.
+  strokeLog.mark = state && state.mark === mark ? mark : null;
+  strokeLog.pixels = strokeLog.mark === null ? null : pixels;
+}
+
+/* Redraw the screen painting onto `out`: the base enlarged, then every logged
+ * stroke and patch at the new scale. A batch still being painted is waited
+ * out (the tap has already paused the painter). If the log cannot account for
+ * the screen, the screen itself is enlarged instead, so the file is still
+ * what was on screen. False when nothing has been painted yet - then the
+ * caller exports the render. */
+async function paintExportFromLog(out, onProgress = null) {
+  if (!strokeLog.base || strokeLog.width !== view.width || strokeLog.height !== view.height) return false;
+  for (let waited = 0; strokeLog.drawing && waited < 3000; waited += 50) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const pixels = vctx.getImageData(0, 0, view.width, view.height).data;
+  let strokes = strokeLog.strokes.slice();
+  let matches = !strokeLog.drawing && strokeLog.mark === pixelMark(pixels);
+  if (!matches && !strokeLog.drawing) {
+    // Something other than strokes changed the canvas since the last batch:
+    // that change goes on top as patches, like the next batch would log it.
+    const patches = strokeLogPatches(pixels, view.width, view.height);
+    if (patches) { strokes = strokes.concat(patches); matches = true; }
+  }
+  if (!matches) strokes = [];
+  const ctx = out.getContext("2d");
+  ctx.save();
+  ctx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = 1;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.clearRect(0, 0, out.width, out.height);
+  ctx.drawImage(matches ? strokeLog.base : view, 0, 0, out.width, out.height);
+  ctx.scale(out.width / strokeLog.width, out.height / strokeLog.height);
+  try {
+    for (let i = 0; i < strokes.length; i++) {
+      const event = strokes[i];
+      if (event.patch) {
+        ctx.drawImage(event.patch, event.ox, event.oy, event.w, event.h, event.x, event.y, event.w, event.h);
+      } else {
+        drawPaintStroke(ctx, event);
+      }
+      if (i % 500 === 499) {
+        if (onProgress) onProgress(i / strokes.length);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    }
+  } finally {
+    ctx.restore();
+  }
+  return true;
 }
 
 function continueMasterDetail(result) {
@@ -31187,7 +31448,8 @@ function continueMasterDetail(result) {
     if (strokePainter.sourceParams) strokePainter.layer = Math.max(0, strokePainter.layer - 1);
     strokePainter.sourceParams = source.params;
   }
-  const completion = paintTowardReference(detailResult, reference, width, height, { refKey: source.params });
+  const completion = paintTowardReference(detailResult, reference, width, height,
+    { refKey: source.params, enhance: true });
   if (!detailResult.paintStrokeCount) {
     result.paintDetailConverged = true;
     return false;
@@ -31330,7 +31592,8 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
     strokePainter.settleAngle = -0.7 + mulberry32((Number(result?.drawSeed) || 1) >>> 0)() * 0.9;
     paintRevision++;
     view.dataset.paintRevision = String(paintRevision);
-    visiblePaintCompletion = paintTowardReference(result, reference, width, height, { layer: 0, limit: STROKE_BATCH * 2 })
+    visiblePaintCompletion = paintTowardReference(result, reference, width, height,
+      { layer: 0, limit: STROKE_BATCH * 2, enhance: true })
       .then((landed) => { paintVisibleGlyphOverlay(result); return true; });
   }
   const seedMasterCommitted = !refinement && result.paintCanvasFilled === true;
@@ -32596,6 +32859,7 @@ function snapshotVisibleCanvas() {
     canvas.width = view.width;
     canvas.height = view.height;
     canvas.getContext("2d").drawImage(view, 0, 0);
+    canvas.strokeLogState = strokeLogSnapshot();
     return canvas;
   } catch { return null; }
 }
@@ -32609,6 +32873,7 @@ function restoreVisibleCanvas(snapshot) {
     vctx.clearRect(0, 0, view.width, view.height);
     vctx.drawImage(snapshot, 0, 0);
     vctx.restore();
+    strokeLogRestore(snapshot.strokeLogState);
     return true;
   } catch { return false; }
 }
@@ -35870,7 +36135,13 @@ $("export").addEventListener("click", async () => {
 
   try {
     await new Promise((r) => setTimeout(r, 16));
-    if (current.params.field === "fractal") {
+    // The screen shows a painting, so the file is that painting: the same
+    // strokes redrawn at print size. Only a screen that is not a logged
+    // painting (nothing painted yet) exports the render itself.
+    const painted = await paintExportFromLog(out, (frac) => {
+      setExportStatus(`painting… ${Math.round(frac * 100)}%`);
+    });
+    if (!painted && current.params.field === "fractal") {
       // The chunked fractal renderer draws its own field, so the word has to
       // reach it as a mask exactly as it does on screen - otherwise the export
       // and the screen disagree and a wrong file goes to a printer.
@@ -35880,7 +36151,7 @@ $("export").addEventListener("click", async () => {
         setExportStatus(`rendering… ${Math.round(frac * 100)}%`);
       }, mask);
       screenIfPrinted(octx, out.width, out.height, current.params);
-    } else {
+    } else if (!painted) {
       renderComposite(octx, out.width, out.height, current.params,
                       mulberry32(current.drawSeed), seedText(), textMode());
     }
