@@ -22395,7 +22395,7 @@ function scheduleColourTreatmentChoice(reason = "taste") {
       const candidates = colourTreatmentCandidates(hashText("colour-treatment|" + visibleTasteEpoch));
       let best = null, low = Infinity, high = -Infinity;
       for (const candidate of candidates) {
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await yieldToPainter();
         const score = scoreColourTreatment(candidate);
         if (!Number.isFinite(score)) continue;
         low = Math.min(low, score);
@@ -27044,6 +27044,26 @@ for (const kind of ["pointerdown", "keydown", "wheel", "touchstart"]) {
   addEventListener(kind, () => { lastInteractionAt = Date.now(); }, { passive: true, capture: true });
 }
 
+/* Taps first.
+ *
+ * Every pass, analysis step and background study is a block of canvas work on
+ * the one thread that also has to answer a finger. Measured on a phone-speed
+ * CPU, a tap waited a median 0.3s and one in four waited over 0.75s - long
+ * enough that KEEP and REJECT read as broken. A touch now buys the page a
+ * quiet window: no new pass starts and no background step runs until the
+ * person has stopped touching for INPUT_PRIORITY_MS. Work already running
+ * finishes; nothing new competes with the next tap. */
+const INPUT_PRIORITY_MS = 2500;
+function userRecentlyActive() {
+  return Date.now() - lastInteractionAt < INPUT_PRIORITY_MS;
+}
+async function waitForQuietInput(maxMs = 12000) {
+  const start = Date.now();
+  while (userRecentlyActive() && Date.now() - start < maxMs) {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+}
+
 /* Hand the thread back properly between cycles.
  *
  * A fixed 16ms gap was the wrong instrument. It bounded the pause but not the
@@ -27601,8 +27621,19 @@ async function buildTerminalLearningBatch(ranked) {
  */
 let tasteCycleCanvas = null;
 
+let tasteCycleRetryArmed = false;
 function runTasteCycle(source = "visitor") {
   if (tasteCycleState.running) return Promise.resolve(null);
+  /* Background learning, not the painting. On a phone it waits until nobody
+   * has touched the page for 45s, so it never lands on someone reaching for a
+   * button - it used to start 30s after load, exactly when people start. */
+  if (source === "autonomous" && isMobileBrowser() && Date.now() - lastInteractionAt < 45000) {
+    if (!tasteCycleRetryArmed) {
+      tasteCycleRetryArmed = true;
+      setTimeout(() => { tasteCycleRetryArmed = false; runTasteCycle("autonomous"); }, 60000);
+    }
+    return Promise.resolve(null);
+  }
   nextFieldVariation("taste-cycle");
   const overlay = $("overlay");
   /* A phone paints the visible canvas on the same thread. The full cycle - 36
@@ -27663,7 +27694,7 @@ function runTasteCycle(source = "visitor") {
                                            cycleCtx, probe.width, probe.height, null, seen);
           if (study.sig) seen.push(study.sig);
           studies.push(study);
-          await new Promise((resolve) => setTimeout(resolve, 0));
+          await yieldToPainter();
         }
         ranked = rankTastePopulation(studies);
         recordCausalCounterfactual(ranked);
@@ -31096,7 +31127,10 @@ function drawImmediate(result, { refinement = false } = {}) {
 
 
 let analysisChain = Promise.resolve();
-const yieldToPainter = () => new Promise((resolve) => setTimeout(resolve, 0));
+const yieldToPainter = async () => {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await waitForQuietInput();
+};
 
 /* Measured in steps, not one block. Each pass below is a full read of the
  * visible canvas, and together they held a phone's page frozen for 1.5-2s on a
@@ -31356,6 +31390,12 @@ function generate() {
    * this was the gap that turned it into a dead page instead of a retried
    * one. */
   let requestToken;
+  const passStartedAt = performance.now();
+  // Only the painter's own timer-driven passes give way to a touch; a pass a
+  // person asked for (KEEP, REJECT, CHANGE SEED, PERTURB, typing) is the
+  // response to that touch and must not wait for it to end.
+  const autonomousPass = autonomousPassPending;
+  autonomousPassPending = false;
   try {
     requestToken = ++renderRequestToken;
     nextFieldVariation(pendingAction || "generate");
@@ -31459,6 +31499,19 @@ function generate() {
       }
       const best = candidates[0];
       retainMeasuredMiniMaster(best);
+      /* The full-size master is the single most expensive step of a pass, and
+       * draw() used to build it in the same task as the commit - about 1.2s of
+       * blocked page per accepted stroke on a phone-speed CPU. Build it here,
+       * then hand the thread back (and wait out any touch) before drawing; draw
+       * finds it in the one-slot cache. */
+      try {
+        const layout = miniDesignLayout(view.width, view.height);
+        canonicalMasterCanvas(best.params, best.drawSeed, seedText(), textMode(),
+          layout.sourceWidth, layout.sourceHeight);
+      } catch { /* draw() renders it itself if this could not */ }
+      if (autonomousPass) await yieldToPainter();
+      else await new Promise((resolve) => setTimeout(resolve, 0));
+      if (requestToken !== renderRequestToken) return;
       /* Preserve the exact visible control before the winner is put on the
        * easel. `bestRun` is updated after drawing, so it cannot reconstruct
        * what REJECT must return to. */
@@ -31565,6 +31618,7 @@ function generate() {
        * empty and therefore leave no timer behind.  Scheduling from every
        * settled owner lets the autonomous path recover with a fresh search
        * instead of silently becoming a static page. */
+      lastPassDurationMs = performance.now() - passStartedAt;
       scheduleAutoAdvance();
       // Show where the climb is rather than a fixed slogan: this line is the
       // only outward sign that the loop is accumulating anything.
@@ -32740,8 +32794,16 @@ const AUTO_PERTURB_ENABLED = true;
  * wrong for what a person watching the page actually wants. What real
  * profiling on this session's real device DID show - warm-perturb genuinely
  * costs more on a phone - stays as a modest multiplier, not a stop-and-wait. */
+/* A phone also rests in proportion to the pass it just ran, so the thread is
+ * free for roughly a third of the time instead of a fixed second between
+ * back-to-back multi-second passes. The painter is slower per minute; it is
+ * also a page a person can use while it paints. */
+let lastPassDurationMs = 0;
+// Set by the auto-advance timer just before it starts a pass; read by generate().
+let autonomousPassPending = false;
 function nextAutoAdvanceDelay() {
-  return REFINE_ADVANCE_MS * paintingCadenceScale() * (isMobileBrowser() ? 1.3 : 1);
+  const base = REFINE_ADVANCE_MS * paintingCadenceScale() * (isMobileBrowser() ? 1.3 : 1);
+  return isMobileBrowser() ? Math.max(base, Math.min(6000, lastPassDurationMs * 0.5)) : base;
 }
 
 /* Knowing when a painting is done.
@@ -32796,6 +32858,7 @@ function scheduleAutoAdvance() {
        * deliberately paused here. This is an unattended painter: when the tab
        * wakes it should still have a next move ready. */
       if ($("overlay")?.classList.contains("on")) { scheduleAutoAdvance(); return; }
+      if (userRecentlyActive()) { scheduleAutoAdvance(); return; }
       const interacted = lastInteractionAt > lastReseedAt;
       unattendedAdvances = interacted ? 0 : unattendedAdvances + 1;
       if (unattendedAdvances > AUTO_ADVANCE_MAX_UNATTENDED) {
@@ -32818,6 +32881,7 @@ function scheduleAutoAdvance() {
         const left = FINISHED_HOLD_MS - (Date.now() - finishedAt);
         if (left <= 0) {
           paintingFinishedAt = 0;
+          autonomousPassPending = true;
           changeSeed(true);
         } else {
           const label = document.getElementById("painterStatus");
@@ -32826,13 +32890,16 @@ function scheduleAutoAdvance() {
         }
       } else if (controlDegenerateStreak >= CONTROL_DEGENERATE_RESEED_LIMIT) {
         controlDegenerateStreak = 0;
+        autonomousPassPending = true;
         autonomousReseed(true);
       } else if (current && AUTO_PERTURB_ENABLED) {
         lastReseedAt = Date.now();
         lastReseedWasAuto = true;
         filePaintingMaturity();
+        autonomousPassPending = true;
         perturb();
       } else {
+        autonomousPassPending = true;
         autonomousReseed(true);
       }
       /* Mature work still keeps moving. The cadence scale widens the pause after
