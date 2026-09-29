@@ -31093,10 +31093,110 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
   // Toward the thirds along the long side, toward the middle across it.
   const toThird = (v) => v + ((Math.abs(v - 1 / 3) < Math.abs(v - 2 / 3) ? 1 / 3 : 2 / 3) - v) * 0.6;
   if (width >= height) { fx = toThird(fx); fy += (0.45 - fy) * 0.4; } else { fy = toThird(fy); fx += (0.5 - fx) * 0.4; }
-  const plan = { fx, fy, lightOnDark: true, palette: null, drawSeed, style: paintingBrushStyle(params) };
+  const plan = { fx, fy, lightOnDark: true, palette: null, drawSeed, style: paintingBrushStyle(params), scene: null };
+  /* Things the words name (visual dictionary, words/hexfield-visual.js): the
+   * first one takes the focus, and the painting is built around it. */
+  const scene = planScene(params, width, height, fx, drawSeed);
+  if (scene?.focus) { plan.fx = scene.focus.fx; plan.fy = scene.focus.fy; }
+  plan.scene = scene;
   const { Lf, Lb } = planLuminanceStats(ref, width, height, plan);
   plan.lightOnDark = Math.abs(Lf - Lb) > 6 ? Lf > Lb : mulberry32((Number(drawSeed) || 7) >>> 0)() < 0.6;
   return plan;
+}
+
+/* ─── What the words name ───
+ * The visual dictionary describes things in a small drawing kit; here a
+ * painting's words become a laid-out scene once, when the plan is made, and
+ * that scene is painted into every reference the painting is painted from. It
+ * goes in as big value shapes over the composed picture, never on the canvas
+ * itself - the stroke painter still does all the painting, so a door arrives
+ * as a painted door rather than a pasted one. */
+const SCENE_STRENGTH = 0.85;
+const SCENE_MIN_CONTRAST = 48;
+
+function planScene(params, width, height, fx, drawSeed) {
+  const Visual = globalThis.HexfieldVisual;
+  const text = params?.__hexfieldWords?.text;
+  if (!Visual || !text) return null;
+  const read = Visual.read(text);
+  if (!read.subjects.length && !read.settings.length) return null;
+  const rng = mulberry32(((Number(drawSeed) || 0) ^ 0x5ce4e) >>> 0);
+  const laid = Visual.layout(read, width, height, rng, width >= height ? fx : null);
+  return { words: read.words, items: laid.items, focus: laid.focus, width, height, layer: null };
+}
+
+/* The scene as pixels: everything, and the subjects' own coverage (for
+ * keeping them readable against what surrounds them). Drawn once per plan. */
+function planSceneLayer(scene) {
+  if (scene.layer) return scene.layer;
+  const { width, height } = scene;
+  const canvas = paintBuffer(width, height);
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  // The same seed both times, so the subjects' coverage matches the full layer.
+  const draw = (only) => {
+    ctx.clearRect(0, 0, width, height);
+    globalThis.HexfieldVisual.paint(ctx, width, height, scene.items, mulberry32(0x7e57a), only);
+    return ctx.getImageData(0, 0, width, height).data;
+  };
+  const all = draw(null);
+  const subjects = draw("subject");
+  canvas.width = 0; canvas.height = 0;
+  const cover = new Uint8Array(width * height);
+  for (let i = 0; i < cover.length; i++) cover[i] = subjects[i * 4 + 3];
+  scene.layer = { all, cover };
+  return scene.layer;
+}
+
+/* Paint the scene into a composed reference, in place. */
+function applyPlanScene(pixels, width, height, plan) {
+  const scene = plan?.scene;
+  if (!scene || scene.width !== width || scene.height !== height || !globalThis.HexfieldVisual) return pixels;
+  const { all, cover } = planSceneLayer(scene);
+  for (let o = 0, i = 0; o < pixels.length; o += 4, i++) {
+    const a = (all[o + 3] / 255) * SCENE_STRENGTH;
+    if (!a) continue;
+    pixels[o] += (all[o] - pixels[o]) * a;
+    pixels[o + 1] += (all[o + 1] - pixels[o + 1]) * a;
+    pixels[o + 2] += (all[o + 2] - pixels[o + 2]) * a;
+  }
+  /* Readable: a subject whose values sit too close to what surrounds it is
+   * pushed away from its surroundings, lighter or darker, whichever it
+   * already leans to. Measured per item box, with a margin for the ring -
+   * once, on the painting's first reference, and then baked into the layer,
+   * so every later reference (and every accepted change) is one pass. */
+  if (scene.readable) return pixels;
+  scene.readable = true;
+  for (const item of scene.items) {
+    if (item.entry.kind !== "subject") continue;
+    const m = 0.3;
+    const x0 = Math.max(0, Math.floor(item.box.x - item.box.w * m)), x1 = Math.min(width, Math.ceil(item.box.x + item.box.w * (1 + m)));
+    const y0 = Math.max(0, Math.floor(item.box.y - item.box.h * m)), y1 = Math.min(height, Math.ceil(item.box.y + item.box.h * (1 + m)));
+    let ls = 0, ns = 0, lb = 0, nb = 0;
+    const step = Math.max(1, Math.round(Math.sqrt((x1 - x0) * (y1 - y0) / 4000)));
+    for (let y = y0; y < y1; y += step) {
+      for (let x = x0; x < x1; x += step) {
+        const i = y * width + x, o = i * 4;
+        const l = 0.2126 * pixels[o] + 0.7152 * pixels[o + 1] + 0.0722 * pixels[o + 2];
+        if (cover[i] > 160) { ls += l; ns++; } else if (cover[i] < 10) { lb += l; nb++; }
+      }
+    }
+    if (!ns || !nb) continue;
+    const diff = ls / ns - lb / nb;
+    if (Math.abs(diff) >= SCENE_MIN_CONTRAST) continue;
+    const lighter = Math.abs(diff) > 4 ? diff > 0 : !plan.lightOnDark;
+    const shift = (lighter ? 1 : -1) * (SCENE_MIN_CONTRAST - Math.abs(diff));
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const i = y * width + x;
+        if (!cover[i]) continue;
+        const k = (cover[i] / 255) * shift, o = i * 4;
+        pixels[o] += k; pixels[o + 1] += k; pixels[o + 2] += k;
+        const baked = k / SCENE_STRENGTH;
+        all[o] += baked; all[o + 1] += baked; all[o + 2] += baked;
+      }
+    }
+  }
+  return pixels;
 }
 
 /* The reference, reshaped to the plan. Pure; returns a new pixel array. */
@@ -31142,12 +31242,15 @@ function composeStrokeReference(ref, width, height, plan) {
         soft[c] = (blocks[b00 + c] * (1 - tx) + blocks[b01 + c] * tx) * (1 - ty) +
                   (blocks[b10 + c] * (1 - tx) + blocks[b11 + c] * tx) * ty;
       }
-      const k = (1 - w) * 0.75;
+      // A painting with a subject quiets its ground further, so the thing the
+      // words named is what the eye finds.
+      const k = (1 - w) * (plan.scene ? 0.92 : 0.75);
       const r = ref[o] + (soft[0] - ref[o]) * k, g = ref[o + 1] + (soft[1] - ref[o + 1]) * k,
             b = ref[o + 2] + (soft[2] - ref[o + 2]) * k;
       const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-      const L = (G + (l - Lb) * 0.5 * (1 - 0.3 * punch)) * (1 - w) + (F + (l - Lf) * 1.2) * w;
-      const sat = 0.75 + 0.4 * w;
+      const groundContrast = (plan.scene ? 0.32 : 0.5) * (1 - 0.3 * punch);
+      const L = (G + (l - Lb) * groundContrast) * (1 - w) + (F + (l - Lf) * 1.2) * w;
+      const sat = (plan.scene ? 0.62 : 0.75) + (plan.scene ? 0.5 : 0.4) * w;
       out[o] = L + (r - l) * sat;
       out[o + 1] = L + (g - l) * sat;
       out[o + 2] = L + (b - l) * sat;
@@ -31221,17 +31324,22 @@ function snapToPalette(pixels, palette, amount = PLAN_PALETTE_SNAP) {
 
 /* A reference as this painting paints it: enhanced, composed to the plan and
  * mixed from its palette. The first reference of a painting makes the plan. */
-function prepareStrokeReference(ref, width, height) {
-  const enhanced = enhanceStrokeReference(ref);
+function prepareStrokeReference(ref, width, height, enhanced = enhanceStrokeReference(ref)) {
   if (!strokePainter.plan) {
     const source = bestRun?.params ? bestRun : current;
     strokePainter.plan = makePaintingPlan(enhanced, width, height, source?.drawSeed || 0, source?.params);
   }
   const plan = strokePainter.plan;
-  const composed = composeStrokeReference(enhanced, width, height, plan);
+  const composed = applyPlanScene(composeStrokeReference(enhanced, width, height, plan), width, height, plan);
   if (!plan.palette) {
     plan.palette = paletteFromPixels(composed, plan.style?.paletteSize || PLAN_PALETTE_SIZE,
       mulberry32(((Number(plan.drawSeed) || 0) ^ 0x51f15e) >>> 0));
+    // The named things keep their own colours on the palette.
+    for (const colour of plan.scene ? globalThis.HexfieldVisual.subjectColours(plan.scene.items) : []) {
+      const near = nearestPaletteColour(plan.palette, colour[0], colour[1], colour[2]);
+      const d = Math.hypot(near[0] - colour[0], near[1] - colour[1], near[2] - colour[2]);
+      if (d > 40 && plan.palette.length < PLAN_PALETTE_SIZE + 4) plan.palette.push(colour);
+    }
   }
   return snapToPalette(composed, plan.palette, planPaletteSnap(plan));
 }
@@ -31249,7 +31357,7 @@ function scheduleStrokeReference(ref, width, height, refKey) {
     const enhanced = enhanceStrokeReference(ref);
     await pause();
     if (!stillWanted()) return;
-    const composed = composeStrokeReference(enhanced, width, height, plan);
+    const composed = applyPlanScene(composeStrokeReference(enhanced, width, height, plan), width, height, plan);
     await pause();
     if (!stillWanted()) return;
     strokePainter.enhanced = snapToPalette(composed, plan.palette, planPaletteSnap(plan));
@@ -31353,7 +31461,9 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       x += dx * radius; y += dy * radius;
       if (x < 0 || y < 0 || x >= width || y >= height) break;
       // Stop where carrying on would paint a colour the reference does not have.
-      if (step > 2 && diff(colourAt(ref, x, y), colour) > diff(colourAt(current, x, y), colour)) break;
+      // From the second step on: waiting until the third let a big brush run
+      // most of a stroke length past the edge of a shape.
+      if (step > 1 && diff(colourAt(ref, x, y), colour) > diff(colourAt(current, x, y), colour)) break;
       points.push([x, y]);
       lastDx = dx; lastDy = dy;
     }
@@ -31430,8 +31540,13 @@ function paintTowardReference(result, ref, width, height,
       strokePainter.enhancedPlan = strokePainter.plan;
     }
   }
-  // Accepted changes that arrive as raw pixels are still mixed from the palette.
+  // Accepted changes that arrive as raw pixels are still mixed from the palette,
+  // and still hold the painting's subject: a change may reshape the picture
+  // around the door, but it does not paint the door away.
   const palette = enhance || prepared ? null : strokePainter.plan?.palette || null;
+  if (!enhance && !prepared && strokePainter.plan?.scene) {
+    ref = applyPlanScene(new Uint8ClampedArray(ref), width, height, strokePainter.plan);
+  }
   const animation = ++activePaintAnimation;
   // The reference's contours are reused while it is the same picture - a
   // detail pass re-reads the held master every time, but it has not changed.
@@ -31892,8 +32007,9 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
     result.paintCanvasFilled = true;
     const raw = target.getContext("2d").getImageData(0, 0, width, height).data;
     // A new painting, a new plan: focus, value scheme and palette.
-    strokePainter.plan = makePaintingPlan(enhanceStrokeReference(raw), width, height, result?.drawSeed, result?.params);
-    const reference = prepareStrokeReference(raw, width, height);
+    const enhancedRaw = enhanceStrokeReference(raw);
+    strokePainter.plan = makePaintingPlan(enhancedRaw, width, height, result?.drawSeed, result?.params);
+    const reference = prepareStrokeReference(raw, width, height, enhancedRaw);
     // Detail passes start from this one while theirs is prepared in the background.
     strokePainter.enhanced = reference;
     strokePainter.enhancedKey = null;
