@@ -30975,10 +30975,206 @@ function enhanceStrokeReference(ref) {
   return out;
 }
 
+/* ─── A painting's plan ───
+ * Generated references are all-over: detail and colour spread evenly edge to
+ * edge, so a painting copied from one has nowhere for the eye to land. Each
+ * painting therefore gets a plan when it starts, and every reference it is
+ * painted from is reshaped to it:
+ *   - a focus near a third, where the reference's own forms are densest;
+ *   - a value scheme, light-on-dark or dark-on-light, whichever the focus
+ *     already leans to, pushed apart so the focus reads from across a room;
+ *   - a quieter ground: softer, lower in contrast and a little greyer, so the
+ *     big brushes stay big there and the fine ones gather at the focus;
+ *   - a palette of a few colours taken from the composed picture, which every
+ *     stroke is mixed from, the way a painter works from one palette. */
+const PLAN_PALETTE_SIZE = 6;
+const PLAN_PALETTE_SNAP = 0.7;
+
+function planFocusSigma(width, height) {
+  return Math.max(0.16 * Math.max(width, height), 0.3 * Math.min(width, height));
+}
+
+function planLuminanceStats(ref, width, height, plan) {
+  const sigma = planFocusSigma(width, height), cx = plan.fx * width, cy = plan.fy * height;
+  let lf = 0, wf = 0, lb = 0, wb = 0;
+  const step = Math.max(1, Math.round(Math.sqrt(width * height / 6000)));
+  for (let y = 0; y < height; y += step) {
+    for (let x = 0; x < width; x += step) {
+      const o = (y * width + x) * 4;
+      const l = 0.2126 * ref[o] + 0.7152 * ref[o + 1] + 0.0722 * ref[o + 2];
+      const w = Math.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (2 * sigma * sigma));
+      lf += w * l; wf += w; lb += (1 - w) * l; wb += 1 - w;
+    }
+  }
+  return { Lf: wf ? lf / wf : 128, Lb: wb ? lb / wb : 128 };
+}
+
+function makePaintingPlan(ref, width, height, drawSeed) {
+  let { fx, fy } = strokeReferenceGradient(ref, width, height).focus;
+  // Toward the thirds along the long side, toward the middle across it.
+  const toThird = (v) => v + ((Math.abs(v - 1 / 3) < Math.abs(v - 2 / 3) ? 1 / 3 : 2 / 3) - v) * 0.6;
+  if (width >= height) { fx = toThird(fx); fy += (0.45 - fy) * 0.4; } else { fy = toThird(fy); fx += (0.5 - fx) * 0.4; }
+  const plan = { fx, fy, lightOnDark: true, palette: null, drawSeed };
+  const { Lf, Lb } = planLuminanceStats(ref, width, height, plan);
+  plan.lightOnDark = Math.abs(Lf - Lb) > 6 ? Lf > Lb : mulberry32((Number(drawSeed) || 7) >>> 0)() < 0.6;
+  return plan;
+}
+
+/* The reference, reshaped to the plan. Pure; returns a new pixel array. */
+function composeStrokeReference(ref, width, height, plan) {
+  const sigma = planFocusSigma(width, height);
+  const wx = new Float32Array(width), wy = new Float32Array(height);
+  for (let x = 0; x < width; x++) wx[x] = Math.exp(-((x - plan.fx * width) ** 2) / (2 * sigma * sigma));
+  for (let y = 0; y < height; y++) wy[y] = Math.exp(-((y - plan.fy * height) ** 2) / (2 * sigma * sigma));
+  // A soft copy from block averages, for the ground.
+  const bs = Math.max(4, Math.round(Math.min(width, height) / 32));
+  const bw = Math.ceil(width / bs), bh = Math.ceil(height / bs);
+  const blocks = new Float32Array(bw * bh * 3), counts = new Float32Array(bw * bh);
+  for (let y = 0; y < height; y++) {
+    const by = ((y / bs) | 0) * bw;
+    for (let x = 0; x < width; x++) {
+      const b = by + ((x / bs) | 0), o = (y * width + x) * 4;
+      blocks[b * 3] += ref[o]; blocks[b * 3 + 1] += ref[o + 1]; blocks[b * 3 + 2] += ref[o + 2]; counts[b]++;
+    }
+  }
+  for (let b = 0; b < bw * bh; b++) {
+    const n = counts[b] || 1;
+    blocks[b * 3] /= n; blocks[b * 3 + 1] /= n; blocks[b * 3 + 2] /= n;
+  }
+  const { Lf, Lb } = planLuminanceStats(ref, width, height, plan);
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const G = plan.lightOnDark ? clamp(Lb * 0.65, 28, 105) : clamp(Lb * 0.75 + 70, 150, 225);
+  const F = plan.lightOnDark ? clamp(Math.max(Lf, G + 95), 0, 225) : clamp(Math.min(Lf, G - 95), 30, 255);
+  const out = new Uint8ClampedArray(ref.length);
+  const soft = [0, 0, 0];
+  for (let y = 0; y < height; y++) {
+    const gy = Math.min(bh - 1.001, Math.max(0, y / bs - 0.5));
+    const y0 = gy | 0, ty = gy - y0;
+    for (let x = 0; x < width; x++) {
+      const o = (y * width + x) * 4;
+      const w = wx[x] * wy[y];
+      const gx = Math.min(bw - 1.001, Math.max(0, x / bs - 0.5));
+      const x0 = gx | 0, tx = gx - x0;
+      const b00 = (y0 * bw + x0) * 3, b01 = b00 + 3, b10 = b00 + bw * 3, b11 = b10 + 3;
+      for (let c = 0; c < 3; c++) {
+        soft[c] = (blocks[b00 + c] * (1 - tx) + blocks[b01 + c] * tx) * (1 - ty) +
+                  (blocks[b10 + c] * (1 - tx) + blocks[b11 + c] * tx) * ty;
+      }
+      const k = (1 - w) * 0.75;
+      const r = ref[o] + (soft[0] - ref[o]) * k, g = ref[o + 1] + (soft[1] - ref[o + 1]) * k,
+            b = ref[o + 2] + (soft[2] - ref[o + 2]) * k;
+      const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      const L = (G + (l - Lb) * 0.5) * (1 - w) + (F + (l - Lf) * 1.2) * w;
+      const sat = 0.75 + 0.4 * w;
+      out[o] = L + (r - l) * sat;
+      out[o + 1] = L + (g - l) * sat;
+      out[o + 2] = L + (b - l) * sat;
+      out[o + 3] = 255;
+    }
+  }
+  return out;
+}
+
+/* A few colours that the composed picture is made of (k-means, seeded). */
+function paletteFromPixels(pixels, count, rng) {
+  const samples = [];
+  const stride = Math.max(1, Math.floor(pixels.length / 4 / 3000)) * 4;
+  for (let o = 0; o < pixels.length; o += stride) samples.push([pixels[o], pixels[o + 1], pixels[o + 2]]);
+  if (!samples.length) return [];
+  const d2 = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2;
+  const centres = [samples[Math.floor(rng() * samples.length)].slice()];
+  const nearest = samples.map((sample) => d2(sample, centres[0]));
+  while (centres.length < count) {
+    const total = nearest.reduce((a, b) => a + b, 0);
+    if (!total) break;
+    let pick = rng() * total, i = 0;
+    for (; i < samples.length - 1 && pick > nearest[i]; i++) pick -= nearest[i];
+    centres.push(samples[i].slice());
+    for (let j = 0; j < samples.length; j++) nearest[j] = Math.min(nearest[j], d2(samples[j], samples[i]));
+  }
+  for (let iter = 0; iter < 8; iter++) {
+    const sums = centres.map(() => [0, 0, 0, 0]);
+    for (const sample of samples) {
+      let best = 0, bd = Infinity;
+      for (let c = 0; c < centres.length; c++) { const d = d2(sample, centres[c]); if (d < bd) { bd = d; best = c; } }
+      const t = sums[best]; t[0] += sample[0]; t[1] += sample[1]; t[2] += sample[2]; t[3]++;
+    }
+    for (let c = 0; c < centres.length; c++) {
+      if (sums[c][3]) centres[c] = [sums[c][0] / sums[c][3], sums[c][1] / sums[c][3], sums[c][2] / sums[c][3]];
+    }
+  }
+  return centres.map((c) => c.map(Math.round));
+}
+
+function nearestPaletteColour(palette, r, g, b) {
+  let best = palette[0], bd = Infinity;
+  for (const p of palette) {
+    const d = (p[0] - r) ** 2 + (p[1] - g) ** 2 + (p[2] - b) ** 2;
+    if (d < bd) { bd = d; best = p; }
+  }
+  return best;
+}
+
+/* Mixed from the palette: each pixel moves most of the way to its nearest
+ * palette colour. A 32-level lookup keeps it one table read per pixel. */
+function snapToPalette(pixels, palette, amount = PLAN_PALETTE_SNAP) {
+  if (!palette?.length) return pixels;
+  const lut = new Uint8Array(32 * 32 * 32);
+  for (let r = 0; r < 32; r++) for (let g = 0; g < 32; g++) for (let b = 0; b < 32; b++) {
+    lut[(r << 10) | (g << 5) | b] = palette.indexOf(nearestPaletteColour(palette, r * 8 + 4, g * 8 + 4, b * 8 + 4));
+  }
+  for (let o = 0; o < pixels.length; o += 4) {
+    const p = palette[lut[((pixels[o] >> 3) << 10) | ((pixels[o + 1] >> 3) << 5) | (pixels[o + 2] >> 3)]];
+    pixels[o] += (p[0] - pixels[o]) * amount;
+    pixels[o + 1] += (p[1] - pixels[o + 1]) * amount;
+    pixels[o + 2] += (p[2] - pixels[o + 2]) * amount;
+  }
+  return pixels;
+}
+
+/* A reference as this painting paints it: enhanced, composed to the plan and
+ * mixed from its palette. The first reference of a painting makes the plan. */
+function prepareStrokeReference(ref, width, height) {
+  const enhanced = enhanceStrokeReference(ref);
+  if (!strokePainter.plan) strokePainter.plan = makePaintingPlan(enhanced, width, height, 0);
+  const plan = strokePainter.plan;
+  const composed = composeStrokeReference(enhanced, width, height, plan);
+  if (!plan.palette) {
+    plan.palette = paletteFromPixels(composed, PLAN_PALETTE_SIZE, mulberry32(((Number(plan.drawSeed) || 0) ^ 0x51f15e) >>> 0));
+  }
+  return snapToPalette(composed, plan.palette);
+}
+
+/* The same preparation off the painting path: enhance, compose and mix are
+ * each one task, with the page free to answer a tap in between. */
+let strokeReferenceJob = null;
+function scheduleStrokeReference(ref, width, height, refKey) {
+  if (strokeReferenceJob?.refKey === refKey) return;
+  const job = strokeReferenceJob = { refKey };
+  const plan = strokePainter.plan;
+  const stillWanted = () => strokeReferenceJob === job && strokePainter.plan === plan;
+  const pause = () => new Promise((resolve) => setTimeout(resolve, 0));
+  (async () => {
+    const enhanced = enhanceStrokeReference(ref);
+    await pause();
+    if (!stillWanted()) return;
+    const composed = composeStrokeReference(enhanced, width, height, plan);
+    await pause();
+    if (!stillWanted()) return;
+    strokePainter.enhanced = snapToPalette(composed, plan.palette);
+    strokePainter.enhancedKey = refKey;
+    strokePainter.enhancedPlan = plan;
+    strokeReferenceJob = null;
+  })().catch((error) => {
+    console.warn("stroke reference preparation failed", error);
+    if (strokeReferenceJob === job) strokeReferenceJob = null;
+  });
+}
+
 /* Plan one batch of strokes: where the canvas is furthest from the reference
  * at this brush size, and which way each stroke runs. Pure; nothing is drawn. */
 function planStrokeBatch(current, ref, gradient, width, height, radius, rng, hand = null, limit = STROKE_BATCH,
-                         tolerance = STROKE_ERROR_TOLERANCE, layer = 0) {
+                         tolerance = STROKE_ERROR_TOLERANCE, layer = 0, palette = null) {
   const cell = Math.max(2, Math.round(radius));
   // Sparse enough that a fine layer does not read every pixel of the canvas.
   const sample = Math.max(2, Math.floor(cell / 2));
@@ -31030,7 +31226,11 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
   const width2 = radius * (1 + 0.25 * pot);
   const strokes = [];
   for (const start of chosen) {
-    const colour = colourAt(ref, start.x, start.y);
+    let colour = colourAt(ref, start.x, start.y);
+    if (palette?.length) {
+      const p = nearestPaletteColour(palette, colour[0], colour[1], colour[2]);
+      colour = colour.map((c, i) => c + (p[i] - c) * PLAN_PALETTE_SNAP);
+    }
     const points = [[start.x, start.y]];
     let x = start.x, y = start.y, lastDx = 0, lastDy = 0;
     // Where the reference has no direction of its own, a stroke sweeps straight
@@ -31112,24 +31312,37 @@ function drawPaintStroke(ctx, stroke) {
  * this layer (or a newer pass cancelled it). Advances the layer when the
  * current brush has run out of places it can improve. */
 function paintTowardReference(result, ref, width, height,
-                              { layer = null, limit = STROKE_BATCH, refKey = null, enhance = false } = {}) {
+                              { layer = null, limit = STROKE_BATCH, refKey = null, enhance = false,
+                                prepared = false } = {}) {
   markPaintTimingStarted(result);
   if (enhance) {
-    // The same master enhances to the same picture; only a new one is redone.
-    if (refKey && strokePainter.enhancedKey === refKey && strokePainter.enhanced?.length === ref.length) {
+    // The same master prepares to the same picture; only a new one is redone.
+    const usable = strokePainter.enhancedPlan === strokePainter.plan && strokePainter.enhanced?.length === ref.length;
+    if (usable && refKey && strokePainter.enhancedKey === refKey) {
       ref = strokePainter.enhanced;
+    } else if (usable && refKey) {
+      // A changed master is prepared in the background, a step per task; this
+      // batch keeps painting toward the last prepared picture meanwhile.
+      scheduleStrokeReference(ref, width, height, refKey);
+      ref = strokePainter.enhanced;
+      refKey = strokePainter.enhancedKey;
     } else {
-      ref = enhanceStrokeReference(ref);
+      ref = prepareStrokeReference(ref, width, height);
       strokePainter.enhanced = ref;
       strokePainter.enhancedKey = refKey;
+      strokePainter.enhancedPlan = strokePainter.plan;
     }
   }
+  // Accepted changes that arrive as raw pixels are still mixed from the palette.
+  const palette = enhance || prepared ? null : strokePainter.plan?.palette || null;
   const animation = ++activePaintAnimation;
   // The reference's contours are reused while it is the same picture - a
   // detail pass re-reads the held master every time, but it has not changed.
   const sameReference = refKey ? strokePainter.refKey === refKey : strokePainter.reference === ref;
   if (!sameReference || strokePainter.width !== width || strokePainter.height !== height) {
     strokePainter.gradient = strokeReferenceGradient(ref, width, height);
+    // The fine brushes gather where the plan put the focus.
+    if (strokePainter.plan) strokePainter.gradient.focus = { fx: strokePainter.plan.fx, fy: strokePainter.plan.fy };
     strokePainter.refKey = refKey;
     strokePainter.width = width;
     strokePainter.height = height;
@@ -31142,12 +31355,12 @@ function paintTowardReference(result, ref, width, height,
   strokeLogBegin(current, width, height);
   const toleranceFor = (l) => l === 0 ? STROKE_ERROR_TOLERANCE * 0.35 : STROKE_ERROR_TOLERANCE;
   let plan = planStrokeBatch(current, ref, strokePainter.gradient, width, height,
-    strokeRadiusForLayer(useLayer, height), rng, hand, limit, toleranceFor(useLayer), useLayer);
+    strokeRadiusForLayer(useLayer, height), rng, hand, limit, toleranceFor(useLayer), useLayer, palette);
   // A layer with (almost) nothing left to fix hands over to the next, finer one.
   while (plan.candidates < Math.max(3, plan.cells * 0.01) && useLayer < STROKE_LAYER_FRACTIONS.length - 1) {
     useLayer++;
     plan = planStrokeBatch(current, ref, strokePainter.gradient, width, height,
-      strokeRadiusForLayer(useLayer, height), rng, hand, limit, toleranceFor(useLayer), useLayer);
+      strokeRadiusForLayer(useLayer, height), rng, hand, limit, toleranceFor(useLayer), useLayer, palette);
   }
   if (layer == null) {
     /* One layer is a fixed number of passes, as in Hertzmann's layering: the
@@ -31222,23 +31435,18 @@ function paintTowardReference(result, ref, width, height,
 /* A new painting starts on a toned ground - one colour, the reference's
  * average, the way a painter stains a canvas before the first mark. Everything
  * else, even the soft gradients, arrives through strokes. */
-function paintTonedGround(target, width, height) {
-  // One colour: the reference's average. A blurred copy already matched the
-  // soft areas, so the first brush left them as an unpainted wash.
-  const tiny = paintBuffer(1, 1);
-  const tctx = tiny.getContext("2d");
-  tctx.imageSmoothingEnabled = true;
-  tctx.imageSmoothingQuality = "high";
-  tctx.drawImage(target, 0, 0, tiny.width, tiny.height);
+function paintTonedGround(reference, width, height) {
+  // One colour: the prepared reference's average. A blurred copy already
+  // matched the soft areas, so the first brush left them as an unpainted wash.
+  let r = 0, g = 0, b = 0, n = 0;
+  for (let o = 0; o < reference.length; o += 4 * 11) { r += reference[o]; g += reference[o + 1]; b += reference[o + 2]; n++; }
   vctx.save();
   vctx.globalCompositeOperation = "source-over";
   vctx.globalAlpha = 1;
-  vctx.imageSmoothingEnabled = true;
-  vctx.imageSmoothingQuality = "high";
   vctx.clearRect(0, 0, width, height);
-  vctx.drawImage(tiny, 0, 0, width, height);
+  vctx.fillStyle = `rgb(${Math.round(r / n)},${Math.round(g / n)},${Math.round(b / n)})`;
+  vctx.fillRect(0, 0, width, height);
   vctx.restore();
-  tiny.width = 0;
 }
 
 /* The painting on screen, as something EXPORT can redraw at print size: the
@@ -31583,8 +31791,15 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
     result.paintCommit = result?.action === "change-seed" ? "seed" : "redraw";
     result.paintCanvasCoverage = 1;
     result.paintCanvasFilled = true;
-    const reference = target.getContext("2d").getImageData(0, 0, width, height).data;
-    paintTonedGround(target, width, height);
+    const raw = target.getContext("2d").getImageData(0, 0, width, height).data;
+    // A new painting, a new plan: focus, value scheme and palette.
+    strokePainter.plan = makePaintingPlan(enhanceStrokeReference(raw), width, height, result?.drawSeed);
+    const reference = prepareStrokeReference(raw, width, height);
+    // Detail passes start from this one while theirs is prepared in the background.
+    strokePainter.enhanced = reference;
+    strokePainter.enhancedKey = null;
+    strokePainter.enhancedPlan = strokePainter.plan;
+    paintTonedGround(reference, width, height);
     strokePainter.layer = 0;
     strokePainter.layerBatches = 0;
     strokePainter.strokes = 0;
@@ -31593,7 +31808,7 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
     paintRevision++;
     view.dataset.paintRevision = String(paintRevision);
     visiblePaintCompletion = paintTowardReference(result, reference, width, height,
-      { layer: 0, limit: STROKE_BATCH * 2, enhance: true })
+      { layer: 0, limit: STROKE_BATCH * 2, prepared: true })
       .then((landed) => { paintVisibleGlyphOverlay(result); return true; });
   }
   const seedMasterCommitted = !refinement && result.paintCanvasFilled === true;
