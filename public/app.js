@@ -27974,7 +27974,12 @@ const MASTER_RENDER_PIXEL_BUDGET = 12000000;
  * stops being high-detail. */
 const CANONICAL_MASTER_WIDTH = isMobileBrowser() ? MOBILE_MASTER_WIDTH : 4400;
 const CANONICAL_MASTER_HEIGHT = isMobileBrowser() ? MOBILE_MASTER_HEIGHT : 1000;
-let canonicalMaster = { key: "", canvas: null, width: 0, height: 0 };
+/* Two slots, least recently used first out. One slot thrashed once the stroke
+ * painter kept working toward the held master between passes: every pass
+ * built the candidate's master, evicting the held one, which the next stroke
+ * batch then rebuilt - about 0.6s on a phone-speed CPU, twice a pass. */
+const CANONICAL_MASTER_SLOTS = 2;
+let canonicalMasters = [];
 
 function canonicalMasterKey(params, drawSeed, text, mode) {
   const publicParams = Object.fromEntries(Object.entries(params || {})
@@ -28081,13 +28086,17 @@ function canonicalMasterCanvas(params, drawSeed, text, mode, minimumWidth = 0, m
   const key = canonicalMasterKey(params, drawSeed, text, mode);
   const requestedWidth = Math.max(CANONICAL_MASTER_WIDTH, Math.round(minimumWidth) || 0);
   const requestedHeight = Math.max(CANONICAL_MASTER_HEIGHT, Math.round(minimumHeight) || 0);
-  if (canonicalMaster.canvas && canonicalMaster.key === key &&
-      canonicalMaster.width >= requestedWidth && canonicalMaster.height >= requestedHeight) {
-    return canonicalMaster.canvas;
+  const hit = canonicalMasters.findIndex((entry) => entry.key === key &&
+    entry.width >= requestedWidth && entry.height >= requestedHeight);
+  if (hit >= 0) {
+    const [entry] = canonicalMasters.splice(hit, 1);
+    canonicalMasters.push(entry);
+    return entry.canvas;
   }
-  if (canonicalMaster.canvas) {
-    canonicalMaster.canvas.width = 0;
-    canonicalMaster.canvas.height = 0;
+  while (canonicalMasters.length >= CANONICAL_MASTER_SLOTS) {
+    const evicted = canonicalMasters.shift();
+    evicted.canvas.width = 0;
+    evicted.canvas.height = 0;
   }
   const source = paintBuffer(requestedWidth, requestedHeight);
   const sourceCtx = source.getContext("2d", { willReadFrequently: true });
@@ -28099,7 +28108,7 @@ function canonicalMasterCanvas(params, drawSeed, text, mode, minimumWidth = 0, m
     renderComposite(sourceCtx, requestedWidth, requestedHeight, params,
       mulberry32(Number(drawSeed) || 0), text, mode);
   }
-  canonicalMaster = { key, canvas: source, width: requestedWidth, height: requestedHeight };
+  canonicalMasters.push({ key, canvas: source, width: requestedWidth, height: requestedHeight });
   return source;
 }
 
@@ -30841,10 +30850,308 @@ function continuePaintOpening(result) {
  * batch with a smaller brush. It never changes seed, subject or composition.
  * The cursor is prime-stepped so a persistent residual cannot monopolise the
  * same first region on every pass. */
-const MASTER_DETAIL_MIN_MARKS = 48;
-const MASTER_DETAIL_MAX_MARKS = 300;
-const MASTER_DETAIL_CONVERGED_MARKS = 24;
-let masterDetailState = { params: null, best: Infinity, stalls: 0 };
+
+/* ------------------------------------------------------------------ *
+ * The stroke painter
+ *
+ * Everything that reached the easel used to be the generated picture itself,
+ * copied through brush-shaped masks. However the masks were shaped, the result
+ * was a pasted picture: gradients and cut-out forms with a brushy edge.
+ *
+ * This paints instead. The generated picture is only the reference - the
+ * subject a painter looks at - and the canvas receives flat-coloured strokes,
+ * the way painterly rendering has done it since Hertzmann (1998):
+ *
+ *   - layers from a big brush to a small one; each layer only paints where the
+ *     canvas still differs from the reference by more than a tolerance, so
+ *     large quiet areas stay broad and loose while edges and detail collect
+ *     the small brushes;
+ *   - each stroke takes one colour from the reference where it starts, and
+ *     travels along the reference's contours (perpendicular to its gradient),
+ *     stopping when continuing would paint a colour the reference does not
+ *     have there;
+ *   - strokes carry a faint bristle line so they read as paint, and the word
+ *     hand (wordBrushHand) sets how heavy, long and restless they are.
+ *
+ * Batches are animated a few strokes per frame so the painting is visibly
+ * made, and each frame is small enough to leave taps alone.
+ * ------------------------------------------------------------------ */
+/* Brush radius as a share of canvas height, coarse to fine. The canvas is
+ * 4.4:1, so height is the short side: on a phone's 250px strip these are
+ * about 21, 10, 5 and 2.6px. */
+const STROKE_LAYER_FRACTIONS = [1 / 12, 1 / 24, 1 / 48, 1 / 96];
+// Batches a layer gets before the next, finer brush takes over.
+const STROKE_LAYER_BATCHES = [2, 3, 4, 6];
+const STROKE_ERROR_TOLERANCE = 20;
+const STROKE_BATCH = isMobileBrowser() ? 140 : 260;
+const STROKES_PER_FRAME = isMobileBrowser() ? 18 : 40;
+// Below this Sobel magnitude (0..255 luminance units) the reference has no
+// contour worth following.
+const STROKE_GRADIENT_MIN = 24;
+let strokePainter = { reference: null, layer: 0, layerBatches: 0, gradient: null, width: 0, height: 0, strokes: 0 };
+
+function strokeRadiusForLayer(layer, height) {
+  const fraction = STROKE_LAYER_FRACTIONS[Math.min(layer, STROKE_LAYER_FRACTIONS.length - 1)];
+  return Math.max(1.5, height * fraction);
+}
+
+// Luminance gradient of the reference on a half-resolution grid, for stroke direction.
+function strokeReferenceGradient(ref, width, height) {
+  const gw = Math.max(2, width >> 1), gh = Math.max(2, height >> 1);
+  const lum = new Float32Array(gw * gh);
+  for (let y = 0; y < gh; y++) {
+    for (let x = 0; x < gw; x++) {
+      const o = ((Math.min(height - 1, y * 2)) * width + Math.min(width - 1, x * 2)) * 4;
+      lum[y * gw + x] = 0.2126 * ref[o] + 0.7152 * ref[o + 1] + 0.0722 * ref[o + 2];
+    }
+  }
+  const gx = new Float32Array(gw * gh), gy = new Float32Array(gw * gh);
+  for (let y = 1; y < gh - 1; y++) {
+    for (let x = 1; x < gw - 1; x++) {
+      const i = y * gw + x;
+      gx[i] = (lum[i - gw + 1] + 2 * lum[i + 1] + lum[i + gw + 1]) - (lum[i - gw - 1] + 2 * lum[i - 1] + lum[i + gw - 1]);
+      gy[i] = (lum[i + gw - 1] + 2 * lum[i + gw] + lum[i + gw + 1]) - (lum[i - gw - 1] + 2 * lum[i - gw] + lum[i - gw + 1]);
+    }
+  }
+  return { gw, gh, gx, gy };
+}
+
+/* Plan one batch of strokes: where the canvas is furthest from the reference
+ * at this brush size, and which way each stroke runs. Pure; nothing is drawn. */
+function planStrokeBatch(current, ref, gradient, width, height, radius, rng, hand = null, limit = STROKE_BATCH,
+                         tolerance = STROKE_ERROR_TOLERANCE) {
+  const cell = Math.max(2, Math.round(radius));
+  // Sparse enough that a fine layer does not read every pixel of the canvas.
+  const sample = Math.max(2, Math.floor(cell / 2));
+  const colourAt = (pixels, x, y) => {
+    const o = (Math.max(0, Math.min(height - 1, y | 0)) * width + Math.max(0, Math.min(width - 1, x | 0))) * 4;
+    return [pixels[o], pixels[o + 1], pixels[o + 2]];
+  };
+  const diff = (a, b) => (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2])) / 3;
+  const starts = [];
+  let cells = 0;
+  for (let cy = 0; cy < height; cy += cell) {
+    for (let cx = 0; cx < width; cx += cell) {
+      cells++;
+      let sum = 0, n = 0, worst = -1, wx = cx, wy = cy;
+      for (let y = cy; y < Math.min(height, cy + cell); y += sample) {
+        for (let x = cx; x < Math.min(width, cx + cell); x += sample) {
+          const o = (y * width + x) * 4;
+          const e = (Math.abs(current[o] - ref[o]) + Math.abs(current[o + 1] - ref[o + 1]) + Math.abs(current[o + 2] - ref[o + 2])) / 3;
+          sum += e; n++;
+          if (e > worst) { worst = e; wx = x; wy = y; }
+        }
+      }
+      if (n && sum / n > tolerance) starts.push({ x: wx, y: wy, error: sum / n });
+    }
+  }
+  // Worst first, then shuffled within the batch so strokes do not march in rows.
+  starts.sort((a, b) => b.error - a.error);
+  const chosen = starts.slice(0, limit);
+  for (let i = chosen.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [chosen[i], chosen[j]] = [chosen[j], chosen[i]];
+  }
+  const ene = hand ? hand.ene * hand.strength : 0;
+  const strokeSettleAngle = (Number(strokePainter.settleAngle) || 0);
+  const pot = hand ? hand.pot * hand.strength : 0;
+  // Big brushes make long sweeps; small ones short touches.
+  const maxLength = Math.max(3, Math.round((radius > 8 ? 12 : radius > 4 ? 9 : 6) * (1 + 0.45 * ene)));
+  const width2 = radius * (1 + 0.25 * pot);
+  const strokes = [];
+  for (const start of chosen) {
+    const colour = colourAt(ref, start.x, start.y);
+    const points = [[start.x, start.y]];
+    let x = start.x, y = start.y, lastDx = 0, lastDy = 0;
+    // Where the reference has no direction of its own, a stroke sweeps straight
+    // at one angle for the whole painting, the way a hand settles into a rhythm.
+    const settle = strokeSettleAngle + (rng() - 0.5) * 0.9;
+    for (let step = 1; step < maxLength; step++) {
+      const gi = Math.min(gradient.gh - 1, (y | 0) >> 1) * gradient.gw + Math.min(gradient.gw - 1, (x | 0) >> 1);
+      const gX = gradient.gx[gi], gY = gradient.gy[gi];
+      const mag = Math.hypot(gX, gY);
+      let dx, dy;
+      if (mag < STROKE_GRADIENT_MIN) {
+        if (step === 1) { dx = Math.cos(settle); dy = Math.sin(settle); } else { dx = lastDx; dy = lastDy; }
+      } else {
+        // Along the contour: perpendicular to the gradient.
+        dx = -gY / mag; dy = gX / mag;
+        if (lastDx * dx + lastDy * dy < 0) { dx = -dx; dy = -dy; }
+      }
+      if (step > 1) {
+        // Curvature damping keeps strokes from kinking on noise.
+        dx = 0.4 * dx + 0.6 * lastDx; dy = 0.4 * dy + 0.6 * lastDy;
+        const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+      }
+      x += dx * radius; y += dy * radius;
+      if (x < 0 || y < 0 || x >= width || y >= height) break;
+      // Stop where carrying on would paint a colour the reference does not have.
+      if (step > 2 && diff(colourAt(ref, x, y), colour) > diff(colourAt(current, x, y), colour)) break;
+      points.push([x, y]);
+      lastDx = dx; lastDy = dy;
+    }
+    const jitter = 6 + 10 * Math.max(0, ene);
+    strokes.push({
+      points,
+      width: width2 * 2 * (0.8 + rng() * 0.35),
+      colour: colour.map((c) => Math.max(0, Math.min(255, Math.round(c + (rng() - 0.5) * jitter)))),
+      bristle: rng(),
+    });
+  }
+  return { strokes, candidates: starts.length, cells };
+}
+
+function drawPaintStroke(ctx, stroke) {
+  const [r, g, b] = stroke.colour;
+  const pts = stroke.points;
+  const path = () => {
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    if (pts.length === 1) ctx.lineTo(pts[0][0] + 0.01, pts[0][1]);
+    for (let i = 1; i < pts.length; i++) {
+      const mx = (pts[i - 1][0] + pts[i][0]) / 2, my = (pts[i - 1][1] + pts[i][1]) / 2;
+      ctx.quadraticCurveTo(pts[i - 1][0], pts[i - 1][1], mx, my);
+    }
+    ctx.lineTo(pts[pts.length - 1][0], pts[pts.length - 1][1]);
+  };
+  // A flat brush leaves square-ish ends; a small round one, a dab.
+  ctx.lineCap = stroke.width >= 8 ? "butt" : "round";
+  ctx.lineJoin = "round";
+  ctx.globalAlpha = 0.82 + stroke.bristle * 0.14;
+  ctx.strokeStyle = `rgb(${r},${g},${b})`;
+  ctx.lineWidth = stroke.width;
+  path();
+  ctx.stroke();
+  // A bristle line inside the stroke, a shade off, so it reads as paint.
+  if (stroke.width >= 4) {
+    const shade = stroke.bristle < 0.5 ? -18 : 14;
+    ctx.globalAlpha = 0.22;
+    ctx.strokeStyle = `rgb(${Math.max(0, Math.min(255, r + shade))},${Math.max(0, Math.min(255, g + shade))},${Math.max(0, Math.min(255, b + shade))})`;
+    ctx.lineWidth = Math.max(1, stroke.width * 0.28);
+    ctx.save();
+    ctx.translate((stroke.bristle - 0.5) * stroke.width * 0.4, (stroke.bristle - 0.5) * stroke.width * 0.25);
+    path();
+    ctx.stroke();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* Paint one batch toward `ref` at the painter's current layer, animated.
+ * Resolves true when strokes landed, false when there was nothing to paint at
+ * this layer (or a newer pass cancelled it). Advances the layer when the
+ * current brush has run out of places it can improve. */
+function paintTowardReference(result, ref, width, height, { layer = null, limit = STROKE_BATCH, refKey = null } = {}) {
+  markPaintTimingStarted(result);
+  const animation = ++activePaintAnimation;
+  // The reference's contours are reused while it is the same picture - a
+  // detail pass re-reads the held master every time, but it has not changed.
+  const sameReference = refKey ? strokePainter.refKey === refKey : strokePainter.reference === ref;
+  if (!sameReference || strokePainter.width !== width || strokePainter.height !== height) {
+    strokePainter.gradient = strokeReferenceGradient(ref, width, height);
+    strokePainter.refKey = refKey;
+    strokePainter.width = width;
+    strokePainter.height = height;
+  }
+  strokePainter.reference = ref;
+  const hand = wordBrushHand(result?.params || bestRun?.params);
+  const rng = mulberry32(((Number(result?.drawSeed) || 0) ^ (painterPass * 0x9e3779b9) ^ paintRevision) >>> 0);
+  let useLayer = layer ?? strokePainter.layer;
+  let current = vctx.getImageData(0, 0, width, height).data;
+  const toleranceFor = (l) => l === 0 ? STROKE_ERROR_TOLERANCE * 0.35 : STROKE_ERROR_TOLERANCE;
+  let plan = planStrokeBatch(current, ref, strokePainter.gradient, width, height,
+    strokeRadiusForLayer(useLayer, height), rng, hand, limit, toleranceFor(useLayer));
+  // A layer with (almost) nothing left to fix hands over to the next, finer one.
+  while (plan.candidates < Math.max(3, plan.cells * 0.01) && useLayer < STROKE_LAYER_FRACTIONS.length - 1) {
+    useLayer++;
+    plan = planStrokeBatch(current, ref, strokePainter.gradient, width, height,
+      strokeRadiusForLayer(useLayer, height), rng, hand, limit, toleranceFor(useLayer));
+  }
+  if (layer == null) {
+    /* One layer is a fixed number of passes, as in Hertzmann's layering: the
+     * big brush never matches a fine edge, so "until nothing is left" would
+     * keep it forever. When its batches are used up, or it has covered every
+     * place it could improve, the next finer brush takes over. */
+    if (useLayer !== strokePainter.layer) strokePainter.layerBatches = 0;
+    strokePainter.layer = useLayer;
+    strokePainter.layerBatches++;
+    const allowed = STROKE_LAYER_BATCHES[Math.min(useLayer, STROKE_LAYER_BATCHES.length - 1)];
+    if ((strokePainter.layerBatches >= allowed || plan.candidates <= limit) &&
+        strokePainter.layer < STROKE_LAYER_FRACTIONS.length - 1) {
+      strokePainter.layer++;
+      strokePainter.layerBatches = 0;
+    }
+  }
+  current = null;
+  const strokes = plan.strokes;
+  result.paintStrokeLayer = useLayer;
+  result.paintStrokeCount = strokes.length;
+  result.paintBrush = {
+    families: ["stroke"], textures: ["flat"], signatures: [], lineageObjects: [],
+    source: "stroke-painter", lifts: 0, smudges: 0,
+    minSize: strokes.length ? Math.min(...strokes.map((s) => s.width)) : 0,
+    maxSize: strokes.length ? Math.max(...strokes.map((s) => s.width)) : 0,
+    nonRedundancy: 0.5, count: (Number(result.paintBrush?.count) || 0) + strokes.length,
+    wordHand: hand?.label || "",
+  };
+  view.dataset.paintBrushSource = "stroke-painter";
+  view.dataset.paintStrokeLayer = String(useLayer);
+  if (!strokes.length) {
+    if (activePaintAnimation === animation) activePaintAnimation = 0;
+    markPaintTimingCompleted(result);
+    return Promise.resolve(false);
+  }
+  strokePainter.strokes += strokes.length;
+  result.paintProgress = 0;
+  return new Promise((resolve) => {
+    let cursor = 0;
+    const finish = (landed) => {
+      if (animation === activePaintAnimation) activePaintAnimation = 0;
+      result.paintProgress = 1;
+      markPaintTimingCompleted(result);
+      paintRevision++;
+      view.dataset.paintRevision = String(paintRevision);
+      updatePainterStatus(result);
+      resolve(landed);
+    };
+    const frame = () => {
+      if (animation !== activePaintAnimation) { finish(cursor > 0); return; }
+      const end = Math.min(strokes.length, cursor + STROKES_PER_FRAME);
+      vctx.save();
+      vctx.globalCompositeOperation = "source-over";
+      for (; cursor < end; cursor++) drawPaintStroke(vctx, strokes[cursor]);
+      vctx.restore();
+      result.paintProgress = cursor / strokes.length;
+      if (cursor >= strokes.length) { finish(true); return; }
+      // A timer, not requestAnimationFrame: rAF stops in a background tab and
+      // the painter's loop must not hang waiting for a frame that never comes.
+      setTimeout(frame, 16);
+    };
+    frame();
+  });
+}
+
+/* A new painting starts on a toned ground - one colour, the reference's
+ * average, the way a painter stains a canvas before the first mark. Everything
+ * else, even the soft gradients, arrives through strokes. */
+function paintTonedGround(target, width, height) {
+  // One colour: the reference's average. A blurred copy already matched the
+  // soft areas, so the first brush left them as an unpainted wash.
+  const tiny = paintBuffer(1, 1);
+  const tctx = tiny.getContext("2d");
+  tctx.imageSmoothingEnabled = true;
+  tctx.imageSmoothingQuality = "high";
+  tctx.drawImage(target, 0, 0, tiny.width, tiny.height);
+  vctx.save();
+  vctx.globalCompositeOperation = "source-over";
+  vctx.globalAlpha = 1;
+  vctx.imageSmoothingEnabled = true;
+  vctx.imageSmoothingQuality = "high";
+  vctx.clearRect(0, 0, width, height);
+  vctx.drawImage(tiny, 0, 0, width, height);
+  vctx.restore();
+  tiny.width = 0;
+}
 
 function continueMasterDetail(result) {
   const source = bestRun?.params ? bestRun : current?.params ? current : result;
@@ -30864,73 +31171,36 @@ function continueMasterDetail(result) {
     console.warn("master detail render failed", error);
     return false;
   }
-
-  const before = vctx.getImageData(0, 0, width, height);
-  const after = targetCtx.getImageData(0, 0, width, height);
-  /* Once the broad structure is held, keep admitting quieter pixel changes.
-   * The mini preview makes those changes legible after downsampling; a 9-unit
-   * floor left the large canvas with only its loudest blocks. */
-  const threshold = Math.max(5, 22 - Math.min(14, painterPass) * 1.15);
+  const reference = targetCtx.getImageData(0, 0, width, height).data;
+  target.width = 0; target.height = 0;
+  /* The held master is the reference; the painter keeps working toward it in
+   * strokes, a layer at a time, until even the finest brush finds nothing it
+   * can improve. Then the pass counts as held and the stall/bold/finish logic
+   * takes over, instead of re-copying the same few marks forever. */
   const detailResult = {
-    ...result,
-    params: source.params,
-    drawSeed: source.drawSeed,
-    paintCommit: "detail",
-    paintDetailPass: Math.max(1, painterPass),
+    ...result, params: source.params, drawSeed: source.drawSeed,
+    paintCommit: "detail", paintDetailPass: Math.max(1, painterPass),
   };
-  let marks = logicalPaintMarks(before.data, after.data, width, height,
-    threshold, detailResult);
-  /* During classify/sketch the first silhouette is evidence, not wet clay.
-   * Keep detail deposition out of its padded bounds so the painter spends this
-   * phase on planned connections and missing scene roles. */
-  const detailScene = sceneRead(source.params);
-  const detailLifecycle = sceneLifecycleOf(detailScene);
-  if (detailLifecycle.freezeBase && detailLifecycle.baseObjectId) {
-    const bounds = sceneBounds(source.params, detailLifecycle.baseObjectId, width, height);
-    if (bounds) {
-      const radius = Math.max(8, bounds.approxSize * 0.72);
-      marks = marks.filter((mark) => Math.hypot(mark.x - bounds.cx, mark.y - bounds.cy) > radius);
-      result.paintFrozenObject = detailLifecycle.baseObjectId;
-      result.paintSceneLifecycle = detailLifecycle.stage;
-    }
+  // A changed master reopens one coarser layer, so what changed is repainted
+  // as a passage rather than stippled in with the finest brush.
+  if (strokePainter.sourceParams !== source.params) {
+    if (strokePainter.sourceParams) strokePainter.layer = Math.max(0, strokePainter.layer - 1);
+    strokePainter.sourceParams = source.params;
   }
-  /* Converged: the canvas already holds the master. What is left is the
-   * difference between a brush and a renderer, which never closes - measured,
-   * the painter spent ~40 passes re-laying the same five marks. Stop when few
-   * marks remain or three detail passes in a row fail to shrink the remainder,
-   * and let the pass count as held so the painter moves on to bolder work. */
-  if (masterDetailState.params !== source.params) {
-    masterDetailState = { params: source.params, best: Infinity, stalls: 0 };
-  }
-  if (marks.length < masterDetailState.best * 0.9) {
-    masterDetailState.best = marks.length;
-    masterDetailState.stalls = 0;
-  } else {
-    masterDetailState.stalls++;
-  }
-  if (!marks.length || marks.length < MASTER_DETAIL_CONVERGED_MARKS || masterDetailState.stalls >= 3) {
-    result.paintDetailConverged = marks.length > 0;
-    target.width = 0; target.height = 0;
+  const completion = paintTowardReference(detailResult, reference, width, height, { refKey: source.params });
+  if (!detailResult.paintStrokeCount) {
+    result.paintDetailConverged = true;
     return false;
   }
-  const batchSize = Math.min(marks.length, MASTER_DETAIL_MAX_MARKS,
-    Math.max(MASTER_DETAIL_MIN_MARKS, Math.ceil(marks.length * 0.12)));
-  const span = Math.max(1, marks.length - batchSize + 1);
-  const markOffset = (paintDetailCursor * 97) % span;
-  paintDetailCursor++;
-
   result.paintCommit = "detail";
   result.paintDetailPass = detailResult.paintDetailPass;
-  result.paintDetail = { marks: batchSize, available: marks.length, threshold, markOffset };
-  result.paintChangeRatio = Math.min(1, batchSize / Math.max(1, marks.length)) *
-    paintDeltaRatio(before.data, after.data, threshold);
-  const completion = animatePaintCommit(
-    detailResult, before.data, after.data, width, height, true,
-    { markLimit: batchSize, markOffset, threshold });
+  result.paintStrokeLayer = detailResult.paintStrokeLayer;
+  result.paintDetail = { marks: detailResult.paintStrokeCount, available: detailResult.paintStrokeCount,
+    layer: detailResult.paintStrokeLayer };
+  result.paintChangeRatio = 0;
   visiblePaintCompletion = completion.then((completed) => {
     result.paintBrush = detailResult.paintBrush;
     result.paintProgress = detailResult.paintProgress;
-    target.width = 0; target.height = 0;
     updatePainterStatus(result);
     return completed;
   });
@@ -31014,8 +31284,14 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
   }
 
   if (decision.commit === "stroke") {
-    visiblePaintCompletion = animatePaintCommit(
-      result, before.data, delta.pixels, width, height, true);
+    /* Painted, not pasted: strokes toward the accepted deposit, one layer
+     * coarser than the detail layer so a real change arrives as a passage of
+     * paint. If the change is too slight for any stroke to find, the deposit
+     * lands as before so an accepted move is never silently dropped. */
+    const strokeLayer = Math.max(1, strokePainter.layer - 1);
+    const painted = paintTowardReference(result, delta.pixels, width, height, { layer: strokeLayer });
+    visiblePaintCompletion = result.paintStrokeCount ? painted
+      : animatePaintCommit(result, before.data, delta.pixels, width, height, true);
   } else {
     /* Refinement is constitutionally incremental. paintCommitDecision currently
      * returns only hold/stroke for it, but keep the invariant at the destructive
@@ -31034,9 +31310,9 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
      * through coarse deposits destroyed the very structure the critic chose.
      * Commit that master intact; later accepted moves remain incremental and
      * have to prove that they improve on this preserved base. */
-    vctx.globalCompositeOperation = "source-over";
-    vctx.globalAlpha = 1;
-    vctx.clearRect(0, 0, width, height);
+    /* A new painting is painted from a toned ground: the master is the
+     * reference, and the first layer - the largest brush - blocks in its
+     * masses now; finer layers follow on later passes. */
     visibleBrushHistory = [];
     paintDetailCursor = 0;
     paintOpening = null;
@@ -31045,11 +31321,17 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
     result.paintCommit = result?.action === "change-seed" ? "seed" : "redraw";
     result.paintCanvasCoverage = 1;
     result.paintCanvasFilled = true;
-    result.paintProgress = 1;
-    vctx.drawImage(target, 0, 0);
+    const reference = target.getContext("2d").getImageData(0, 0, width, height).data;
+    paintTonedGround(target, width, height);
+    strokePainter.layer = 0;
+    strokePainter.layerBatches = 0;
+    strokePainter.strokes = 0;
+    // Each painting gets its own hand angle: mostly diagonal, like a right hand.
+    strokePainter.settleAngle = -0.7 + mulberry32((Number(result?.drawSeed) || 1) >>> 0)() * 0.9;
     paintRevision++;
     view.dataset.paintRevision = String(paintRevision);
-    visiblePaintCompletion = Promise.resolve(true);
+    visiblePaintCompletion = paintTowardReference(result, reference, width, height, { layer: 0, limit: STROKE_BATCH * 2 })
+      .then((landed) => { paintVisibleGlyphOverlay(result); return true; });
   }
   const seedMasterCommitted = !refinement && result.paintCanvasFilled === true;
   paintProgressStatus(result, seedMasterCommitted ? 1 : 0, seedMasterCommitted ? 1 : 0, 1);
@@ -31167,10 +31449,17 @@ async function analyseRender(result) {
    * reported the same quality because the flag was stale. The shapes themselves
    * are the evidence, and they are already in hand. */
   const harvestQuality = harvestQualityOf(finishedShapes);
-  const W = view.width, H = view.height;
+  /* On a phone the measuring passes read a half-size copy: 660px across is
+   * still far above the 440px probe the search measures at, and each pass
+   * costs a quarter as much - these were the last long tasks left once the
+   * stroke painter was in (about 0.3s each on a phone-speed CPU). */
+  const scale = isMobileBrowser() ? Math.min(1, 660 / Math.max(1, view.width)) : 1;
+  const W = Math.max(1, Math.round(view.width * scale)), H = Math.max(1, Math.round(view.height * scale));
   const snapshot = paintBuffer(W, H);
   const snap = snapshot.getContext("2d", { willReadFrequently: true });
-  snap.drawImage(view, 0, 0);
+  snap.imageSmoothingEnabled = true;
+  snap.imageSmoothingQuality = "high";
+  snap.drawImage(view, 0, 0, W, H);
   const sourceParamsGrammar = result.params.__hexfieldGrammar;
   await yieldToPainter();
   /* One edge analysis for both grammars below. The snapshot does not change
