@@ -25596,7 +25596,45 @@ function currentWordComposition() {
   return composed;
 }
 
+/* What the painter will actually paint from the words, in plain terms: the
+ * things and places it has a picture for (and how many votes have taught
+ * each), and the words it has no picture for yet. */
+const WORD_PAINTS_QUIET = new Set(["the", "a", "an", "of", "to", "and", "is", "are", "it", "in", "on", "at", "with",
+  "by", "under", "over", "above", "below", "beneath", "beside", "near", "into", "onto", "inside", "atop", "some",
+  "my", "your", "our", "their", "his", "her", "its", "this", "that", "these", "those", "very", "so", "not", "no",
+  "two", "three", "four", "five", "pair", "few", "several", "many"]);
+
+function updateWordPaints() {
+  const line = document.getElementById("wordPaints");
+  const Visual = globalThis.HexfieldVisual;
+  if (!line || !Visual) return;
+  const text = ($("wordPrompt")?.value || "").trim();
+  if (!text) { line.textContent = ""; return; }
+  const read = Visual.read(text);
+  const named = [...read.subjects, ...read.settings.filter((s) => !s.implied)];
+  const colourName = (colour) => Object.keys(Visual.COLOUR_WORDS).find((k) => Visual.COLOUR_WORDS[k] === colour);
+  const parts = named.map((item) => {
+    const votes = Math.round(visualLearned(item.key).votes);
+    const colour = item.colour ? colourName(item.colour) : null;
+    const stars = item.key === "star" && item.count > 1;
+    const many = item.count > 1 && !stars ? item.count + " × " : "";
+    return many + (colour ? colour + " " : "") + (stars ? "stars" : item.key) +
+      (votes ? " (" + votes + " vote" + (votes === 1 ? "" : "s") + ")" : "");
+  });
+  // Words with no picture are not all unknown: feelings and qualities (hope,
+  // grief, wild) are read by the stance lexicon and set the mood instead.
+  const stance = wordEngine()?.LEXICON || {};
+  const rest = (text.toLowerCase().match(/[a-z]+/g) || []).filter((word) =>
+    !WORD_PAINTS_QUIET.has(word) && !Visual.lookup(word) && !Visual.COLOUR_WORDS[word] && !Visual.RELATIONS[word]);
+  const mood = rest.filter((word) => stance[word]);
+  const unknown = rest.filter((word) => !stance[word]);
+  line.textContent = (parts.length ? "paints: " + parts.join(" · ") : "paints: no things it knows yet") +
+    (mood.length ? " · mood: " + mood.slice(0, 4).join(", ") : "") +
+    (unknown.length ? " · no picture yet: " + unknown.slice(0, 4).join(", ") : "");
+}
+
 function updateWordStatus() {
+  updateWordPaints();
   const label = document.getElementById("wordStatus");
   if (!label) return;
   const words = wordEngine();
@@ -28063,6 +28101,14 @@ function measuredMiniEdge(data, width, height, x, y) {
 }
 
 function enrichMeasuredMiniMaster(ctx, width, height, measured, params, drawSeed, text, mode) {
+  const steps = enrichMeasuredMiniMasterSteps(ctx, width, height, measured, params, drawSeed, text, mode);
+  while (!steps.next().done) { /* all at once */ }
+}
+
+/* The same work as a sequence of steps - the render, the edge map, then the
+ * full-size pass a quarter at a time - so the advance build of a new master
+ * can hand the thread back between them (see canonicalMasterCanvasStepped). */
+function* enrichMeasuredMiniMasterSteps(ctx, width, height, measured, params, drawSeed, text, mode) {
   const detailWidth = Math.max(measured.width, Math.round(measured.width * MEASURED_DETAIL_SCALE));
   const detailHeight = Math.max(measured.height, Math.round(measured.height * MEASURED_DETAIL_SCALE));
   const detail = paintBuffer(detailWidth, detailHeight);
@@ -28071,6 +28117,7 @@ function enrichMeasuredMiniMaster(ctx, width, height, measured, params, drawSeed
     const detailCtx = detail.getContext("2d", { willReadFrequently: true });
     renderComposite(detailCtx, detailWidth, detailHeight, params,
       mulberry32(Number(drawSeed) || 0), text, mode);
+    yield;
     const lowCtx = low.getContext("2d", { willReadFrequently: true });
     lowCtx.imageSmoothingEnabled = true;
     lowCtx.imageSmoothingQuality = "high";
@@ -28085,9 +28132,12 @@ function enrichMeasuredMiniMaster(ctx, width, height, measured, params, drawSeed
           basePixels, measured.width, measured.height, miniX, miniY);
       }
     }
+    yield;
     const output = ctx.createImageData(width, height);
     const out = output.data;
+    const quarter = Math.max(1, Math.ceil(height / 4));
     for (let y = 0; y < height; y++) {
+      if (y && y % quarter === 0) yield;
       const miniY = Math.min(measured.height - 1, Math.floor(y * measured.height / height));
       const detailY = Math.min(detailHeight - 1, Math.floor(y * detailHeight / height));
       for (let x = 0; x < width; x++) {
@@ -28120,6 +28170,36 @@ function enrichMeasuredMiniMaster(ctx, width, height, measured, params, drawSeed
     detail.width = 0;
     low.width = 0;
   }
+}
+
+/* canonicalMasterCanvas, built with the thread handed back between steps.
+ * For the advance build of a new winner: the commit that follows finds it in
+ * the cache. If something else built the same master meanwhile, that one is
+ * kept and this one dropped. */
+async function canonicalMasterCanvasStepped(params, drawSeed, text, mode, minimumWidth = 0, minimumHeight = 0) {
+  const key = canonicalMasterKey(params, drawSeed, text, mode);
+  const requestedWidth = Math.max(CANONICAL_MASTER_WIDTH, Math.round(minimumWidth) || 0);
+  const requestedHeight = Math.max(CANONICAL_MASTER_HEIGHT, Math.round(minimumHeight) || 0);
+  const cached = () => canonicalMasters.find((entry) => entry.key === key &&
+    entry.width >= requestedWidth && entry.height >= requestedHeight);
+  if (cached()) return;
+  const measured = measuredMiniMasters.get(key);
+  if (!measured) {
+    canonicalMasterCanvas(params, drawSeed, text, mode, minimumWidth, minimumHeight);
+    return;
+  }
+  const source = paintBuffer(requestedWidth, requestedHeight);
+  const sourceCtx = source.getContext("2d", { willReadFrequently: true });
+  const steps = enrichMeasuredMiniMasterSteps(sourceCtx, requestedWidth, requestedHeight, measured,
+    params, drawSeed, text, mode);
+  while (!steps.next().done) await new Promise((resolve) => setTimeout(resolve, 0));
+  if (cached()) { source.width = 0; source.height = 0; return; }
+  while (canonicalMasters.length >= CANONICAL_MASTER_SLOTS) {
+    const evicted = canonicalMasters.shift();
+    evicted.canvas.width = 0;
+    evicted.canvas.height = 0;
+  }
+  canonicalMasters.push({ key, canvas: source, width: requestedWidth, height: requestedHeight });
 }
 
 function canonicalMasterCanvas(params, drawSeed, text, mode, minimumWidth = 0, minimumHeight = 0) {
@@ -31265,6 +31345,7 @@ async function pullVisualLexicon() {
   visualLexicon = body;
   // Votes that have not reached the server yet still count here.
   for (const vote of visualVotesPending) visualLexiconAdd(vote);
+  updateWordPaints();
   flushVisualVotes();
 }
 for (const vote of visualVotesPending) visualLexiconAdd(vote);
@@ -32632,7 +32713,7 @@ function generate() {
        * finds it in the one-slot cache. */
       try {
         const layout = miniDesignLayout(view.width, view.height);
-        canonicalMasterCanvas(best.params, best.drawSeed, seedText(), textMode(),
+        await canonicalMasterCanvasStepped(best.params, best.drawSeed, seedText(), textMode(),
           layout.sourceWidth, layout.sourceHeight);
       } catch { /* draw() renders it itself if this could not */ }
       if (autonomousPass) await yieldToPainter();
@@ -33005,6 +33086,14 @@ function renderLiveTasteLogo(reason = "taste") {
     liveLogoMutation++;
   }
   const rng = mulberry32(Number(preview.drawSeed) || 0);
+  /* On a phone the logo is hidden (the painting sits in its place), and a
+   * projected proposal costs a full-size master render - sometimes half a
+   * second - for pixels nobody sees. SAVE LOOP still gets frames: the
+   * painting itself. */
+  if (canvas.offsetParent === null && view?.width && view?.height) {
+    ctx.drawImage(view, 0, 0, W, H);
+    return true;
+  }
   try {
     if (preview.project && view?.width && view?.height) {
       const target = paintBuffer(W, H);
@@ -36967,6 +37056,7 @@ function mountShopEssentials() {
    * not wired to a person. Its long explanatory note stays behind; the box and
    * the line reporting what was read come across. */
   take("wordPrompt");
+  take("wordPaints");
   take("wordStatus");
 
   /* Buy first, above EXPORT and above the status lines.

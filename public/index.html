@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- autodeploy-check: workers-builds-verify-8f2c1a -->
-<!-- hexfield build 191 (2026-09-29) -->
+<!-- hexfield build 192 (2026-09-29) -->
 <html lang="en">
 <head>
 <script>
@@ -231,6 +231,10 @@
   #groundZeroNote { margin-top: 5px; color: #aeb6cf; min-height: 2.6em; }
   @media (max-width: 820px) { #headlessSim { right: 8px; bottom: 8px; width: min(232px, calc(100vw - 16px)); } }
   .note { font-size: 9px; color: var(--dim); line-height: 1.35; margin: 3px 0; }
+  /* What the words will paint: the one line of the word readout a person
+     needs, so it reads louder than the diagnostics under it. */
+  #wordPaints { font-size: 12px; color: #e8f4f8; margin: 5px 0 2px; }
+  #wordPaints:empty { display: none; }
   #finetune { border-top: 1px solid var(--line); padding-top: 5px; }
   #finetune summary { color: var(--accent); cursor: pointer; font-size: 10px;
     text-transform: uppercase; letter-spacing: 0.1em; list-style: none; }
@@ -762,7 +766,7 @@
     <div id="colourChoice">colour: choosing…</div>
     <div id="robBossMood" aria-live="polite">rob boss: waking up · show me 4–8 clear choices</div>
     <div id="painterStatus">seed held · preparing the first paint pass</div>
-    <div id="buildBadge">build 191</div>
+    <div id="buildBadge">build 192</div>
     <div id="bootErrors" style="display:none;color:#ff6b6b;font-size:10px;white-space:pre-wrap;margin-top:4px;"></div>
   </div>
   <div id="shopEssentials" aria-label="print controls"></div>
@@ -786,6 +790,7 @@
          it never appears as letters. Reading one box as both would mean a visitor
          could not ask for a calm picture without the word "calm" in it. -->
     <input type="text" id="wordPrompt" placeholder="a word or a short sentence">
+    <p id="wordPaints" class="note"></p>
     <p id="wordStatus" class="note">words: nothing to read</p>
     <p class="note">Read as stance rather than as meaning - roughly how good,
       how energetic, how contained, how many. It steers the recipe and decides
