@@ -414,6 +414,651 @@
         { shape: "rect", box: [0.53, 0.08, 0.42, 0.84], colour: "pages", texture: "grain-h", tone: -0.04 },
       ],
     },
+    // ── more things: household, tools and toys ───────────────────────────
+    window: {
+      kind: "subject", anchor: "centre", size: 0.5, aspect: 0.8,
+      colours: { glass: [205, 45, 62], frame: [30, 15, 88] },
+      parts: [
+        { shape: "rect", box: [0, 0, 1, 0.94], colour: "frame" },
+        { shape: "rect", box: [0.08, 0.07, 0.84, 0.8], colour: "glass" },
+        { shape: "line", pts: [[0.5, 0.07], [0.5, 0.87]], width: 0.06, colour: "frame" },
+        { shape: "line", pts: [[0.08, 0.47], [0.92, 0.47]], width: 0.06, colour: "frame" },
+        { shape: "line", pts: [[0.18, 0.2], [0.38, 0.12]], width: 0.03, colour: "glass", tone: 0.25 },
+        { shape: "rect", box: [-0.06, 0.92, 1.12, 0.08], colour: "frame", tone: -0.1 },
+      ],
+    },
+    table: {
+      kind: "subject", anchor: "ground", size: 0.42, aspect: 1.8,
+      colours: { wood: [28, 45, 36] },
+      parts: [
+        { shape: "line", pts: [[0.2, 0.1], [0.22, 0.8]], width: 0.035, colour: "wood", tone: -0.1 },
+        { shape: "line", pts: [[0.8, 0.1], [0.78, 0.8]], width: 0.035, colour: "wood", tone: -0.1 },
+        { shape: "line", pts: [[0.06, 0.1], [0.06, 1]], width: 0.04, colour: "wood" },
+        { shape: "line", pts: [[0.94, 0.1], [0.94, 1]], width: 0.04, colour: "wood" },
+        { shape: "rect", box: [0, 0, 1, 0.13], colour: "wood", texture: "grain-h" },
+      ],
+    },
+    bed: {
+      kind: "subject", anchor: "ground", size: 0.36, aspect: 2,
+      colours: { blanket: [220, 45, 42], sheet: [40, 20, 90], wood: [26, 40, 30] },
+      parts: [
+        { shape: "rect", box: [0, 0, 0.1, 1], colour: "wood" },
+        { shape: "rect", box: [0.05, 0.46, 0.95, 0.3], colour: "sheet" },
+        { shape: "ellipse", box: [0.1, 0.3, 0.22, 0.2], colour: "sheet", tone: 0.03 },
+        { shape: "rect", box: [0.3, 0.4, 0.7, 0.4], colour: "blanket", texture: "grain-h", r: 0.15 },
+        { shape: "rect", box: [0.93, 0.6, 0.07, 0.4], colour: "wood" },
+      ],
+    },
+    umbrella: {
+      kind: "subject", anchor: "ground", size: 0.6, aspect: 0.95,
+      colours: { cloth: [352, 70, 46], handle: [28, 30, 22] },
+      parts: [
+        { shape: "line", pts: [[0.5, 0.3], [0.5, 0.94], [0.43, 1], [0.37, 0.94]], width: 0.035, colour: "handle" },
+        { shape: "dome", box: [0, 0.02, 1, 0.42], colour: "cloth" },
+        { shape: "line", pts: [[0.5, 0.03], [0.25, 0.44]], width: 0.015, colour: "cloth", tone: -0.15 },
+        { shape: "line", pts: [[0.5, 0.03], [0.75, 0.44]], width: 0.015, colour: "cloth", tone: -0.15 },
+        { shape: "line", pts: [[0.5, 0], [0.5, 0.44]], width: 0.015, colour: "cloth", tone: -0.15 },
+      ],
+    },
+    balloon: {
+      kind: "subject", anchor: "sky", size: 0.3, aspect: 0.62,
+      colours: { rubber: [0, 76, 52], string: [0, 0, 30] },
+      parts: [
+        { shape: "line", pts: [[0.5, 0.74], [0.42, 0.88], [0.56, 1]], width: 0.02, colour: "string" },
+        { shape: "egg", box: [0, 0, 1, 0.74], colour: "rubber" },
+        { shape: "poly", pts: [[0.44, 0.76], [0.56, 0.76], [0.5, 0.71]], colour: "rubber", tone: -0.1 },
+        { shape: "ellipse", box: [0.2, 0.12, 0.2, 0.18], colour: "rubber", tone: 0.22 },
+      ],
+    },
+    kite: {
+      kind: "subject", anchor: "sky", size: 0.34, aspect: 0.7,
+      colours: { cloth: [48, 90, 56], cross: [28, 30, 24], tail: [352, 70, 50] },
+      parts: [
+        { shape: "line", pts: [[0.5, 0.62], [0.36, 0.72], [0.56, 0.82], [0.4, 0.92], [0.52, 1]], width: 0.03, colour: "tail" },
+        { shape: "poly", pts: [[0.5, 0], [0.95, 0.24], [0.5, 0.62], [0.05, 0.24]], colour: "cloth" },
+        { shape: "poly", pts: [[0.5, 0], [0.95, 0.24], [0.5, 0.24]], colour: "cloth", tone: -0.1 },
+        { shape: "line", pts: [[0.5, 0], [0.5, 0.62]], width: 0.025, colour: "cross" },
+        { shape: "line", pts: [[0.05, 0.24], [0.95, 0.24]], width: 0.025, colour: "cross" },
+      ],
+    },
+    ball: {
+      kind: "subject", anchor: "ground", size: 0.2, aspect: 1,
+      colours: { skin: [8, 76, 50], band: [44, 90, 60] },
+      parts: [
+        { shape: "ellipse", box: [0, 0, 1, 1], colour: "skin" },
+        { shape: "wave", box: [0, 0.38, 1, 0.22], colour: "band" },
+        { shape: "ellipse", box: [0.2, 0.12, 0.22, 0.16], colour: "skin", tone: 0.2 },
+      ],
+    },
+    bicycle: {
+      kind: "subject", anchor: "ground", size: 0.36, aspect: 1.7,
+      colours: { frame: [200, 60, 40], tyre: [0, 0, 12] },
+      parts: [
+        { shape: "ring", box: [0, 0.42, 0.4, 0.58], thickness: 0.14, colour: "tyre" },
+        { shape: "ring", box: [0.6, 0.42, 0.4, 0.58], thickness: 0.14, colour: "tyre" },
+        { shape: "line", pts: [[0.2, 0.71], [0.42, 0.34], [0.72, 0.34], [0.8, 0.71]], width: 0.03, colour: "frame" },
+        { shape: "line", pts: [[0.42, 0.34], [0.48, 0.71], [0.2, 0.71]], width: 0.03, colour: "frame" },
+        { shape: "line", pts: [[0.48, 0.71], [0.72, 0.34]], width: 0.03, colour: "frame" },
+        { shape: "line", pts: [[0.72, 0.34], [0.7, 0.12], [0.78, 0.1]], width: 0.025, colour: "frame", tone: -0.15 },
+        { shape: "rect", box: [0.34, 0.24, 0.14, 0.06], colour: "tyre", r: 0.5 },
+      ],
+    },
+    train: {
+      kind: "subject", anchor: "ground", size: 0.36, aspect: 2.6,
+      colours: { body: [0, 62, 40], cabin: [220, 30, 30], window: [46, 80, 70], wheel: [0, 0, 12], smoke: [215, 8, 75] },
+      parts: [
+        { shape: "cluster", box: [0.02, -0.4, 0.3, 0.42], n: 5, r: 0.3, colour: "smoke" },
+        { shape: "rect", box: [0.1, 0.02, 0.08, 0.22], colour: "wheel" },
+        { shape: "rect", box: [0, 0.22, 0.62, 0.52], colour: "body", r: 0.2 },
+        { shape: "rect", box: [0.56, 0.02, 0.3, 0.72], colour: "cabin" },
+        { shape: "rect", box: [0.62, 0.12, 0.18, 0.2], colour: "window" },
+        { shape: "ellipse", box: [0.04, 0.66, 0.16, 0.34], colour: "wheel" },
+        { shape: "ellipse", box: [0.26, 0.66, 0.16, 0.34], colour: "wheel" },
+        { shape: "ellipse", box: [0.62, 0.66, 0.16, 0.34], colour: "wheel" },
+      ],
+    },
+    plane: {
+      kind: "subject", anchor: "sky", size: 0.22, aspect: 2.4,
+      colours: { hull: [210, 10, 86], wing: [210, 12, 70] },
+      parts: [
+        { shape: "poly", pts: [[0.38, 0.48], [0.6, 0.48], [0.46, 0]], colour: "wing", tone: -0.06 },
+        { shape: "poly", pts: [[0.02, 0.5], [0.12, 0.5], [0.04, 0.12]], colour: "wing" },
+        { shape: "almond", box: [0, 0.36, 1, 0.28], colour: "hull" },
+        { shape: "poly", pts: [[0.38, 0.52], [0.6, 0.52], [0.46, 1]], colour: "wing" },
+      ],
+    },
+    rocket: {
+      kind: "subject", anchor: "centre", size: 0.62, aspect: 0.4,
+      colours: { hull: [210, 10, 88], fin: [0, 62, 46], window: [200, 55, 45], flame: [30, 96, 56] },
+      parts: [
+        { shape: "glow", box: [-0.4, 0.7, 1.8, 0.6], colour: "flame" },
+        { shape: "tongues", box: [0.3, 0.78, 0.4, 0.26], n: 3, colour: "flame", flip: true },
+        { shape: "poly", pts: [[0.2, 0.55], [0, 0.82], [0.22, 0.78]], colour: "fin" },
+        { shape: "poly", pts: [[0.8, 0.55], [1, 0.82], [0.78, 0.78]], colour: "fin" },
+        { shape: "poly", pts: [[0.5, 0], [0.8, 0.26], [0.78, 0.8], [0.22, 0.8], [0.2, 0.26]], colour: "hull", texture: "grain-v" },
+        { shape: "poly", pts: [[0.5, 0], [0.8, 0.26], [0.2, 0.26]], colour: "fin" },
+        { shape: "ring", box: [0.34, 0.32, 0.32, 0.16], thickness: 0.3, colour: "hull", tone: -0.2 },
+        { shape: "ellipse", box: [0.38, 0.34, 0.24, 0.12], colour: "window" },
+      ],
+    },
+    bell: {
+      kind: "subject", anchor: "centre", size: 0.4, aspect: 0.9,
+      colours: { metal: [42, 70, 48] },
+      parts: [
+        { shape: "ring", box: [0.42, 0, 0.16, 0.12], thickness: 0.35, colour: "metal", tone: -0.1 },
+        { shape: "poly", pts: [[0.32, 0.1], [0.68, 0.1], [0.78, 0.6], [1, 0.84], [0, 0.84], [0.22, 0.6]], colour: "metal", texture: "grain-v" },
+        { shape: "ellipse", box: [0.42, 0.8, 0.16, 0.18], colour: "metal", tone: -0.2 },
+        { shape: "rect", box: [0.26, 0.2, 0.08, 0.5], colour: "metal", tone: 0.2 },
+      ],
+    },
+    anchor: {
+      kind: "subject", anchor: "centre", size: 0.5, aspect: 0.8,
+      colours: { iron: [215, 15, 34] },
+      parts: [
+        { shape: "ring", box: [0.4, 0, 0.2, 0.16], thickness: 0.35, colour: "iron" },
+        { shape: "rect", box: [0.46, 0.14, 0.08, 0.76], colour: "iron" },
+        { shape: "rect", box: [0.24, 0.22, 0.52, 0.06], colour: "iron" },
+        { shape: "line", pts: [[0.08, 0.6], [0.2, 0.86], [0.5, 0.93], [0.8, 0.86], [0.92, 0.6]], width: 0.07, colour: "iron" },
+        { shape: "poly", pts: [[0.02, 0.66], [0.08, 0.54], [0.16, 0.66]], colour: "iron" },
+        { shape: "poly", pts: [[0.84, 0.66], [0.92, 0.54], [0.98, 0.66]], colour: "iron" },
+      ],
+    },
+    sword: {
+      kind: "subject", anchor: "centre", size: 0.7, aspect: 0.3,
+      colours: { blade: [210, 12, 80], gold: [44, 75, 50], grip: [20, 40, 20] },
+      parts: [
+        { shape: "poly", pts: [[0.42, 0.66], [0.58, 0.66], [0.58, 0.07], [0.5, 0], [0.42, 0.07]], colour: "blade" },
+        { shape: "line", pts: [[0.5, 0.06], [0.5, 0.64]], width: 0.04, colour: "blade", tone: -0.15 },
+        { shape: "rect", box: [0.05, 0.65, 0.9, 0.06], colour: "gold", r: 0.4 },
+        { shape: "rect", box: [0.42, 0.7, 0.16, 0.22], colour: "grip", texture: "grain-h" },
+        { shape: "ellipse", box: [0.38, 0.9, 0.24, 0.1], colour: "gold" },
+      ],
+    },
+    shield: {
+      kind: "subject", anchor: "centre", size: 0.46, aspect: 0.85,
+      colours: { field: [220, 55, 34], gold: [44, 75, 52] },
+      parts: [
+        { shape: "poly", pts: [[0, 0], [1, 0], [1, 0.45], [0.5, 1], [0, 0.45]], colour: "gold" },
+        { shape: "poly", pts: [[0.07, 0.05], [0.93, 0.05], [0.93, 0.44], [0.5, 0.92], [0.07, 0.44]], colour: "field", texture: "grain-v" },
+        { shape: "rect", box: [0.44, 0.05, 0.12, 0.84], colour: "gold" },
+        { shape: "rect", box: [0.07, 0.3, 0.86, 0.1], colour: "gold" },
+      ],
+    },
+    guitar: {
+      kind: "subject", anchor: "centre", size: 0.72, aspect: 0.42,
+      colours: { body: [28, 62, 46], neck: [24, 40, 22], hole: [0, 0, 10] },
+      parts: [
+        { shape: "rect", box: [0.43, 0, 0.14, 0.52], colour: "neck", texture: "grain-h" },
+        { shape: "rect", box: [0.38, -0.02, 0.24, 0.08], colour: "neck", tone: -0.05 },
+        { shape: "ellipse", box: [0.08, 0.32, 0.84, 0.36], colour: "body" },
+        { shape: "ellipse", box: [0, 0.54, 1, 0.46], colour: "body", texture: "grain-d" },
+        { shape: "ellipse", box: [0.38, 0.55, 0.24, 0.12], colour: "hole" },
+        { shape: "rect", box: [0.36, 0.8, 0.28, 0.04], colour: "neck" },
+      ],
+    },
+    cake: {
+      kind: "subject", anchor: "ground", size: 0.36, aspect: 1.1,
+      colours: { sponge: [338, 50, 78], icing: [40, 30, 94], flame: [40, 100, 62], candle: [200, 60, 60] },
+      parts: [
+        { shape: "line", pts: [[0.3, 0.3], [0.3, 0.12]], width: 0.04, colour: "candle" },
+        { shape: "line", pts: [[0.5, 0.3], [0.5, 0.1]], width: 0.04, colour: "candle", tone: 0.1 },
+        { shape: "line", pts: [[0.7, 0.3], [0.7, 0.12]], width: 0.04, colour: "candle" },
+        { shape: "tongues", box: [0.26, 0, 0.08, 0.12], n: 1, colour: "flame" },
+        { shape: "tongues", box: [0.46, -0.02, 0.08, 0.12], n: 1, colour: "flame" },
+        { shape: "tongues", box: [0.66, 0, 0.08, 0.12], n: 1, colour: "flame" },
+        { shape: "rect", box: [0, 0.34, 1, 0.66], colour: "sponge", texture: "grain-h" },
+        { shape: "wave", box: [0, 0.3, 1, 0.14], colour: "icing" },
+      ],
+    },
+    mushroom: {
+      kind: "subject", anchor: "ground", size: 0.36, aspect: 1,
+      colours: { cap: [4, 76, 46], stem: [40, 26, 88], spot: [40, 20, 96] },
+      parts: [
+        { shape: "rect", box: [0.34, 0.42, 0.32, 0.58], colour: "stem", r: 0.3 },
+        { shape: "dome", box: [0, 0, 1, 0.56], colour: "cap" },
+        { shape: "ellipse", box: [0.22, 0.2, 0.14, 0.1], colour: "spot" },
+        { shape: "ellipse", box: [0.52, 0.1, 0.16, 0.12], colour: "spot" },
+        { shape: "ellipse", box: [0.7, 0.32, 0.1, 0.08], colour: "spot" },
+      ],
+    },
+    cactus: {
+      kind: "subject", anchor: "ground", size: 0.62, aspect: 0.7,
+      colours: { green: [122, 40, 34] },
+      parts: [
+        { shape: "line", pts: [[0.24, 0.3], [0.24, 0.55], [0.4, 0.55]], width: 0.13, colour: "green", tone: -0.05 },
+        { shape: "line", pts: [[0.78, 0.18], [0.78, 0.45], [0.6, 0.45]], width: 0.13, colour: "green", tone: -0.05 },
+        { shape: "rect", box: [0.37, 0, 0.26, 1], colour: "green", r: 0.5, texture: "grain-v" },
+      ],
+    },
+    pine: {
+      kind: "subject", anchor: "ground", size: 0.9, aspect: 0.55,
+      colours: { needles: [140, 40, 24], bark: [25, 35, 22] },
+      parts: [
+        { shape: "rect", box: [0.44, 0.84, 0.12, 0.16], colour: "bark" },
+        { shape: "poly", pts: [[0.5, 0.38], [1, 0.88], [0, 0.88]], colour: "needles", texture: "grain-d" },
+        { shape: "poly", pts: [[0.5, 0.16], [0.88, 0.6], [0.12, 0.6]], colour: "needles", tone: 0.04 },
+        { shape: "poly", pts: [[0.5, 0], [0.76, 0.34], [0.24, 0.34]], colour: "needles", tone: 0.08 },
+      ],
+    },
+    palm: {
+      kind: "subject", anchor: "ground", size: 0.86, aspect: 0.8,
+      colours: { frond: [110, 50, 34], trunk: [32, 35, 42] },
+      parts: [
+        { shape: "line", pts: [[0.42, 1], [0.46, 0.6], [0.56, 0.2]], width: 0.07, colour: "trunk", texture: "grain-h" },
+        { shape: "line", pts: [[0.56, 0.2], [0.3, 0.08], [0.06, 0.3]], width: 0.06, colour: "frond" },
+        { shape: "line", pts: [[0.56, 0.2], [0.82, 0.06], [1, 0.3]], width: 0.06, colour: "frond" },
+        { shape: "line", pts: [[0.56, 0.2], [0.36, 0.26], [0.2, 0.5]], width: 0.06, colour: "frond", tone: -0.06 },
+        { shape: "line", pts: [[0.56, 0.2], [0.76, 0.3], [0.88, 0.52]], width: 0.06, colour: "frond", tone: -0.06 },
+        { shape: "line", pts: [[0.56, 0.2], [0.56, 0]], width: 0.06, colour: "frond", tone: 0.05 },
+      ],
+    },
+    bush: {
+      kind: "subject", anchor: "ground", size: 0.32, aspect: 1.5,
+      colours: { leaves: [115, 42, 30] },
+      parts: [{ shape: "cluster", box: [0, 0, 1, 1], n: 10, r: 0.34, colour: "leaves", texture: "leafy" }],
+    },
+    sunflower: {
+      kind: "subject", anchor: "ground", size: 0.72, aspect: 0.45,
+      colours: { petal: [48, 92, 56], centre: [26, 55, 24], stem: [105, 45, 32] },
+      parts: [
+        { shape: "line", pts: [[0.5, 1], [0.52, 0.3]], width: 0.06, colour: "stem" },
+        { shape: "almond", box: [0.5, 0.56, 0.4, 0.12], colour: "stem", tone: 0.05 },
+        { shape: "petals", box: [0, 0, 1, 0.46], n: 14, colour: "petal" },
+        { shape: "ellipse", box: [0.3, 0.11, 0.4, 0.24], colour: "centre", texture: "speckle" },
+      ],
+    },
+    // ── more creatures ───────────────────────────────────────────────────
+    horse: {
+      kind: "subject", anchor: "ground", size: 0.56, aspect: 1.3,
+      colours: { coat: [24, 45, 30], mane: [20, 30, 12] },
+      parts: [
+        { shape: "line", pts: [[0.2, 0.5], [0.2, 1]], width: 0.05, colour: "coat", tone: -0.06 },
+        { shape: "line", pts: [[0.3, 0.5], [0.3, 1]], width: 0.05, colour: "coat" },
+        { shape: "line", pts: [[0.62, 0.5], [0.62, 1]], width: 0.05, colour: "coat", tone: -0.06 },
+        { shape: "line", pts: [[0.7, 0.5], [0.7, 1]], width: 0.05, colour: "coat" },
+        { shape: "line", pts: [[0.14, 0.36], [0.04, 0.5], [0.06, 0.66]], width: 0.05, colour: "mane" },
+        { shape: "ellipse", box: [0.12, 0.28, 0.66, 0.3], colour: "coat", texture: "fur" },
+        { shape: "poly", pts: [[0.62, 0.36], [0.76, 0.34], [0.9, 0.06], [0.78, 0.02]], colour: "coat" },
+        { shape: "poly", pts: [[0.78, 0], [0.98, 0.14], [0.94, 0.22], [0.8, 0.14]], colour: "coat" },
+        { shape: "line", pts: [[0.78, 0.04], [0.66, 0.34]], width: 0.03, colour: "mane" },
+      ],
+    },
+    cow: {
+      kind: "subject", anchor: "ground", size: 0.46, aspect: 1.5,
+      colours: { hide: [40, 10, 92], patch: [0, 0, 14], nose: [350, 40, 70] },
+      parts: [
+        { shape: "line", pts: [[0.2, 0.55], [0.2, 1]], width: 0.06, colour: "hide", tone: -0.1 },
+        { shape: "line", pts: [[0.32, 0.55], [0.32, 1]], width: 0.06, colour: "hide" },
+        { shape: "line", pts: [[0.62, 0.55], [0.62, 1]], width: 0.06, colour: "hide", tone: -0.1 },
+        { shape: "line", pts: [[0.72, 0.55], [0.72, 1]], width: 0.06, colour: "hide" },
+        { shape: "rect", box: [0.1, 0.24, 0.7, 0.4], colour: "hide", r: 0.3 },
+        { shape: "ellipse", box: [0.2, 0.28, 0.2, 0.18], colour: "patch" },
+        { shape: "ellipse", box: [0.5, 0.36, 0.16, 0.2], colour: "patch" },
+        { shape: "rect", box: [0.76, 0.14, 0.2, 0.28], colour: "hide", r: 0.3 },
+        { shape: "ellipse", box: [0.78, 0.32, 0.2, 0.12], colour: "nose" },
+        { shape: "line", pts: [[0.8, 0.14], [0.76, 0.04]], width: 0.025, colour: "patch" },
+        { shape: "line", pts: [[0.92, 0.14], [0.96, 0.04]], width: 0.025, colour: "patch" },
+      ],
+    },
+    rabbit: {
+      kind: "subject", anchor: "ground", size: 0.32, aspect: 0.8,
+      colours: { fur: [30, 16, 66], inner: [350, 50, 78], tail: [40, 10, 94] },
+      parts: [
+        { shape: "almond", box: [0.3, -0.02, 0.14, 0.42], vertical: true, colour: "fur" },
+        { shape: "almond", box: [0.52, -0.02, 0.14, 0.42], vertical: true, colour: "fur" },
+        { shape: "almond", box: [0.34, 0.04, 0.06, 0.3], vertical: true, colour: "inner" },
+        { shape: "ellipse", box: [0.12, 0.46, 0.76, 0.54], colour: "fur", texture: "fur" },
+        { shape: "ellipse", box: [0.28, 0.26, 0.42, 0.34], colour: "fur" },
+        { shape: "ellipse", box: [0.8, 0.7, 0.16, 0.16], colour: "tail" },
+        { shape: "ellipse", box: [0.54, 0.36, 0.06, 0.06], colour: "tail", tone: -0.85 },
+      ],
+    },
+    owl: {
+      kind: "subject", anchor: "centre", size: 0.42, aspect: 0.8,
+      colours: { feathers: [30, 34, 34], eye: [48, 90, 58], pupil: [0, 0, 8], beak: [36, 60, 50] },
+      parts: [
+        { shape: "poly", pts: [[0.08, 0.2], [0.18, 0], [0.3, 0.16]], colour: "feathers" },
+        { shape: "poly", pts: [[0.7, 0.16], [0.82, 0], [0.92, 0.2]], colour: "feathers" },
+        { shape: "egg", box: [0, 0.08, 1, 0.92], colour: "feathers", texture: "scales" },
+        { shape: "ellipse", box: [0.12, 0.2, 0.34, 0.3], colour: "eye" },
+        { shape: "ellipse", box: [0.54, 0.2, 0.34, 0.3], colour: "eye" },
+        { shape: "ellipse", box: [0.22, 0.28, 0.14, 0.14], colour: "pupil" },
+        { shape: "ellipse", box: [0.64, 0.28, 0.14, 0.14], colour: "pupil" },
+        { shape: "poly", pts: [[0.44, 0.46], [0.56, 0.46], [0.5, 0.58]], colour: "beak" },
+      ],
+    },
+    whale: {
+      kind: "subject", anchor: "water", size: 0.34, aspect: 2.4,
+      colours: { skin: [215, 32, 34], belly: [210, 20, 70], spout: [200, 30, 90] },
+      parts: [
+        { shape: "line", pts: [[0.3, 0.2], [0.26, 0]], width: 0.02, colour: "spout" },
+        { shape: "line", pts: [[0.3, 0.2], [0.34, 0]], width: 0.02, colour: "spout" },
+        { shape: "poly", pts: [[0.8, 0.5], [1, 0.2], [0.94, 0.5], [1, 0.8]], colour: "skin" },
+        { shape: "almond", box: [0, 0.2, 0.86, 0.66], colour: "skin" },
+        { shape: "almond", box: [0.08, 0.54, 0.6, 0.26], colour: "belly" },
+        { shape: "ellipse", box: [0.16, 0.44, 0.04, 0.06], colour: "skin", tone: -0.25 },
+      ],
+    },
+    turtle: {
+      kind: "subject", anchor: "ground", size: 0.22, aspect: 1.8,
+      colours: { shell: [96, 38, 30], skin: [90, 30, 48] },
+      parts: [
+        { shape: "ellipse", box: [0.78, 0.4, 0.22, 0.34], colour: "skin" },
+        { shape: "ellipse", box: [0.14, 0.72, 0.14, 0.28], colour: "skin" },
+        { shape: "ellipse", box: [0.6, 0.72, 0.14, 0.28], colour: "skin" },
+        { shape: "dome", box: [0.06, 0, 0.76, 0.8], colour: "shell", texture: "scales" },
+      ],
+    },
+    frog: {
+      kind: "subject", anchor: "ground", size: 0.22, aspect: 1.3,
+      colours: { skin: [100, 55, 40], eye: [52, 80, 60], pupil: [0, 0, 8] },
+      parts: [
+        { shape: "ellipse", box: [0, 0.6, 0.34, 0.4], colour: "skin", tone: -0.06 },
+        { shape: "ellipse", box: [0.66, 0.6, 0.34, 0.4], colour: "skin", tone: -0.06 },
+        { shape: "ellipse", box: [0.12, 0.24, 0.76, 0.7], colour: "skin", texture: "speckle" },
+        { shape: "ellipse", box: [0.16, 0.06, 0.26, 0.3], colour: "skin" },
+        { shape: "ellipse", box: [0.58, 0.06, 0.26, 0.3], colour: "skin" },
+        { shape: "ellipse", box: [0.22, 0.12, 0.14, 0.16], colour: "eye" },
+        { shape: "ellipse", box: [0.64, 0.12, 0.14, 0.16], colour: "eye" },
+        { shape: "ellipse", box: [0.26, 0.16, 0.06, 0.08], colour: "pupil" },
+        { shape: "ellipse", box: [0.68, 0.16, 0.06, 0.08], colour: "pupil" },
+      ],
+    },
+    butterfly: {
+      kind: "subject", anchor: "sky", size: 0.24, aspect: 1.3,
+      colours: { wing: [28, 90, 55], spot: [0, 0, 10], body: [0, 0, 12] },
+      parts: [
+        { shape: "ellipse", box: [0.04, 0.02, 0.46, 0.52], rot: -0.4, colour: "wing" },
+        { shape: "ellipse", box: [0.5, 0.02, 0.46, 0.52], rot: 0.4, colour: "wing" },
+        { shape: "ellipse", box: [0.12, 0.5, 0.36, 0.4], rot: 0.3, colour: "wing", tone: -0.08 },
+        { shape: "ellipse", box: [0.52, 0.5, 0.36, 0.4], rot: -0.3, colour: "wing", tone: -0.08 },
+        { shape: "ellipse", box: [0.18, 0.18, 0.1, 0.1], colour: "spot" },
+        { shape: "ellipse", box: [0.72, 0.18, 0.1, 0.1], colour: "spot" },
+        { shape: "almond", box: [0.46, 0.1, 0.08, 0.8], vertical: true, colour: "body" },
+        { shape: "line", pts: [[0.48, 0.12], [0.4, 0]], width: 0.015, colour: "body" },
+        { shape: "line", pts: [[0.52, 0.12], [0.6, 0]], width: 0.015, colour: "body" },
+      ],
+    },
+    bee: {
+      kind: "subject", anchor: "sky", size: 0.14, aspect: 1.4,
+      colours: { body: [48, 92, 55], band: [0, 0, 10], wing: [200, 30, 92] },
+      parts: [
+        { shape: "ellipse", box: [0.3, 0, 0.3, 0.4], rot: -0.3, colour: "wing" },
+        { shape: "ellipse", box: [0.5, 0, 0.3, 0.4], rot: 0.3, colour: "wing", tone: -0.05 },
+        { shape: "ellipse", box: [0.08, 0.3, 0.84, 0.6], colour: "body" },
+        { shape: "rect", box: [0.34, 0.3, 0.1, 0.6], colour: "band" },
+        { shape: "rect", box: [0.56, 0.3, 0.1, 0.6], colour: "band" },
+        { shape: "ellipse", box: [0, 0.42, 0.2, 0.36], colour: "band" },
+      ],
+    },
+    snake: {
+      kind: "subject", anchor: "ground", size: 0.2, aspect: 4,
+      colours: { scales: [100, 45, 34], belly: [60, 50, 60] },
+      parts: [
+        { shape: "line", pts: [[0, 0.72], [0.14, 0.32], [0.28, 0.76], [0.44, 0.34], [0.6, 0.76], [0.76, 0.4], [0.88, 0.5]], width: 0.05, colour: "scales" },
+        { shape: "ellipse", box: [0.86, 0.3, 0.1, 0.4], colour: "scales", tone: -0.06 },
+        { shape: "line", pts: [[0.96, 0.5], [1, 0.46]], width: 0.01, colour: "belly" },
+      ],
+    },
+    snail: {
+      kind: "subject", anchor: "ground", size: 0.22, aspect: 1.4,
+      colours: { shell: [28, 55, 40], body: [40, 30, 66] },
+      parts: [
+        { shape: "line", pts: [[0.84, 0.72], [0.8, 0.36]], width: 0.025, colour: "body" },
+        { shape: "line", pts: [[0.9, 0.72], [0.96, 0.4]], width: 0.025, colour: "body" },
+        { shape: "poly", pts: [[0, 1], [1, 1], [0.98, 0.84], [0.84, 0.66], [0.2, 0.8]], colour: "body" },
+        { shape: "ellipse", box: [0.16, 0.06, 0.6, 0.82], colour: "shell", texture: "rays" },
+        { shape: "ring", box: [0.3, 0.26, 0.32, 0.44], thickness: 0.3, colour: "shell", tone: -0.12 },
+      ],
+    },
+    spider: {
+      kind: "subject", anchor: "centre", size: 0.26, aspect: 1.4,
+      colours: { body: [0, 0, 10] },
+      parts: [
+        { shape: "line", pts: [[0.4, 0.5], [0.2, 0.2], [0, 0.3]], width: 0.025, colour: "body" },
+        { shape: "line", pts: [[0.4, 0.55], [0.16, 0.44], [0, 0.6]], width: 0.025, colour: "body" },
+        { shape: "line", pts: [[0.4, 0.6], [0.18, 0.7], [0.04, 0.92]], width: 0.025, colour: "body" },
+        { shape: "line", pts: [[0.42, 0.62], [0.28, 0.86], [0.2, 1]], width: 0.025, colour: "body" },
+        { shape: "line", pts: [[0.6, 0.5], [0.8, 0.2], [1, 0.3]], width: 0.025, colour: "body" },
+        { shape: "line", pts: [[0.6, 0.55], [0.84, 0.44], [1, 0.6]], width: 0.025, colour: "body" },
+        { shape: "line", pts: [[0.6, 0.6], [0.82, 0.7], [0.96, 0.92]], width: 0.025, colour: "body" },
+        { shape: "line", pts: [[0.58, 0.62], [0.72, 0.86], [0.8, 1]], width: 0.025, colour: "body" },
+        { shape: "ellipse", box: [0.34, 0.4, 0.32, 0.34], colour: "body" },
+        { shape: "ellipse", box: [0.4, 0.26, 0.2, 0.2], colour: "body", tone: 0.06 },
+      ],
+    },
+    ghost: {
+      kind: "subject", anchor: "centre", size: 0.56, aspect: 0.75,
+      colours: { sheet: [220, 16, 92], eye: [0, 0, 8] },
+      parts: [
+        { shape: "glow", box: [-0.5, -0.4, 2, 1.8], colour: "sheet" },
+        { shape: "poly", pts: [[0.05, 1], [0.05, 0.4], [0.2, 0.08], [0.5, 0], [0.8, 0.08], [0.95, 0.4], [0.95, 1], [0.8, 0.9], [0.66, 1], [0.5, 0.9], [0.34, 1], [0.2, 0.9]], colour: "sheet" },
+        { shape: "ellipse", box: [0.28, 0.26, 0.14, 0.18], colour: "eye" },
+        { shape: "ellipse", box: [0.58, 0.26, 0.14, 0.18], colour: "eye" },
+        { shape: "ellipse", box: [0.42, 0.5, 0.16, 0.16], colour: "eye" },
+      ],
+    },
+    robot: {
+      kind: "subject", anchor: "ground", size: 0.62, aspect: 0.62,
+      colours: { metal: [210, 12, 68], eye: [180, 90, 55], dark: [215, 15, 25] },
+      parts: [
+        { shape: "line", pts: [[0.5, 0.04], [0.5, -0.06]], width: 0.03, colour: "dark" },
+        { shape: "ellipse", box: [0.46, -0.1, 0.08, 0.06], colour: "eye" },
+        { shape: "rect", box: [0.26, 0.02, 0.48, 0.24], colour: "metal", r: 0.2 },
+        { shape: "ellipse", box: [0.34, 0.08, 0.1, 0.08], colour: "eye" },
+        { shape: "ellipse", box: [0.56, 0.08, 0.1, 0.08], colour: "eye" },
+        { shape: "rect", box: [0.4, 0.18, 0.2, 0.03], colour: "dark" },
+        { shape: "rect", box: [0.02, 0.3, 0.12, 0.36], colour: "metal", tone: -0.08, r: 0.4 },
+        { shape: "rect", box: [0.86, 0.3, 0.12, 0.36], colour: "metal", tone: -0.08, r: 0.4 },
+        { shape: "rect", box: [0.16, 0.28, 0.68, 0.42], colour: "metal", texture: "grain-h" },
+        { shape: "rect", box: [0.36, 0.38, 0.28, 0.14], colour: "dark" },
+        { shape: "rect", box: [0.24, 0.7, 0.18, 0.3], colour: "metal", tone: -0.05 },
+        { shape: "rect", box: [0.58, 0.7, 0.18, 0.3], colour: "metal", tone: -0.05 },
+      ],
+    },
+    hand: {
+      kind: "subject", anchor: "centre", size: 0.46, aspect: 0.8,
+      colours: { skin: [24, 45, 62] },
+      parts: [
+        { shape: "rect", box: [0.2, 0.06, 0.12, 0.44], colour: "skin", r: 0.5 },
+        { shape: "rect", box: [0.34, 0, 0.12, 0.46], colour: "skin", r: 0.5 },
+        { shape: "rect", box: [0.48, 0.02, 0.12, 0.46], colour: "skin", r: 0.5 },
+        { shape: "rect", box: [0.62, 0.1, 0.11, 0.42], colour: "skin", r: 0.5 },
+        { shape: "line", pts: [[0.7, 0.66], [0.84, 0.48], [0.94, 0.36]], width: 0.13, colour: "skin" },
+        { shape: "rect", box: [0.2, 0.38, 0.54, 0.5], colour: "skin", r: 0.3 },
+        { shape: "rect", box: [0.28, 0.84, 0.4, 0.16], colour: "skin", tone: -0.06 },
+      ],
+    },
+    // ── more buildings and landmarks ─────────────────────────────────────
+    tent: {
+      kind: "subject", anchor: "ground", size: 0.44, aspect: 1.4,
+      colours: { canvas: [30, 60, 46], door: [26, 40, 16] },
+      parts: [
+        { shape: "poly", pts: [[0, 1], [0.5, 0], [1, 1]], colour: "canvas", texture: "grain-d" },
+        { shape: "poly", pts: [[0.5, 0], [1, 1], [0.64, 1]], colour: "canvas", tone: -0.1 },
+        { shape: "poly", pts: [[0.5, 0.36], [0.62, 1], [0.38, 1]], colour: "door" },
+      ],
+    },
+    windmill: {
+      kind: "subject", anchor: "ground", size: 0.86, aspect: 0.8,
+      colours: { tower: [30, 22, 72], cap: [8, 40, 34], sail: [36, 22, 86] },
+      parts: [
+        { shape: "poly", pts: [[0.38, 0.3], [0.62, 0.3], [0.7, 1], [0.3, 1]], colour: "tower", texture: "brick" },
+        { shape: "dome", box: [0.36, 0.2, 0.28, 0.12], colour: "cap" },
+        { shape: "rect", box: [0.45, 0.8, 0.1, 0.2], colour: "cap", tone: -0.1 },
+        { shape: "line", pts: [[0.5, 0.26], [0.08, 0]], width: 0.06, colour: "sail" },
+        { shape: "line", pts: [[0.5, 0.26], [0.92, 0.52]], width: 0.06, colour: "sail" },
+        { shape: "line", pts: [[0.5, 0.26], [0.74, -0.14]], width: 0.06, colour: "sail", tone: -0.06 },
+        { shape: "line", pts: [[0.5, 0.26], [0.26, 0.66]], width: 0.06, colour: "sail", tone: -0.06 },
+        { shape: "ellipse", box: [0.46, 0.22, 0.08, 0.08], colour: "cap" },
+      ],
+    },
+    church: {
+      kind: "subject", anchor: "ground", size: 0.8, aspect: 0.95,
+      colours: { stone: [34, 16, 70], roof: [220, 22, 34], window: [46, 70, 62] },
+      parts: [
+        { shape: "rect", box: [0, 0.5, 0.7, 0.5], colour: "stone", texture: "brick" },
+        { shape: "poly", pts: [[-0.03, 0.52], [0.35, 0.3], [0.73, 0.52]], colour: "roof" },
+        { shape: "rect", box: [0.68, 0.24, 0.3, 0.76], colour: "stone", tone: -0.04, texture: "brick" },
+        { shape: "poly", pts: [[0.66, 0.26], [0.83, 0], [1, 0.26]], colour: "roof" },
+        { shape: "rect", box: [0.77, 0.38, 0.12, 0.16], colour: "window", r: 0.5 },
+        { shape: "rect", box: [0.12, 0.62, 0.1, 0.18], colour: "window", r: 0.5 },
+        { shape: "rect", box: [0.42, 0.62, 0.1, 0.18], colour: "window", r: 0.5 },
+        { shape: "rect", box: [0.78, 0.78, 0.1, 0.22], colour: "roof", tone: -0.1 },
+      ],
+    },
+    pyramid: {
+      kind: "subject", anchor: "ground", size: 0.6, aspect: 1.6,
+      colours: { stone: [40, 50, 62] },
+      parts: [
+        { shape: "poly", pts: [[0, 1], [0.5, 0], [1, 1]], colour: "stone", texture: "brick" },
+        { shape: "poly", pts: [[0.5, 0], [1, 1], [0.66, 1]], colour: "stone", tone: -0.14 },
+      ],
+    },
+    fence: {
+      kind: "subject", anchor: "ground", size: 0.26, aspect: 4,
+      colours: { wood: [36, 30, 80] },
+      parts: [
+        { shape: "rect", box: [0, 0.3, 1, 0.1], colour: "wood", tone: -0.1 },
+        { shape: "rect", box: [0, 0.7, 1, 0.1], colour: "wood", tone: -0.1 },
+        { shape: "pickets", box: [0, 0, 1, 1], n: 12, colour: "wood" },
+      ],
+    },
+    wall: {
+      kind: "subject", anchor: "ground", size: 0.42, aspect: 3,
+      colours: { brick: [14, 40, 44] },
+      parts: [{ shape: "rect", box: [0, 0, 1, 1], colour: "brick", texture: "brick" }],
+    },
+    stairs: {
+      kind: "subject", anchor: "ground", size: 0.52, aspect: 1.2,
+      colours: { stone: [34, 12, 60] },
+      parts: [
+        { shape: "poly", pts: [[0, 1], [0, 0.8], [0.2, 0.8], [0.2, 0.6], [0.4, 0.6], [0.4, 0.4], [0.6, 0.4], [0.6, 0.2], [0.8, 0.2], [0.8, 0], [1, 0], [1, 1]], colour: "stone", texture: "speckle" },
+        { shape: "rungs", box: [0, 0.02, 1, 0.98], n: 5, width: 0.01, colour: "stone", tone: 0.14 },
+      ],
+    },
+    arch: {
+      kind: "subject", anchor: "ground", size: 0.72, aspect: 0.95,
+      colours: { stone: [32, 18, 58] },
+      parts: [
+        { shape: "rect", box: [0, 0, 1, 1], colour: "stone", texture: "brick" },
+        { shape: "rect", box: [0.22, 0.42, 0.56, 0.6], cut: true },
+        { shape: "ellipse", box: [0.22, 0.14, 0.56, 0.56], cut: true },
+      ],
+    },
+    waterfall: {
+      kind: "subject", anchor: "ground", size: 0.9, aspect: 0.7,
+      colours: { rock: [30, 10, 30], water: [198, 40, 82], foam: [200, 20, 96] },
+      parts: [
+        { shape: "rect", box: [0, 0, 0.34, 1], colour: "rock", texture: "speckle" },
+        { shape: "rect", box: [0.66, 0, 0.34, 1], colour: "rock", texture: "speckle", tone: 0.04 },
+        { shape: "rect", box: [0.3, 0, 0.4, 0.92], colour: "water", texture: "grain-v" },
+        { shape: "cluster", box: [0.2, 0.8, 0.6, 0.2], n: 7, r: 0.3, colour: "foam" },
+      ],
+    },
+    volcano: {
+      kind: "subject", anchor: "ground", size: 0.8, aspect: 1.8,
+      colours: { rock: [14, 20, 22], lava: [14, 92, 50], smoke: [215, 8, 50] },
+      parts: [
+        { shape: "cluster", box: [0.3, -0.3, 0.4, 0.4], n: 6, r: 0.35, colour: "smoke" },
+        { shape: "glow", box: [0.15, -0.2, 0.7, 0.6], colour: "lava" },
+        { shape: "poly", pts: [[0, 1], [0.4, 0.08], [0.6, 0.08], [1, 1]], colour: "rock", texture: "grain-d" },
+        { shape: "tongues", box: [0.4, 0, 0.2, 0.14], n: 3, colour: "lava" },
+        { shape: "line", pts: [[0.46, 0.1], [0.4, 0.4], [0.34, 0.7]], width: 0.03, colour: "lava" },
+      ],
+    },
+    planet: {
+      kind: "subject", anchor: "sky", size: 0.34, aspect: 1.7,
+      colours: { body: [30, 52, 56], ring: [40, 30, 78] },
+      parts: [
+        { shape: "ellipse", box: [0.2, 0, 0.6, 1], colour: "body", texture: "grain-h" },
+        { shape: "ring", box: [0, 0.36, 1, 0.3], thickness: 0.22, colour: "ring" },
+      ],
+    },
+    crystal: {
+      kind: "subject", anchor: "centre", size: 0.36, aspect: 0.8,
+      colours: { gem: [190, 62, 58] },
+      parts: [
+        { shape: "glow", box: [-0.5, -0.4, 2, 1.8], colour: "gem" },
+        { shape: "poly", pts: [[0.5, 0], [1, 0.34], [0.5, 1], [0, 0.34]], colour: "gem" },
+        { shape: "poly", pts: [[0.5, 0], [0.7, 0.34], [0.5, 1], [0.3, 0.34]], colour: "gem", tone: 0.15 },
+        { shape: "poly", pts: [[0, 0.34], [0.3, 0.34], [0.5, 1]], colour: "gem", tone: -0.12 },
+      ],
+    },
+    lantern: {
+      kind: "subject", anchor: "centre", size: 0.46, aspect: 0.55,
+      colours: { light: [44, 92, 64], frame: [24, 20, 18] },
+      parts: [
+        { shape: "glow", box: [-1, -0.4, 3, 1.8], colour: "light" },
+        { shape: "ring", box: [0.3, 0, 0.4, 0.2], thickness: 0.25, colour: "frame" },
+        { shape: "poly", pts: [[0.1, 0.26], [0.5, 0.12], [0.9, 0.26]], colour: "frame" },
+        { shape: "rect", box: [0.14, 0.26, 0.72, 0.62], colour: "light" },
+        { shape: "line", pts: [[0.5, 0.26], [0.5, 0.88]], width: 0.05, colour: "frame" },
+        { shape: "rect", box: [0.08, 0.86, 0.84, 0.1], colour: "frame" },
+      ],
+    },
+    hat: {
+      kind: "subject", anchor: "centre", size: 0.26, aspect: 1.6,
+      colours: { felt: [0, 0, 14], band: [352, 60, 42] },
+      parts: [
+        { shape: "ellipse", box: [0, 0.72, 1, 0.28], colour: "felt", tone: 0.04 },
+        { shape: "rect", box: [0.24, 0, 0.52, 0.84], colour: "felt", r: 0.15 },
+        { shape: "rect", box: [0.24, 0.6, 0.52, 0.12], colour: "band" },
+      ],
+    },
+    hourglass: {
+      kind: "subject", anchor: "centre", size: 0.46, aspect: 0.6,
+      colours: { glass: [200, 20, 86], sand: [40, 62, 60], wood: [26, 40, 28] },
+      parts: [
+        { shape: "poly", pts: [[0.12, 0.08], [0.88, 0.08], [0.5, 0.5]], colour: "glass" },
+        { shape: "poly", pts: [[0.5, 0.5], [0.88, 0.92], [0.12, 0.92]], colour: "glass" },
+        { shape: "poly", pts: [[0.3, 0.3], [0.7, 0.3], [0.5, 0.5]], colour: "sand" },
+        { shape: "poly", pts: [[0.5, 0.7], [0.82, 0.92], [0.18, 0.92]], colour: "sand" },
+        { shape: "line", pts: [[0.5, 0.5], [0.5, 0.72]], width: 0.02, colour: "sand" },
+        { shape: "rect", box: [0, 0, 1, 0.08], colour: "wood" },
+        { shape: "rect", box: [0, 0.92, 1, 0.08], colour: "wood" },
+      ],
+    },
+    mirror: {
+      kind: "subject", anchor: "centre", size: 0.56, aspect: 0.7,
+      colours: { frame: [44, 70, 48], glass: [205, 18, 80] },
+      parts: [
+        { shape: "ellipse", box: [0, 0, 1, 1], colour: "frame", texture: "grain-v" },
+        { shape: "ellipse", box: [0.08, 0.06, 0.84, 0.88], colour: "glass" },
+        { shape: "line", pts: [[0.28, 0.3], [0.44, 0.16]], width: 0.04, colour: "glass", tone: 0.18 },
+        { shape: "line", pts: [[0.28, 0.44], [0.54, 0.2]], width: 0.03, colour: "glass", tone: 0.14 },
+      ],
+    },
+    bowl: {
+      kind: "subject", anchor: "ground", size: 0.2, aspect: 2,
+      colours: { glaze: [200, 32, 66] },
+      parts: [
+        { shape: "dome", box: [0, 0, 1, 1], down: true, colour: "glaze", texture: "grain-h" },
+        { shape: "ellipse", box: [0, -0.1, 1, 0.2], colour: "glaze", tone: -0.2 },
+      ],
+    },
+    vase: {
+      kind: "subject", anchor: "ground", size: 0.46, aspect: 0.55,
+      colours: { clay: [200, 52, 40], band: [40, 30, 88] },
+      parts: [
+        { shape: "rect", box: [0.3, 0, 0.4, 0.26], colour: "clay", tone: -0.05 },
+        { shape: "ellipse", box: [0.22, -0.02, 0.56, 0.08], colour: "clay", tone: 0.06 },
+        { shape: "egg", box: [0, 0.18, 1, 0.82], colour: "clay" },
+        { shape: "bands", box: [0.06, 0.46, 0.88, 0.2], n: 3, colour: "band" },
+      ],
+    },
+    teapot: {
+      kind: "subject", anchor: "ground", size: 0.32, aspect: 1.5,
+      colours: { china: [205, 18, 88], blue: [220, 60, 42] },
+      parts: [
+        { shape: "ring", box: [0.72, 0.3, 0.26, 0.44], thickness: 0.3, colour: "china", tone: -0.06 },
+        { shape: "poly", pts: [[0.28, 0.56], [0.02, 0.2], [0.08, 0.16], [0.3, 0.42]], colour: "china", tone: -0.04 },
+        { shape: "ellipse", box: [0.2, 0.24, 0.6, 0.76], colour: "china" },
+        { shape: "dome", box: [0.34, 0.1, 0.32, 0.18], colour: "blue" },
+        { shape: "ellipse", box: [0.46, 0.04, 0.08, 0.08], colour: "blue" },
+        { shape: "bands", box: [0.22, 0.56, 0.56, 0.14], n: 1, colour: "blue" },
+      ],
+    },
     // ── places ───────────────────────────────────────────────────────────
     sky: {
       kind: "setting", region: [0, 0, 1, 0.66], horizon: 0.66,
@@ -505,33 +1150,90 @@
         { shape: "line", pts: [[0.5, 0.05], [0.5, 1]], width: 0.01, colour: "line", dash: true },
       ],
     },
+    sunset: {
+      kind: "setting", region: [0, 0, 1, 0.66], horizon: 0.66,
+      colours: { high: [262, 38, 30], low: [22, 90, 62], sun: [40, 95, 70] },
+      parts: [
+        { shape: "gradient", box: [0, 0, 1, 1], colour: "high", to: "low" },
+        { shape: "glow", box: [0.3, 0.55, 0.4, 0.9], colour: "sun" },
+        { shape: "dome", box: [0.42, 0.84, 0.16, 0.16], colour: "sun" },
+      ],
+    },
+    fog: {
+      kind: "setting", region: [0, 0, 1, 1], overlay: true,
+      colours: { mist: [210, 12, 86] },
+      parts: [{ shape: "gradient", box: [0, 0, 1, 1], colour: "mist", to: "mist" }],
+    },
+    underwater: {
+      kind: "setting", region: [0, 0, 1, 1],
+      colours: { top: [190, 70, 44], deep: [218, 70, 14], bubble: [190, 50, 85], light: [185, 60, 70] },
+      parts: [
+        { shape: "gradient", box: [0, 0, 1, 1], colour: "top", to: "deep" },
+        { shape: "streaks", box: [0, 0, 1, 0.7], n: 14, colour: "light" },
+        { shape: "scatter", box: [0, 0, 1, 1], n: 40, r: 0.006, colour: "bubble" },
+      ],
+    },
+    cave: {
+      kind: "setting", region: [0, 0, 1, 1], horizon: 0.82,
+      colours: { rock: [26, 16, 14] },
+      parts: [
+        { shape: "rect", box: [0, 0, 1, 1], colour: "rock", texture: "speckle" },
+        { shape: "ellipse", box: [0.16, 0.14, 0.68, 1.2], cut: true },
+      ],
+    },
+    room: {
+      kind: "setting", region: [0, 0, 1, 1], horizon: 0.7,
+      colours: { wall: [36, 30, 72], floor: [28, 42, 36] },
+      parts: [
+        { shape: "rect", box: [0, 0, 1, 0.7], colour: "wall" },
+        { shape: "rect", box: [0, 0.7, 1, 0.3], colour: "floor", texture: "grain-h" },
+        { shape: "rect", box: [0, 0.68, 1, 0.03], colour: "floor", tone: -0.1 },
+      ],
+    },
+    island: {
+      kind: "setting", region: [0, 0.55, 1, 0.45], horizon: 0.55,
+      colours: { sea: [196, 60, 44], sand: [40, 55, 70] },
+      parts: [
+        { shape: "gradient", box: [0, 0, 1, 1], colour: "sea", to: "sea" },
+        { shape: "ripples", box: [0, 0.05, 1, 0.95], n: 7, colour: "sand" },
+        { shape: "dome", box: [0.2, 0.18, 0.6, 0.34], colour: "sand" },
+      ],
+    },
+    garden: {
+      kind: "setting", region: [0, 0.62, 1, 0.38], horizon: 0.62,
+      colours: { grass: [100, 45, 38], flowers: [335, 70, 64] },
+      parts: [
+        { shape: "rect", box: [0, 0, 1, 1], colour: "grass", texture: "grass" },
+        { shape: "scatter", box: [0, 0.1, 1, 0.9], n: 50, r: 0.007, colour: "flowers" },
+      ],
+    },
   };
 
   /* Words that name a thing by its family: an oak is drawn as a tree until it
    * has an entry of its own. A value may name several entries (a beach is
    * sand and sea). */
   const FAMILIES = {
-    oak: "tree", pine: "tree", willow: "tree", birch: "tree", palm: "tree", maple: "tree", elm: "tree",
+    oak: "tree", willow: "tree", birch: "tree", maple: "tree", elm: "tree",
     cottage: "house", home: "house", hut: "house", cabin: "house", building: "house", barn: "house",
-    castle: "tower", church: "tower", steeple: "tower", spire: "tower", skyscraper: "tower",
+    castle: "tower", steeple: "tower", spire: "tower", skyscraper: "tower",
     gate: "door", portal: "door", entrance: "door", doorway: "door",
     ship: "boat", yacht: "boat", sailboat: "boat", canoe: "boat",
     man: "person", woman: "person", girl: "person", boy: "person", child: "person", figure: "person",
     people: "person", friend: "person", stranger: "person", mother: "person", father: "person",
-    kitten: "cat", lion: "cat", tiger: "cat", puppy: "dog", wolf: "dog", fox: "dog", horse: "dog",
+    kitten: "cat", lion: "cat", tiger: "cat", puppy: "dog", wolf: "dog", fox: "dog", donkey: "horse", pony: "horse",
     rose: "flower", tulip: "flower", daisy: "flower", lily: "flower", blossom: "flower", bloom: "flower",
     flame: "fire", blaze: "fire", bonfire: "fire", campfire: "fire",
     rock: "stone", boulder: "stone", pebble: "stone",
-    hill: "mountain", peak: "mountain", volcano: "mountain",
-    lamp: "candle", lantern: "candle",
+    hill: "mountain", peak: "mountain",
+    lamp: "lantern",
     mug: "cup", teacup: "cup", glass: "cup",
     crow: "bird", raven: "bird", gull: "bird", dove: "bird", swallow: "bird",
-    planet: "moon", comet: "star",
+    comet: "star",
     heartbeat: "heart", love: "heart",
     skull: "bone", seed: "egg",
     ocean: "sea", lake: "sea", pond: "sea", water: "sea", waves: "sea", wave: "sea",
     stream: "river", creek: "river",
-    meadow: "field", grass: "field", garden: "field", farm: "field", prairie: "field",
+    meadow: "field", grass: "field", farm: "field", prairie: "field",
     sand: "desert", dune: "desert", dunes: "desert",
     woods: "forest", jungle: "forest",
     town: "city", street: "city", village: "city",
@@ -541,6 +1243,58 @@
     thunder: "storm", lightning: "storm",
     winter: "snow",
     automobile: "car", truck: "car",
+    // Added with the second batch of entries.
+    fir: "pine", spruce: "pine", conifer: "pine", evergreen: "pine", christmas: "pine",
+    coconut: "palm", shrub: "bush", hedge: "bush", fern: "bush", plant: "bush",
+    cathedral: "church", chapel: "church", temple: "church", mosque: "church",
+    stallion: "horse", mare: "horse", unicorn: "horse", deer: "horse", zebra: "horse",
+    cattle: "cow", bull: "cow", ox: "cow", sheep: "cow", goat: "cow", pig: "cow",
+    bunny: "rabbit", hare: "rabbit", mouse: "rabbit", rat: "rabbit", squirrel: "rabbit",
+    dolphin: "whale", shark: "whale", seal: "whale",
+    tortoise: "turtle", toad: "frog", lizard: "snake", serpent: "snake", worm: "snake", dragon: "snake",
+    moth: "butterfly", insect: "bee", wasp: "bee", ant: "spider", bug: "spider", beetle: "spider",
+    eagle: "bird", hawk: "bird", sparrow: "bird", robin: "bird", parrot: "bird", swan: "bird", duck: "bird",
+    owlet: "owl", penguin: "owl", chicken: "owl", hen: "owl",
+    spirit: "ghost", phantom: "ghost", soul: "ghost",
+    android: "robot", machine: "robot", cyborg: "robot",
+    fist: "hand", finger: "hand",
+    bike: "bicycle",
+    locomotive: "train", tram: "train", bus: "train",
+    airplane: "plane", aeroplane: "plane", jet: "plane", aircraft: "plane",
+    spaceship: "rocket", spacecraft: "rocket", missile: "rocket",
+    blade: "sword", knife: "sword", dagger: "sword", spear: "sword",
+    armour: "shield", armor: "shield",
+    violin: "guitar", instrument: "guitar", music: "guitar",
+    cupcake: "cake", birthday: "cake", pie: "cake", bread: "cake",
+    toadstool: "mushroom", fungus: "mushroom",
+    desk: "table", bench: "table",
+    sofa: "bed", couch: "bed", pillow: "bed",
+    parasol: "umbrella",
+    balloons: "balloon", bubble: "balloon",
+    football: "ball", orb: "ball", sphere: "ball",
+    bells: "bell", gong: "bell",
+    tents: "tent", camp: "tent", teepee: "tent",
+    mill: "windmill", pyramids: "pyramid", tomb: "pyramid",
+    railing: "fence", barrier: "fence", brick: "wall", bricks: "wall",
+    staircase: "stairs", steps: "stairs", step: "stairs",
+    archway: "arch", doorframe: "arch",
+    cascade: "waterfall",
+    saturn: "planet", jupiter: "planet", mars: "planet", world: "planet", globe: "planet",
+    gem: "crystal", diamond: "crystal", jewel: "crystal",
+    torch: "lantern",
+    cap: "hat", helmet: "hat",
+   
+    reflection: "mirror",
+    dish: "bowl", plate: "bowl",
+    jar: "vase", pot: "vase", urn: "vase",
+    kettle: "teapot", tea: "teapot",
+    sunflowers: "sunflower",
+    dusk: "sunset", dawn: "sunset", sunrise: "sunset", evening: "sunset", twilight: "sunset",
+    mist: "fog", haze: "fog",
+    reef: "underwater", seabed: "underwater",
+    cavern: "cave", tunnel: "cave",
+    kitchen: "room", bedroom: "room", hall: "room", interior: "room", indoors: "room",
+    isle: "island", park: "garden", orchard: "garden",
   };
 
   const COLOUR_WORDS = {
@@ -590,6 +1344,11 @@
         const entry = ENTRIES[key];
         if (entry.kind === "setting") {
           if (!settings.some((s) => s.key === key) && settings.length < 3) settings.push({ key, entry, colour });
+          // "A whale under the sea", "a fish in the river": in water, a thing
+          // goes below the surface. On land, "in a field" still stands on it.
+          if ((relation === "below" || relation === "in") && subjects.length && ["sea", "underwater", "river"].includes(key)) {
+            subjects[subjects.length - 1].within = key;
+          }
         } else if (!subjects.some((s) => s.key === key) && subjects.length < 3) {
           const many = found.plural ? Math.max(count, 3) : count;
           // "mountains" as a place, not as three separate mountains.
@@ -605,7 +1364,8 @@
     /* A thing in the sky, or ground that runs to a horizon, implies a sky
      * above it - otherwise whatever the field happens to be fills that half
      * and a green tree disappears against green. Moon and stars imply night. */
-    const hasSky = settings.some((s) => ["sky", "night", "storm", "city", "forest", "snow"].includes(s.key));
+    const hasSky = settings.some((s) => ["sky", "night", "storm", "city", "forest", "snow", "sunset", "underwater",
+      "cave", "room"].includes(s.key));
     const wantsSky = subjects.some((s) => s.entry.anchor === "sky") ||
       settings.some((s) => Number.isFinite(s.entry.horizon) && !s.entry.overlay);
     if (!hasSky && wantsSky && settings.length < 4) {
@@ -656,6 +1416,11 @@
       else if (anchor === "water") bottom = ((horizon ?? 0.62) + 0.1) * H;
       else if (anchor === "centre") bottom = H * 0.5 + h / 2;
       else bottom = groundY;
+      const inside = s.within && items.find((it) => it.key === s.within);
+      if (inside) {
+        const r = inside.box;
+        bottom = Math.min(r.y + r.h * 0.92, Math.max(r.y + h * 1.05, r.y + r.h * 0.5 + h / 2));
+      }
       const before = placed[placed.length - 1];
       let z = 0;
       let lift = null;
@@ -737,7 +1502,15 @@
         });
         return path;
       case "ellipse":
-        boxPath(box, b, (x, y, w, h) => path.ellipse(x + w / 2, y + h / 2, Math.abs(w / 2), Math.abs(h / 2), 0, 0, Math.PI * 2));
+        boxPath(box, b, (x, y, w, h) => path.ellipse(x + w / 2, y + h / 2, Math.abs(w / 2), Math.abs(h / 2), part.rot || 0, 0, Math.PI * 2));
+        return path;
+      case "dome":
+        // Half an ellipse: a cap, a roof, a shell - or, with `down`, a bowl.
+        boxPath(box, b, (x, y, w, h) => {
+          if (part.down) path.ellipse(x + w / 2, y, w / 2, h, 0, 0, Math.PI);
+          else path.ellipse(x + w / 2, y + h, w / 2, h, 0, Math.PI, Math.PI * 2);
+          path.closePath();
+        });
         return path;
       case "poly": {
         part.pts.forEach((pt, i) => { const [x, y] = P(box, pt); if (i) path.lineTo(x, y); else path.moveTo(x, y); });
@@ -941,6 +1714,9 @@
       }
       case "tongues": {
         const n = part.n || 5;
+        ctx.save();
+        // Flames that point down, out of a rocket.
+        if (part.flip) { ctx.translate(0, 2 * y + h); ctx.scale(1, -1); }
         ctx.fillStyle = hsl(colour, tone);
         for (let i = 0; i < n; i++) {
           const cx = x + w * (n === 1 ? 0.5 : 0.12 + 0.76 * (i / (n - 1))) + (rng() - 0.5) * w * 0.06;
@@ -952,6 +1728,23 @@
           ctx.moveTo(cx - half, y + h);
           ctx.bezierCurveTo(cx - half * 1.1, y + h * 0.7, cx + lean - half * 0.2, top + (y + h - top) * 0.3, cx + lean, top);
           ctx.bezierCurveTo(cx + lean + half * 0.2, top + (y + h - top) * 0.3, cx + half * 1.1, y + h * 0.7, cx + half, y + h);
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.restore();
+        return true;
+      }
+      case "pickets": {
+        const n = part.n || 8, pw = w / n * 0.72;
+        ctx.fillStyle = hsl(colour, tone);
+        for (let i = 0; i < n; i++) {
+          const px = x + (i + 0.14) * w / n;
+          ctx.beginPath();
+          ctx.moveTo(px, y + h);
+          ctx.lineTo(px, y + pw * 0.7);
+          ctx.lineTo(px + pw / 2, y);
+          ctx.lineTo(px + pw, y + pw * 0.7);
+          ctx.lineTo(px + pw, y + h);
           ctx.closePath();
           ctx.fill();
         }
