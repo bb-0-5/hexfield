@@ -22478,7 +22478,12 @@ const FORMATS = {
   master: isMobileBrowser()
     ? { w: MOBILE_MASTER_WIDTH, h: MOBILE_MASTER_HEIGHT, ew: 4400, eh: 1000, aspect: "22 / 5" }
     : { w: 2200, h: 500, ew: 4400, eh: 1000, aspect: "22 / 5" },
-  print: { w: 900, h: 1080, ew: 4500, eh: 5400, aspect: "5 / 6" },
+  /* Phones paint this one by default (see the start-up below): a portrait
+   * canvas is what a phone screen can actually show large. 600×720 costs about
+   * what the 1100×250 strip did; exports are unchanged. */
+  print: isMobileBrowser()
+    ? { w: 600, h: 720, ew: 4500, eh: 5400, aspect: "5 / 6" }
+    : { w: 900, h: 1080, ew: 4500, eh: 5400, aspect: "5 / 6" },
   /* 3600, not 2400. The square is printed at 12x12 inches, and 2400px across
    * that is 200dpi - visibly soft for artwork whose whole subject is fine
    * structure: halftone dots, moire interference, single automaton cells. 3600
@@ -27054,8 +27059,14 @@ for (const kind of ["pointerdown", "keydown", "wheel", "touchstart"]) {
  * person has stopped touching for INPUT_PRIORITY_MS. Work already running
  * finishes; nothing new competes with the next tap. */
 const INPUT_PRIORITY_MS = 2500;
+/* Declared here, not beside the export handler, because the painter's gates
+ * below read it from start-up on. */
+let exportInFlight = false;
+
+/* A print-size export takes seconds on a phone; the painter waits it out, the
+ * same as it waits for a tap, so the two do not slow each other down. */
 function userRecentlyActive() {
-  return Date.now() - lastInteractionAt < INPUT_PRIORITY_MS;
+  return exportInFlight || Date.now() - lastInteractionAt < INPUT_PRIORITY_MS;
 }
 async function waitForQuietInput(maxMs = 12000) {
   const start = Date.now();
@@ -27143,7 +27154,22 @@ function currentHeadlessSimBudget() {
     ? HEADLESS_SIM_ACCELERATOR_BUDGET_MS : HEADLESS_SIM_CYCLE_BUDGET_MS;
 }
 
+/* A cycle now pauses between the steps of each study, so a stop-and-start
+ * could otherwise begin a second cycle on the same canvas while the first is
+ * mid-study. One cycle at a time; the one in flight schedules the next. */
+let headlessCycleInFlight = false;
+
 async function runHeadlessSimCycle() {
+  if (headlessCycleInFlight) return;
+  headlessCycleInFlight = true;
+  try {
+    await runHeadlessSimCycleSteps();
+  } finally {
+    headlessCycleInFlight = false;
+  }
+}
+
+async function runHeadlessSimCycleSteps() {
   if (!headlessSim.running) return;
   const started = performance.now();
   // Yield the main thread whenever the visitor's own search is running. Both
@@ -27225,8 +27251,9 @@ async function runHeadlessSimCycle() {
      * still get the full six, which is where the throughput came from. */
     const studies = [];
     for (const candidate of population) {
-      studies.push(evaluateTasteStudy(candidate.params, candidate.drawSeed,
+      studies.push(await evaluateTasteStudy(candidate.params, candidate.drawSeed,
         headlessCtx, headlessProbe.width, headlessProbe.height, cycleNumber));
+      if (!headlessSim.running) break;
       if (performance.now() - started > currentHeadlessSimBudget()) break;
     }
     const ranked = rankTastePopulation(studies);
@@ -27406,7 +27433,14 @@ const SIM_BRUSH_CACHE_MS = 250;
  * A cycle now passes a list that starts as the archive and grows as the cycle
  * evaluates, so candidate n is measured against the archive plus everything
  * this cycle has already made. */
-function evaluateTasteStudy(params, drawSeed, targetCtx = pctx, targetW = probe.width, targetH = probe.height, cycleNumber = null, against = archive) {
+/* A pause between the steps of one study: render, shapes, grammar, features.
+ * One study used to be a single 250-600ms block on a throttled phone - the
+ * block a tap would land on - even though its callers already yield between
+ * studies. */
+const studyStepPause = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+async function evaluateTasteStudy(params, drawSeed, targetCtx = pctx, targetW = probe.width, targetH = probe.height,
+                                  cycleNumber = null, against = archive, pause = studyStepPause) {
   // The simulator judges the complete product surface: field plus the
   // harvested brush that a customer would actually see. The previous version
   // forced seed mode here, so its top ten had no learned font language.
@@ -27432,11 +27466,16 @@ function evaluateTasteStudy(params, drawSeed, targetCtx = pctx, targetW = probe.
   // ride into later generations - or, worse, reach the visible canvas and stop
   // it evolving at all. Strip them the moment the render is done.
   delete params.__hexfieldHarvestCycle;
+  // The canvas belongs to this study's caller alone, so it keeps its pixels
+  // across the pauses.
+  if (pause) await pause();
   const sig = signature(targetCtx, targetW, targetH);
   const minCov = MIN_COVERAGE[params.field] ?? 0;
   const poorlyComposed = structure(sig) < MIN_STRUCTURE || coverage(sig) < minCov;
   const finishedShapes = extractShapes(targetCtx, targetW, targetH, 8, 0.0016, 0.58);
+  if (pause) await pause();
   const grammar = canvasGrammar(targetCtx, targetW, targetH, finishedShapes);
+  if (pause) await pause();
   const rawFeatures = tasteFeatures(targetCtx, targetW, targetH, sig);
   const rawNovelty = novelty(sig, against);
   const noveltyValue = noveltyUnit(rawNovelty, 0.55);
@@ -27690,8 +27729,8 @@ function runTasteCycle(source = "visitor") {
         }
         const cycleCtx = tasteCycleCanvas.getContext("2d", { willReadFrequently: true });
         for (const candidate of population) {
-          const study = evaluateTasteStudy(candidate.params, candidate.drawSeed,
-                                           cycleCtx, probe.width, probe.height, null, seen);
+          const study = await evaluateTasteStudy(candidate.params, candidate.drawSeed,
+                                                 cycleCtx, probe.width, probe.height, null, seen);
           if (study.sig) seen.push(study.sig);
           studies.push(study);
           await yieldToPainter();
@@ -30890,9 +30929,17 @@ const STROKES_PER_FRAME = isMobileBrowser() ? 18 : 40;
 const STROKE_GRADIENT_MIN = 24;
 let strokePainter = { reference: null, layer: 0, layerBatches: 0, gradient: null, width: 0, height: 0, strokes: 0 };
 
-function strokeRadiusForLayer(layer, height) {
+/* What brush sizes are measured against: the short side, but never more than
+ * 45% of the long one. The 4.4:1 strip keeps its brushes exactly (its height);
+ * a near-square portrait would otherwise get strokes three times as large
+ * relative to the picture, which read as blocks rather than brushwork. */
+function strokeBrushBase(width, height) {
+  return Math.min(Math.min(width, height), 0.45 * Math.max(width, height));
+}
+
+function strokeRadiusForLayer(layer, short) {
   const fraction = STROKE_LAYER_FRACTIONS[Math.min(layer, STROKE_LAYER_FRACTIONS.length - 1)];
-  return Math.max(1.5, height * fraction);
+  return Math.max(1.5, short * fraction);
 }
 
 // Luminance gradient of the reference on a half-resolution grid, for stroke direction.
@@ -30990,12 +31037,44 @@ function enhanceStrokeReference(ref) {
 const PLAN_PALETTE_SIZE = 6;
 const PLAN_PALETTE_SNAP = 0.7;
 
-function planFocusSigma(width, height) {
-  return Math.max(0.16 * Math.max(width, height), 0.3 * Math.min(width, height));
+/* How this painting is painted, from the words and from taste. Each axis runs
+ * -1..1 and 0 is the painter's own default. Words speak through their hand;
+ * taste speaks through how far the learned weights (crowd + you) have moved
+ * from the factory ones, so an untrained studio paints neutrally and every
+ * vote nudges the brush as well as the picture. Fixed for one painting. */
+function paintingBrushStyle(params) {
+  const hand = wordBrushHand(params);
+  // Word axes mostly sit within ±0.5, so they are scaled up before mixing.
+  const word = (axis) => hand ? Math.tanh(2 * (Number(hand[axis]) || 0) * hand.strength) : 0;
+  const learned = activeTasteModel().weights, factory = newTasteModel().weights;
+  const taste = (key) => Math.tanh(((Number(learned[key]) || 0) - (Number(factory[key]) || 0)) / 0.2);
+  const axis = (v) => Math.max(-1, Math.min(1, v));
+  const style = {
+    looseness: axis(0.8 * word("ene") + 0.35 * taste("messiness") + 0.2 * taste("randomness") - 0.35 * taste("neatness")),
+    detail: axis(0.8 * word("mul") + 0.35 * taste("complexity") + 0.25 * taste("effectiveComplexity") - 0.3 * taste("overload")),
+    contrast: axis(0.8 * word("pot") + 0.5 * taste("contrast")),
+    focus: axis(0.8 * word("bnd") + 0.3 * taste("balance") + 0.2 * taste("voids")),
+    colours: axis(0.6 * word("mul") + 0.4 * taste("chromaticContrast") + 0.2 * taste("chromaticComplement")),
+  };
+  const lean = (v, low, high) => v > 0.25 ? high : v < -0.25 ? low : "";
+  style.label = [lean(style.looseness, "tight", "loose"), lean(style.detail, "broad", "detailed"),
+    lean(style.contrast, "soft", "punchy"), lean(style.focus, "open", "focused")].filter(Boolean).join(" · ") || "even";
+  style.paletteSize = Math.round(PLAN_PALETTE_SIZE + 2 * style.colours);
+  style.label += ` · ${style.paletteSize} colours`;
+  return style;
+}
+
+function planStyle() {
+  return strokePainter.plan?.style || null;
+}
+
+function planFocusSigma(width, height, style = null) {
+  const focus = Number(style?.focus) || 0;
+  return Math.max(0.16 * Math.max(width, height), 0.3 * Math.min(width, height)) * (1 - 0.3 * focus);
 }
 
 function planLuminanceStats(ref, width, height, plan) {
-  const sigma = planFocusSigma(width, height), cx = plan.fx * width, cy = plan.fy * height;
+  const sigma = planFocusSigma(width, height, plan.style), cx = plan.fx * width, cy = plan.fy * height;
   let lf = 0, wf = 0, lb = 0, wb = 0;
   const step = Math.max(1, Math.round(Math.sqrt(width * height / 6000)));
   for (let y = 0; y < height; y += step) {
@@ -31009,12 +31088,12 @@ function planLuminanceStats(ref, width, height, plan) {
   return { Lf: wf ? lf / wf : 128, Lb: wb ? lb / wb : 128 };
 }
 
-function makePaintingPlan(ref, width, height, drawSeed) {
+function makePaintingPlan(ref, width, height, drawSeed, params = null) {
   let { fx, fy } = strokeReferenceGradient(ref, width, height).focus;
   // Toward the thirds along the long side, toward the middle across it.
   const toThird = (v) => v + ((Math.abs(v - 1 / 3) < Math.abs(v - 2 / 3) ? 1 / 3 : 2 / 3) - v) * 0.6;
   if (width >= height) { fx = toThird(fx); fy += (0.45 - fy) * 0.4; } else { fy = toThird(fy); fx += (0.5 - fx) * 0.4; }
-  const plan = { fx, fy, lightOnDark: true, palette: null, drawSeed };
+  const plan = { fx, fy, lightOnDark: true, palette: null, drawSeed, style: paintingBrushStyle(params) };
   const { Lf, Lb } = planLuminanceStats(ref, width, height, plan);
   plan.lightOnDark = Math.abs(Lf - Lb) > 6 ? Lf > Lb : mulberry32((Number(drawSeed) || 7) >>> 0)() < 0.6;
   return plan;
@@ -31022,7 +31101,8 @@ function makePaintingPlan(ref, width, height, drawSeed) {
 
 /* The reference, reshaped to the plan. Pure; returns a new pixel array. */
 function composeStrokeReference(ref, width, height, plan) {
-  const sigma = planFocusSigma(width, height);
+  const sigma = planFocusSigma(width, height, plan.style);
+  const punch = Number(plan.style?.contrast) || 0;
   const wx = new Float32Array(width), wy = new Float32Array(height);
   for (let x = 0; x < width; x++) wx[x] = Math.exp(-((x - plan.fx * width) ** 2) / (2 * sigma * sigma));
   for (let y = 0; y < height; y++) wy[y] = Math.exp(-((y - plan.fy * height) ** 2) / (2 * sigma * sigma));
@@ -31044,7 +31124,9 @@ function composeStrokeReference(ref, width, height, plan) {
   const { Lf, Lb } = planLuminanceStats(ref, width, height, plan);
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const G = plan.lightOnDark ? clamp(Lb * 0.65, 28, 105) : clamp(Lb * 0.75 + 70, 150, 225);
-  const F = plan.lightOnDark ? clamp(Math.max(Lf, G + 95), 0, 225) : clamp(Math.min(Lf, G - 95), 30, 255);
+  // How far apart focus and ground are pushed: punchier hands push further.
+  const gap = 95 * (1 + 0.35 * punch);
+  const F = plan.lightOnDark ? clamp(Math.max(Lf, G + gap), 0, 235) : clamp(Math.min(Lf, G - gap), 20, 255);
   const out = new Uint8ClampedArray(ref.length);
   const soft = [0, 0, 0];
   for (let y = 0; y < height; y++) {
@@ -31064,7 +31146,7 @@ function composeStrokeReference(ref, width, height, plan) {
       const r = ref[o] + (soft[0] - ref[o]) * k, g = ref[o + 1] + (soft[1] - ref[o + 1]) * k,
             b = ref[o + 2] + (soft[2] - ref[o + 2]) * k;
       const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-      const L = (G + (l - Lb) * 0.5) * (1 - w) + (F + (l - Lf) * 1.2) * w;
+      const L = (G + (l - Lb) * 0.5 * (1 - 0.3 * punch)) * (1 - w) + (F + (l - Lf) * 1.2) * w;
       const sat = 0.75 + 0.4 * w;
       out[o] = L + (r - l) * sat;
       out[o + 1] = L + (g - l) * sat;
@@ -31106,6 +31188,11 @@ function paletteFromPixels(pixels, count, rng) {
   return centres.map((c) => c.map(Math.round));
 }
 
+// More colours to mix from, less pull toward any one of them.
+function planPaletteSnap(plan) {
+  return PLAN_PALETTE_SNAP - 0.12 * (Number(plan?.style?.colours) || 0);
+}
+
 function nearestPaletteColour(palette, r, g, b) {
   let best = palette[0], bd = Infinity;
   for (const p of palette) {
@@ -31136,13 +31223,17 @@ function snapToPalette(pixels, palette, amount = PLAN_PALETTE_SNAP) {
  * mixed from its palette. The first reference of a painting makes the plan. */
 function prepareStrokeReference(ref, width, height) {
   const enhanced = enhanceStrokeReference(ref);
-  if (!strokePainter.plan) strokePainter.plan = makePaintingPlan(enhanced, width, height, 0);
+  if (!strokePainter.plan) {
+    const source = bestRun?.params ? bestRun : current;
+    strokePainter.plan = makePaintingPlan(enhanced, width, height, source?.drawSeed || 0, source?.params);
+  }
   const plan = strokePainter.plan;
   const composed = composeStrokeReference(enhanced, width, height, plan);
   if (!plan.palette) {
-    plan.palette = paletteFromPixels(composed, PLAN_PALETTE_SIZE, mulberry32(((Number(plan.drawSeed) || 0) ^ 0x51f15e) >>> 0));
+    plan.palette = paletteFromPixels(composed, plan.style?.paletteSize || PLAN_PALETTE_SIZE,
+      mulberry32(((Number(plan.drawSeed) || 0) ^ 0x51f15e) >>> 0));
   }
-  return snapToPalette(composed, plan.palette);
+  return snapToPalette(composed, plan.palette, planPaletteSnap(plan));
 }
 
 /* The same preparation off the painting path: enhance, compose and mix are
@@ -31161,7 +31252,7 @@ function scheduleStrokeReference(ref, width, height, refKey) {
     const composed = composeStrokeReference(enhanced, width, height, plan);
     await pause();
     if (!stillWanted()) return;
-    strokePainter.enhanced = snapToPalette(composed, plan.palette);
+    strokePainter.enhanced = snapToPalette(composed, plan.palette, planPaletteSnap(plan));
     strokePainter.enhancedKey = refKey;
     strokePainter.enhancedPlan = plan;
     strokeReferenceJob = null;
@@ -31204,11 +31295,13 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
    * survives only occasionally, so the ground keeps its broad strokes. */
   const focus = gradient.focus;
   if (focus && layer >= 2) {
-    const sigma = layer === 2 ? 0.7 : 0.4, aspect = width / height;
+    const detail = Number(planStyle()?.detail) || 0;
+    const sigma = (layer === 2 ? 0.7 : 0.4) * (1 + 0.4 * detail), aspect = width / height;
+    const floor = Math.max(0.02, 0.06 * (1 + detail));
     for (let i = starts.length - 1; i >= 0; i--) {
       const dx = (starts[i].x / width - focus.fx) * aspect, dy = starts[i].y / height - focus.fy;
       const w = Math.exp(-(dx * dx + dy * dy) / (2 * sigma * sigma));
-      if (rng() > Math.max(0.06, w)) starts.splice(i, 1);
+      if (rng() > Math.max(floor, w)) starts.splice(i, 1);
     }
   }
   // Worst first, then shuffled within the batch so strokes do not march in rows.
@@ -31218,7 +31311,9 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
     const j = Math.floor(rng() * (i + 1));
     [chosen[i], chosen[j]] = [chosen[j], chosen[i]];
   }
-  const ene = hand ? hand.ene * hand.strength : 0;
+  /* Looseness is the words' energy together with taste (planStyle); without
+   * a plan, the words alone, as before. */
+  const ene = planStyle() ? planStyle().looseness : hand ? hand.ene * hand.strength : 0;
   const strokeSettleAngle = (Number(strokePainter.settleAngle) || 0);
   const pot = hand ? hand.pot * hand.strength : 0;
   // Big brushes make long sweeps; small ones short touches.
@@ -31229,7 +31324,7 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
     let colour = colourAt(ref, start.x, start.y);
     if (palette?.length) {
       const p = nearestPaletteColour(palette, colour[0], colour[1], colour[2]);
-      colour = colour.map((c, i) => c + (p[i] - c) * PLAN_PALETTE_SNAP);
+      colour = colour.map((c, i) => c + (p[i] - c) * planPaletteSnap(strokePainter.plan));
     }
     const points = [[start.x, start.y]];
     let x = start.x, y = start.y, lastDx = 0, lastDy = 0;
@@ -31250,7 +31345,9 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       }
       if (step > 1) {
         // Curvature damping keeps strokes from kinking on noise.
-        dx = 0.4 * dx + 0.6 * lastDx; dy = 0.4 * dy + 0.6 * lastDy;
+        // Curvature damping: a loose hand follows the forms more freely.
+        const follow = 0.4 + 0.15 * Math.max(0, ene);
+        dx = follow * dx + (1 - follow) * lastDx; dy = follow * dy + (1 - follow) * lastDy;
         const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
       }
       x += dx * radius; y += dy * radius;
@@ -31353,14 +31450,16 @@ function paintTowardReference(result, ref, width, height,
   let useLayer = layer ?? strokePainter.layer;
   let current = vctx.getImageData(0, 0, width, height).data;
   strokeLogBegin(current, width, height);
-  const toleranceFor = (l) => l === 0 ? STROKE_ERROR_TOLERANCE * 0.35 : STROKE_ERROR_TOLERANCE;
+  // A detailed hand keeps working on smaller differences.
+  const tolerance = STROKE_ERROR_TOLERANCE * (1 - 0.3 * (Number(planStyle()?.detail) || 0));
+  const toleranceFor = (l) => l === 0 ? tolerance * 0.35 : tolerance;
   let plan = planStrokeBatch(current, ref, strokePainter.gradient, width, height,
-    strokeRadiusForLayer(useLayer, height), rng, hand, limit, toleranceFor(useLayer), useLayer, palette);
+    strokeRadiusForLayer(useLayer, strokeBrushBase(width, height)), rng, hand, limit, toleranceFor(useLayer), useLayer, palette);
   // A layer with (almost) nothing left to fix hands over to the next, finer one.
   while (plan.candidates < Math.max(3, plan.cells * 0.01) && useLayer < STROKE_LAYER_FRACTIONS.length - 1) {
     useLayer++;
     plan = planStrokeBatch(current, ref, strokePainter.gradient, width, height,
-      strokeRadiusForLayer(useLayer, height), rng, hand, limit, toleranceFor(useLayer), useLayer, palette);
+      strokeRadiusForLayer(useLayer, strokeBrushBase(width, height)), rng, hand, limit, toleranceFor(useLayer), useLayer, palette);
   }
   if (layer == null) {
     /* One layer is a fixed number of passes, as in Hertzmann's layering: the
@@ -31387,7 +31486,7 @@ function paintTowardReference(result, ref, width, height,
     minSize: strokes.length ? Math.min(...strokes.map((s) => s.width)) : 0,
     maxSize: strokes.length ? Math.max(...strokes.map((s) => s.width)) : 0,
     nonRedundancy: 0.5, count: (Number(result.paintBrush?.count) || 0) + strokes.length,
-    wordHand: hand?.label || "",
+    wordHand: planStyle()?.label || hand?.label || "",
   };
   view.dataset.paintBrushSource = "stroke-painter";
   view.dataset.paintStrokeLayer = String(useLayer);
@@ -31793,7 +31892,7 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
     result.paintCanvasFilled = true;
     const raw = target.getContext("2d").getImageData(0, 0, width, height).data;
     // A new painting, a new plan: focus, value scheme and palette.
-    strokePainter.plan = makePaintingPlan(enhanceStrokeReference(raw), width, height, result?.drawSeed);
+    strokePainter.plan = makePaintingPlan(enhanceStrokeReference(raw), width, height, result?.drawSeed, result?.params);
     const reference = prepareStrokeReference(raw, width, height);
     // Detail passes start from this one while theirs is prepared in the background.
     strokePainter.enhanced = reference;
@@ -32509,6 +32608,13 @@ function autonomousRandom() {
   return Math.random();
 }
 
+/* Phones paint in portrait, everything else on the landscape master. Reseeds
+ * reset the control to this; setting it to "master" on a phone left the
+ * portrait canvas exporting as a squashed 4400×1000 file. */
+function defaultFormat() {
+  return isMobileBrowser() ? "print" : "master";
+}
+
 function setAutonomousControl(id, value) {
   const control = document.getElementById(id);
   if (control) control.value = String(value);
@@ -32593,7 +32699,7 @@ function randomizeAutonomousControls() {
   setAutonomousControl("palette", chooseFresh("palette", [
     "random", "random", "mono", "sunset", "christmas", "ice", "forest", "cyberpunk", "jazzy",
   ]));
-  setAutonomousControl("format", "master");
+  setAutonomousControl("format", defaultFormat());
   const effort = 8 + Math.floor(autonomousRandom() * 7);
   setAutonomousControl("effort", effort);
   if ($("effortVal")) $("effortVal").textContent = String(effort);
@@ -36167,7 +36273,6 @@ function setExportStatus(text) {
   if (el) el.textContent = text || "";
 }
 
-let exportInFlight = false;
 
 /* ------------------------------------------------------------------ *
  * Buy this print
@@ -36459,6 +36564,16 @@ async function connectAndStart() {
    * sampled matte. Apply the selected format before the first search so the
    * composition, the pixels being painted and the box displaying them are the
    * same shape from frame one. */
+  if (isMobileBrowser()) {
+    /* On a phone the easel was a 4.4:1 strip at the very bottom of the page,
+     * about 390×90 on screen, with only the logo-sized preview near the top.
+     * A phone paints in portrait, and the painting takes the preview's place
+     * at the top, above CHANGE SEED and KEEP/REJECT. The preview keeps
+     * rendering hidden, because SAVE LOOP records it. */
+    $("format").value = defaultFormat();
+    const logo = document.getElementById("liveLogo");
+    if (logo && $("stage")) logo.before($("stage"));
+  }
   applyFormat();
   randomizeAutonomousControls();
   /* The seed box starts empty, which that call fills with "HEXFIELD".

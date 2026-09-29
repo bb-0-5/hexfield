@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- autodeploy-check: workers-builds-verify-8f2c1a -->
-<!-- hexfield build 187 (2026-09-29) -->
+<!-- hexfield build 188 (2026-09-29) -->
 <html lang="en">
 <head>
 <script>
@@ -440,6 +440,13 @@
    * was written to show through is gone (see isoField = null above), so
    * there is nothing left to justify paying for it on a phone; a solid panel
    * reads fine there. */
+  /* Phones: the painting sits at the top of the controls, full width, in
+     place of the logo preview (see the start-up in app.js). */
+  html.is-mobile #autonomousControls #stage {
+    width: 100%; height: auto; max-width: 100%; max-height: none;
+    margin: 4px 0 2px; flex: 0 0 auto;
+  }
+  html.is-mobile #liveLogo { display: none; }
   html.is-mobile aside > div#shopEssentials,
   html.is-mobile #autonomousControls {
     backdrop-filter: none;
@@ -755,7 +762,7 @@
     <div id="colourChoice">colour: choosing…</div>
     <div id="robBossMood" aria-live="polite">rob boss: waking up · show me 4–8 clear choices</div>
     <div id="painterStatus">seed held · preparing the first paint pass</div>
-    <div id="buildBadge">build 187</div>
+    <div id="buildBadge">build 188</div>
     <div id="bootErrors" style="display:none;color:#ff6b6b;font-size:10px;white-space:pre-wrap;margin-top:4px;"></div>
   </div>
   <div id="shopEssentials" aria-label="print controls"></div>
