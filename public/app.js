@@ -14962,6 +14962,7 @@ async function connectTaste() {
       pullGlobalTaste(), pullTasteAgreement(), pullStyleCatalogue(), pullCausalExperiments(),
       pullHarvestMaterials(), pullSharedVisualSymbols(),
       pullVisualSourceCorpus(), fetchKnownCreationHashes(), refreshMuseumStatus(),
+      pullVisualLexicon(),
     ]);
     queueTasteSync();
     scheduleSharedTasteFlush(0);
@@ -31121,9 +31122,152 @@ function planScene(params, width, height, fx, drawSeed) {
   const read = Visual.read(text);
   if (!read.subjects.length && !read.settings.length) return null;
   const rng = mulberry32(((Number(drawSeed) || 0) ^ 0x5ce4e) >>> 0);
+  // Each named thing is painted a little differently each time, around what
+  // votes have taught that word so far (see "Words learn their look").
+  const variations = {};
+  for (const item of [...read.subjects, ...read.settings]) {
+    if (item.implied) continue;
+    const v = variations[item.key] || (variations[item.key] = sampleVisualVariation(item.key, rng));
+    applyVisualVariation(item, v);
+  }
   const laid = Visual.layout(read, width, height, rng, width >= height ? fx : null);
-  return { words: read.words, items: laid.items, focus: laid.focus, width, height, layer: null };
+  const literal = Object.values(variations).reduce((sum, v) => sum + v.literal, 0) / Math.max(1, Object.keys(variations).length);
+  return {
+    words: read.words, items: laid.items, focus: laid.focus, width, height, layer: null,
+    variations, votes: { kept: false, rejected: false },
+    strength: Math.min(0.95, SCENE_STRENGTH * (1 + 0.15 * literal)),
+  };
 }
+
+/* ─── Words learn their look ───
+ * The dictionary says what a door is; votes say what a good painted door is.
+ * Every painting varies each named thing a little - size, hue, lightness, how
+ * literally the scene is painted - sampled around the word's learned look.
+ * KEEP pulls the word toward the variation it saw, REJECT pushes it away (at
+ * half weight: a rejection may be about anything in the painting). Shared
+ * through hexfield_visual_votes / hexfield_visual_lexicon(), where one
+ * visitor counts at most three votes each way per word. */
+const VISUAL_KEYS = ["size", "hue", "light", "literal"];
+const VISUAL_SPREAD = { size: 0.18, hue: 14, light: 7, literal: 0.3 };
+const VISUAL_LIMITS = { size: 1, hue: 60, light: 30, literal: 1 };
+const VISUAL_VOTE_PRIOR = 4;
+const VISUAL_PENDING_KEY = "hexfield.visualVotes.pending.v1";
+const VISUAL_PENDING_CAP = 200;
+let visualLexicon = {};
+let visualVotesPending = readVisualPending();
+let visualVotesFlushing = false;
+
+function readVisualPending() {
+  try {
+    const list = JSON.parse(localStorage.getItem(VISUAL_PENDING_KEY) || "[]");
+    return Array.isArray(list) ? list.slice(-VISUAL_PENDING_CAP) : [];
+  } catch { return []; }
+}
+function writeVisualPending() {
+  try { localStorage.setItem(VISUAL_PENDING_KEY, JSON.stringify(visualVotesPending.slice(-VISUAL_PENDING_CAP))); } catch {}
+}
+
+function visualLexiconAdd(vote) {
+  const stats = visualLexicon[vote.word] || (visualLexicon[vote.word] = { nl: 0, nr: 0, sl: [0, 0, 0, 0], sr: [0, 0, 0, 0] });
+  const sums = vote.liked ? stats.sl : stats.sr;
+  if (vote.liked) stats.nl++; else stats.nr++;
+  VISUAL_KEYS.forEach((key, i) => { sums[i] += Number(vote[key]) || 0; });
+}
+
+function visualLearned(word) {
+  const stats = visualLexicon[word];
+  const out = { size: 0, hue: 0, light: 0, literal: 0, votes: 0 };
+  if (!stats) return out;
+  const nl = Number(stats.nl) || 0, nr = Number(stats.nr) || 0;
+  const weight = nl + 0.5 * nr + VISUAL_VOTE_PRIOR;
+  VISUAL_KEYS.forEach((key, i) => {
+    const learned = ((Number(stats.sl?.[i]) || 0) - 0.5 * (Number(stats.sr?.[i]) || 0)) / weight;
+    out[key] = Math.max(-VISUAL_LIMITS[key], Math.min(VISUAL_LIMITS[key], learned));
+  });
+  out.votes = nl + nr;
+  return out;
+}
+
+function sampleVisualVariation(word, rng) {
+  const learned = visualLearned(word);
+  // Exploration narrows as a word gathers votes, but never to nothing.
+  const explore = Math.max(0.4, Math.sqrt(VISUAL_VOTE_PRIOR / (VISUAL_VOTE_PRIOR + learned.votes)));
+  const v = {};
+  for (const key of VISUAL_KEYS) {
+    const gauss = Math.sqrt(-2 * Math.log(Math.max(1e-9, rng()))) * Math.cos(2 * Math.PI * rng());
+    const value = learned[key] + gauss * VISUAL_SPREAD[key] * explore;
+    v[key] = Math.round(Math.max(-VISUAL_LIMITS[key], Math.min(VISUAL_LIMITS[key], value)) * 1000) / 1000;
+  }
+  return v;
+}
+
+function applyVisualVariation(item, v) {
+  if (item.entry.kind === "subject") item.entry = { ...item.entry, size: item.entry.size * Math.exp(0.5 * v.size) };
+  const base = item.colour || Object.values(item.entry.colours)[0];
+  item.colour = [((base[0] + v.hue) % 360 + 360) % 360, base[1], Math.max(4, Math.min(96, base[2] + v.light))];
+}
+
+/* A vote on a painting that painted named things. Each direction counts once
+ * per painting, however many times the button is pressed. */
+function recordVisualVote(liked) {
+  const scene = strokePainter.plan?.scene;
+  if (!scene?.variations) return;
+  const flag = liked ? "kept" : "rejected";
+  if (scene.votes[flag]) return;
+  scene.votes[flag] = true;
+  for (const [word, v] of Object.entries(scene.variations)) {
+    if (!/^[a-z]{1,24}$/.test(word)) continue;
+    const vote = { word, liked: Boolean(liked), ...v };
+    visualLexiconAdd(vote);
+    visualVotesPending.push(vote);
+  }
+  writeVisualPending();
+  flushVisualVotes();
+}
+
+async function flushVisualVotes() {
+  if (visualVotesFlushing || !visualVotesPending.length) return;
+  visualVotesFlushing = true;
+  const batch = visualVotesPending.slice(0, 50);
+  try {
+    const session = await ensureTasteSession();
+    const res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_visual_votes", {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token,
+        "Content-Type": "application/json", Prefer: "return=minimal",
+      },
+      body: JSON.stringify(batch.map((vote) => ({
+        word: vote.word, liked: vote.liked, size: vote.size, hue: vote.hue, light: vote.light, literal: vote.literal,
+      }))),
+    });
+    if (res.ok) {
+      visualVotesPending = visualVotesPending.slice(batch.length);
+      writeVisualPending();
+    }
+  } catch {
+    // Kept in localStorage; the next connection sends it.
+  } finally {
+    visualVotesFlushing = false;
+  }
+}
+
+async function pullVisualLexicon() {
+  const session = await ensureTasteSession();
+  const res = await fetch(SUPABASE_URL + "/rest/v1/rpc/hexfield_visual_lexicon", {
+    method: "POST",
+    headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token, "Content-Type": "application/json" },
+    body: "{}",
+  });
+  if (!res.ok) return;
+  const body = await res.json();
+  if (!body || typeof body !== "object") return;
+  visualLexicon = body;
+  // Votes that have not reached the server yet still count here.
+  for (const vote of visualVotesPending) visualLexiconAdd(vote);
+  flushVisualVotes();
+}
+for (const vote of visualVotesPending) visualLexiconAdd(vote);
 
 /* The scene as pixels: everything, and the subjects' own coverage (for
  * keeping them readable against what surrounds them). Drawn once per plan. */
@@ -31153,7 +31297,7 @@ function applyPlanScene(pixels, width, height, plan) {
   if (!scene || scene.width !== width || scene.height !== height || !globalThis.HexfieldVisual) return pixels;
   const { all, cover } = planSceneLayer(scene);
   for (let o = 0, i = 0; o < pixels.length; o += 4, i++) {
-    const a = (all[o + 3] / 255) * SCENE_STRENGTH;
+    const a = (all[o + 3] / 255) * (scene.strength || SCENE_STRENGTH);
     if (!a) continue;
     pixels[o] += (all[o] - pixels[o]) * a;
     pixels[o + 1] += (all[o + 1] - pixels[o + 1]) * a;
@@ -31191,7 +31335,7 @@ function applyPlanScene(pixels, width, height, plan) {
         if (!cover[i]) continue;
         const k = (cover[i] / 255) * shift, o = i * 4;
         pixels[o] += k; pixels[o + 1] += k; pixels[o + 2] += k;
-        const baked = k / SCENE_STRENGTH;
+        const baked = k / (scene.strength || SCENE_STRENGTH);
         all[o] += baked; all[o + 1] += baked; all[o + 2] += baked;
       }
     }
@@ -36281,6 +36425,7 @@ function castHumanTasteDecision(liked) {
  * already-supported queued perturbation path, so it cannot disappear. */
 function startHumanTasteRefinement(liked) {
   if (!current?.params) return false;
+  recordVisualVote(liked);
   pendingHumanReject = liked ? false : true;
   /* KEEP accepts the visible perturbation. REJECT does the inverse: it returns
    * to the control captured before the perturbation. The old code assigned
