@@ -19438,8 +19438,8 @@ function canvasGrammar(ctx, W, H, seedShapes = [], edges = null) {
  * generation that never advanced. Publishing here means it always holds the
  * program that drew the picture on screen, which is exactly what the recording
  * path downstream is supposed to describe. */
-function letterProgramForRender(params = {}) {
-  const family = currentFontFamily();
+function letterProgramForRender(params = {}, familyOverride = null) {
+  const family = familyOverride || currentFontFamily();
   const spec = fontFamilySpec(family);
   // The wildstyle flag inside fieldLetterProgram widens the shear and extension
   // bounds. It is a property of that one family, not a global default.
@@ -25609,7 +25609,7 @@ function updateWordPaints() {
   const Visual = globalThis.HexfieldVisual;
   if (!line || !Visual) return;
   const text = ($("wordPrompt")?.value || "").trim();
-  if (!text) { line.textContent = ""; return; }
+  if (!text && !seedText()) { line.textContent = ""; return; }
   const read = Visual.read(text);
   const named = [...read.subjects, ...read.settings.filter((s) => !s.implied)];
   const colourName = (colour) => Object.keys(Visual.COLOUR_WORDS).find((k) => Visual.COLOUR_WORDS[k] === colour);
@@ -25628,6 +25628,8 @@ function updateWordPaints() {
     !WORD_PAINTS_QUIET.has(word) && !Visual.lookup(word) && !Visual.COLOUR_WORDS[word] && !Visual.RELATIONS[word]);
   const mood = rest.filter((word) => stance[word]);
   const unknown = rest.filter((word) => !stance[word]);
+  const letters = seedText();
+  if (letters) parts.unshift("the letters “" + letters.slice(0, 24) + "”");
   line.textContent = (parts.length ? "paints: " + parts.join(" · ") : "paints: no things it knows yet") +
     (mood.length ? " · mood: " + mood.slice(0, 4).join(", ") : "") +
     (unknown.length ? " · no picture yet: " + unknown.slice(0, 4).join(", ") : "");
@@ -31197,10 +31199,11 @@ const SCENE_MIN_CONTRAST = 48;
 
 function planScene(params, width, height, fx, drawSeed) {
   const Visual = globalThis.HexfieldVisual;
-  const text = params?.__hexfieldWords?.text;
-  if (!Visual || !text) return null;
+  const text = params?.__hexfieldWords?.text || "";
+  const letters = seedText().replace(/\s+/g, " ").slice(0, 24);
+  if (!Visual || (!text && !letters)) return null;
   const read = Visual.read(text);
-  if (!read.subjects.length && !read.settings.length) return null;
+  if (!read.subjects.length && !read.settings.length && !letters) return null;
   const rng = mulberry32(((Number(drawSeed) || 0) ^ 0x5ce4e) >>> 0);
   // Each named thing is painted a little differently each time, around what
   // votes have taught that word so far (see "Words learn their look").
@@ -31212,12 +31215,114 @@ function planScene(params, width, height, fx, drawSeed) {
   }
   const laid = Visual.layout(read, width, height, rng, width >= height ? fx : null);
   const literal = Object.values(variations).reduce((sum, v) => sum + v.literal, 0) / Math.max(1, Object.keys(variations).length);
-  return {
+  const scene = {
     words: read.words, items: laid.items, focus: laid.focus, width, height, layer: null,
     variations, votes: { kept: false, rejected: false },
     strength: Math.min(0.95, SCENE_STRENGTH * (1 + 0.15 * literal)),
+    lettering: null, sharp: null,
+  };
+  if (letters) planLettering(scene, letters, params, read, laid, rng);
+  return scene;
+}
+
+/* ─── The seed word, painted ───
+ * The seed text is lettered into the scene like a sign painter would: one of
+ * the studio's letter programs, set as a solid face with a drop shadow (the
+ * dotted and hatched fills turn to speckle under a brush), in a lightness
+ * chosen against the ground. Alone, the word is the subject; with named
+ * things it takes the band or the side the main subject leaves free. Its box
+ * keeps fine brushes (scene.sharp) so the letters do not dissolve, and the
+ * font, size and colour are learned from votes like any other word. */
+const LETTER_FAMILY_LEANS = {
+  adaptive: {},
+  "ring-code": { ene: -0.8, bnd: 0.7 },
+  "ribbon-rise": { ene: 0.7, ver: 0.6, dir: 0.3 },
+  "hard-echo": { mul: 0.5, ene: 0.3, pot: -0.4 },
+  "foreign-collage": { mul: 0.9, con: -0.3 },
+  "bubble-cutout": { bnd: 0.5, pot: -0.4, val: 0.5 },
+  wildstyle: { ene: 1, pot: 0.4, bnd: -0.3 },
+  "iso-block": { pot: 0.7, bnd: 0.6, con: 0.5 },
+  "press-slab": { pot: 1, ene: -0.3 },
+};
+const fontVoteWord = (family) => "font" + family.replace(/[^a-z]/g, "");
+
+function visualLearnedChoice(word) {
+  const stats = visualLexicon[word];
+  if (!stats) return 0;
+  const nl = Number(stats.nl) || 0, nr = Number(stats.nr) || 0;
+  return (nl - 0.5 * nr) / (nl + nr + VISUAL_VOTE_PRIOR);
+}
+
+function chooseLetterFamily(params, rng) {
+  const axes = params?.__hexfieldWords?.axes || {};
+  let best = "adaptive", bestScore = -Infinity;
+  for (const [family, lean] of Object.entries(LETTER_FAMILY_LEANS)) {
+    let score = (rng() - 0.5) * 0.6 + 0.8 * visualLearnedChoice(fontVoteWord(family));
+    for (const [axis, weight] of Object.entries(lean)) score += weight * (Number(axes[axis]) || 0);
+    if (score > bestScore) { bestScore = score; best = family; }
+  }
+  return best;
+}
+
+/* What every painted letter program keeps, however it was bred: a solid face
+ * made of strokes, oblique depth (the isometric frame shears the whole word),
+ * a flat or gently rising baseline (a diagonal one, stretched to fit a tall
+ * box, tips the word over), and the box filled. */
+function paintedLetterProgram(program) {
+  const baselineRule = program.baselineRule === "rising" || program.baselineRule === "curved" ? program.baselineRule : "flat";
+  return {
+    ...program,
+    fontAssembly: "collage", fillStyle: "solid", depthProjection: "oblique", baselineRule,
+    placementWidth: 0.96, placementHeight: 0.9, anchorX: 0.5, anchorY: 0.5,
   };
 }
+
+function planLettering(scene, letters, params, read, laid, rng) {
+  const { width: W, height: H } = scene;
+  const family = chooseLetterFamily(params, rng);
+  const v = sampleVisualVariation("lettering", rng);
+  scene.variations.lettering = v;
+  scene.variations[fontVoteWord(family)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  const wide = W / H > 2;
+  const k = Math.exp(0.3 * v.size);
+  let box;
+  const main = read.subjects.length ? laid.focus : null;
+  if (!main) {
+    const bw = W * Math.min(0.94, 0.86 * k), bh = H * Math.min(0.8, (wide ? 0.62 : 0.34) * k);
+    const cy = Number.isFinite(laid.horizon) ? Math.max(bh / 2 + H * 0.04, laid.horizon * H * 0.48) : H * 0.46;
+    box = { x: (W - bw) / 2, y: cy - bh / 2, w: bw, h: bh };
+  } else if (wide) {
+    // Beside the subject, across the two thirds it leaves.
+    const bw = W * Math.min(0.6, 0.52 * k), bh = H * Math.min(0.8, 0.58 * k);
+    const x = main.fx < 0.5 ? W * 0.94 - bw : W * 0.06;
+    box = { x, y: H * 0.46 - bh / 2, w: bw, h: bh };
+  } else {
+    // Above or below it - a band tall enough for the letters to paint.
+    const bw = W * Math.min(0.94, 0.86 * k), bh = H * Math.min(0.34, 0.27 * k);
+    box = { x: (W - bw) / 2, y: main.fy > 0.45 ? H * 0.05 : H * 0.95 - bh, w: bw, h: bh };
+  }
+  const colourWord = (params?.__hexfieldWords?.text || "").toLowerCase().match(/[a-z]+/g)?.find((w) => globalThis.HexfieldVisual.COLOUR_WORDS[w]);
+  const named = colourWord ? globalThis.HexfieldVisual.COLOUR_WORDS[colourWord] : null;
+  const hue = (((named ? named[0] : Number(params?.palette?.hue) || 200) + v.hue) % 360 + 360) % 360;
+  // Provisional; makePaintingPlan sets it from the painting's value scheme.
+  const light = (Number(params?.palette?.light) || 50) < 55 ? 0.84 : 0.2;
+  const base = letterProgramForRender({ ...params, __hexfieldBrushProgram: undefined, __hexfieldBrush: undefined }, family);
+  const program = paintedLetterProgram({
+    ...base,
+    primaryHue: hue, lightness: Math.max(0.08, Math.min(0.94, light + v.light / 100)),
+    outlineMode: "offset", outlineWidth: 0.06, outlineAlpha: 0.75,
+    outlineHue: hue, depth3d: Math.min(0.22, Number(base.depth3d) || 0),
+  });
+  scene.lettering = {
+    text: letters, family, program, base: program, box,
+    stage: "block", passes: 0, rounds: 0, round: null, changed: false,
+    mode: family === "wildstyle" ? "wildstyle" : "throwup",
+  };
+  scene.items.push({ key: "letters", entry: { kind: "subject", parts: [], colours: { face: [hue, 70, light * 100] } }, box, alpha: 1, lettering: true });
+  scene.sharp = { x0: box.x / W, y0: box.y / H, x1: (box.x + box.w) / W, y1: (box.y + box.h) / H };
+  if (!main) scene.focus = { fx: (box.x + box.w / 2) / W, fy: (box.y + box.h / 2) / H };
+}
+
 
 /* ─── Words learn their look ───
  * The dictionary says what a door is; votes say what a good painted door is.
@@ -31350,6 +31455,358 @@ async function pullVisualLexicon() {
 }
 for (const vote of visualVotesPending) visualLexiconAdd(vote);
 
+/* ─── Carving the letters ───
+ * The font is a guide, not a stamp. The lettering goes through the same
+ * stages as the painting around it:
+ *   block   - the letters as soft masses only (no outline, no depth, blurred),
+ *             so the big brushes rough them in like any other form;
+ *   refine  - a few rounds where the painter perturbs the letterforms with the
+ *             letter programs' own mutation (weight, lean, stretch, spacing,
+ *             curve habits, held inside the family) and keeps a variant only
+ *             when its taste scores it higher without losing legibility;
+ *   detail  - once the forms have settled, outline, drop shadow and depth
+ *             arrive for the fine brushes.
+ * Each change rebuilds the painting's reference in the background. */
+const LETTER_BLOCK_PASSES = 4;
+const LETTER_ROUND_EVERY = 4;
+const LETTER_ROUNDS = 3;
+const LETTER_ROUND_CANDIDATES = 4;
+const LETTER_TOUCHUPS = 2;
+const LETTER_TOUCHUP_EVERY = 6;
+
+function letteringStageProgram(lettering) {
+  const program = lettering.stage === "refine" ? lettering.base : lettering.program;
+  if (lettering.stage === "detail") return { ...lettering.base, ...detailOnly(lettering.program) };
+  return { ...program, outlineMode: "none", outlineWidth: 0, depth3d: 0 };
+}
+
+// The finishing genes of the painting's lettering, laid over the evolved forms.
+function detailOnly(program) {
+  const { primaryHue, lightness, outlineMode, outlineWidth, outlineAlpha, outlineHue, depth3d } = program;
+  return { primaryHue, lightness, outlineMode, outlineWidth, outlineAlpha, outlineHue, depth3d };
+}
+
+/* Letters sized by the box's width come out short in a tall box (a short
+ * word across a portrait canvas); they are drawn stretched upward to fill it,
+ * tall and condensed the way a sign painter fits a word to a board. */
+function letteringStretch(box, text, program) {
+  const layout = layoutWord(box.w, box.h, text, program);
+  if (!layout) return 1;
+  return Math.max(1, Math.min(2.4, (box.h * 0.72) / (layout.size + 2 * layout.pen)));
+}
+
+// Draw a lettering program into a box on ctx (in the box's own coordinates).
+function letterInBox(ctx, box, text, program) {
+  const stretch = letteringStretch(box, text, program);
+  ctx.save();
+  ctx.translate(box.x, box.y + box.h / 2);
+  ctx.scale(1, stretch);
+  ctx.translate(0, -box.h / 2);
+  paintLetterWord(ctx, box.w, box.h, text, program, mulberry32(hashText("painted-letters|" + text)));
+  ctx.restore();
+}
+
+/* Light letters on a dark ground, dark on light - judged on the ground the
+ * letters actually sit on: the scene painted behind them where there is one
+ * (a night sky), otherwise the composition's focus, which the plan pushes
+ * lighter in a light-on-dark painting and darker in a dark-on-light one. The
+ * letter brush paints faces only, so the face has to carry the contrast. */
+function chooseLetteringValue(ctx, scene) {
+  const lettering = scene.lettering;
+  if (lettering.valueChosen) return;
+  const box = lettering.box;
+  const x = Math.max(0, Math.floor(box.x)), y = Math.max(0, Math.floor(box.y));
+  const w = Math.max(1, Math.min(scene.width - x, Math.ceil(box.w))), h = Math.max(1, Math.min(scene.height - y, Math.ceil(box.h)));
+  const pixels = ctx.getImageData(x, y, w, h).data;
+  let sum = 0, covered = 0, n = 0;
+  for (let o = 0; o < pixels.length; o += 4 * 7) {
+    n++;
+    if (pixels[o + 3] < 128) continue;
+    covered++;
+    sum += 0.2126 * pixels[o] + 0.7152 * pixels[o + 1] + 0.0722 * pixels[o + 2];
+  }
+  const groundLight = covered > n * 0.5 ? sum / covered > 128 : Boolean(strokePainter.plan?.lightOnDark);
+  const shift = (Number(scene.variations.lettering?.light) || 0) / 100;
+  const lightness = Math.max(0.06, Math.min(0.95, (groundLight ? 0.14 : 0.88) + shift));
+  lettering.program = { ...lettering.program, lightness };
+  lettering.base = { ...lettering.base, lightness };
+  lettering.valueChosen = true;
+}
+
+/* A sign painter's cushion: the same letters, much heavier, blurred and in
+ * the opposite value, laid behind the face so the word reads on any ground. */
+function drawLetteringCushion(ctx, lettering, program) {
+  const { text, box } = lettering;
+  const cushion = paintBuffer(Math.ceil(box.w), Math.ceil(box.h));
+  const light = Number(program.lightness) || 0.5;
+  letterInBox(cushion.getContext("2d"), { x: 0, y: 0, w: box.w, h: box.h }, text, {
+    ...program, penWeight: 1.7, lightness: light > 0.5 ? 0.1 : 0.92,
+    outlineMode: "none", outlineWidth: 0, depth3d: 0,
+  });
+  ctx.save();
+  ctx.globalAlpha = 0.72;
+  ctx.filter = "blur(" + Math.max(3, Math.round(box.h / 14)) + "px)";
+  ctx.drawImage(cushion, box.x, box.y);
+  ctx.restore();
+  cushion.width = 0; cushion.height = 0;
+}
+
+function drawSceneLettering(ctx, lettering, program = letteringStageProgram(lettering)) {
+  const { text, box } = lettering;
+  try {
+    drawLetteringCushion(ctx, lettering, program);
+    if (lettering.stage === "block") {
+      // Soft masses: drawn apart, then blurred onto the layer.
+      const soft = paintBuffer(Math.ceil(box.w), Math.ceil(box.h));
+      letterInBox(soft.getContext("2d"), { x: 0, y: 0, w: box.w, h: box.h }, text, program);
+      ctx.save();
+      ctx.filter = "blur(" + Math.max(2, Math.round(box.h / 26)) + "px)";
+      ctx.drawImage(soft, box.x, box.y);
+      ctx.restore();
+      soft.width = 0; soft.height = 0;
+      return;
+    }
+    letterInBox(ctx, box, text, program);
+  } catch (error) {
+    console.warn("painted lettering skipped", error);
+  }
+}
+
+/* Called before each detail pass. Moves the lettering through its stages and
+ * starts refinement rounds; returns true when the reference has to be rebuilt. */
+function advanceSceneLettering(scene) {
+  const lettering = scene?.lettering;
+  if (!lettering) return false;
+  lettering.passes++;
+  const changed = () => { lettering.version = (lettering.version || 0) + 1; return true; };
+  if (lettering.changed) {
+    lettering.changed = false;
+    return changed();
+  }
+  if (lettering.stage === "block" && lettering.passes >= LETTER_BLOCK_PASSES && strokePainter.layer >= 1) {
+    lettering.stage = "refine";
+    lettering.passes = 0;
+    return changed();
+  }
+  // Detail: after the first lettering, two touch-ups with a finer brush tighten
+  // the letters, the way a sign painter goes back over edges.
+  if (lettering.stage === "detail" && lettering.painted === lettering.version &&
+      (lettering.touchups || 0) < LETTER_TOUCHUPS && lettering.passes >= LETTER_TOUCHUP_EVERY) {
+    lettering.touchups = (lettering.touchups || 0) + 1;
+    lettering.passes = 0;
+    lettering.version = (lettering.version || 0) + 1;
+    return false;
+  }
+  if (lettering.stage === "refine" && !lettering.round && lettering.passes >= LETTER_ROUND_EVERY) {
+    lettering.passes = 0;
+    if (lettering.rounds >= LETTER_ROUNDS) {
+      lettering.stage = "detail";
+      return changed();
+    }
+    lettering.rounds++;
+    lettering.round = runLetteringRound(scene).finally(() => { lettering.round = null; });
+  }
+  return false;
+}
+
+/* One refinement round, a candidate per task. Each candidate is the current
+ * letterforms mutated and held to the family, lettered over the painting's
+ * own reference at the lettering's place, and scored by the studio's taste. */
+async function runLetteringRound(scene) {
+  const lettering = scene.lettering;
+  const ref = strokePainter.enhanced;
+  if (!ref || ref.length !== scene.width * scene.height * 4) return;
+  const { box } = lettering;
+  const sw = 220, sh = Math.max(32, Math.round(sw * box.h / box.w));
+  const full = paintBuffer(scene.width, scene.height);
+  full.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(ref), scene.width, scene.height), 0, 0);
+  const ground = paintBuffer(sw, sh);
+  ground.getContext("2d").drawImage(full, box.x, box.y, box.w, box.h, 0, 0, sw, sh);
+  full.width = 0; full.height = 0;
+  const probe = paintBuffer(sw, sh);
+  const pctx = probe.getContext("2d", { willReadFrequently: true });
+  const score = (program) => {
+    pctx.clearRect(0, 0, sw, sh);
+    pctx.drawImage(ground, 0, 0);
+    pctx.save();
+    pctx.scale(sw / box.w, sh / box.h);
+    letterInBox(pctx, { x: 0, y: 0, w: box.w, h: box.h }, lettering.text, program);
+    pctx.restore();
+    const features = tasteFeatures(pctx, sw, sh, signature(pctx, sw, sh));
+    return { taste: tastePrediction(features), legibility: Number(features.legibility) || 0 };
+  };
+  const pause = () => new Promise((resolve) => setTimeout(resolve, 0));
+  try {
+    const stageOf = (program) => ({ ...program, outlineMode: "none", outlineWidth: 0, depth3d: 0 });
+    const incumbent = score(stageOf(lettering.base));
+    let best = null;
+    const rng = mulberry32(hashText("letter-round|" + lettering.text + "|" + lettering.rounds + "|" + scene.width));
+    const spec = fontFamilySpec(lettering.family);
+    for (let i = 0; i < LETTER_ROUND_CANDIDATES; i++) {
+      await pause();
+      if (strokePainter.plan?.scene !== scene) return;
+      const mutated = constrainFontProgram({ ...mutateBrushProgram(lettering.base, rng, lettering.mode), fontFamily: lettering.family },
+        spec, 0.82, rng);
+      const candidate = paintedLetterProgram({
+        ...finishBrushProgram(mutated),
+        // What the painting decided stays: colour, solid face, the box.
+        ...detailOnly(lettering.program),
+      });
+      const result = score(stageOf(candidate));
+      if (result.legibility < incumbent.legibility - 0.05) continue;
+      if (result.taste > incumbent.taste + 0.01 && (!best || result.taste > best.result.taste)) best = { candidate, result };
+    }
+    lettering.history = (lettering.history || []).concat([{ round: lettering.rounds, incumbent: incumbent.taste, best: best?.result.taste ?? null }]);
+    if (best && strokePainter.plan?.scene === scene) {
+      lettering.base = best.candidate;
+      lettering.changed = true;
+    }
+  } finally {
+    ground.width = 0; probe.width = 0;
+  }
+}
+
+/* ─── The letter brush ───
+ * Generic strokes find the letters only roughly - they cross edges and the
+ * word turns to scribble. Once the forms are set (refine and detail stages),
+ * the painter letters them the way a sign painter does: brush strokes along
+ * each letter's own skeleton, at the letter's weight, in the colour the
+ * reference holds there. In the detail stage the drop shadow goes down first,
+ * offset, then the face over it. The skeleton is rebuilt exactly as the
+ * reference drew it (same layout, same random sequence, same stretch). */
+function letterSkeletonPolylines(lettering, program) {
+  const { box, text } = lettering;
+  const layout = layoutWord(box.w, box.h, text, program);
+  if (!layout) return null;
+  const { spots, fit, size, pen } = layout;
+  const glyphSize = size * fit.scale;
+  const lineWidth = Math.max(2.25, pen * fit.scale);
+  const stretch = letteringStretch(box, text, program);
+  const rng = mulberry32(hashText("painted-letters|" + text));
+  const xh = 0.82 + (Number(program.xHeight) || 0.5) * 0.36;
+  const wx = 0.74 + clamp01(Number(program.widthAxis) || 0.5) * 0.62;
+  const lines = [];
+  for (const spot of spots) {
+    const at = fit.place(spot.x, spot.y);
+    const strokes = transformSkeleton(LETTER_SKELETONS[spot.ch] || LETTER_SKELETONS.O, program, rng);
+    const map = (gx, gy) => {
+      const x = at.x - glyphSize / 2 + (gx * wx + (1 - wx) * 0.5) * glyphSize;
+      const y = at.y - glyphSize / 2 + (gy * xh + (1 - xh) * 0.5) * glyphSize;
+      return [box.x + x, box.y + box.h / 2 + (y - box.h / 2) * stretch];
+    };
+    for (const stroke of strokes) {
+      let line = null, cur = null;
+      for (const cmd of stroke) {
+        if (cmd[0] === "M") { if (line && line.length > 1) lines.push(line); cur = [cmd[1], cmd[2]]; line = [map(cur[0], cur[1])]; }
+        else if (cmd[0] === "L" && line) { cur = [cmd[1], cmd[2]]; line.push(map(cur[0], cur[1])); }
+        else if (cmd[0] === "Q" && line && cur) {
+          for (let t = 0.2; t <= 1.0001; t += 0.2) {
+            const u = 1 - t;
+            const qx = u * u * cur[0] + 2 * u * t * cmd[1] + t * t * cmd[3];
+            const qy = u * u * cur[1] + 2 * u * t * cmd[2] + t * t * cmd[4];
+            line.push(map(qx, qy));
+          }
+          cur = [cmd[3], cmd[4]];
+        }
+      }
+      if (line && line.length > 1) lines.push(line);
+    }
+  }
+  return { lines, width: lineWidth * (1 + stretch) / 2, glyphSize };
+}
+
+function letterBrushStrokes(lettering, program, ref, W, H) {
+  const skeleton = letterSkeletonPolylines(lettering, program);
+  if (!skeleton) return [];
+  const rng = mulberry32(hashText("letter-brush|" + lettering.text + "|" + (lettering.version || 0)));
+  const colourAt = (x, y) => {
+    const o = (Math.max(0, Math.min(H - 1, Math.round(y))) * W + Math.max(0, Math.min(W - 1, Math.round(x)))) * 4;
+    return [ref[o], ref[o + 1], ref[o + 2]];
+  };
+  // Each skeleton stroke becomes brush marks a few pen-widths long, overlapping.
+  const marks = (width, dx, dy, widthScale) => {
+    const out = [];
+    const reach = Math.max(10, width * 3);
+    for (const line of skeleton.lines) {
+      let piece = [line[0]], length = 0;
+      for (let i = 1; i < line.length; i++) {
+        const [x0, y0] = line[i - 1], [x1, y1] = line[i];
+        const seg = Math.hypot(x1 - x0, y1 - y0);
+        const steps = Math.max(1, Math.ceil(seg / (reach / 3)));
+        for (let k = 1; k <= steps; k++) {
+          const p = [x0 + (x1 - x0) * k / steps, y0 + (y1 - y0) * k / steps];
+          piece.push(p);
+          length += seg / steps;
+          if (length >= reach) {
+            out.push(piece);
+            piece = [piece[piece.length - 2] || p, p];
+            length = 0;
+          }
+        }
+      }
+      if (piece.length > 1) out.push(piece);
+    }
+    return out.map((points) => {
+      const mid = points[Math.floor(points.length / 2)];
+      return {
+        points: points.map(([x, y]) => [x + dx, y + dy]),
+        width: width * widthScale * (0.92 + rng() * 0.16),
+        colour: colourAt(mid[0] + dx, mid[1] + dy).map((c) => Math.max(0, Math.min(255, Math.round(c + (rng() - 0.5) * 8)))),
+        bristle: rng(),
+      };
+    });
+  };
+  const strokes = [];
+  const touchups = lettering.touchups || 0;
+  if (lettering.stage === "detail" && !touchups && program.outlineMode === "offset" && Number(program.outlineWidth) > 0) {
+    const offset = Math.max(1, skeleton.glyphSize * program.outlineWidth) * 0.9;
+    strokes.push(...marks(skeleton.width, offset, offset, 1.15));
+  }
+  // Each touch-up is a finer brush down the middle of the letter.
+  strokes.push(...marks(skeleton.width, 0, 0, [1, 0.78, 0.6][Math.min(2, touchups)]));
+  return strokes;
+}
+
+function paintLetteringStrokes(result, scene) {
+  const W = view.width, H = view.height;
+  const ref = strokePainter.enhanced;
+  markPaintTimingStarted(result);
+  const animation = ++activePaintAnimation;
+  if (!ref || ref.length !== W * H * 4) {
+    if (activePaintAnimation === animation) activePaintAnimation = 0;
+    markPaintTimingCompleted(result);
+    result.paintStrokeCount = 0;
+    return Promise.resolve(false);
+  }
+  strokeLogBegin(vctx.getImageData(0, 0, W, H).data, W, H);
+  const strokes = letterBrushStrokes(scene.lettering, letteringStageProgram(scene.lettering), ref, W, H);
+  result.paintStrokeLayer = strokePainter.layer;
+  result.paintStrokeCount = strokes.length;
+  result.paintBrush = {
+    families: ["letter"], textures: ["flat"], signatures: [], lineageObjects: [],
+    source: "letter-brush", lifts: 0, smudges: 0,
+    minSize: strokes.length ? Math.min(...strokes.map((s) => s.width)) : 0,
+    maxSize: strokes.length ? Math.max(...strokes.map((s) => s.width)) : 0,
+    nonRedundancy: 0.5, count: (Number(result.paintBrush?.count) || 0) + strokes.length,
+    wordHand: "letters · " + scene.lettering.family + " · " + scene.lettering.stage,
+  };
+  if (!strokes.length) {
+    if (activePaintAnimation === animation) activePaintAnimation = 0;
+    markPaintTimingCompleted(result);
+    return Promise.resolve(false);
+  }
+  return animateLoggedStrokes(result, strokes, animation);
+}
+
+/* A lettering stage or form changed: the scene layer, its readability and the
+ * prepared reference are rebuilt (in the background). The painter keeps its
+ * brush size - letters need the finer brushes to read at all. */
+function rebuildSceneForLettering(scene) {
+  scene.layer = null;
+  scene.readable = false;
+  strokePainter.enhancedKey = null;
+}
+
 /* The scene as pixels: everything, and the subjects' own coverage (for
  * keeping them readable against what surrounds them). Drawn once per plan. */
 function planSceneLayer(scene) {
@@ -31361,6 +31818,10 @@ function planSceneLayer(scene) {
   const draw = (only) => {
     ctx.clearRect(0, 0, width, height);
     globalThis.HexfieldVisual.paint(ctx, width, height, scene.items, mulberry32(0x7e57a), only);
+    if (scene.lettering && only !== "setting") {
+      if (!only) chooseLetteringValue(ctx, scene);
+      drawSceneLettering(ctx, scene.lettering);
+    }
     return ctx.getImageData(0, 0, width, height).data;
   };
   const all = draw(null);
@@ -31392,8 +31853,10 @@ function applyPlanScene(pixels, width, height, plan) {
   if (scene.readable) return pixels;
   scene.readable = true;
   for (const item of scene.items) {
-    if (item.entry.kind !== "subject") continue;
+    // Lettering carries its own contrast (drawLetteringCushion).
+    if (item.entry.kind !== "subject" || item.lettering) continue;
     const m = 0.3;
+    const needed = SCENE_MIN_CONTRAST;
     const x0 = Math.max(0, Math.floor(item.box.x - item.box.w * m)), x1 = Math.min(width, Math.ceil(item.box.x + item.box.w * (1 + m)));
     const y0 = Math.max(0, Math.floor(item.box.y - item.box.h * m)), y1 = Math.min(height, Math.ceil(item.box.y + item.box.h * (1 + m)));
     let ls = 0, ns = 0, lb = 0, nb = 0;
@@ -31407,9 +31870,9 @@ function applyPlanScene(pixels, width, height, plan) {
     }
     if (!ns || !nb) continue;
     const diff = ls / ns - lb / nb;
-    if (Math.abs(diff) >= SCENE_MIN_CONTRAST) continue;
+    if (Math.abs(diff) >= needed) continue;
     const lighter = Math.abs(diff) > 4 ? diff > 0 : !plan.lightOnDark;
-    const shift = (lighter ? 1 : -1) * (SCENE_MIN_CONTRAST - Math.abs(diff));
+    const shift = (lighter ? needed : -needed) - diff;
     for (let y = y0; y < y1; y++) {
       for (let x = x0; x < x1; x++) {
         const i = y * width + x;
@@ -31447,6 +31910,8 @@ function composeStrokeReference(ref, width, height, plan) {
     blocks[b * 3] /= n; blocks[b * 3 + 1] /= n; blocks[b * 3 + 2] /= n;
   }
   const { Lf, Lb } = planLuminanceStats(ref, width, height, plan);
+  const lettersAlone = Boolean(plan.scene?.lettering &&
+    !plan.scene.items.some((item) => item.entry.kind === "subject" && !item.lettering));
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const G = plan.lightOnDark ? clamp(Lb * 0.65, 28, 105) : clamp(Lb * 0.75 + 70, 150, 225);
   // How far apart focus and ground are pushed: punchier hands push further.
@@ -31469,7 +31934,9 @@ function composeStrokeReference(ref, width, height, plan) {
       }
       // A painting with a subject quiets its ground further, so the thing the
       // words named is what the eye finds.
-      const k = (1 - w) * (plan.scene ? 0.92 : 0.75);
+      // Letters alone are the painting's detail; the ground under them goes
+      // soft everywhere, or its texture becomes confetti around the word.
+      const k = lettersAlone ? 0.9 : (1 - w) * (plan.scene ? 0.92 : 0.75);
       const r = ref[o] + (soft[0] - ref[o]) * k, g = ref[o + 1] + (soft[1] - ref[o + 1]) * k,
             b = ref[o + 2] + (soft[2] - ref[o + 2]) * k;
       const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
@@ -31588,6 +32055,8 @@ function scheduleStrokeReference(ref, width, height, refKey) {
     strokePainter.enhanced = snapToPalette(composed, plan.palette, planPaletteSnap(plan));
     strokePainter.enhancedKey = refKey;
     strokePainter.enhancedPlan = plan;
+    // A new picture under the same master key needs its own contours.
+    strokePainter.refKey = null;
     strokeReferenceJob = null;
   })().catch((error) => {
     console.warn("stroke reference preparation failed", error);
@@ -31621,6 +32090,9 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
           if (e > worst) { worst = e; wx = x; wy = y; }
         }
       }
+      const guard = gradient.protect;
+      if (guard && wx >= guard.box.x && wx <= guard.box.x + guard.box.w && wy >= guard.box.y &&
+          wy <= guard.box.y + guard.box.h && guard.cover[(wy | 0) * guard.width + (wx | 0)] > 110) continue;
       if (n && sum / n > tolerance) starts.push({ x: wx, y: wy, error: sum / n });
     }
   }
@@ -31633,7 +32105,10 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
     const floor = Math.max(0.02, 0.06 * (1 + detail));
     for (let i = starts.length - 1; i >= 0; i--) {
       const dx = (starts[i].x / width - focus.fx) * aspect, dy = starts[i].y / height - focus.fy;
-      const w = Math.exp(-(dx * dx + dy * dy) / (2 * sigma * sigma));
+      const sharp = gradient.sharp;
+      const nx = starts[i].x / width, ny = starts[i].y / height;
+      const w = sharp && nx >= sharp.x0 && nx <= sharp.x1 && ny >= sharp.y0 && ny <= sharp.y1
+        ? 1 : Math.exp(-(dx * dx + dy * dy) / (2 * sigma * sigma));
       if (rng() > Math.max(floor, w)) starts.splice(i, 1);
     }
   }
@@ -31778,8 +32253,11 @@ function paintTowardReference(result, ref, width, height,
   const sameReference = refKey ? strokePainter.refKey === refKey : strokePainter.reference === ref;
   if (!sameReference || strokePainter.width !== width || strokePainter.height !== height) {
     strokePainter.gradient = strokeReferenceGradient(ref, width, height);
-    // The fine brushes gather where the plan put the focus.
+    // The fine brushes gather where the plan put the focus - and stay on the
+    // lettering wherever it is.
     if (strokePainter.plan) strokePainter.gradient.focus = { fx: strokePainter.plan.fx, fy: strokePainter.plan.fy };
+    // (The lettering box used to keep every fine brush; the letter brush does
+    // the letters now, and fine strokes across the whole box made confetti.)
     strokePainter.refKey = refKey;
     strokePainter.width = width;
     strokePainter.height = height;
@@ -31788,6 +32266,13 @@ function paintTowardReference(result, ref, width, height,
   const hand = wordBrushHand(result?.params || bestRun?.params);
   const rng = mulberry32(((Number(result?.drawSeed) || 0) ^ (painterPass * 0x9e3779b9) ^ paintRevision) >>> 0);
   let useLayer = layer ?? strokePainter.layer;
+  /* Once the letter brush has lettered the word, general strokes leave the
+   * letter bodies to it: they would only scribble over them chasing the exact
+   * font image. They still paint between and around the letters. */
+  const scene = strokePainter.plan?.scene;
+  strokePainter.gradient.protect = scene?.lettering?.painted !== undefined && scene.layer?.cover &&
+    scene.width === width && scene.height === height
+    ? { cover: scene.layer.cover, box: scene.lettering.box, width } : null;
   let current = vctx.getImageData(0, 0, width, height).data;
   strokeLogBegin(current, width, height);
   // A detailed hand keeps working on smaller differences.
@@ -31835,6 +32320,13 @@ function paintTowardReference(result, ref, width, height,
     markPaintTimingCompleted(result);
     return Promise.resolve(false);
   }
+  return animateLoggedStrokes(result, strokes, animation);
+}
+
+/* Draw planned strokes onto the canvas a few per frame, logging each for
+ * EXPORT. Resolves true when they all landed (false if a newer pass took over
+ * first). Shared by the stroke painter and the letter brush. */
+function animateLoggedStrokes(result, strokes, animation) {
   strokePainter.strokes += strokes.length;
   strokeLog.drawing = true;
   const logEpoch = strokeLog.epoch;
@@ -32089,14 +32581,32 @@ function continueMasterDetail(result) {
     ...result, params: source.params, drawSeed: source.drawSeed,
     paintCommit: "detail", paintDetailPass: Math.max(1, painterPass),
   };
+  // Lettering moves through block-in, taste refinement and detail.
+  if (advanceSceneLettering(strokePainter.plan?.scene)) rebuildSceneForLettering(strokePainter.plan.scene);
   // A changed master reopens one coarser layer, so what changed is repainted
   // as a passage rather than stippled in with the finest brush.
   if (strokePainter.sourceParams !== source.params) {
     if (strokePainter.sourceParams) strokePainter.layer = Math.max(0, strokePainter.layer - 1);
     strokePainter.sourceParams = source.params;
   }
-  const completion = paintTowardReference(detailResult, reference, width, height,
-    { refKey: source.params, enhance: true });
+  // After a lettering change, once the reference has caught up, this pass is
+  // the letter brush's.
+  const letters = strokePainter.plan?.scene?.lettering;
+  const letterTurn = Boolean(letters && letters.stage !== "block" && letters.painted !== letters.version &&
+    letters.painting !== letters.version && strokePainter.enhancedKey && strokePainter.enhancedPlan === strokePainter.plan);
+  const completion = letterTurn
+    ? paintLetteringStrokes(detailResult, strokePainter.plan.scene)
+    : paintTowardReference(detailResult, reference, width, height, { refKey: source.params, enhance: true });
+  if (letterTurn) {
+    // Counted as lettered only when every stroke landed; an interrupted pass
+    // is tried again on the next one.
+    const version = letters.version;
+    letters.painting = version;
+    completion.then((landed) => {
+      if (letters.painting === version) letters.painting = undefined;
+      if (landed) letters.painted = version;
+    });
+  }
   if (!detailResult.paintStrokeCount) {
     result.paintDetailConverged = true;
     return false;
