@@ -25655,7 +25655,9 @@ function updateWordPaints() {
   if (letters) parts.unshift("the letters “" + letters.slice(0, 24) + "”");
   const manner = planManner();
   const dims = strokePainter.plan?.dims, persp = strokePainter.plan?.scene?.perspective;
-  line.textContent = (manner ? "manner: " + manner.name + (dims ? " · " + dims.name : "") + (persp ? " · " + persp.name : "") + " · " : "") +
+  const drawn = strokePainter.plan?.scene?.forms;
+  line.textContent = (manner ? "manner: " + manner.name + (dims ? " · " + dims.name : "") + (persp ? " · " + persp.name : "") +
+    (drawn ? " · drawn " + drawn.name : "") + " · " : "") +
     (parts.length ? "paints: " + parts.join(" · ") : "paints: no things it knows yet") +
     (mood.length ? " · mood: " + mood.slice(0, 4).join(", ") : "") +
     (unknown.length ? " · no picture yet: " + unknown.slice(0, 4).join(", ") : "");
@@ -31234,19 +31236,91 @@ const SCENE_MIN_CONTRAST = 48;
  * taste, which moves them up or down. Rendering every option cost a phone
  * most of a second at the start of every painting; the rest keep their prior
  * and can still win. Returns the options, best first. */
-function chooseByTaste(keys, { lean, learned, rng, taste, tasted = 3 }) {
-  const scores = keys.map((key) => ({ key, lean: lean(key), learned: learned(key), chance: (rng() - 0.5) * 1.1, taste: null }));
-  for (const x of scores) x.prior = 0.8 * x.learned + x.lean + x.chance;
+/* What the studio has chosen lately, per axis: a painter does not paint
+ * every picture the same way. Kept in this browser; lost with site data. */
+const RECENT_CHOICES_KEY = "hexfield.recentChoices.v1";
+const RECENT_CHOICES_KEPT = 8;
+let recentChoicesMemory = null;
+function recentChoices() {
+  if (recentChoicesMemory) return recentChoicesMemory;
+  try { recentChoicesMemory = JSON.parse(localStorage.getItem(RECENT_CHOICES_KEY) || "{}") || {}; } catch { recentChoicesMemory = {}; }
+  return recentChoicesMemory;
+}
+function rememberChoice(axis, key) {
+  const all = recentChoices();
+  all[axis] = [...(Array.isArray(all[axis]) ? all[axis] : []), key].slice(-RECENT_CHOICES_KEPT);
+  try { localStorage.setItem(RECENT_CHOICES_KEY, JSON.stringify(all)); } catch { /* memory only */ }
+}
+
+function chooseByTaste(keys, { lean, learned, rng, taste, tasted = 3, axis = null }) {
+  // Variety: an option chosen in most recent paintings gives way a little.
+  const recent = axis && Array.isArray(recentChoices()[axis]) ? recentChoices()[axis] : [];
+  const used = (key) => recent.length ? recent.filter((k) => k === key).length / recent.length : 0;
+  const scores = keys.map((key) => ({ key, lean: lean(key), learned: learned(key), chance: (rng() - 0.5) * 1.1, taste: null, used: used(key) }));
+  // ...and one not tried lately gets a turn.
+  const unused = (x) => recent.length >= 4 && !x.used ? 0.45 : 0;
+  for (const x of scores) x.prior = 0.8 * x.learned + x.lean + x.chance - 0.9 * x.used + unused(x);
   const ranked = scores.slice().sort((a, b) => b.prior - a.prior);
   for (let i = 0; i < Math.min(tasted, ranked.length); i++) ranked[i].taste = taste(ranked[i].key);
   const scored = scores.filter((x) => x.taste !== null);
   const mean = scored.reduce((sum, x) => sum + x.taste, 0) / Math.max(1, scored.length);
   for (const x of scores) x.score = x.prior + (x.taste !== null ? 8 * (x.taste - mean) : 0);
-  return scores.sort((a, b) => b.score - a.score);
+  scores.sort((a, b) => b.score - a.score);
+  if (axis) rememberChoice(axis, scores[0].key);
+  return scores;
 }
 
 const summariseChoice = (scores) => scores.map((x) => ({ key: x.key, score: +x.score.toFixed(3),
   taste: x.taste === null ? null : +x.taste.toFixed(4), lean: +x.lean.toFixed(2), learned: +x.learned.toFixed(2) }));
+
+const formVoteWord = (key) => "form" + String(key).replace(/[^a-z]/g, "");
+
+/* How the things themselves are drawn - never the same cat twice. Each
+ * named thing takes one of its entry's ways of being (a cat sits, curls up
+ * or walks) and its own genes, in one drawing style for the whole painting
+ * (plain, angular, rounded, wobbly, elongated, squat, cartoon). The style is
+ * chosen like the others: the scene is drawn small in the best few and taste
+ * scores them, with the words and votes. Writes the forms onto the read. */
+function chooseSceneForms(read, width, height, ref, layoutFor, params, drawSeed) {
+  const Craft = globalThis.HexfieldCraft, Visual = globalThis.HexfieldVisual;
+  const rng = mulberry32(((Number(drawSeed) || 0) ^ 0xf0e3) >>> 0);
+  // Each thing's pose, once per painting.
+  for (const s of read.subjects) {
+    const base = s.entry.variantOf || s.entry;
+    const count = (base.variants?.length || 0) + 1;
+    s.entry = Visual.entryVariant(base, Math.floor(rng() * count));
+  }
+  const seedOf = (key) => ((Number(drawSeed) || 0) ^ hashText("form|" + key)) >>> 0;
+  const apply = (key) => {
+    const formRng = mulberry32(seedOf(key));
+    for (const s of read.subjects) s.form = Visual.sampleForm(key, formRng);
+  };
+  const leans = Craft?.formLeans ? Craft.formLeans(params?.__hexfieldWords?.text || "") : {};
+  let scores = null;
+  if (ref && ref.length === width * height * 4) {
+    const { pixels: base, sw, sh } = smallCopy(ref, width, height);
+    const small = paintBuffer(sw, sh), sctx = small.getContext("2d", { willReadFrequently: true });
+    const layer = paintBuffer(sw, sh), lctx = layer.getContext("2d");
+    scores = chooseByTaste(Visual.FORM_KEYS, {
+      rng, axis: "form", lean: (key) => leans[key] || 0, learned: (key) => visualLearnedChoice(formVoteWord(key)),
+      taste: (key) => {
+        apply(key);
+        const { items } = scaledLayout(layoutFor(null), sw / width, sh / height);
+        sctx.putImageData(new ImageData(new Uint8ClampedArray(base), sw, sh), 0, 0);
+        lctx.clearRect(0, 0, sw, sh);
+        Visual.paint(lctx, sw, sh, items, mulberry32(0x7e57a));
+        sctx.globalAlpha = SCENE_STRENGTH;
+        sctx.drawImage(layer, 0, 0);
+        sctx.globalAlpha = 1;
+        return tastePrediction(tasteFeatures(sctx, sw, sh, signature(sctx, sw, sh)));
+      },
+    });
+    small.width = 0; layer.width = 0;
+  }
+  const key = scores ? scores[0].key : Visual.FORM_KEYS[Math.floor(rng() * Visual.FORM_KEYS.length)];
+  apply(key);
+  return { key, name: key, scores: scores ? summariseChoice(scores) : null };
+}
 
 const perspVoteWord = (key) => "persp" + String(key).replace(/[^a-z]/g, "");
 
@@ -31277,7 +31351,7 @@ function chooseScenePerspective(read, width, height, ref, layoutFor, params, dra
     return persp;
   };
   const scores = chooseByTaste(Craft.PERSPECTIVE_KEYS, {
-    rng, lean: (key) => leans[key] || 0, learned: (key) => visualLearnedChoice(perspVoteWord(key)),
+    rng, axis: "perspective", lean: (key) => leans[key] || 0, learned: (key) => visualLearnedChoice(perspVoteWord(key)),
     taste: (key) => {
       const { items, view: sview } = scaledLayout(layoutFor(perspOf(key).settings), sw / width, sh / height);
       sctx.putImageData(new ImageData(new Uint8ClampedArray(base), sw, sh), 0, 0);
@@ -31314,6 +31388,8 @@ function planScene(params, width, height, fx, drawSeed, ref = null) {
   // One layout seed, so every perspective lays out the same things the same way.
   const layoutSeed = Math.floor(rng() * 4294967296) >>> 0;
   const layoutFor = (settings) => Visual.layout(read, width, height, mulberry32(layoutSeed), width >= height ? fx : null, settings);
+  const forms = read.subjects.length && globalThis.HexfieldVisual.sampleForm
+    ? chooseSceneForms(read, width, height, ref, layoutFor, params, drawSeed) : null;
   const things = read.subjects.length + read.settings.filter((s) => !s.implied).length;
   const persp = things && ref && globalThis.HexfieldCraft?.perspective && ref.length === width * height * 4
     ? chooseScenePerspective(read, width, height, ref, layoutFor, params, drawSeed) : null;
@@ -31324,7 +31400,7 @@ function planScene(params, width, height, fx, drawSeed, ref = null) {
     variations, votes: { kept: false, rejected: false },
     strength: Math.min(0.95, SCENE_STRENGTH * (1 + 0.15 * literal)),
     lettering: null, sharp: null,
-    perspective: persp, view: laid.view || null,
+    perspective: persp, view: laid.view || null, forms,
   };
   if (letters) planLettering(scene, letters, params, read, laid, rng);
   return scene;
@@ -31507,6 +31583,7 @@ function recordVisualVote(liked) {
   if (plan?.manner) variations[mannerVoteWord(plan.manner.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.dims) variations[dimsVoteWord(plan.dims.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (scene?.perspective) variations[perspVoteWord(scene.perspective.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  if (scene?.forms) variations[formVoteWord(scene.forms.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (!Object.keys(variations).length) return;
   const votes = scene?.votes || (plan.votes ||= { kept: false, rejected: false });
   const flag = liked ? "kept" : "rejected";
@@ -32615,16 +32692,210 @@ function applyMannerContour(pixels, width, height, plan, manner) {
 
 let contourVersion = 0;
 
+/* ─── The thing brush ───
+ * The general painter sizes its brushes to the canvas, so a small or far-off
+ * thing - a house down the street, a boat on the horizon - is only ever
+ * touched by brushes as big as it is, and comes out as mush while the plan
+ * under it is perfectly clear. So each named thing is painted like the
+ * letters are: with its own brushes, sized to the thing (a fifth, a tenth,
+ * a twentieth of its short side), laid only inside its own shape and along
+ * its forms, in the painting's manner - then its silhouette is drawn round
+ * in its own edge colour. Afterwards the big brushes leave it alone. */
+const THING_PASSES = [1 / 5, 1 / 10, 1 / 20];
+const THING_SILHOUETTE = THING_PASSES.length;
+// Strokes planned per turn; the rest of the pass continues on the next one.
+const THING_BATCH = isMobileBrowser() ? 500 : 1200;
+
+/* The masks are a full-canvas paint each: made in the background, one thing
+ * per task, before the thing brush's first turn (all at once froze a phone
+ * for over two seconds). */
+function buildThingMasks(scene, W, H) {
+  const things = scene.thing;
+  if (things.masking) return;
+  things.masking = true;
+  (async () => {
+    for (let index = 0; index < scene.items.length; index++) {
+      const item = scene.items[index];
+      if (item.entry.kind !== "subject" || item.lettering) continue;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (strokePainter.plan?.scene !== scene) return;
+      thingMask(scene, index, W, H);
+    }
+    things.masksReady = true;
+  })().catch((error) => console.warn("thing masks failed", error));
+}
+
+// The thing's exact shape, as the scene paints it (same seed, solidity and
+// perspective), cropped to its surroundings. Made once per plan.
+function thingMask(scene, index, W, H) {
+  const item = scene.items[index];
+  if (item.brushMask !== undefined) return item.brushMask;
+  const b = item.box, m = Math.max(b.w, b.h) * 0.45;
+  const x0 = Math.max(0, Math.floor(b.x - m)), y0 = Math.max(0, Math.floor(b.y - m));
+  const x1 = Math.min(W, Math.ceil(b.x + b.w + m)), y1 = Math.min(H, Math.ceil(b.y + b.h + m * 0.2));
+  if (x1 - x0 < 4 || y1 - y0 < 4) return (item.brushMask = null);
+  const canvas = paintBuffer(W, H);
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  globalThis.HexfieldVisual.paint(ctx, W, H, scene.items, mulberry32(0x7e57a), null, sceneDims(scene), scene.view, index);
+  const w = x1 - x0, h = y1 - y0;
+  const data = ctx.getImageData(x0, y0, w, h).data;
+  canvas.width = 0; canvas.height = 0;
+  // Solid body counts; a cast shadow (translucent) does not.
+  const alpha = new Uint8Array(w * h);
+  let area = 0;
+  for (let i = 0; i < alpha.length; i++) { alpha[i] = data[i * 4 + 3]; if (alpha[i] > 200) area++; }
+  return (item.brushMask = { x0, y0, w, h, alpha, area });
+}
+
+function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0) {
+  const strokes = [];
+  let next = scene.items.length;
+  const brush = planManner()?.brush || null;
+  const gradient = strokePainter.gradient;
+  const at = (px, x, y) => {
+    const o = (Math.max(0, Math.min(H - 1, Math.round(y))) * W + Math.max(0, Math.min(W - 1, Math.round(x)))) * 4;
+    return [px[o], px[o + 1], px[o + 2]];
+  };
+  const diff = (a, b) => (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2])) / 3;
+  const finish = (stroke) => {
+    if (Number(brush?.alpha) > 0) stroke.alpha = Number(brush.alpha);
+    if (brush?.bristle === false) stroke.plain = true;
+    if (brush?.round) stroke.round = true;
+    return stroke;
+  };
+  scene.items.forEach((item, index) => {
+    if (index < from || next < scene.items.length) return;
+    if (strokes.length >= THING_BATCH) { next = index; return; }
+    if (item.entry.kind !== "subject" || item.lettering) return;
+    const mask = thingMask(scene, index, W, H);
+    if (!mask || mask.area < 30) return;
+    const inside = (x, y) => {
+      const mx = Math.round(x) - mask.x0, my = Math.round(y) - mask.y0;
+      return mx >= 0 && my >= 0 && mx < mask.w && my < mask.h && mask.alpha[my * mask.w + mx] > 200;
+    };
+    const short = Math.max(4, Math.min(item.box.w, item.box.h));
+    if (pass === THING_SILHOUETTE) {
+      // Round its edge in its own colour, so the silhouette stays crisp.
+      if (planManner()?.reference?.contour) return; // the ink pass outlines it
+      const edge = new Uint8Array(mask.w * mask.h);
+      for (let y = 1; y < mask.h - 1; y++) {
+        for (let x = 1; x < mask.w - 1; x++) {
+          const i = y * mask.w + x;
+          if (mask.alpha[i] > 200 && (mask.alpha[i - 1] <= 200 || mask.alpha[i + 1] <= 200 ||
+              mask.alpha[i - mask.w] <= 200 || mask.alpha[i + mask.w] <= 200)) edge[i] = 1;
+        }
+      }
+      const width = Math.max(1.5, short / 30);
+      for (const line of traceEdgeLines(edge, mask.w, mask.h)) {
+        const points = line.map(([x, y]) => [x + mask.x0, y + mask.y0]);
+        const mid = points[Math.floor(points.length / 2)];
+        strokes.push(finish({ points, width: width * (0.85 + rng() * 0.3),
+          colour: at(ref, mid[0], mid[1]).map((c) => Math.max(0, Math.min(255, Math.round(c + (rng() - 0.5) * 6)))),
+          bristle: rng() }));
+      }
+      return;
+    }
+    const radius = Math.max(1.5, short * THING_PASSES[pass]);
+    const cell = Math.max(2, Math.round(radius));
+    const tolerance = pass === 0 ? 8 : 14;
+    const maxLength = Math.max(3, Math.round([7, 6, 4][pass] * (Number(brush?.length) || 1)));
+    const side = radius * 0.7;
+    const jitter = Number(brush?.jitter) >= 0 ? Number(brush.jitter) : 8;
+    for (let cy = mask.y0; cy < mask.y0 + mask.h; cy += cell) {
+      for (let cx = mask.x0; cx < mask.x0 + mask.w; cx += cell) {
+        const sx = cx + rng() * cell, sy = cy + rng() * cell;
+        if (!inside(sx, sy)) continue;
+        const colour = at(ref, sx, sy);
+        if (pass > 0 && diff(at(current, sx, sy), colour) < tolerance) continue;
+        // The brush starts only where it fits: a thin part waits for a finer one.
+        if (pass < 2) {
+          let fits = 0;
+          for (const [ox, oy] of [[side, 0], [-side, 0], [0, side], [0, -side]]) if (inside(sx + ox, sy + oy)) fits++;
+          if (fits < 3) continue;
+        }
+        const points = [[sx, sy]];
+        let x = sx, y = sy, lastDx = 0, lastDy = 0;
+        for (let step = 1; step < maxLength; step++) {
+          const gi = Math.min(gradient.gh - 1, (y | 0) >> 1) * gradient.gw + Math.min(gradient.gw - 1, (x | 0) >> 1);
+          const gX = gradient.gx[gi] || 0, gY = gradient.gy[gi] || 0, mag = Math.hypot(gX, gY);
+          let dx, dy;
+          if (mag < STROKE_GRADIENT_MIN) {
+            if (step === 1) { const a = (Number(strokePainter.settleAngle) || 0) + (rng() - 0.5) * 0.8; dx = Math.cos(a); dy = Math.sin(a); } else { dx = lastDx; dy = lastDy; }
+          } else {
+            dx = -gY / mag; dy = gX / mag;
+            if (lastDx * dx + lastDy * dy < 0) { dx = -dx; dy = -dy; }
+          }
+          if (step > 1) {
+            dx = 0.45 * dx + 0.55 * lastDx; dy = 0.45 * dy + 0.55 * lastDy;
+            const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+          }
+          x += dx * radius; y += dy * radius;
+          // Inside its own shape - centre and both sides of the brush - and
+          // inside its own colour.
+          if (!inside(x, y) || (pass < 2 && (!inside(x - dy * side, y + dx * side) || !inside(x + dy * side, y - dx * side)))) break;
+          if (diff(at(ref, x, y), colour) > 34) break;
+          points.push([x, y]);
+          lastDx = dx; lastDy = dy;
+        }
+        if (brush?.round && pass < 2 && points.length < 2) continue;
+        strokes.push(finish({
+          points, width: radius * 2 * (0.85 + rng() * 0.3),
+          colour: colour.map((c) => Math.max(0, Math.min(255, Math.round(c + (rng() - 0.5) * jitter)))),
+          bristle: rng(),
+        }));
+      }
+    }
+  });
+  return { strokes, next };
+}
+
+function paintThingStrokes(result, scene, pass) {
+  const W = view.width, H = view.height;
+  const ref = strokePainter.enhanced;
+  markPaintTimingStarted(result);
+  const animation = ++activePaintAnimation;
+  const current = vctx.getImageData(0, 0, W, H).data;
+  const rng = mulberry32(((Number(strokePainter.plan?.drawSeed) || 0) ^ (pass * 0x2545f491) ^ paintRevision) >>> 0);
+  const things = scene.thing;
+  const planned = ref && ref.length === W * H * 4
+    ? thingBrushStrokes(scene, ref, current, W, H, pass, rng, things.item || 0) : { strokes: [], next: scene.items.length };
+  const strokes = planned.strokes;
+  // Where this pass carries on next turn (past the end: the pass is done).
+  things.item = planned.next;
+  result.paintStrokeLayer = strokePainter.layer;
+  result.paintStrokeCount = strokes.length;
+  result.paintBrush = {
+    families: ["thing"], textures: ["flat"], signatures: [], lineageObjects: [],
+    source: "thing-brush", lifts: 0, smudges: 0,
+    minSize: strokes.length ? Math.min(...strokes.map((x) => x.width)) : 0,
+    maxSize: strokes.length ? Math.max(...strokes.map((x) => x.width)) : 0,
+    nonRedundancy: 0.5, count: (Number(result.paintBrush?.count) || 0) + strokes.length,
+    wordHand: (planStyle()?.label || "") + " · things " + (pass === THING_SILHOUETTE ? "silhouette" : "pass " + (pass + 1)),
+  };
+  if (!strokes.length) {
+    if (activePaintAnimation === animation) activePaintAnimation = 0;
+    markPaintTimingCompleted(result);
+    return Promise.resolve(false);
+  }
+  strokeLogBegin(current, W, H);
+  return animateLoggedStrokes(result, strokes, animation);
+}
+
 /* The outline as lines a hand would draw: edge pixels chained into
  * polylines, following the way each line is already going, thinned to every
  * few pixels. Letters are skipped - they have their own brush. */
 function traceContourLines(plan) {
-  const info = plan.contourEdge;
-  const { edge, width, height } = info;
+  const { edge, width, height } = plan.contourEdge;
   const box = plan.scene?.lettering?.box;
   const cover = plan.scene?.layer?.cover;
   const blocked = (x, y) => box && cover && x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h &&
     cover[y * width + x] > 110;
+  return traceEdgeLines(edge, width, height, blocked);
+}
+
+/* Edge pixels chained into polylines (every third pixel, in pieces a stroke
+ * can carry), following the way each line is already going. */
+function traceEdgeLines(edge, width, height, blocked = () => false) {
   const seen = new Uint8Array(width * height);
   const lines = [];
   const dirs = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
@@ -32790,7 +33061,7 @@ function choosePlanDims(plan, composed, width, height, params) {
   const layer = paintBuffer(sw, sh), lctx = layer.getContext("2d");
   const leans = Craft.dimensionLeans(params?.__hexfieldWords?.text || "", params?.__hexfieldWords?.axes || {});
   const scores = chooseByTaste(Craft.DIMENSION_KEYS, {
-    rng, tasted: 2, lean: (key) => leans[key] || 0, learned: (key) => visualLearnedChoice(dimsVoteWord(key)),
+    rng, tasted: 2, axis: "dims", lean: (key) => leans[key] || 0, learned: (key) => visualLearnedChoice(dimsVoteWord(key)),
     taste: (key) => {
       const dims = Craft.dimension(key);
       sctx.putImageData(new ImageData(new Uint8ClampedArray(base), sw, sh), 0, 0);
@@ -32821,7 +33092,7 @@ function choosePlanManner(plan, composed, width, height, params) {
   const sctx = small.getContext("2d", { willReadFrequently: true });
   const leans = Craft.wordLeans(params?.__hexfieldWords?.text || "", params?.__hexfieldWords?.axes || {});
   const scores = chooseByTaste(Craft.KEYS, {
-    rng, lean: (key) => leans[key] || 0, learned: (key) => visualLearnedChoice(mannerVoteWord(key)),
+    rng, axis: "manner", lean: (key) => leans[key] || 0, learned: (key) => visualLearnedChoice(mannerVoteWord(key)),
     taste: (key) => {
       // A throwaway plan at the small size: its own palette, no scene layer.
       const probe = { ...plan, palette: null, manner: Craft.manner(key), scene: null, contourInk: null };
@@ -32915,7 +33186,14 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
   const guard = gradient.protect;
   const guardedAt = (x, y) => x >= 0 && y >= 0 && x < width && y < height &&
     guard.cover[(y | 0) * guard.width + (x | 0)] > 110;
+  // The big brushes (the first two layers) also keep off painted things.
+  const things = layer < 2 ? gradient.protectThings : null;
+  const onThing = (x, y) => x >= 0 && y >= 0 && x < width && y < height && things.cover[(y | 0) * things.width + (x | 0)] > 200;
   const guarded = (x, y) => {
+    if (things) {
+      const r = radius * 0.8;
+      if (onThing(x, y) || onThing(x - r, y) || onThing(x + r, y) || onThing(x, y - r) || onThing(x, y + r)) return true;
+    }
     if (!guard) return false;
     // The whole footprint: strokes run up to 1.15 radii wide, and round ends
     // reach diagonally as far as they do straight out.
@@ -33048,6 +33326,9 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       points.push([x, y]);
       lastDx = dx; lastDy = dy;
     }
+    // A flat manner's stroke that cannot take a single step is a round dab,
+    // and rows of dabs are what ringed its shapes with beads.
+    if (edgeStop && !finest && points.length < 2) continue;
     const jitter = Number(brush?.jitter) >= 0 ? Number(brush.jitter) : 6 + 10 * Math.max(0, ene);
     const stroke = {
       points,
@@ -33166,6 +33447,9 @@ function paintTowardReference(result, ref, width, height,
   strokePainter.gradient.protect = scene?.lettering?.painted !== undefined && cover &&
     scene.width === width && scene.height === height
     ? { cover, box: scene.lettering.box, width } : null;
+  // Things painted by their own brush are left to it by the big brushes.
+  strokePainter.gradient.protectThings = scene?.thing?.pass >= 1 && scene.layer?.cover &&
+    scene.width === width && scene.height === height ? { cover: scene.layer.cover, width } : null;
   let current = vctx.getImageData(0, 0, width, height).data;
   strokeLogBegin(current, width, height);
   // A detailed hand keeps working on smaller differences.
@@ -33495,13 +33779,45 @@ function continueMasterDetail(result) {
   // A manner with an outline inks it once the big brush has blocked in, and again
   // whenever the reference (and so its outline) is re-made.
   const plan = strokePainter.plan;
-  const inkTurn = Boolean(!letterTurn && plan?.contourEdge && plan.manner?.reference?.contour &&
+  const inkTurn = Boolean(!letterTurn && !(plan?.scene?.thing?.painting) && plan?.contourEdge && plan.manner?.reference?.contour &&
     strokePainter.layer >= 1 && plan.inked !== plan.contourEdge.version && plan.inking !== plan.contourEdge.version &&
     strokePainter.enhancedKey && strokePainter.enhancedPlan === plan);
+  /* Named things get their own brush once the big brush has blocked the
+   * picture in: three passes and a silhouette. A re-prepared reference (a
+   * new master) is taken again from the middle pass. */
+  const scene = plan?.scene;
+  const refReady = Boolean(strokePainter.enhancedKey && strokePainter.enhancedPlan === plan &&
+    strokePainter.enhanced?.length === width * height * 4);
+  let thingTurn = false;
+  if (!letterTurn && scene?.items?.some((item) => item.entry.kind === "subject" && !item.lettering) && refReady) {
+    const things = scene.thing || (scene.thing = { key: null, pass: 0, painting: false });
+    if (things.key !== strokePainter.enhancedKey) {
+      if (things.key !== null) { things.pass = Math.min(things.pass, 1); things.item = 0; }
+      things.key = strokePainter.enhancedKey;
+    }
+    if (!things.masksReady) buildThingMasks(scene, width, height);
+    thingTurn = things.masksReady && !things.painting && things.pass <= THING_SILHOUETTE && strokePainter.layer >= 1;
+  }
   const completion = letterTurn
     ? paintLetteringStrokes(detailResult, strokePainter.plan.scene)
+    : thingTurn ? paintThingStrokes(detailResult, scene, scene.thing.pass)
     : inkTurn ? paintContourInk(detailResult, plan)
     : paintTowardReference(detailResult, reference, width, height, { refKey: source.params, enhance: true });
+  if (thingTurn) {
+    const things = scene.thing;
+    things.painting = true;
+    completion.then((landed) => {
+      things.painting = false;
+      // A pass is done when it has reached the last thing and landed (or
+      // there was nothing left to paint); otherwise it carries on.
+      if ((landed || !detailResult.paintStrokeCount) && (things.item || 0) >= scene.items.length) {
+        things.pass++;
+        things.item = 0;
+      } else if (!landed) {
+        things.item = 0;
+      }
+    });
+  }
   if (inkTurn) {
     const version = plan.contourEdge.version;
     plan.inking = version;

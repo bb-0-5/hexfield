@@ -278,7 +278,33 @@
     return out;
   }
 
+  /* ── Form ─────────────────────────────────────────────────────────────
+   * How the things themselves are drawn (the styles and their genes live in
+   * the visual dictionary, FORM_STYLES): one style per painting. These are
+   * the words that lean toward each; taste and votes decide the rest. */
+  const FORM_LEANS = {
+    plain: { base: 0.2, words: [] },
+    angular: { words: ["cubist", "angular", "geometric", "sharp", "crystal", "broken", "shattered", "jagged"] },
+    rounded: { words: ["soft", "round", "bubble", "chubby", "cosy", "cozy", "fluffy", "puffy", "gentle"] },
+    wobbly: { words: ["wobbly", "sketch", "doodle", "childlike", "scribble", "drawn", "wild", "crazy", "drunk"] },
+    elongated: { words: ["tall", "thin", "slender", "long", "elegant", "ghost", "ghostly", "stretched"] },
+    squat: { words: ["fat", "tiny", "chunky", "stout", "squat", "heavy", "little"] },
+    cartoon: { words: ["cartoon", "cute", "comic", "kawaii", "funny", "silly", "baby", "happy", "toy"] },
+  };
+
+  function formLeans(text) {
+    const words = new Set((String(text || "").toLowerCase().match(/[a-z]+/g) || []));
+    const out = {};
+    for (const [key, entry] of Object.entries(FORM_LEANS)) {
+      let lean = Number(entry.base) || 0;
+      for (const word of entry.words) if (words.has(word)) lean += 0.5;
+      out[key] = lean;
+    }
+    return out;
+  }
+
   global.HexfieldCraft = {
+    formLeans,
     MANNERS, KEYS: Object.keys(MANNERS), manner, wordLeans,
     DIMENSIONS, DIMENSION_KEYS: Object.keys(DIMENSIONS), dimension, dimensionLeans,
     PERSPECTIVES, PERSPECTIVE_KEYS: Object.keys(PERSPECTIVES), perspective, perspectiveLeans,

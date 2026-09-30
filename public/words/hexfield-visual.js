@@ -136,6 +136,48 @@
         { shape: "ellipse", box: [0.36, 0.2, 0.08, 0.06], colour: "eye" },
         { shape: "ellipse", box: [0.56, 0.2, 0.08, 0.06], colour: "eye" },
       ],
+      // Other ways a cat is: sitting side-on, curled up as a loaf, walking.
+      variants: [
+        {
+          aspect: 0.78,
+          parts: [
+            { shape: "line", pts: [[0.28, 0.94], [0.06, 0.9], [0.04, 0.7]], width: 0.07, colour: "fur" },
+            { shape: "egg", box: [0.18, 0.36, 0.56, 0.64], colour: "fur", texture: "fur" },
+            { shape: "line", pts: [[0.6, 0.62], [0.62, 1]], width: 0.08, colour: "fur" },
+            { shape: "ellipse", box: [0.44, 0.08, 0.44, 0.36], colour: "fur" },
+            { shape: "poly", pts: [[0.48, 0.16], [0.5, -0.04], [0.62, 0.1]], colour: "fur" },
+            { shape: "poly", pts: [[0.66, 0.1], [0.76, -0.04], [0.8, 0.16]], colour: "fur" },
+            { shape: "ellipse", box: [0.72, 0.2, 0.07, 0.06], colour: "eye" },
+          ],
+        },
+        {
+          aspect: 1.6,
+          parts: [
+            { shape: "ellipse", box: [0.04, 0.4, 0.78, 0.6], colour: "fur", texture: "fur" },
+            { shape: "line", pts: [[0.1, 0.92], [0.36, 1], [0.6, 0.96]], width: 0.05, colour: "fur", tone: -0.05 },
+            { shape: "ellipse", box: [0.58, 0.14, 0.38, 0.5], colour: "fur" },
+            { shape: "poly", pts: [[0.62, 0.24], [0.64, 0.02], [0.74, 0.16]], colour: "fur" },
+            { shape: "poly", pts: [[0.82, 0.16], [0.92, 0.02], [0.93, 0.24]], colour: "fur" },
+            { shape: "almond", box: [0.66, 0.34, 0.09, 0.05], colour: "eye" },
+            { shape: "almond", box: [0.8, 0.34, 0.09, 0.05], colour: "eye" },
+          ],
+        },
+        {
+          aspect: 1.45,
+          parts: [
+            { shape: "line", pts: [[0.22, 0.45], [0.08, 0.26], [0.12, 0.04]], width: 0.05, colour: "fur" },
+            { shape: "line", pts: [[0.26, 0.58], [0.22, 1]], width: 0.06, colour: "fur", tone: -0.06 },
+            { shape: "line", pts: [[0.36, 0.58], [0.38, 1]], width: 0.06, colour: "fur" },
+            { shape: "line", pts: [[0.62, 0.58], [0.6, 1]], width: 0.06, colour: "fur", tone: -0.06 },
+            { shape: "line", pts: [[0.7, 0.58], [0.74, 1]], width: 0.06, colour: "fur" },
+            { shape: "ellipse", box: [0.18, 0.32, 0.6, 0.34], colour: "fur", texture: "fur" },
+            { shape: "ellipse", box: [0.66, 0.14, 0.3, 0.32], colour: "fur" },
+            { shape: "poly", pts: [[0.69, 0.22], [0.7, 0.02], [0.8, 0.16]], colour: "fur" },
+            { shape: "poly", pts: [[0.84, 0.16], [0.93, 0.02], [0.94, 0.24]], colour: "fur" },
+            { shape: "ellipse", box: [0.84, 0.26, 0.05, 0.05], colour: "eye" },
+          ],
+        },
+      ],
     },
     dog: {
       kind: "subject", anchor: "ground", size: 0.38, aspect: 1.35,
@@ -1477,7 +1519,8 @@
           else y = bottom + (rng() - 0.5) * h * 0.08;
           k = 0.7 + rng() * 0.5;
         }
-        let bw = w * k * fit * importance * towering, bh = h * k * fit * importance * towering;
+        let bw = w * k * fit * importance * towering * (s.form?.stretch || 1), bh = h * k * fit * importance * towering;
+        if (bw > W * 0.9) { bh *= W * 0.9 / bw; bw = W * 0.9; }
         /* Set back in depth: the first thing stands in front; the others (and
          * copies, spread through the depth) further back - smaller, higher
          * and toward the vanishing point, or, isometric, up and across. */
@@ -1499,6 +1542,8 @@
         if (bh > room && room > 0) { bw *= room / bh; bh = room; }
         const box = { x: x - bw / 2, y: Math.min(H - bh * 0.02, y) - bh, w: bw, h: bh };
         const item = { ...s, box, alpha: 1, z, depth };
+        // Copies are cousins, not clones: the same style, their own genes.
+        if (s.form) item.form = c ? { ...s.form, seed: (s.form.seed + c * 7919) >>> 0, parts: null } : s.form;
         if (persp?.aerial && depth) item.aerial = Math.min(0.7, depth * persp.aerial);
         if (persp?.keystone && persp.keystone !== 1 && standing) item.keystone = persp.keystone;
         placed.push(item);
@@ -1549,6 +1594,102 @@
   }
   const P = (box, pt) => [box.x + pt[0] * box.w, box.y + pt[1] * box.h];
 
+  /* ── Form ────────────────────────────────────────────────────────────────
+   * The same thing is never drawn the same way twice. Each painting draws its
+   * things in one of these styles, and each thing gets its own genes within
+   * it: a gentle warp, a lean, larger or smaller features (eyes, ears),
+   * stretched or squat proportions. The entry is the idea of a cat; the form
+   * is this cat.
+   *   warp      how far a smooth field pushes parts and points (of the box)
+   *   features  scale of small parts (eyes, ears, windows) about their centre
+   *   stretch   width over the entry's own proportions
+   *   lean      how far the top leans over the foot
+   *   facets    angular: round parts become polygons with this many sides
+   *   smooth    rounded: polygons are rounded, corners softened
+   *   jitter    wobbly: every point shakes, outlines go hand-drawn */
+  const FORM_STYLES = {
+    plain: { warp: 0.02, features: [0.9, 1.15], stretch: [0.92, 1.08], lean: 0.04 },
+    angular: { warp: 0.03, features: [0.9, 1.1], stretch: [0.9, 1.1], lean: 0.05, facets: [4, 7] },
+    rounded: { warp: 0.02, features: [1, 1.2], stretch: [0.95, 1.12], lean: 0.02, smooth: true },
+    wobbly: { warp: 0.06, features: [0.85, 1.2], stretch: [0.9, 1.1], lean: 0.08, jitter: 0.022 },
+    elongated: { warp: 0.03, features: [0.8, 1], stretch: [0.6, 0.76], lean: 0.05 },
+    squat: { warp: 0.03, features: [1, 1.2], stretch: [1.28, 1.48], lean: 0.03 },
+    cartoon: { warp: 0.02, features: [1.35, 1.6], stretch: [0.9, 1.05], lean: 0.03, smooth: true },
+  };
+
+  function sampleForm(style, rng) {
+    const f = FORM_STYLES[style] || FORM_STYLES.plain;
+    const between = ([lo, hi]) => lo + (hi - lo) * rng();
+    return {
+      style: FORM_STYLES[style] ? style : "plain", seed: Math.floor(rng() * 1e9),
+      warp: f.warp * (0.6 + rng() * 0.8), features: between(f.features), stretch: between(f.stretch),
+      lean: (rng() - 0.5) * 2 * f.lean, facets: f.facets ? Math.round(between(f.facets)) : 0,
+      smooth: Boolean(f.smooth), jitter: f.jitter || 0,
+    };
+  }
+
+  function formField(seed) {
+    const r = seededRandom(seed >>> 0);
+    const p = [r(), r(), r(), r()].map((v) => v * Math.PI * 2), k = [2 + r() * 2, 2 + r() * 2, 2 + r() * 2, 2 + r() * 2];
+    return (x, y) => [Math.sin(x * k[0] + p[0]) * Math.cos(y * k[1] + p[1]), Math.sin(y * k[2] + p[2]) * Math.cos(x * k[3] + p[3])];
+  }
+
+  const ROUND_SHAPES = new Set(["ellipse", "egg", "almond", "dome"]);
+
+  /* The entry's parts, drawn in this item's form (cached on the form). */
+  function formParts(item) {
+    const form = item.form;
+    if (!form) return item.entry.parts;
+    if (form.parts && form.partsOf === item.entry) return form.parts;
+    const field = formField(form.seed), rng = seededRandom((form.seed ^ 0x51ab) >>> 0);
+    const move = ([x, y]) => {
+      const [fx, fy] = field(x, y);
+      return [x + fx * form.warp + (1 - y) * form.lean, y + fy * form.warp];
+    };
+    const shake = (pt) => form.jitter ? [pt[0] + (rng() - 0.5) * 2 * form.jitter, pt[1] + (rng() - 0.5) * 2 * form.jitter] : pt;
+    const parts = item.entry.parts.map((part) => {
+      const out = { ...part };
+      if (part.box) {
+        let [bx, by, bw, bh] = part.box;
+        // Small parts - eyes, ears, windows - are where character lives.
+        const small = bw * bh < 0.03 ? form.features : 1;
+        const [cx, cy] = move([bx + bw / 2, by + bh / 2]);
+        bw *= small; bh *= small;
+        out.box = [cx - bw / 2, cy - bh / 2, bw, bh];
+        if (!part.cut && ROUND_SHAPES.has(part.shape) && (form.facets || form.jitter)) {
+          // Angular: facets. Wobbly: a shaky outline.
+          const n = form.facets || 14, a0 = rng() * Math.PI * 2;
+          out.shape = "poly";
+          out.pts = Array.from({ length: n }, (_, i) => {
+            const a = a0 + (i / n) * Math.PI * 2, j = form.facets ? 1 + (rng() - 0.5) * 0.24 : 1 + (rng() - 0.5) * form.jitter * 8;
+            return [cx + Math.cos(a) * bw / 2 * j, cy + Math.sin(a) * bh / 2 * j];
+          });
+          out.smooth = Boolean(form.jitter);
+        } else if (part.shape === "rect" && form.smooth) out.r = Math.max(part.r || 0, 0.4);
+      }
+      if (part.pts) {
+        const pts = part.pts.map(move);
+        const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+        const area = (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
+        const k = area < 0.03 ? form.features : 1;
+        const mx = xs.reduce((a, b) => a + b, 0) / xs.length, my = ys.reduce((a, b) => a + b, 0) / ys.length;
+        out.pts = pts.map(([x, y]) => shake([mx + (x - mx) * k, my + (y - my) * k]));
+        if (part.shape === "poly" && form.smooth) out.smooth = true;
+      }
+      return out;
+    });
+    form.parts = parts;
+    form.partsOf = item.entry;
+    return parts;
+  }
+
+  /* One of an entry's ways of being (0 is the entry as written). */
+  function entryVariant(entry, index) {
+    const variants = entry?.variants || [];
+    if (!index || !variants[index - 1]) return entry;
+    return { ...entry, ...variants[index - 1], variantOf: entry };
+  }
+
   function shapePath(part, box) {
     const path = new Path2D();
     const b = part.box || [0, 0, 1, 1];
@@ -1571,6 +1712,16 @@
         });
         return path;
       case "poly": {
+        if (part.smooth && part.pts.length > 2) {
+          // Round through the midpoints: the same shape, softened.
+          const pts = part.pts.map((pt) => P(box, pt)), n = pts.length;
+          const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+          const start = mid(pts[n - 1], pts[0]);
+          path.moveTo(start[0], start[1]);
+          for (let i = 0; i < n; i++) { const m = mid(pts[i], pts[(i + 1) % n]); path.quadraticCurveTo(pts[i][0], pts[i][1], m[0], m[1]); }
+          path.closePath();
+          return path;
+        }
         part.pts.forEach((pt, i) => { const [x, y] = P(box, pt); if (i) path.lineTo(x, y); else path.moveTo(x, y); });
         path.closePath();
         return path;
@@ -2024,7 +2175,7 @@
 
   function paintItem(ctx, item, rng) {
     const box = item.box;
-    for (const part of item.entry.parts) {
+    for (const part of formParts(item)) {
       if (part.cut) {
         const path = shapePath(part, box);
         if (!path) continue;
@@ -2198,8 +2349,10 @@
    * own layer so a cut-out (the moon's crescent, a bridge's arch) removes only
    * that thing. `only` limits it to "subject" or "setting"; `dims` gives the
    * subjects their solidity (see Dimensionality); `view` is the perspective
-   * the layout was made in (ground lines, keystones, aerial fade). */
-  function paint(ctx, W, H, items, rng, only = null, dims = null, view = null) {
+   * the layout was made in (ground lines, keystones, aerial fade). `pick`
+   * paints just that one item, exactly as it looks among the others (same
+   * seed) - the painter's mask for a thing's own brush. */
+  function paint(ctx, W, H, items, rng, only = null, dims = null, view = null, pick = null) {
     const layer = document.createElement("canvas");
     layer.width = W; layer.height = H;
     const lctx = layer.getContext("2d");
@@ -2208,11 +2361,12 @@
     const seeds = items.map(() => Math.floor(rng() * 4294967296) >>> 0);
     const solid = dims && (dims.model > 0 || dims.cast > 0 || dims.depth > 0);
     // The ground's lines go down once the places are painted, under the things.
-    let cued = !view || only === "subject";
+    let cued = !view || only === "subject" || pick !== null;
     for (let index = 0; index < items.length; index++) {
       const item = items[index];
       if (!cued && item.entry.kind !== "setting") { groundCues(ctx, W, H, view); cued = true; }
       if (only && item.entry.kind !== only) continue;
+      if (pick !== null && index !== pick) continue;
       lctx.clearRect(0, 0, W, H);
       paintItem(lctx, item, seededRandom(seeds[index]));
       if (solid && item.entry.kind === "subject" && !item.lettering) dimensionItem(ctx, layer, lctx, item, W, H, dims);
@@ -2248,5 +2402,6 @@
     return out;
   }
 
-  global.HexfieldVisual = { ENTRIES, FAMILIES, COLOUR_WORDS, RELATIONS, lookup, read, layout, paint, subjectColours };
+  global.HexfieldVisual = { ENTRIES, FAMILIES, COLOUR_WORDS, RELATIONS, lookup, read, layout, paint, subjectColours,
+    FORM_STYLES, FORM_KEYS: Object.keys(FORM_STYLES), sampleForm, entryVariant };
 })(typeof globalThis !== "undefined" ? globalThis : this);
