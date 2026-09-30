@@ -25654,7 +25654,8 @@ function updateWordPaints() {
   const letters = seedText();
   if (letters) parts.unshift("the letters “" + letters.slice(0, 24) + "”");
   const manner = planManner();
-  line.textContent = (manner ? "manner: " + manner.name + " · " : "") +
+  const dims = strokePainter.plan?.dims;
+  line.textContent = (manner ? "manner: " + manner.name + (dims ? " · " + dims.name : "") + " · " : "") +
     (parts.length ? "paints: " + parts.join(" · ") : "paints: no things it knows yet") +
     (mood.length ? " · mood: " + mood.slice(0, 4).join(", ") : "") +
     (unknown.length ? " · no picture yet: " + unknown.slice(0, 4).join(", ") : "");
@@ -31202,6 +31203,11 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
   const toThird = (v) => v + ((Math.abs(v - 1 / 3) < Math.abs(v - 2 / 3) ? 1 / 3 : 2 / 3) - v) * 0.6;
   if (width >= height) { fx = toThird(fx); fy += (0.45 - fy) * 0.4; } else { fy = toThird(fy); fx += (0.5 - fx) * 0.4; }
   const plan = { fx, fy, lightOnDark: true, palette: null, drawSeed, style: paintingBrushStyle(params), scene: null };
+  /* One light for the whole painting - the side light of a manner, the
+   * modelling and cast shadows of solid things, the hatching of a print. The
+   * direction toward it, always from above, left or right of overhead. */
+  const lightRng = mulberry32(((Number(drawSeed) || 0) ^ 0x119b7) >>> 0);
+  plan.lightAngle = -Math.PI / 2 + (lightRng() < 0.5 ? -1 : 1) * (0.35 + lightRng() * 0.75);
   /* Things the words name (visual dictionary, words/hexfield-visual.js): the
    * first one takes the focus, and the painting is built around it. */
   const scene = planScene(params, width, height, fx, drawSeed);
@@ -31425,6 +31431,7 @@ function recordVisualVote(liked) {
   // The manner is voted on with every painting, words or none.
   const variations = { ...(scene?.variations || {}) };
   if (plan?.manner) variations[mannerVoteWord(plan.manner.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  if (plan?.dims) variations[dimsVoteWord(plan.dims.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (!Object.keys(variations).length) return;
   const votes = scene?.votes || (plan.votes ||= { kept: false, rejected: false });
   const flag = liked ? "kept" : "rejected";
@@ -31514,8 +31521,8 @@ function letteringStageProgram(lettering) {
 
 // The finishing genes of the painting's lettering, laid over the evolved forms.
 function detailOnly(program) {
-  const { primaryHue, lightness, outlineMode, outlineWidth, outlineAlpha, outlineHue, depth3d } = program;
-  return { primaryHue, lightness, outlineMode, outlineWidth, outlineAlpha, outlineHue, depth3d };
+  const { primaryHue, lightness, outlineMode, outlineWidth, outlineAlpha, outlineHue, depth3d, lightAngle, letterHand } = program;
+  return { primaryHue, lightness, outlineMode, outlineWidth, outlineAlpha, outlineHue, depth3d, lightAngle, letterHand };
 }
 
 /* Letters sized by the box's width come out short in a tall box (a short
@@ -31689,7 +31696,10 @@ async function runLetteringFinish(scene) {
       }
     }
   };
-  if (!ref || ref.length !== scene.width * scene.height * 4) { decide(LETTER_FINISHES[3]); return; }
+  if (!ref || ref.length !== scene.width * scene.height * 4) {
+    decide({ ...LETTER_FINISHES[3], letterHand: randomLetterHand(mulberry32(hashText("letter-hand|" + lettering.text))) });
+    return;
+  }
   const { box } = lettering;
   const sw = 220, sh = Math.max(32, Math.round(sw * box.h / box.w));
   const full = paintBuffer(scene.width, scene.height);
@@ -31705,28 +31715,52 @@ async function runLetteringFinish(scene) {
   const outlineHue = rng() < 0.5 ? (hue + 180) % 360 : hue;
   const lightAngle = -0.7 + (rng() - 0.5) * 1.2;
   const results = [];
+  // Scored as the letter brush will paint it - hand and all - over the
+  // painting's own ground, so taste judges the real thing, not a clean font.
+  const W = scene.width, H = scene.height;
+  const score = (finish) => {
+    const program = paintedLetterProgram({ ...lettering.base, ...detailOnly(lettering.program), ...finish });
+    pctx.clearRect(0, 0, sw, sh);
+    pctx.drawImage(ground, 0, 0);
+    pctx.save();
+    pctx.scale(sw / box.w, sh / box.h);
+    pctx.translate(-box.x, -box.y);
+    for (const stroke of letterBrushStrokes(lettering, program, ref, W, H, null, { finish: true })) drawPaintStroke(pctx, stroke);
+    pctx.restore();
+    const features = tasteFeatures(pctx, sw, sh, signature(pctx, sw, sh));
+    return { finish, taste: tastePrediction(features), legibility: Number(features.legibility) || 0 };
+  };
+  const hand = randomLetterHand(rng);
+  let best = null;
   try {
     for (const finish of LETTER_FINISHES) {
       await new Promise((resolve) => setTimeout(resolve, 0));
       if (strokePainter.plan?.scene !== scene) return;
-      const program = paintedLetterProgram({ ...lettering.base, ...detailOnly(lettering.program), ...finish,
-        outlineHue, outlineAlpha: 0.85, lightAngle });
-      pctx.clearRect(0, 0, sw, sh);
-      pctx.drawImage(ground, 0, 0);
-      pctx.save();
-      pctx.scale(sw / box.w, sh / box.h);
-      letterInBox(pctx, { x: 0, y: 0, w: box.w, h: box.h }, lettering.text, program);
-      pctx.restore();
-      const features = tasteFeatures(pctx, sw, sh, signature(pctx, sw, sh));
-      results.push({ finish: { ...finish, outlineHue, outlineAlpha: 0.85, lightAngle }, taste: tastePrediction(features),
-        legibility: Number(features.legibility) || 0 });
+      results.push(score({ ...finish, outlineHue, outlineAlpha: 0.85, lightAngle, letterHand: hand }));
+    }
+    const plainLegibility = results[0]?.legibility || 0;
+    const floor = plainLegibility - 0.08;
+    const eligible = results.filter((r) => r.legibility >= floor);
+    best = eligible.sort((a, b) => b.taste - a.taste)[0] || results[0];
+    /* Then the hand itself is refined: the outline's wobble, weight, gaps,
+     * overshoot and register are mutated and kept when taste prefers them. */
+    lettering.handHistory = [];
+    if (best && (best.finish.outlineMode !== "none" || Number(best.finish.depth3d) > 0.02)) {
+      for (let round = 0; round < LETTER_HAND_ROUNDS; round++) {
+        let improved = null;
+        for (let c = 0; c < LETTER_HAND_CANDIDATES; c++) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          if (strokePainter.plan?.scene !== scene) return;
+          const tried = score({ ...best.finish, letterHand: mutateLetterHand(best.finish.letterHand, rng) });
+          if (tried.legibility >= floor && tried.taste > best.taste && (!improved || tried.taste > improved.taste)) improved = tried;
+        }
+        lettering.handHistory.push({ round, from: +best.taste.toFixed(4), to: improved ? +improved.taste.toFixed(4) : null });
+        if (improved) best = improved;
+      }
     }
   } finally {
     ground.width = 0; probe.width = 0;
   }
-  const plainLegibility = results[0]?.legibility || 0;
-  const eligible = results.filter((r) => r.legibility >= plainLegibility - 0.08);
-  const best = eligible.sort((a, b) => b.taste - a.taste)[0] || results[0];
   lettering.finishScores = results.map((r) => ({ mode: r.finish.outlineMode, depth: r.finish.depth3d, taste: +r.taste.toFixed(4) }));
   if (best && strokePainter.plan?.scene === scene) decide(best.finish);
 }
@@ -31863,7 +31897,35 @@ function letterSkeletonPolylines(lettering, program) {
   return { lines, width: lineWidth * (1 + stretch) / 2, glyphSize, stretch };
 }
 
-function letterBrushStrokes(lettering, program, ref, W, H, previous = null) {
+/* The hand an outline (and a 3D side) is drawn with. Nothing about it is
+ * exact: the line drifts and the marks do not quite meet, the weight swells
+ * and thins, the brush lifts, lines run past their corners and the whole
+ * outline sits a little off the letter, like a print out of register. Taste
+ * refines these like any other gene (runLetteringHand). */
+// Floors, not zeros: taste may steady the hand but never make it exact.
+const LETTER_HAND_GENES = {
+  wobble: [0.15, 1], weightVar: [0.15, 1], gaps: [0, 0.6], overshoot: [0.1, 1], drift: [0.1, 1],
+};
+const LETTER_HAND_ROUNDS = 3;
+const LETTER_HAND_CANDIDATES = 4;
+
+function randomLetterHand(rng) {
+  const hand = { driftAngle: rng() * Math.PI * 2, seed: Math.floor(rng() * 1e9) };
+  for (const [gene, [lo, hi]] of Object.entries(LETTER_HAND_GENES)) hand[gene] = lo + (hi - lo) * rng() * 0.7;
+  return hand;
+}
+
+function mutateLetterHand(hand, rng) {
+  const out = { ...hand };
+  for (const [gene, [lo, hi]] of Object.entries(LETTER_HAND_GENES)) {
+    out[gene] = Math.max(lo, Math.min(hi, (Number(out[gene]) || 0) + (rng() - 0.5) * (hi - lo) * 0.5));
+  }
+  if (rng() < 0.3) out.driftAngle = rng() * Math.PI * 2;
+  if (rng() < 0.4) out.seed = Math.floor(rng() * 1e9);
+  return out;
+}
+
+function letterBrushStrokes(lettering, program, ref, W, H, previous = null, { finish = null } = {}) {
   const skeleton = letterSkeletonPolylines(lettering, program);
   if (!skeleton) return [];
   const before = previous ? letterSkeletonPolylines(lettering, previous) : null;
@@ -31873,9 +31935,34 @@ function letterBrushStrokes(lettering, program, ref, W, H, previous = null) {
     return [ref[o], ref[o + 1], ref[o + 2]];
   };
   // Each skeleton stroke becomes brush marks a few pen-widths long, overlapping.
-  const marks = (width, dx, dy, widthScale, lines = skeleton.lines) => {
+  // With a hand, the marks are the manner's length and the line is drawn
+  // freely (see LETTER_HAND_GENES); without one, exactly along the letter.
+  const brush = planManner()?.brush || null;
+  const marks = (width, dx, dy, widthScale, lines = skeleton.lines, hand = null) => {
     const out = [];
-    const reach = Math.max(10, width * 3);
+    const reach = Math.max(10, width * 3) * (hand ? Math.max(0.4, Math.min(1.6, Number(brush?.length) || 1)) : 1);
+    if (hand) {
+      const field = letterWarpField(hand.seed || 1);
+      const amp = hand.wobble * width * 1.1;
+      const drift = hand.drift * width * 0.9;
+      const ddx = Math.cos(hand.driftAngle || 0) * drift, ddy = Math.sin(hand.driftAngle || 0) * drift;
+      const scale = 1 / Math.max(40, skeleton.glyphSize);
+      lines = lines.map((line) => {
+        // Running past the corners: the first and last points pushed on.
+        const over = hand.overshoot * width * 1.6;
+        const ext = line.slice();
+        if (over > 0.5 && line.length > 1) {
+          const [a, b] = [line[0], line[1]], [c, d] = [line[line.length - 2], line[line.length - 1]];
+          const la = Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, lc = Math.hypot(d[0] - c[0], d[1] - c[1]) || 1;
+          ext[0] = [a[0] + (a[0] - b[0]) / la * over, a[1] + (a[1] - b[1]) / la * over];
+          ext[ext.length - 1] = [d[0] + (d[0] - c[0]) / lc * over, d[1] + (d[1] - c[1]) / lc * over];
+        }
+        return ext.map(([x, y]) => {
+          const [fx, fy] = field(x * scale, y * scale);
+          return [x + fx * amp + ddx, y + fy * amp + ddy];
+        });
+      });
+    }
     for (const line of lines) {
       let piece = [line[0]], length = 0;
       for (let i = 1; i < line.length; i++) {
@@ -31895,15 +31982,28 @@ function letterBrushStrokes(lettering, program, ref, W, H, previous = null) {
       }
       if (piece.length > 1) out.push(piece);
     }
-    return out.map((points) => {
+    const made = [];
+    for (let m = 0; m < out.length; m++) {
+      const points = out[m];
+      // The brush lifts now and then.
+      if (hand && rng() < hand.gaps * 0.5) continue;
       const mid = points[Math.floor(points.length / 2)];
-      return {
-        points: points.map(([x, y]) => [x + dx, y + dy]),
-        width: width * widthScale * (0.92 + rng() * 0.16),
-        colour: colourAt(mid[0] + dx, mid[1] + dy).map((c) => Math.max(0, Math.min(255, Math.round(c + (rng() - 0.5) * 8)))),
+      // Marks that do not quite meet, and weight that swells and thins.
+      const jx = hand ? (rng() - 0.5) * hand.wobble * width * 0.5 : 0, jy = hand ? (rng() - 0.5) * hand.wobble * width * 0.5 : 0;
+      const weight = hand ? 1 + (rng() - 0.5) * hand.weightVar * 0.9 : 0.92 + rng() * 0.16;
+      const stroke = {
+        points: points.map(([x, y]) => [x + dx + jx, y + dy + jy]),
+        width: width * widthScale * weight,
+        colour: colourAt(mid[0] + dx, mid[1] + dy).map((c) => Math.max(0, Math.min(255, Math.round(c + (rng() - 0.5) * (hand ? 16 : 8))))),
         bristle: rng(),
       };
-    });
+      // Drawn in the painting's manner.
+      if (hand && Number(brush?.alpha) > 0) stroke.alpha = Math.max(0.75, Number(brush.alpha));
+      if (hand && brush?.bristle === false) stroke.plain = true;
+      if (hand && brush?.round) stroke.round = true;
+      made.push(stroke);
+    }
+    return made;
   };
   const strokes = [];
   // The letters it painted before, painted out with whatever the reference
@@ -31915,7 +32015,8 @@ function letterBrushStrokes(lettering, program, ref, W, H, previous = null) {
   const tinted = (list, rgb, mix = 0.7) => list.map((stroke) => ({
     ...stroke, colour: stroke.colour.map((c, i) => Math.round(c * (1 - mix) + rgb[i] * mix)),
   }));
-  if (lettering.stage === "detail" && !touchups) {
+  if (finish ?? (lettering.stage === "detail" && !touchups)) {
+    const hand = program.letterHand || null;
     const outlineWidth = Number(program.outlineWidth) || 0;
     const depth = clamp01(Number(program.depth3d) || 0);
     // 3D: slices from the back forward, in the face's hue, much darker.
@@ -31926,17 +32027,18 @@ function letterBrushStrokes(lettering, program, ref, W, H, previous = null) {
       const side = hslToRgb(hue, 0.55, light > 0.45 ? Math.max(0.06, light - 0.36) : Math.min(0.9, light + 0.34));
       for (let i = slices; i >= 1; i--) {
         const t = i / slices;
-        strokes.push(...tinted(marks(skeleton.width, Math.cos(angle) * reach * t, Math.sin(angle) * reach * t * skeleton.stretch, 1), side, 0.85));
+        strokes.push(...tinted(marks(skeleton.width, Math.cos(angle) * reach * t, Math.sin(angle) * reach * t * skeleton.stretch, 1,
+          skeleton.lines, hand && { ...hand, gaps: 0, overshoot: hand.overshoot * 0.3, seed: (hand.seed || 1) + i }), side, 0.85));
       }
     }
     const outline = hslToRgb((Number(program.outlineHue) || 0) / 360, 0.85, 0.55);
     if (program.outlineMode === "offset" && outlineWidth > 0) {
       const offset = Math.max(1, skeleton.glyphSize * outlineWidth) * 0.9;
-      strokes.push(...tinted(marks(skeleton.width, offset, offset * skeleton.stretch, 1.15), outline, 0.5));
+      strokes.push(...tinted(marks(skeleton.width, offset, offset * skeleton.stretch, 1.15, skeleton.lines, hand), outline, 0.5));
     } else if (program.outlineMode === "rim" && outlineWidth > 0) {
-      strokes.push(...tinted(marks(skeleton.width, 0, 0, 1 + outlineWidth * 5), outline, 0.85));
+      strokes.push(...tinted(marks(skeleton.width, 0, 0, 1 + outlineWidth * 5, skeleton.lines, hand), outline, 0.85));
     } else if (program.outlineMode === "halo" && outlineWidth > 0) {
-      strokes.push(...tinted(marks(skeleton.width, 0, 0, 1 + outlineWidth * 9), outline, 0.55));
+      strokes.push(...tinted(marks(skeleton.width, 0, 0, 1 + outlineWidth * 9, skeleton.lines, hand && { ...hand, gaps: hand.gaps * 0.4 }), outline, 0.55));
     }
   }
   // Each touch-up is a finer brush down the middle of the letter.
@@ -32002,7 +32104,7 @@ function planSceneLayer(scene) {
   // The same seed both times, so the subjects' coverage matches the full layer.
   const draw = (only) => {
     ctx.clearRect(0, 0, width, height);
-    globalThis.HexfieldVisual.paint(ctx, width, height, scene.items, mulberry32(0x7e57a), only);
+    globalThis.HexfieldVisual.paint(ctx, width, height, scene.items, mulberry32(0x7e57a), only, sceneDims(scene));
     if (scene.lettering && only !== "setting") {
       if (!only) chooseLetteringValue(ctx, scene);
       drawSceneLettering(ctx, scene.lettering);
@@ -32267,7 +32369,7 @@ function applyMannerReference(pixels, width, height, plan, manner) {
   const sigma = planFocusSigma(width, height, plan.style);
   const cx = plan.fx * width, cy = plan.fy * height;
   const [lo, hi] = m.keys;
-  const angle = Number(plan.lightAngle) || -2.4;
+  const angle = Number.isFinite(plan.lightAngle) ? plan.lightAngle : -2;
   const lx = Math.cos(angle), ly = Math.sin(angle), diag = Math.hypot(width, height);
   const warm = [m.warmth, m.warmth * 0.3, -m.warmth];
   const layer = plan.scene?.layer;
@@ -32299,6 +32401,18 @@ function applyMannerReference(pixels, width, height, plan, manner) {
     let acc = 0;
     for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= total * 0.55) { split = Math.max(60, Math.min(190, v)); break; } }
   }
+  /* With two values, a named thing and its ground can both fall to ink (a
+   * dark castle on a dark hill) and merge. Then the things flip - paper on
+   * ink - so they still read as shapes. */
+  let flipThings = false;
+  if (m.twoTone && cover) {
+    let ts = 0, tn = 0, gs = 0, gn = 0;
+    for (let i = 0, o = 0; i < cover.length; i += 7, o += 28) {
+      const l = lo + (0.2126 * pixels[o] + 0.7152 * pixels[o + 1] + 0.0722 * pixels[o + 2]) / 255 * (hi - lo);
+      if (cover[i] > 160) { ts += l > split ? 1 : 0; tn++; } else if (cover[i] < 10) { gs += l > split ? 1 : 0; gn++; }
+    }
+    if (tn && gn) flipThings = (ts / tn > 0.5) === (gs / gn > 0.5);
+  }
   for (let y = 0; y < height; y++) {
     const dy = y - cy;
     for (let x = 0; x < width; x++) {
@@ -32316,8 +32430,13 @@ function applyMannerReference(pixels, width, height, plan, manner) {
       // hardly any of the ground is ground.)
       if (m.groundDark) L *= 1 - m.groundDark * (1 - Math.max(w * w * w, cover ? cover[y * width + x] / 255 : 0));
       // Light from one side: toward the light is lighter, away from it darker.
-      if (m.light) L *= 1 + m.light * Math.max(-0.8, Math.min(0.8, -(dx * lx + dy * ly) / diag * 2.2));
-      if (m.twoTone) L += ((L > split ? hi : lo) - L) * m.twoTone;
+      // (It was the other way round, lighting pictures from below.)
+      if (m.light) L *= 1 + m.light * Math.max(-0.8, Math.min(0.8, (dx * lx + dy * ly) / diag * 2.2));
+      if (m.twoTone) {
+        let paper = L > split;
+        if (flipThings && cover && cover[y * width + x] > 110) paper = !paper;
+        L += ((paper ? hi : lo) - L) * m.twoTone;
+      }
       pixels[o] = L + (r - l) * m.saturation + warm[0];
       pixels[o + 1] = L + (g - l) * m.saturation + warm[1];
       pixels[o + 2] = L + (b - l) * m.saturation + warm[2];
@@ -32548,17 +32667,9 @@ function finishPlanReference(composed, width, height, plan) {
   return pixels;
 }
 
-/* Which manner this painting is made in. Every manner reshapes a small copy
- * of the composed picture and the studio's taste scores it; the words' leans,
- * what votes have taught each manner and a little chance are added, and the
- * best is kept. So taste decides, the words steer and nothing is fixed. */
-function choosePlanManner(plan, composed, width, height, params) {
-  const Craft = globalThis.HexfieldCraft;
-  if (!Craft) return plainManner();
-  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x3a77e5) >>> 0);
-  plan.lightAngle = -Math.PI / 2 - 0.5 - rng() * 1.2 + (rng() < 0.5 ? 0 : 1.7);
-  // A small copy by block averages - cheap, and taste reads it the same.
-  const sw = Math.min(80, width), sh = Math.max(16, Math.round(sw * height / width));
+/* A small copy by block averages - cheap, and taste reads it the same. */
+function smallCopy(composed, width, height, target = 80) {
+  const sw = Math.min(target, width), sh = Math.max(16, Math.round(sw * height / width));
   const base = new Uint8ClampedArray(sw * sh * 4);
   const fx = width / sw, fy = height / sh, stepX = Math.max(1, Math.floor(fx / 3)), stepY = Math.max(1, Math.floor(fy / 3));
   for (let y = 0; y < sh; y++) {
@@ -32573,6 +32684,63 @@ function choosePlanManner(plan, composed, width, height, params) {
       base[o] = r / n; base[o + 1] = g / n; base[o + 2] = b / n; base[o + 3] = 255;
     }
   }
+  return { pixels: base, sw, sh };
+}
+
+const dimsVoteWord = (key) => "dims" + String(key).replace(/[^a-z]/g, "");
+
+/* The scene painted as this painting sees solidity: its dimensionality's
+ * settings with the painting's one light. */
+function sceneDims(scene) {
+  return scene?.dims ? { ...scene.dims.settings, light: scene.dimsLight } : null;
+}
+
+/* How solid this painting's things are - flat, shaded or solid. The scene is
+ * painted small each way over a small copy of the composed ground and taste
+ * scores it; words, votes and a little chance are added, as for the manner.
+ * Without named things there is nothing to make solid, and it stays flat. */
+function choosePlanDims(plan, composed, width, height, params) {
+  const Craft = globalThis.HexfieldCraft, Visual = globalThis.HexfieldVisual;
+  const scene = plan.scene;
+  const things = scene?.items?.filter((item) => item.entry.kind === "subject" && !item.lettering) || [];
+  if (!Craft?.dimension || !Visual || !things.length) return null;
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0xd1e5) >>> 0);
+  const { pixels: base, sw, sh } = smallCopy(composed, width, height);
+  const kx = sw / width, ky = sh / height;
+  const items = scene.items.filter((item) => !item.lettering)
+    .map((item) => ({ ...item, box: { x: item.box.x * kx, y: item.box.y * ky, w: item.box.w * kx, h: item.box.h * ky } }));
+  const small = paintBuffer(sw, sh), sctx = small.getContext("2d", { willReadFrequently: true });
+  const layer = paintBuffer(sw, sh), lctx = layer.getContext("2d");
+  const leans = Craft.dimensionLeans(params?.__hexfieldWords?.text || "", params?.__hexfieldWords?.axes || {});
+  const scores = [];
+  for (const key of Craft.DIMENSION_KEYS) {
+    const dims = Craft.dimension(key);
+    sctx.putImageData(new ImageData(new Uint8ClampedArray(base), sw, sh), 0, 0);
+    lctx.clearRect(0, 0, sw, sh);
+    Visual.paint(lctx, sw, sh, items, mulberry32(0x7e57a), null, { ...dims.settings, light: plan.lightAngle });
+    sctx.globalAlpha = scene.strength || SCENE_STRENGTH;
+    sctx.drawImage(layer, 0, 0);
+    sctx.globalAlpha = 1;
+    const taste = tastePrediction(tasteFeatures(sctx, sw, sh, signature(sctx, sw, sh)));
+    scores.push({ key, taste, learned: visualLearnedChoice(dimsVoteWord(key)), lean: leans[key] || 0, chance: (rng() - 0.5) * 1.1 });
+  }
+  small.width = 0; layer.width = 0;
+  const mean = scores.reduce((sum, x) => sum + x.taste, 0) / scores.length;
+  for (const x of scores) x.score = 8 * (x.taste - mean) + 0.8 * x.learned + x.lean + x.chance;
+  scores.sort((a, b) => b.score - a.score);
+  plan.dimsScores = scores.map((x) => ({ key: x.key, score: +x.score.toFixed(3), taste: +x.taste.toFixed(4), lean: +x.lean.toFixed(2) }));
+  return Craft.dimension(scores[0].key);
+}
+
+/* Which manner this painting is made in. Every manner reshapes a small copy
+ * of the composed picture and the studio's taste scores it; the words' leans,
+ * what votes have taught each manner and a little chance are added, and the
+ * best is kept. So taste decides, the words steer and nothing is fixed. */
+function choosePlanManner(plan, composed, width, height, params) {
+  const Craft = globalThis.HexfieldCraft;
+  if (!Craft) return plainManner();
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x3a77e5) >>> 0);
+  const { pixels: base, sw, sh } = smallCopy(composed, width, height);
   const small = paintBuffer(sw, sh);
   const sctx = small.getContext("2d", { willReadFrequently: true });
   const leans = Craft.wordLeans(params?.__hexfieldWords?.text || "", params?.__hexfieldWords?.axes || {});
@@ -32605,11 +32773,24 @@ function prepareStrokeReference(ref, width, height, enhanced = enhanceStrokeRefe
     fresh = true;
   }
   const plan = strokePainter.plan;
-  const composed = applyPlanScene(composeStrokeReference(enhanced, width, height, plan), width, height, plan);
-  if (fresh || !plan.manner) {
-    const source = bestRun?.params ? bestRun : current;
+  const ground = composeStrokeReference(enhanced, width, height, plan);
+  const choosing = fresh || !plan.manner;
+  const source = bestRun?.params ? bestRun : current;
+  // Solidity first (it changes how the scene is painted into the picture),
+  // then the manner, over the picture as it will be.
+  if (choosing) {
+    plan.dims = choosePlanDims(plan, ground, width, height, source?.params);
+    if (plan.scene) {
+      plan.scene.dims = plan.dims;
+      plan.scene.dimsLight = plan.lightAngle;
+      plan.scene.layer = null;
+      plan.scene.readable = false;
+    }
+  }
+  const composed = applyPlanScene(ground, width, height, plan);
+  if (choosing) {
     plan.manner = choosePlanManner(plan, composed, width, height, source?.params);
-    if (plan.style) plan.style.label = plan.manner.name + " · " + plan.style.label;
+    if (plan.style) plan.style.label = plan.manner.name + (plan.dims ? " · " + plan.dims.name : "") + " · " + plan.style.label;
     updateWordPaints();
   }
   return finishPlanReference(composed, width, height, plan);
@@ -32663,10 +32844,13 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
     guard.cover[(y | 0) * guard.width + (x | 0)] > 110;
   const guarded = (x, y) => {
     if (!guard) return false;
-    const r = radius * 0.9, b = guard.box;
+    // The whole footprint: strokes run up to 1.15 radii wide, and round ends
+    // reach diagonally as far as they do straight out.
+    const r = radius * 1.2, d = r * 0.71, b = guard.box;
     if (x < b.x - r || x > b.x + b.w + r || y < b.y - r || y > b.y + b.h + r) return false;
     return guardedAt(x, y) || guardedAt(x - r, y) || guardedAt(x + r, y) ||
-      guardedAt(x, y - r) || guardedAt(x, y + r);
+      guardedAt(x, y - r) || guardedAt(x, y + r) ||
+      guardedAt(x - d, y - d) || guardedAt(x + d, y - d) || guardedAt(x - d, y + d) || guardedAt(x + d, y + d);
   };
   const starts = [];
   let cells = 0;

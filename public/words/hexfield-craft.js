@@ -1,4 +1,6 @@
 /* A craft dictionary: ways of painting, told as principles.
+ * Two independent axes: the manner (how marks are made - below) and the
+ * dimensionality (how solid things are - DIMENSIONS, further down).
  * ---------------------------------------------------------------------------
  *
  * The visual dictionary (hexfield-visual.js) says what things look like. This
@@ -154,5 +156,57 @@
     return out;
   }
 
-  global.HexfieldCraft = { MANNERS, KEYS: Object.keys(MANNERS), manner, wordLeans };
+  /* ── Dimensionality ───────────────────────────────────────────────────
+   * A second axis, independent of the manner: how solid the things in the
+   * picture are. A bold-line painting can be of blocks; a soft-light one can
+   * be of flat cut-outs. Settings are read by hexfield-visual.js (paint):
+   *   model   light and shade across each form
+   *   cast    a shadow thrown on the ground, away from the light
+   *   depth   an extruded body behind each face */
+  const DIMENSIONS = {
+    flat: {
+      name: "flat",
+      principles: ["shapes as flat as paper", "no light direction, no shadow", "space made by overlap and placement alone"],
+      settings: { model: 0, cast: 0, depth: 0 },
+      base: 0.15,
+      leans: { con: 0.3 },
+      words: ["flat", "poster", "sign", "icon", "pattern", "cartoon", "comic", "pop", "paper", "cutout"],
+    },
+    shaded: {
+      name: "shaded",
+      principles: ["one light, from one side", "every form lit on the near side and falling into shade on the far", "shadows cast on the ground"],
+      settings: { model: 1, cast: 0.85, depth: 0 },
+      leans: { val: 0.3, ene: -0.2 },
+      words: ["sun", "sunny", "morning", "evening", "portrait", "candle", "lamp", "shadow", "noon", "light"],
+    },
+    solid: {
+      name: "solid",
+      principles: ["things as blocks with a body behind the face", "the side away from the light in shade", "a shadow on the ground"],
+      settings: { model: 0.6, cast: 0.6, depth: 0.75 },
+      leans: { pot: 0.3, bnd: 0.3 },
+      words: ["solid", "block", "stone", "building", "city", "tower", "statue", "sculpture", "castle", "box", "heavy"],
+    },
+  };
+
+  function dimension(key) {
+    const entry = DIMENSIONS[key] || DIMENSIONS.flat;
+    return { key: DIMENSIONS[key] ? key : "flat", name: entry.name, principles: entry.principles.slice(), settings: { ...entry.settings } };
+  }
+
+  function dimensionLeans(text, axes) {
+    const words = new Set((String(text || "").toLowerCase().match(/[a-z]+/g) || []));
+    const out = {};
+    for (const [key, entry] of Object.entries(DIMENSIONS)) {
+      let lean = Number(entry.base) || 0;
+      for (const [axis, weight] of Object.entries(entry.leans)) lean += 0.6 * weight * (Number(axes?.[axis]) || 0);
+      for (const word of entry.words) if (words.has(word)) lean += 0.4;
+      out[key] = lean;
+    }
+    return out;
+  }
+
+  global.HexfieldCraft = {
+    MANNERS, KEYS: Object.keys(MANNERS), manner, wordLeans,
+    DIMENSIONS, DIMENSION_KEYS: Object.keys(DIMENSIONS), dimension, dimensionLeans,
+  };
 })(typeof window !== "undefined" ? window : globalThis);

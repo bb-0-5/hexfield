@@ -2009,21 +2009,92 @@
     return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
   }
 
+  /* ── Dimensionality ──────────────────────────────────────────────────────
+   * How solid a thing looks, independent of what it is and how it is
+   * painted (hexfield-craft.js, DIMENSIONS):
+   *   model   0..1  light and shade across the form: lit toward the light,
+   *                 falling into shadow on the far side
+   *   cast    0..1  a shadow thrown on the ground, away from the light
+   *   depth   0..1  an extruded body behind the face, receding away from the
+   *                 light - the thing becomes a block, not a cut-out
+   * `light` is the direction toward the light, in radians (canvas y down,
+   * so a light above has a negative sine). Only subjects take it; settings
+   * are the space they stand in. */
+  function tintedCopy(source, W, H, fill) {
+    const copy = document.createElement("canvas");
+    copy.width = W; copy.height = H;
+    const c = copy.getContext("2d");
+    c.drawImage(source, 0, 0);
+    c.globalCompositeOperation = "source-atop";
+    c.fillStyle = fill;
+    c.fillRect(0, 0, W, H);
+    return copy;
+  }
+
+  function dimensionItem(ctx, layer, lctx, item, W, H, dims) {
+    const b = item.box;
+    const sx = Math.cos(dims.light), sy = Math.sin(dims.light);
+    const anchor = item.entry.anchor;
+    const grounded = anchor !== "sky" && anchor !== "centre";
+    // A shadow on the ground, thrown away from the light and lying flat.
+    if (dims.cast > 0 && grounded) {
+      const shadow = tintedCopy(layer, W, H, "rgb(12, 12, 24)");
+      const yb = b.y + b.h, k = -sx * 1.1;
+      ctx.save();
+      ctx.globalAlpha = (item.alpha ?? 1) * dims.cast * 0.75;
+      if ("filter" in ctx) ctx.filter = `blur(${Math.max(1, Math.round(Math.min(b.w, b.h) * 0.03))}px)`;
+      ctx.setTransform(1, 0, -k, 0.28, k * yb, 0.72 * yb);
+      ctx.drawImage(shadow, 0, 0);
+      ctx.restore();
+      shadow.width = 0;
+    }
+    // An extruded body: the face's own colours, darkened, stepped back and
+    // away from the light.
+    if (dims.depth > 0 && anchor !== "sky") {
+      const side = tintedCopy(layer, W, H, "rgba(10, 12, 26, 0.5)");
+      const reach = dims.depth * Math.min(b.w, b.h) * 0.32;
+      const ex = -Math.sign(sx || 1) * 0.72, ey = -0.62;
+      const steps = Math.max(4, Math.round(dims.depth * 14));
+      ctx.save();
+      ctx.globalAlpha = item.alpha ?? 1;
+      for (let i = steps; i >= 1; i--) ctx.drawImage(side, ex * reach * i / steps, ey * reach * i / steps);
+      ctx.restore();
+      side.width = 0;
+    }
+    // Light and shade across the form.
+    if (dims.model > 0) {
+      const cx = b.x + b.w / 2, cy = b.y + b.h / 2, R = Math.max(b.w, b.h) * 0.6;
+      const g = lctx.createLinearGradient(cx + sx * R, cy + sy * R, cx - sx * R, cy - sy * R);
+      g.addColorStop(0, `rgba(255, 246, 228, ${0.42 * dims.model})`);
+      g.addColorStop(0.42, "rgba(255, 255, 255, 0)");
+      g.addColorStop(0.62, `rgba(8, 10, 30, ${0.35 * dims.model})`);
+      g.addColorStop(1, `rgba(8, 10, 30, ${0.8 * dims.model})`);
+      lctx.save();
+      lctx.globalCompositeOperation = "source-atop";
+      lctx.fillStyle = g;
+      lctx.fillRect(b.x - b.w, b.y - b.h, b.w * 3, b.h * 3);
+      lctx.restore();
+    }
+  }
+
   /* Paint laid-out items onto ctx (transparent where nothing is), each on its
    * own layer so a cut-out (the moon's crescent, a bridge's arch) removes only
-   * that thing. `only` limits it to "subject" or "setting". */
-  function paint(ctx, W, H, items, rng, only = null) {
+   * that thing. `only` limits it to "subject" or "setting"; `dims` gives the
+   * subjects their solidity (see Dimensionality). */
+  function paint(ctx, W, H, items, rng, only = null, dims = null) {
     const layer = document.createElement("canvas");
     layer.width = W; layer.height = H;
     const lctx = layer.getContext("2d");
     // One seed per item, drawn up front, so an item looks the same whether or
     // not the others are painted with it.
     const seeds = items.map(() => Math.floor(rng() * 4294967296) >>> 0);
+    const solid = dims && (dims.model > 0 || dims.cast > 0 || dims.depth > 0);
     for (let index = 0; index < items.length; index++) {
       const item = items[index];
       if (only && item.entry.kind !== only) continue;
       lctx.clearRect(0, 0, W, H);
       paintItem(lctx, item, seededRandom(seeds[index]));
+      if (solid && item.entry.kind === "subject" && !item.lettering) dimensionItem(ctx, layer, lctx, item, W, H, dims);
       ctx.save();
       ctx.globalAlpha = item.alpha ?? 1;
       ctx.drawImage(layer, 0, 0);
