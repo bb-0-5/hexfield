@@ -25632,7 +25632,7 @@ function updateWordPaints() {
   const Visual = globalThis.HexfieldVisual;
   if (!line || !Visual) return;
   const text = ($("wordPrompt")?.value || "").trim();
-  if (!text && !seedText()) { line.textContent = ""; return; }
+  if (!text && !seedText()) { line.textContent = planManner() ? "manner: " + planManner().name : ""; return; }
   const read = Visual.read(text);
   const named = [...read.subjects, ...read.settings.filter((s) => !s.implied)];
   const colourName = (colour) => Object.keys(Visual.COLOUR_WORDS).find((k) => Visual.COLOUR_WORDS[k] === colour);
@@ -25653,7 +25653,9 @@ function updateWordPaints() {
   const unknown = rest.filter((word) => !stance[word]);
   const letters = seedText();
   if (letters) parts.unshift("the letters “" + letters.slice(0, 24) + "”");
-  line.textContent = (parts.length ? "paints: " + parts.join(" · ") : "paints: no things it knows yet") +
+  const manner = planManner();
+  line.textContent = (manner ? "manner: " + manner.name + " · " : "") +
+    (parts.length ? "paints: " + parts.join(" · ") : "paints: no things it knows yet") +
     (mood.length ? " · mood: " + mood.slice(0, 4).join(", ") : "") +
     (unknown.length ? " · no picture yet: " + unknown.slice(0, 4).join(", ") : "");
 }
@@ -31418,12 +31420,17 @@ function applyVisualVariation(item, v) {
 /* A vote on a painting that painted named things. Each direction counts once
  * per painting, however many times the button is pressed. */
 function recordVisualVote(liked) {
-  const scene = strokePainter.plan?.scene;
-  if (!scene?.variations) return;
+  const plan = strokePainter.plan;
+  const scene = plan?.scene;
+  // The manner is voted on with every painting, words or none.
+  const variations = { ...(scene?.variations || {}) };
+  if (plan?.manner) variations[mannerVoteWord(plan.manner.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  if (!Object.keys(variations).length) return;
+  const votes = scene?.votes || (plan.votes ||= { kept: false, rejected: false });
   const flag = liked ? "kept" : "rejected";
-  if (scene.votes[flag]) return;
-  scene.votes[flag] = true;
-  for (const [word, v] of Object.entries(scene.variations)) {
+  if (votes[flag]) return;
+  votes[flag] = true;
+  for (const [word, v] of Object.entries(variations)) {
     if (!/^[a-z]{1,24}$/.test(word)) continue;
     const vote = { word, liked: Boolean(liked), ...v };
     visualLexiconAdd(vote);
@@ -32131,9 +32138,9 @@ function composeStrokeReference(ref, width, height, plan) {
 }
 
 /* A few colours that the composed picture is made of (k-means, seeded). */
-function paletteFromPixels(pixels, count, rng) {
+function paletteFromPixels(pixels, count, rng, maxSamples = 3000) {
   const samples = [];
-  const stride = Math.max(1, Math.floor(pixels.length / 4 / 3000)) * 4;
+  const stride = Math.max(1, Math.floor(pixels.length / 4 / maxSamples)) * 4;
   for (let o = 0; o < pixels.length; o += stride) samples.push([pixels[o], pixels[o + 1], pixels[o + 2]]);
   if (!samples.length) return [];
   const d2 = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2;
@@ -32179,6 +32186,16 @@ function nearestPaletteColour(palette, r, g, b) {
  * palette colour. A 32-level lookup keeps it one table read per pixel. */
 function snapToPalette(pixels, palette, amount = PLAN_PALETTE_SNAP) {
   if (!palette?.length) return pixels;
+  // A small picture is cheaper to match pixel by pixel than to build the table.
+  if (pixels.length / 4 < 12000) {
+    for (let o = 0; o < pixels.length; o += 4) {
+      const p = nearestPaletteColour(palette, pixels[o], pixels[o + 1], pixels[o + 2]);
+      pixels[o] += (p[0] - pixels[o]) * amount;
+      pixels[o + 1] += (p[1] - pixels[o + 1]) * amount;
+      pixels[o + 2] += (p[2] - pixels[o + 2]) * amount;
+    }
+    return pixels;
+  }
   const lut = new Uint8Array(32 * 32 * 32);
   for (let r = 0; r < 32; r++) for (let g = 0; g < 32; g++) for (let b = 0; b < 32; b++) {
     lut[(r << 10) | (g << 5) | b] = palette.indexOf(nearestPaletteColour(palette, r * 8 + 4, g * 8 + 4, b * 8 + 4));
@@ -32192,26 +32209,410 @@ function snapToPalette(pixels, palette, amount = PLAN_PALETTE_SNAP) {
   return pixels;
 }
 
-/* A reference as this painting paints it: enhanced, composed to the plan and
- * mixed from its palette. The first reference of a painting makes the plan. */
-function prepareStrokeReference(ref, width, height, enhanced = enhanceStrokeReference(ref)) {
-  if (!strokePainter.plan) {
-    const source = bestRun?.params ? bestRun : current;
-    strokePainter.plan = makePaintingPlan(enhanced, width, height, source?.drawSeed || 0, source?.params);
+/* ─── Manners (craft dictionary, words/hexfield-craft.js) ───
+ * How a painting is made, as opposed to what it shows: flat colour inside a
+ * heavy outline, smoke-soft edges on a dark ground, dabs of broken colour, a
+ * stark print - each a set of principles, not anybody's pictures. A manner
+ * reshapes the reference (values, colour, edges, outline) and sets how every
+ * stroke is laid. One per painting, chosen when the plan is made. */
+function plainManner() {
+  return globalThis.HexfieldCraft?.manner("painterly") || {
+    key: "painterly", name: "painterly", principles: [],
+    reference: { saturation: 1, warmth: 0, keys: [0, 255], groundDark: 0, light: 0, blur: 0, palette: 0, snap: -1, contour: 0, twoTone: 0 },
+    brush: { alpha: 0, bristle: true, jitter: -1, length: 1, width: 1, hatch: 0, evenDetail: 0 },
+  };
+}
+
+function planManner() {
+  return strokePainter.plan?.manner || null;
+}
+
+const mannerVoteWord = (key) => "manner" + String(key).replace(/[^a-z]/g, "");
+
+/* Box blur, two passes of a running sum each way (near enough a Gaussian). */
+function blurPixels(pixels, width, height, radius) {
+  const r = Math.max(1, Math.round(radius));
+  const src = new Float32Array(width * height * 3);
+  for (let i = 0, o = 0; o < pixels.length; o += 4, i += 3) { src[i] = pixels[o]; src[i + 1] = pixels[o + 1]; src[i + 2] = pixels[o + 2]; }
+  const tmp = new Float32Array(src.length);
+  const pass = (from, to, n, lines, stride, step) => {
+    const span = 2 * r + 1;
+    for (let line = 0; line < lines; line++) {
+      const base = line * stride;
+      for (let c = 0; c < 3; c++) {
+        let sum = 0;
+        for (let k = -r; k <= r; k++) sum += from[base + Math.max(0, Math.min(n - 1, k)) * step + c];
+        for (let i = 0; i < n; i++) {
+          to[base + i * step + c] = sum / span;
+          sum += from[base + Math.min(n - 1, i + r + 1) * step + c] - from[base + Math.max(0, i - r) * step + c];
+        }
+      }
+    }
+  };
+  for (let k = 0; k < 2; k++) {
+    pass(src, tmp, width, height, width * 3, 3);
+    pass(tmp, src, height, width, 3, width * 3);
   }
-  const plan = strokePainter.plan;
-  const composed = applyPlanScene(composeStrokeReference(enhanced, width, height, plan), width, height, plan);
+  const out = new Uint8ClampedArray(pixels.length);
+  for (let i = 0, o = 0; o < pixels.length; o += 4, i += 3) { out[o] = src[i]; out[o + 1] = src[i + 1]; out[o + 2] = src[i + 2]; out[o + 3] = 255; }
+  return out;
+}
+
+/* The manner's values and colour, before the palette: key range, dark ground,
+ * a side light, two-tone, saturation and warmth, then soft edges. In place,
+ * except the blur, which returns a new array. Lettering keeps its edges. */
+function applyMannerReference(pixels, width, height, plan, manner) {
+  const m = manner?.reference;
+  if (!m || manner.key === "painterly") return pixels;
+  const sigma = planFocusSigma(width, height, plan.style);
+  const cx = plan.fx * width, cy = plan.fy * height;
+  const [lo, hi] = m.keys;
+  const angle = Number(plan.lightAngle) || -2.4;
+  const lx = Math.cos(angle), ly = Math.sin(angle), diag = Math.hypot(width, height);
+  const warm = [m.warmth, m.warmth * 0.3, -m.warmth];
+  const layer = plan.scene?.layer;
+  const cover = layer?.cover?.length === width * height ? layer.cover : null;
+  const groundOf = (i, w) => (1 - w) * (cover ? 1 - cover[i] / 255 : 1);
+  /* A flat ground: away from the focus and the named things, the picture
+   * settles toward one colour - the ground's own average - so figures stand
+   * on a field instead of in a texture. */
+  let flat = null;
+  if (m.flatGround) {
+    let r = 0, g = 0, b = 0, n = 0;
+    const step = Math.max(1, Math.round(Math.sqrt(width * height / 5000)));
+    for (let y = 0; y < height; y += step) {
+      for (let x = 0; x < width; x += step) {
+        const i = y * width + x, o = i * 4;
+        const k = groundOf(i, Math.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (2 * sigma * sigma)));
+        r += pixels[o] * k; g += pixels[o + 1] * k; b += pixels[o + 2] * k; n += k;
+      }
+    }
+    if (n > 0) flat = [r / n, g / n, b / n];
+  }
+  /* Paper and ink split at the picture's own middle value, not at a fixed
+   * grey: a stormy picture is not all ink, a snowy one not all paper. */
+  let split = 118;
+  if (m.twoTone) {
+    const hist = new Uint32Array(256);
+    for (let o = 0; o < pixels.length; o += 4 * 5) hist[Math.round(lo + (0.2126 * pixels[o] + 0.7152 * pixels[o + 1] + 0.0722 * pixels[o + 2]) / 255 * (hi - lo))]++;
+    const total = hist.reduce((a, b) => a + b, 0);
+    let acc = 0;
+    for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= total * 0.55) { split = Math.max(60, Math.min(190, v)); break; } }
+  }
+  for (let y = 0; y < height; y++) {
+    const dy = y - cy;
+    for (let x = 0; x < width; x++) {
+      const o = (y * width + x) * 4, dx = x - cx;
+      const w = Math.exp(-(dx * dx + dy * dy) / (2 * sigma * sigma));
+      if (flat) {
+        const k = m.flatGround * Math.min(1, 1.6 * groundOf(y * width + x, w));
+        pixels[o] += (flat[0] - pixels[o]) * k; pixels[o + 1] += (flat[1] - pixels[o + 1]) * k; pixels[o + 2] += (flat[2] - pixels[o + 2]) * k;
+      }
+      const r = pixels[o], g = pixels[o + 1], b = pixels[o + 2];
+      const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      let L = lo + (l / 255) * (hi - lo);
+      // The ground falls into shadow; the focus and the named things stay lit.
+      // (A tighter pool of light than the focus's own falloff, or on a phone
+      // hardly any of the ground is ground.)
+      if (m.groundDark) L *= 1 - m.groundDark * (1 - Math.max(w * w * w, cover ? cover[y * width + x] / 255 : 0));
+      // Light from one side: toward the light is lighter, away from it darker.
+      if (m.light) L *= 1 + m.light * Math.max(-0.8, Math.min(0.8, -(dx * lx + dy * ly) / diag * 2.2));
+      if (m.twoTone) L += ((L > split ? hi : lo) - L) * m.twoTone;
+      pixels[o] = L + (r - l) * m.saturation + warm[0];
+      pixels[o + 1] = L + (g - l) * m.saturation + warm[1];
+      pixels[o + 2] = L + (b - l) * m.saturation + warm[2];
+    }
+  }
+  if (!m.blur) return pixels;
+  const short = Math.min(width, height);
+  const soft = blurPixels(pixels, width, height, m.blur * 0.02 * short);
+  const lettering = plan.scene?.lettering?.box;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const o = (y * width + x) * 4;
+      if (lettering && x >= lettering.x && x <= lettering.x + lettering.w && y >= lettering.y && y <= lettering.y + lettering.h) continue;
+      const dx = x - cx, dy = y - cy;
+      // The focus and the named things keep most of their edges: soft all
+      // round, sharp where it matters.
+      const keep = Math.max(0.85 * Math.exp(-(dx * dx + dy * dy) / (2 * sigma * sigma * 0.5)),
+        cover ? 0.6 * cover[y * width + x] / 255 : 0);
+      const k = 1 - keep;
+      pixels[o] += (soft[o] - pixels[o]) * k;
+      pixels[o + 1] += (soft[o + 1] - pixels[o + 1]) * k;
+      pixels[o + 2] += (soft[o + 2] - pixels[o + 2]) * k;
+    }
+  }
+  return pixels;
+}
+
+/* An even outline round every shape: edges found on a smoothed copy (so a
+ * soft gradient or a texture draws no line), thinned to one pixel, then drawn
+ * at an even width in whichever of ink or chalk the ground is not. In place,
+ * after the palette. */
+function applyMannerContour(pixels, width, height, plan, manner) {
+  const amount = Number(manner?.reference?.contour) || 0;
+  if (!amount) return pixels;
+  const short = Math.min(width, height);
+  const t = Math.max(1, Math.round(amount * short * 0.006));
+  let mean = 0;
+  for (let o = 0; o < pixels.length; o += 16) mean += 0.2126 * pixels[o] + 0.7152 * pixels[o + 1] + 0.0722 * pixels[o + 2];
+  mean /= pixels.length / 16 || 1;
+  const ink = mean < 90 ? [236, 232, 222] : [18, 16, 22];
+  // The difference is taken across the width of the smoothing, or a
+  // smoothed edge never reads as one.
+  const blur = Math.max(1, Math.round(short * 0.006));
+  const smooth = blurPixels(pixels, width, height, blur);
+  const d = blur + 1;
+  const sx = new Float32Array(width * height), sy = new Float32Array(width * height);
+  const diff = (a, b) => Math.abs(smooth[a] - smooth[b]) + Math.abs(smooth[a + 1] - smooth[b + 1]) + Math.abs(smooth[a + 2] - smooth[b + 2]);
+  for (let y = d; y < height - d; y++) {
+    for (let x = d; x < width - d; x++) {
+      const i = y * width + x;
+      sx[i] = diff((i - d) * 4, (i + d) * 4);
+      sy[i] = diff((i - d * width) * 4, (i + d * width) * 4);
+    }
+  }
+  const edge = new Uint8Array(width * height);
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const i = y * width + x, h = sx[i], v = sy[i];
+      if (Math.max(h, v) < 60) continue;
+      // Only the ridge of an edge, across its own direction.
+      if (h >= v ? h >= sx[i - 1] && h >= sx[i + 1] : v >= sy[i - width] && v >= sy[i + width]) edge[i] = 1;
+    }
+  }
+  // Thickened to t with a square pen, by two running passes.
+  const wide = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) {
+    let run = -1;
+    for (let x = 0; x < width; x++) { if (edge[y * width + x]) run = x; if (run >= 0 && x - run <= t) wide[y * width + x] = 1; }
+    run = -1;
+    for (let x = width - 1; x >= 0; x--) { if (edge[y * width + x]) run = x; if (run >= 0 && run - x <= t) wide[y * width + x] = 1; }
+  }
+  const box = plan.scene?.lettering?.box;
+  const cover = plan.scene?.layer?.cover;
+  const inLetters = (x, y, i) => box && cover && x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h && cover[i] > 110;
+  for (let x = 0; x < width; x++) {
+    let run = -1;
+    for (let y = 0; y < height; y++) {
+      if (wide[y * width + x]) run = y;
+      if (run < 0 || y - run > t) continue;
+      const i = y * width + x;
+      // The letters' bodies are the letter brush's; the outline runs round them.
+      if (inLetters(x, y, i)) continue;
+      const o = i * 4;
+      pixels[o] = ink[0]; pixels[o + 1] = ink[1]; pixels[o + 2] = ink[2];
+    }
+    run = -1;
+    for (let y = height - 1; y >= 0; y--) {
+      if (wide[y * width + x]) run = y;
+      if (run < 0 || run - y > t) continue;
+      const i = y * width + x;
+      if (inLetters(x, y, i)) continue;
+      const o = i * 4;
+      pixels[o] = ink[0]; pixels[o + 1] = ink[1]; pixels[o + 2] = ink[2];
+    }
+  }
+  plan.contourInk = ink;
+  // Kept for the ink pass, which paints the outline as lines (paintContourInk).
+  plan.contourEdge = { edge, width, height, t, ink, version: ++contourVersion };
+  return pixels;
+}
+
+let contourVersion = 0;
+
+/* The outline as lines a hand would draw: edge pixels chained into
+ * polylines, following the way each line is already going, thinned to every
+ * few pixels. Letters are skipped - they have their own brush. */
+function traceContourLines(plan) {
+  const info = plan.contourEdge;
+  const { edge, width, height } = info;
+  const box = plan.scene?.lettering?.box;
+  const cover = plan.scene?.layer?.cover;
+  const blocked = (x, y) => box && cover && x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h &&
+    cover[y * width + x] > 110;
+  const seen = new Uint8Array(width * height);
+  const lines = [];
+  const dirs = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
+  for (let start = 0; start < edge.length; start++) {
+    if (!edge[start] || seen[start]) continue;
+    let x = start % width, y = (start / width) | 0, dx = 0, dy = 0;
+    const pts = [];
+    for (let guard = 0; guard < 4000; guard++) {
+      seen[y * width + x] = 1;
+      if (!blocked(x, y)) pts.push([x, y]);
+      else if (pts.length) break;
+      let best = null, bestScore = -Infinity;
+      for (const [ddx, ddy] of dirs) {
+        // Two pixels out as well as one, so a thinned line with a gap carries on.
+        for (const reach of [1, 2]) {
+          const nx = x + ddx * reach, ny = y + ddy * reach;
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+          const j = ny * width + nx;
+          if (!edge[j] || seen[j]) continue;
+          const score = (ddx * dx + ddy * dy) - reach * 0.5;
+          if (score > bestScore) { bestScore = score; best = [nx, ny, ddx, ddy]; }
+        }
+      }
+      if (!best) break;
+      [x, y, dx, dy] = best;
+    }
+    if (pts.length < 8) continue;
+    // Every third pixel, in pieces a stroke can carry.
+    const thinned = pts.filter((_, i) => i % 3 === 0 || i === pts.length - 1);
+    for (let i = 0; i < thinned.length - 1; i += 40) lines.push(thinned.slice(i, i + 41));
+  }
+  return lines;
+}
+
+/* The ink pass: once the brushes are fine enough, the outline is drawn over
+ * the painting in even strokes of ink, the way a flat-colour picture is
+ * finished. Logged like any stroke, so EXPORT draws it too. */
+function paintContourInk(result, plan) {
+  const W = view.width, H = view.height;
+  markPaintTimingStarted(result);
+  const animation = ++activePaintAnimation;
+  const info = plan.contourEdge;
+  const lines = info && info.width === W && info.height === H ? traceContourLines(plan) : [];
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ info?.version ^ 0x1c4) >>> 0);
+  const width = Math.max(2, info ? info.t * 2 : 2);
+  const strokes = lines.map((points) => ({
+    points, width: width * (0.9 + rng() * 0.2),
+    colour: info.ink.map((c) => Math.max(0, Math.min(255, c + Math.round((rng() - 0.5) * 6)))),
+    bristle: rng(), alpha: 1, plain: true, round: true,
+  }));
+  result.paintStrokeLayer = strokePainter.layer;
+  result.paintStrokeCount = strokes.length;
+  result.paintBrush = {
+    families: ["ink"], textures: ["flat"], signatures: [], lineageObjects: [],
+    source: "ink-line", lifts: 0, smudges: 0, minSize: width, maxSize: width,
+    nonRedundancy: 0.5, count: (Number(result.paintBrush?.count) || 0) + strokes.length,
+    wordHand: (plan.manner?.name || "") + " · ink",
+  };
+  if (!strokes.length) {
+    if (activePaintAnimation === animation) activePaintAnimation = 0;
+    markPaintTimingCompleted(result);
+    return Promise.resolve(false);
+  }
+  strokeLogBegin(vctx.getImageData(0, 0, W, H).data, W, H);
+  return animateLoggedStrokes(result, strokes, animation);
+}
+
+/* A deposit is the canvas with a change in it. Only the changed pixels are
+ * new and not yet in the manner; the rest already is, and treating it again
+ * would darken, saturate or split it twice. Values and colour only - the
+ * outline and soft edges come from the painting's own reference. */
+function mannerDeposit(ref, width, height, plan) {
+  const canvas = vctx.getImageData(0, 0, width, height).data;
+  if (canvas.length !== ref.length) return ref;
+  const manner = plan.manner;
+  const treated = applyMannerReference(new Uint8ClampedArray(ref), width, height, plan,
+    { ...manner, reference: { ...manner.reference, blur: 0 } });
+  const out = new Uint8ClampedArray(ref);
+  for (let o = 0; o < out.length; o += 4) {
+    if (Math.abs(ref[o] - canvas[o]) + Math.abs(ref[o + 1] - canvas[o + 1]) + Math.abs(ref[o + 2] - canvas[o + 2]) < 24) continue;
+    out[o] = treated[o]; out[o + 1] = treated[o + 1]; out[o + 2] = treated[o + 2];
+  }
+  return snapToPalette(out, plan.palette, planSnapAmount(plan));
+}
+
+function planPaletteSize(plan) {
+  return Number(plan.manner?.reference?.palette) || plan.style?.paletteSize || PLAN_PALETTE_SIZE;
+}
+
+function planSnapAmount(plan) {
+  const snap = Number(plan.manner?.reference?.snap);
+  return snap >= 0 ? snap : planPaletteSnap(plan);
+}
+
+/* Composed picture -> the manner's reference: values and colour, the palette
+ * (made once per painting, here), the snap onto it, then the outline. */
+function finishPlanReference(composed, width, height, plan) {
+  const manner = plan.manner || plainManner();
+  let pixels = applyMannerReference(composed, width, height, plan, manner);
   if (!plan.palette) {
-    plan.palette = paletteFromPixels(composed, plan.style?.paletteSize || PLAN_PALETTE_SIZE,
-      mulberry32(((Number(plan.drawSeed) || 0) ^ 0x51f15e) >>> 0));
+    plan.palette = paletteFromPixels(pixels, planPaletteSize(plan),
+      mulberry32(((Number(plan.drawSeed) || 0) ^ 0x51f15e) >>> 0), width * height < 12000 ? 600 : 3000);
     // The named things keep their own colours on the palette.
     for (const colour of plan.scene ? globalThis.HexfieldVisual.subjectColours(plan.scene.items) : []) {
       const near = nearestPaletteColour(plan.palette, colour[0], colour[1], colour[2]);
       const d = Math.hypot(near[0] - colour[0], near[1] - colour[1], near[2] - colour[2]);
-      if (d > 40 && plan.palette.length < PLAN_PALETTE_SIZE + 4) plan.palette.push(colour);
+      if (d > 40 && plan.palette.length < planPaletteSize(plan) + 4) plan.palette.push(colour);
     }
   }
-  return snapToPalette(composed, plan.palette, planPaletteSnap(plan));
+  pixels = snapToPalette(pixels, plan.palette, planSnapAmount(plan));
+  pixels = applyMannerContour(pixels, width, height, plan, manner);
+  if (plan.contourInk && !plan.palette.some((p) => Math.hypot(p[0] - plan.contourInk[0], p[1] - plan.contourInk[1], p[2] - plan.contourInk[2]) < 30)) {
+    plan.palette.push(plan.contourInk.slice());
+  }
+  return pixels;
+}
+
+/* Which manner this painting is made in. Every manner reshapes a small copy
+ * of the composed picture and the studio's taste scores it; the words' leans,
+ * what votes have taught each manner and a little chance are added, and the
+ * best is kept. So taste decides, the words steer and nothing is fixed. */
+function choosePlanManner(plan, composed, width, height, params) {
+  const Craft = globalThis.HexfieldCraft;
+  if (!Craft) return plainManner();
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x3a77e5) >>> 0);
+  plan.lightAngle = -Math.PI / 2 - 0.5 - rng() * 1.2 + (rng() < 0.5 ? 0 : 1.7);
+  // A small copy by block averages - cheap, and taste reads it the same.
+  const sw = Math.min(80, width), sh = Math.max(16, Math.round(sw * height / width));
+  const base = new Uint8ClampedArray(sw * sh * 4);
+  const fx = width / sw, fy = height / sh, stepX = Math.max(1, Math.floor(fx / 3)), stepY = Math.max(1, Math.floor(fy / 3));
+  for (let y = 0; y < sh; y++) {
+    for (let x = 0; x < sw; x++) {
+      let r = 0, g = 0, b = 0, n = 0;
+      for (let yy = Math.floor(y * fy); yy < Math.min(height, Math.floor((y + 1) * fy)); yy += stepY) {
+        for (let xx = Math.floor(x * fx); xx < Math.min(width, Math.floor((x + 1) * fx)); xx += stepX) {
+          const o = (yy * width + xx) * 4; r += composed[o]; g += composed[o + 1]; b += composed[o + 2]; n++;
+        }
+      }
+      const o = (y * sw + x) * 4; n = n || 1;
+      base[o] = r / n; base[o + 1] = g / n; base[o + 2] = b / n; base[o + 3] = 255;
+    }
+  }
+  const small = paintBuffer(sw, sh);
+  const sctx = small.getContext("2d", { willReadFrequently: true });
+  const leans = Craft.wordLeans(params?.__hexfieldWords?.text || "", params?.__hexfieldWords?.axes || {});
+  const scores = [];
+  for (const key of Craft.KEYS) {
+    const manner = Craft.manner(key);
+    // A throwaway plan at the small size: its own palette, no scene layer.
+    const probe = { ...plan, palette: null, manner, scene: null, contourInk: null };
+    const pixels = finishPlanReference(new Uint8ClampedArray(base), sw, sh, probe);
+    sctx.putImageData(new ImageData(pixels, sw, sh), 0, 0);
+    const taste = tastePrediction(tasteFeatures(sctx, sw, sh, signature(sctx, sw, sh)));
+    const learned = visualLearnedChoice(mannerVoteWord(key));
+    scores.push({ key, taste, learned, lean: leans[key] || 0, chance: (rng() - 0.5) * 1.1 });
+  }
+  small.width = 0; small.height = 0;
+  const mean = scores.reduce((sum, s) => sum + s.taste, 0) / scores.length;
+  for (const s of scores) s.score = 8 * (s.taste - mean) + 0.8 * s.learned + s.lean + s.chance;
+  scores.sort((a, b) => b.score - a.score);
+  plan.mannerScores = scores.map((s) => ({ key: s.key, score: +s.score.toFixed(3), taste: +s.taste.toFixed(4), lean: +s.lean.toFixed(2), learned: +s.learned.toFixed(2) }));
+  return Craft.manner(scores[0].key);
+}
+
+/* A reference as this painting paints it: enhanced, composed to the plan and
+ * mixed from its palette. The first reference of a painting makes the plan. */
+function prepareStrokeReference(ref, width, height, enhanced = enhanceStrokeReference(ref)) {
+  let fresh = false;
+  if (!strokePainter.plan) {
+    const source = bestRun?.params ? bestRun : current;
+    strokePainter.plan = makePaintingPlan(enhanced, width, height, source?.drawSeed || 0, source?.params);
+    fresh = true;
+  }
+  const plan = strokePainter.plan;
+  const composed = applyPlanScene(composeStrokeReference(enhanced, width, height, plan), width, height, plan);
+  if (fresh || !plan.manner) {
+    const source = bestRun?.params ? bestRun : current;
+    plan.manner = choosePlanManner(plan, composed, width, height, source?.params);
+    if (plan.style) plan.style.label = plan.manner.name + " · " + plan.style.label;
+    updateWordPaints();
+  }
+  return finishPlanReference(composed, width, height, plan);
 }
 
 /* The same preparation off the painting path: enhance, compose and mix are
@@ -32230,7 +32631,7 @@ function scheduleStrokeReference(ref, width, height, refKey) {
     const composed = applyPlanScene(composeStrokeReference(enhanced, width, height, plan), width, height, plan);
     await pause();
     if (!stillWanted()) return;
-    strokePainter.enhanced = snapToPalette(composed, plan.palette, planPaletteSnap(plan));
+    strokePainter.enhanced = finishPlanReference(composed, width, height, plan);
     strokePainter.enhancedKey = refKey;
     strokePainter.enhancedPlan = plan;
     // A new picture under the same master key needs its own contours.
@@ -32288,10 +32689,12 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
   /* The two finest brushes work mostly at the focus; elsewhere a start
    * survives only occasionally, so the ground keeps its broad strokes. */
   const focus = gradient.focus;
+  const brush = planManner()?.brush || null;
   if (focus && layer >= 2) {
     const detail = Number(planStyle()?.detail) || 0;
     const sigma = (layer === 2 ? 0.7 : 0.4) * (1 + 0.4 * detail), aspect = width / height;
-    const floor = Math.max(0.02, 0.06 * (1 + detail));
+    // Some manners work the whole surface, not only the focus.
+    const floor = Math.max(0.02, 0.06 * (1 + detail), Number(brush?.evenDetail) || 0);
     for (let i = starts.length - 1; i >= 0; i--) {
       const dx = (starts[i].x / width - focus.fx) * aspect, dy = starts[i].y / height - focus.fy;
       const sharp = gradient.sharp;
@@ -32314,14 +32717,31 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
   const strokeSettleAngle = (Number(strokePainter.settleAngle) || 0);
   const pot = hand ? hand.pot * hand.strength : 0;
   // Big brushes make long sweeps; small ones short touches.
-  const maxLength = Math.max(3, Math.round((radius > 8 ? 12 : radius > 4 ? 9 : 6) * (1 + 0.45 * ene)));
-  const width2 = radius * (1 + 0.25 * pot);
+  const lengthScale = Number(brush?.length) || 1;
+  const maxLength = Math.max(lengthScale < 1 ? 2 : 3, Math.round((radius > 8 ? 12 : radius > 4 ? 9 : 6) * (1 + 0.45 * ene) * lengthScale));
+  const width2 = radius * (1 + 0.25 * pot) * (Number(brush?.width) || 1);
+  // A print's hatching keeps one direction across the picture.
+  const hatch = Number(brush?.hatch) || 0;
+  const edgeStop = Number(brush?.edgeStop) || 0;
+  const hatchAngle = (Number(strokePainter.plan?.lightAngle) || -2.4) + Math.PI / 2;
+  const hx = Math.cos(hatchAngle), hy = Math.sin(hatchAngle);
   const strokes = [];
+  const finest = layer >= STROKE_LAYER_FRACTIONS.length - 1;
   for (const start of chosen) {
     let colour = colourAt(ref, start.x, start.y);
+    // A flat manner's brush starts only where its colour is at least as wide
+    // as the brush; a thinner line waits for a finer brush (or the ink).
+    if (edgeStop && !finest) {
+      const r = radius * 0.8;
+      let fits = 0;
+      for (const [ox, oy] of [[r, 0], [-r, 0], [0, r], [0, -r]]) {
+        if (diff(colourAt(ref, start.x + ox, start.y + oy), colour) <= edgeStop) fits++;
+      }
+      if (fits < 3) continue;
+    }
     if (palette?.length) {
       const p = nearestPaletteColour(palette, colour[0], colour[1], colour[2]);
-      colour = colour.map((c, i) => c + (p[i] - c) * planPaletteSnap(strokePainter.plan));
+      colour = colour.map((c, i) => c + (p[i] - c) * planSnapAmount(strokePainter.plan));
     }
     const points = [[start.x, start.y]];
     let x = start.x, y = start.y, lastDx = 0, lastDy = 0;
@@ -32340,6 +32760,11 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
         dx = -gY / mag; dy = gX / mag;
         if (lastDx * dx + lastDy * dy < 0) { dx = -dx; dy = -dy; }
       }
+      if (hatch && layer < 3) {
+        const sign = dx * hx + dy * hy < 0 ? -1 : 1;
+        dx = dx * (1 - hatch) + sign * hx * hatch; dy = dy * (1 - hatch) + sign * hy * hatch;
+        const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+      }
       if (step > 1) {
         // Curvature damping keeps strokes from kinking on noise.
         // Curvature damping: a loose hand follows the forms more freely.
@@ -32353,16 +32778,31 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       // From the second step on: waiting until the third let a big brush run
       // most of a stroke length past the edge of a shape.
       if (step > 1 && diff(colourAt(ref, x, y), colour) > diff(colourAt(current, x, y), colour)) break;
+      // Flat manners keep a stroke inside its own shape: it stops where its
+      // centre or either side of the brush reaches another colour, however
+      // the canvas looks there. (The centre alone let a wide brush spill half
+      // its width over the outline.)
+      if (edgeStop && !finest) {
+        const side = radius * 0.8;
+        if (diff(colourAt(ref, x, y), colour) > edgeStop ||
+            diff(colourAt(ref, x - dy * side, y + dx * side), colour) > edgeStop ||
+            diff(colourAt(ref, x + dy * side, y - dx * side), colour) > edgeStop) break;
+      } else if (edgeStop && diff(colourAt(ref, x, y), colour) > edgeStop) break;
       points.push([x, y]);
       lastDx = dx; lastDy = dy;
     }
-    const jitter = 6 + 10 * Math.max(0, ene);
-    strokes.push({
+    const jitter = Number(brush?.jitter) >= 0 ? Number(brush.jitter) : 6 + 10 * Math.max(0, ene);
+    const stroke = {
       points,
       width: width2 * 2 * (0.8 + rng() * 0.35),
       colour: colour.map((c) => Math.max(0, Math.min(255, Math.round(c + (rng() - 0.5) * jitter)))),
       bristle: rng(),
-    });
+    };
+    // The manner's handling travels with the stroke, so EXPORT replays it.
+    if (Number(brush?.alpha) > 0) stroke.alpha = Number(brush.alpha);
+    if (brush && brush.bristle === false) stroke.plain = true;
+    if (brush?.round) stroke.round = true;
+    strokes.push(stroke);
   }
   return { strokes, candidates: starts.length, cells };
 }
@@ -32381,15 +32821,15 @@ function drawPaintStroke(ctx, stroke) {
     ctx.lineTo(pts[pts.length - 1][0], pts[pts.length - 1][1]);
   };
   // A flat brush leaves square-ish ends; a small round one, a dab.
-  ctx.lineCap = stroke.width >= 8 ? "butt" : "round";
+  ctx.lineCap = stroke.width >= 8 && !stroke.round ? "butt" : "round";
   ctx.lineJoin = "round";
-  ctx.globalAlpha = 0.82 + stroke.bristle * 0.14;
+  ctx.globalAlpha = stroke.alpha ? Math.min(1, stroke.alpha * (0.94 + stroke.bristle * 0.06)) : 0.82 + stroke.bristle * 0.14;
   ctx.strokeStyle = `rgb(${r},${g},${b})`;
   ctx.lineWidth = stroke.width;
   path();
   ctx.stroke();
   // A bristle line inside the stroke, a shade off, so it reads as paint.
-  if (stroke.width >= 4) {
+  if (stroke.width >= 4 && !stroke.plain) {
     const shade = stroke.bristle < 0.5 ? -18 : 14;
     ctx.globalAlpha = 0.22;
     ctx.strokeStyle = `rgb(${Math.max(0, Math.min(255, r + shade))},${Math.max(0, Math.min(255, g + shade))},${Math.max(0, Math.min(255, b + shade))})`;
@@ -32435,6 +32875,12 @@ function paintTowardReference(result, ref, width, height,
   const palette = enhance || prepared ? null : strokePainter.plan?.palette || null;
   if (!enhance && !prepared && strokePainter.plan?.scene) {
     ref = applyPlanScene(new Uint8ClampedArray(ref), width, height, strokePainter.plan);
+  }
+  // ...and in the painting's manner: an accepted deposit arrives as raw field
+  // pixels, and a flat-colour or two-tone painting would otherwise scribble
+  // them in as they are.
+  if (!enhance && !prepared && planManner() && planManner().key !== "painterly") {
+    ref = mannerDeposit(ref, width, height, strokePainter.plan);
   }
   const animation = ++activePaintAnimation;
   // The reference's contours are reused while it is the same picture - a
@@ -32784,9 +33230,24 @@ function continueMasterDetail(result) {
   const letters = strokePainter.plan?.scene?.lettering;
   const letterTurn = Boolean(letters && letters.stage !== "block" && letters.painted !== letters.version &&
     letters.painting !== letters.version && strokePainter.enhancedKey && strokePainter.enhancedPlan === strokePainter.plan);
+  // A manner with an outline inks it once the big brush has blocked in, and again
+  // whenever the reference (and so its outline) is re-made.
+  const plan = strokePainter.plan;
+  const inkTurn = Boolean(!letterTurn && plan?.contourEdge && plan.manner?.reference?.contour &&
+    strokePainter.layer >= 1 && plan.inked !== plan.contourEdge.version && plan.inking !== plan.contourEdge.version &&
+    strokePainter.enhancedKey && strokePainter.enhancedPlan === plan);
   const completion = letterTurn
     ? paintLetteringStrokes(detailResult, strokePainter.plan.scene)
+    : inkTurn ? paintContourInk(detailResult, plan)
     : paintTowardReference(detailResult, reference, width, height, { refKey: source.params, enhance: true });
+  if (inkTurn) {
+    const version = plan.contourEdge.version;
+    plan.inking = version;
+    completion.then((landed) => {
+      if (plan.inking === version) plan.inking = undefined;
+      if (landed) plan.inked = version;
+    });
+  }
   if (letterTurn) {
     // Counted as lettered only when every stroke landed; an interrupted pass
     // is tried again on the next one.
