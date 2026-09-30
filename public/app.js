@@ -13441,7 +13441,25 @@ function tasteQuantile(values, q) {
  * here, and the arithmetic never asked who made it. */
 const FUNDAMENTAL_KEEP_SOURCES = new Set(["human", "rule"]);
 
-function refreshFundamentalBalance(samples = taste?.samples || []) {
+/* Everyone's explicit keeps, for the bands below: what counts as "too dark"
+ * or "too cluttered" is learned from every visitor's KEEPs, not only this
+ * browser's. Pulled at connect (pullSharedKeeps). */
+let sharedKeeps = [];
+
+async function pullSharedKeeps() {
+  if (HEXFIELD_LOCAL_ONLY) return;
+  const session = await ensureTasteSession();
+  const res = await fetch(SUPABASE_URL +
+    "/rest/v1/hexfield_taste_observations?select=features&source=eq.human&liked=eq.true&order=created_at.desc&limit=400",
+    { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token } });
+  if (!res.ok) return;
+  const rows = await res.json();
+  sharedKeeps = (Array.isArray(rows) ? rows : []).filter((row) => row?.features && typeof row.features === "object")
+    .map((row) => ({ source: "human", label: 1, features: row.features, shared: true }));
+  refreshFundamentalBalance();
+}
+
+function refreshFundamentalBalance(samples = [...(taste?.samples || []), ...sharedKeeps]) {
   const keeps = samples.filter((sample) => FUNDAMENTAL_KEEP_SOURCES.has(sample?.source) &&
     Number(sample.label) >= DISLIKE_LIKE_MIN_LABEL && sample.features);
   const learned = clamp01((keeps.length - FUNDAMENTAL_MIN_HUMAN_KEEPS) /
@@ -14985,7 +15003,7 @@ async function connectTaste() {
       pullGlobalTaste(), pullTasteAgreement(), pullStyleCatalogue(), pullCausalExperiments(),
       pullHarvestMaterials(), pullSharedVisualSymbols(),
       pullVisualSourceCorpus(), fetchKnownCreationHashes(), refreshMuseumStatus(),
-      pullVisualLexicon(),
+      pullVisualLexicon(), pullFormMemory(), pullSharedKeeps(),
     ]);
     queueTasteSync();
     scheduleSharedTasteFlush(0);
@@ -20978,6 +20996,37 @@ function recordRuleVerdict(result) {
  * ------------------------------------------------------------------ */
 
 const SUPABASE_URL = "https://uiobhojjgtsvyzuzqqiy.supabase.co";
+
+/* Learning is global: votes, taste observations, kept forms, the style
+ * catalogue and the creation ledger are one shared database that every
+ * visitor teaches. A page served from this machine - automated tests, local
+ * development - must not teach it: each test run signs in as a new anonymous
+ * visitor, so its KEEP/REJECT clicks were being counted as other people's
+ * taste. On localhost, writes are answered locally (an empty list, which every
+ * caller already handles) unless the address carries ?learn. Reads still go
+ * to the shared database, so the page still learns *from* everyone. */
+const LEARNS_GLOBALLY = (() => {
+  try {
+    return !/^(localhost|127\.|0\.0\.0\.0|\[::1\])/.test(location.hostname) ||
+      new URLSearchParams(location.search).has("learn");
+  } catch {
+    return true;
+  }
+})();
+if (!LEARNS_GLOBALLY && typeof globalThis.fetch === "function") {
+  const sharedFetch = globalThis.fetch.bind(globalThis);
+  const WRITING_RPC = /\/rest\/v1\/rpc\/(bump_hexfield_sim|fold_hexfield_taste_observation)\b/;
+  globalThis.fetch = (input, init = {}) => {
+    const url = typeof input === "string" ? input : input?.url || "";
+    const method = String(init?.method || input?.method || "GET").toUpperCase();
+    const write = url.startsWith(SUPABASE_URL + "/rest/v1/") && method !== "GET" && method !== "HEAD" &&
+      (!url.includes("/rest/v1/rpc/") || WRITING_RPC.test(url));
+    if (write) {
+      return Promise.resolve(new Response("[]", { status: 201, headers: { "Content-Type": "application/json" } }));
+    }
+    return sharedFetch(input, init);
+  };
+}
 const SUPABASE_KEY = "sb_publishable_G6unWGHkbOkjAaRHhaq_8Q_j-1T4jA8";
 const ARCHIVE_KEY = "hexfield.archive.v1";
 const ARCHIVE_CAP = 500;
@@ -31607,7 +31656,7 @@ function recordVisualVote(liked) {
   if (scene?.forms) variations[formVoteWord(scene.forms.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   // A kept painting's things are remembered as forms worth starting from.
   if (liked && scene?.items && !(scene.votes || plan.votes)?.kept) {
-    for (const item of scene.items) if (item.entry.kind === "subject" && !item.lettering) rememberForm(item, 0.02);
+    for (const item of scene.items) if (item.entry.kind === "subject" && !item.lettering) rememberForm(item, 0.02, "keep");
   }
   if (!Object.keys(variations).length) return;
   const votes = scene?.votes || (plan.votes ||= { kept: false, rejected: false });
@@ -32987,21 +33036,100 @@ async function judgeThings(scene, plan) {
  * the pose, the drawing style and the genes, a few per word, in this
  * browser. New paintings often start from one and mutate away from it. */
 const FORM_MEMORY_KEY = "hexfield.formMemory.v1";
+const FORM_MEMORY_PENDING_KEY = "hexfield.formMemoryPending.v1";
 const FORM_MEMORY_KEPT = 6;
 let formMemoryCache = null;
-function formMemory() {
+// Everyone's forms (hexfield_form_memory_top), pulled at connect.
+let sharedFormMemory = {};
+let formMemoryPending = null;
+let formMemoryFlushing = false;
+
+function localFormMemory() {
   if (formMemoryCache) return formMemoryCache;
   try { formMemoryCache = JSON.parse(localStorage.getItem(FORM_MEMORY_KEY) || "{}") || {}; } catch { formMemoryCache = {}; }
   return formMemoryCache;
 }
-function rememberForm(item, score) {
+
+/* What a new painting may start from: this visitor's own forms first, then
+ * everyone's - a cat one person kept can turn up in another person's
+ * painting. */
+function formMemory() {
+  const own = localFormMemory();
+  const out = {};
+  for (const word of new Set([...Object.keys(own), ...Object.keys(sharedFormMemory)])) {
+    const seen = new Set();
+    out[word] = [...(own[word] || []), ...(sharedFormMemory[word] || [])].filter((form) => {
+      const key = form.style + "|" + form.variant + "|" + form.genes?.seed;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, FORM_MEMORY_KEPT * 2);
+  }
+  return out;
+}
+
+function readFormPending() {
+  if (formMemoryPending) return formMemoryPending;
+  try { formMemoryPending = JSON.parse(localStorage.getItem(FORM_MEMORY_PENDING_KEY) || "[]") || []; } catch { formMemoryPending = []; }
+  return formMemoryPending;
+}
+function writeFormPending() {
+  try { localStorage.setItem(FORM_MEMORY_PENDING_KEY, JSON.stringify(readFormPending().slice(-40))); } catch { /* memory only */ }
+}
+
+function rememberForm(item, score, source = "adopt") {
   if (!item?.form || !item.key) return;
-  const memory = formMemory();
+  const memory = localFormMemory();
   const { style, warp, features, stretch, lean, facets, smooth, jitter, seed } = item.form;
   const entry = { variant: item.entry.variantIndex || 0, style, genes: { warp, features, stretch, lean, facets, smooth, jitter, seed },
-    score: +Number(score).toFixed(4), at: Date.now() };
+    score: +Math.max(-1, Math.min(1, Number(score) || 0)).toFixed(4), at: Date.now(), source };
   memory[item.key] = [...(memory[item.key] || []), entry].sort((a, b) => b.at - a.at).slice(0, FORM_MEMORY_KEPT);
   try { localStorage.setItem(FORM_MEMORY_KEY, JSON.stringify(memory)); } catch { /* memory only */ }
+  // ...and to the shared memory, for everyone's paintings.
+  if (/^[a-z]{1,24}$/.test(item.key) && /^[a-z]{1,16}$/.test(String(style))) {
+    readFormPending().push({ word: item.key, variant: entry.variant, style, genes: entry.genes, score: entry.score, source });
+    writeFormPending();
+    flushFormMemory();
+  }
+}
+
+async function flushFormMemory() {
+  const pending = readFormPending();
+  if (formMemoryFlushing || !pending.length) return;
+  formMemoryFlushing = true;
+  const batch = pending.slice(0, 20);
+  try {
+    const session = await ensureTasteSession();
+    const res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_form_memory", {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token,
+        "Content-Type": "application/json", Prefer: "return=minimal",
+      },
+      body: JSON.stringify(batch),
+    });
+    if (res.ok) {
+      formMemoryPending = readFormPending().slice(batch.length);
+      writeFormPending();
+    }
+  } catch {
+    // Kept in localStorage; the next connection sends it.
+  } finally {
+    formMemoryFlushing = false;
+  }
+}
+
+async function pullFormMemory() {
+  const session = await ensureTasteSession();
+  const res = await fetch(SUPABASE_URL + "/rest/v1/rpc/hexfield_form_memory_top", {
+    method: "POST",
+    headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token, "Content-Type": "application/json" },
+    body: "{}",
+  });
+  if (!res.ok) return;
+  const body = await res.json();
+  if (body && typeof body === "object" && !Array.isArray(body)) sharedFormMemory = body;
+  flushFormMemory();
 }
 
 /* The outline as lines a hand would draw: edge pixels chained into
