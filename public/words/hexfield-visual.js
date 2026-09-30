@@ -1384,16 +1384,44 @@
    * where the earlier thing is relative to the later one - "trees under the
    * sun" puts the sun above the trees, "a cat on a chair" puts the chair
    * under the cat, "a bird in a tree" puts the tree around the bird (and
-   * draws it first). Anything else takes the other third. */
-  function layout(scene, W, H, rng, fx = null) {
+   * draws it first). Anything else takes the other third.
+   *
+   * `persp` (hexfield-craft.js, PERSPECTIVES) is where the viewer stands:
+   *   horizon    eye level as a fraction of the height (null: the places decide)
+   *   ground     how far below the horizon the nearest things stand (0..1)
+   *   depth      how far back things after the first are set; further back is
+   *              higher, smaller and nearer the vanishing point
+   *   vanishX    where the lines of the ground meet, across the width
+   *   iso        parallel projection: further back is up and across, not smaller
+   *   hierarchy  size by importance: the first thing large, the others small
+   *   scale      the first thing's size (a low view makes it tower)
+   *   keystone   top width over bottom width of standing things (< 1: seen
+   *              from below; > 1: from above)
+   *   aerial     distant things fade toward the air
+   * Places with a horizon are re-drawn to the eye level; their shapes keep
+   * their order above and below it. */
+  function layout(scene, W, H, rng, fx = null, persp = null) {
     const items = [];
     let horizon = null;
+    const eye = persp && Number.isFinite(persp.horizon) ? persp.horizon : null;
     for (const s of scene.settings) {
       const [rx, ry, rw, rh] = s.entry.region;
-      items.push({ ...s, box: { x: rx * W, y: ry * H, w: rw * W, h: rh * H }, alpha: s.entry.overlay ? 0.55 : 0.8 });
-      if (Number.isFinite(s.entry.horizon) && !s.entry.overlay) horizon = Math.max(horizon ?? 0, s.entry.horizon);
+      const h0 = s.entry.horizon;
+      let y0 = ry, y1 = ry + rh;
+      if (eye != null && Number.isFinite(h0) && !s.entry.overlay) {
+        const map = (y) => y <= h0 ? y * eye / h0 : eye + (y - h0) * (1 - eye) / Math.max(0.01, 1 - h0);
+        y0 = map(y0); y1 = map(y1);
+      }
+      items.push({ ...s, box: { x: rx * W, y: y0 * H, w: rw * W, h: (y1 - y0) * H }, alpha: s.entry.overlay ? 0.55 : 0.8 });
+      if (Number.isFinite(h0) && !s.entry.overlay) horizon = Math.max(horizon ?? 0, eye ?? h0);
     }
-    const groundY = (horizon != null ? horizon + (1 - horizon) * 0.62 : 0.92) * H;
+    if (horizon == null && eye != null) horizon = eye;
+    const groundShare = persp && Number.isFinite(persp.ground) ? persp.ground : 0.62;
+    const groundY = (horizon != null ? horizon + (1 - horizon) * groundShare : 0.92) * H;
+    const horizonY = (horizon ?? 0.62) * H;
+    const depthK = Number(persp?.depth) || 0, iso = Number(persp?.iso) || 0;
+    const vanishX = (Number.isFinite(persp?.vanishX) ? persp.vanishX : 0.5) * W;
+    const isoDir = fx != null && fx > 0.5 ? -1 : 1;
     const skyY = (horizon != null ? horizon * 0.42 : 0.26) * H;
     const mainX = Number.isFinite(fx) ? fx : (rng() < 0.5 ? 1 / 3 : 2 / 3);
     const placed = [];
@@ -1417,6 +1445,10 @@
       else if (anchor === "centre") bottom = H * 0.5 + h / 2;
       else bottom = groundY;
       const inside = s.within && items.find((it) => it.key === s.within);
+      // Size by importance: the first thing large, the rest small.
+      const importance = persp?.hierarchy ? (main ? 1 + 0.5 * persp.hierarchy : 1 - 0.45 * persp.hierarchy) : 1;
+      const towering = main && Number(persp?.scale) > 0 ? persp.scale : 1;
+      const standing = anchor !== "sky" && anchor !== "centre";
       if (inside) {
         const r = inside.box;
         bottom = Math.min(r.y + r.h * 0.92, Math.max(r.y + h * 1.05, r.y + r.h * 0.5 + h / 2));
@@ -1445,9 +1477,30 @@
           else y = bottom + (rng() - 0.5) * h * 0.08;
           k = 0.7 + rng() * 0.5;
         }
-        const bw = w * k * fit, bh = h * k * fit;
+        let bw = w * k * fit * importance * towering, bh = h * k * fit * importance * towering;
+        /* Set back in depth: the first thing stands in front; the others (and
+         * copies, spread through the depth) further back - smaller, higher
+         * and toward the vanishing point, or, isometric, up and across. */
+        let depth = 0;
+        if ((depthK || iso) && standing && !inside && !(before && s.relation)) {
+          depth = main && copies === 1 ? 0.05 : copies > 1 ? 0.1 + 0.7 * (c / (copies - 1)) : 0.3 + rng() * 0.45;
+          if (iso) {
+            x += depth * 0.4 * W * isoDir;
+            y -= depth * (y - horizonY) * 0.55;
+          } else {
+            const sc = Math.max(0.22, 1 - depth * depthK);
+            y = horizonY + (y - horizonY) * sc;
+            x = vanishX + (x - vanishX) * sc;
+            bw *= sc; bh *= sc;
+          }
+        }
+        // A towering thing still keeps its top on the canvas.
+        const room = Math.min(H - bh * 0.02, y) - H * 0.02;
+        if (bh > room && room > 0) { bw *= room / bh; bh = room; }
         const box = { x: x - bw / 2, y: Math.min(H - bh * 0.02, y) - bh, w: bw, h: bh };
-        const item = { ...s, box, alpha: 1, z };
+        const item = { ...s, box, alpha: 1, z, depth };
+        if (persp?.aerial && depth) item.aerial = Math.min(0.7, depth * persp.aerial);
+        if (persp?.keystone && persp.keystone !== 1 && standing) item.keystone = persp.keystone;
         placed.push(item);
         items.push(item);
       }
@@ -1462,13 +1515,18 @@
         }
       }
     });
-    // Containers first, so what is in them is painted over them.
-    items.sort((a, b) => (a.entry.kind === "setting" ? -2 : a.z || 0) - (b.entry.kind === "setting" ? -2 : b.z || 0));
+    // Containers first, so what is in them is painted over them; and further
+    // back before nearer, so nearer things overlap them.
+    items.sort((a, b) => (a.entry.kind === "setting" ? -2 : a.z || 0) - (b.entry.kind === "setting" ? -2 : b.z || 0) ||
+      (b.depth || 0) - (a.depth || 0));
     const first = placed[0];
     const focus = first
       ? { fx: (first.box.x + first.box.w / 2) / W, fy: (first.box.y + first.box.h / 2) / H }
       : null;
-    return { items, focus, horizon };
+    const view = persp && (depthK || iso || persp.lines) ? {
+      horizon: horizonY, vanish: [vanishX, horizonY], lines: Number(persp.lines) || 0, iso, isoDir, ground: groundY,
+    } : null;
+    return { items, focus, horizon, view };
   }
 
   /* ── Drawing ──────────────────────────────────────────────────────────── */
@@ -2048,16 +2106,27 @@
       ctx.restore();
       shadow.width = 0;
     }
-    // An extruded body: the face's own colours, darkened, stepped back and
-    // away from the light.
+    /* An extruded body: the face's own colours, darkened, stepped back. In a
+     * one-point view it recedes toward the vanishing point, shrinking as it
+     * goes; isometric, along the fixed 30-degree depth axis; otherwise up and
+     * away from the light. */
     if (dims.depth > 0 && anchor !== "sky") {
       const side = tintedCopy(layer, W, H, "rgba(10, 12, 26, 0.5)");
-      const reach = dims.depth * Math.min(b.w, b.h) * 0.32;
-      const ex = -Math.sign(sx || 1) * 0.72, ey = -0.62;
       const steps = Math.max(4, Math.round(dims.depth * 14));
       ctx.save();
       ctx.globalAlpha = item.alpha ?? 1;
-      for (let i = steps; i >= 1; i--) ctx.drawImage(side, ex * reach * i / steps, ey * reach * i / steps);
+      if (dims.vanish && !dims.iso) {
+        const [vx, vy] = dims.vanish;
+        for (let i = steps; i >= 1; i--) {
+          const k = 1 - dims.depth * 0.3 * (i / steps);
+          ctx.setTransform(k, 0, 0, k, vx * (1 - k), vy * (1 - k));
+          ctx.drawImage(side, 0, 0);
+        }
+      } else {
+        const reach = dims.depth * Math.min(b.w, b.h) * 0.32;
+        const ex = dims.iso ? 0.87 * (dims.isoDir || 1) : -Math.sign(sx || 1) * 0.72, ey = dims.iso ? -0.5 : -0.62;
+        for (let i = steps; i >= 1; i--) ctx.drawImage(side, ex * reach * i / steps, ey * reach * i / steps);
+      }
       ctx.restore();
       side.width = 0;
     }
@@ -2077,11 +2146,60 @@
     }
   }
 
+  /* ── Perspective ───────────────────────────────────────────────────────
+   * The ground made to recede: lines that meet at the vanishing point and
+   * cross-lines that close up toward the horizon (or, isometric, a diamond
+   * grid of parallels). Faint - a floor, furrows, paving, not a diagram. */
+  function groundCues(ctx, W, H, view) {
+    if (!view?.lines) return;
+    // Only the ground: never over the sky.
+    const top = Math.max(0, view.horizon);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, top, W, H - top);
+    ctx.clip();
+    ctx.strokeStyle = `rgba(20, 18, 32, ${0.2 * view.lines})`;
+    ctx.lineWidth = Math.max(1, Math.min(W, H) / 240);
+    ctx.beginPath();
+    if (view.iso) {
+      const c = Math.cos(Math.PI / 6), sn = Math.sin(Math.PI / 6), L = W + H * 3, step = Math.max(W, H) / 9;
+      for (let x0 = -L; x0 < W + L; x0 += step) {
+        ctx.moveTo(x0, H); ctx.lineTo(x0 + c * L, H - sn * L);
+        ctx.moveTo(x0, H); ctx.lineTo(x0 - c * L, H - sn * L);
+      }
+    } else {
+      const [vx, vy] = view.vanish;
+      for (let i = -7; i <= 7; i++) {
+        const xb = W / 2 + i * W * 0.16;
+        ctx.moveTo(vx, vy); ctx.lineTo(vx + (xb - vx) * 3, vy + (H - vy) * 3);
+      }
+      for (let k = 1; k <= 8; k++) {
+        const y = vy + (H - vy) * Math.pow(k / 8, 2);
+        ctx.moveTo(0, y); ctx.lineTo(W, y);
+      }
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /* A standing thing seen from below narrows toward its top, from above
+   * toward its foot: drawn in thin rows, each scaled about the thing's axis. */
+  function drawKeystoned(ctx, layer, box, keystone, W) {
+    const cx = box.x + box.w / 2;
+    const y0 = Math.max(0, Math.floor(box.y)), y1 = Math.ceil(box.y + box.h);
+    for (let y = y0; y < y1; y += 2) {
+      const t = Math.min(1, Math.max(0, (y - box.y) / Math.max(1, box.h)));
+      const f = keystone + (1 - keystone) * t;
+      ctx.drawImage(layer, 0, y, W, 2, cx - cx * f, y, W * f, 2);
+    }
+  }
+
   /* Paint laid-out items onto ctx (transparent where nothing is), each on its
    * own layer so a cut-out (the moon's crescent, a bridge's arch) removes only
    * that thing. `only` limits it to "subject" or "setting"; `dims` gives the
-   * subjects their solidity (see Dimensionality). */
-  function paint(ctx, W, H, items, rng, only = null, dims = null) {
+   * subjects their solidity (see Dimensionality); `view` is the perspective
+   * the layout was made in (ground lines, keystones, aerial fade). */
+  function paint(ctx, W, H, items, rng, only = null, dims = null, view = null) {
     const layer = document.createElement("canvas");
     layer.width = W; layer.height = H;
     const lctx = layer.getContext("2d");
@@ -2089,17 +2207,30 @@
     // not the others are painted with it.
     const seeds = items.map(() => Math.floor(rng() * 4294967296) >>> 0);
     const solid = dims && (dims.model > 0 || dims.cast > 0 || dims.depth > 0);
+    // The ground's lines go down once the places are painted, under the things.
+    let cued = !view || only === "subject";
     for (let index = 0; index < items.length; index++) {
       const item = items[index];
+      if (!cued && item.entry.kind !== "setting") { groundCues(ctx, W, H, view); cued = true; }
       if (only && item.entry.kind !== only) continue;
       lctx.clearRect(0, 0, W, H);
       paintItem(lctx, item, seededRandom(seeds[index]));
       if (solid && item.entry.kind === "subject" && !item.lettering) dimensionItem(ctx, layer, lctx, item, W, H, dims);
+      // Distance: far things fade toward the air.
+      if (item.aerial) {
+        lctx.save();
+        lctx.globalCompositeOperation = "source-atop";
+        lctx.fillStyle = `rgba(196, 208, 226, ${item.aerial})`;
+        lctx.fillRect(0, 0, W, H);
+        lctx.restore();
+      }
       ctx.save();
       ctx.globalAlpha = item.alpha ?? 1;
-      ctx.drawImage(layer, 0, 0);
+      if (item.keystone && item.keystone !== 1) drawKeystoned(ctx, layer, item.box, item.keystone, W);
+      else ctx.drawImage(layer, 0, 0);
       ctx.restore();
     }
+    if (!cued) groundCues(ctx, W, H, view);
     layer.width = 0; layer.height = 0;
   }
 

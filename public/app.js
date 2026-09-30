@@ -25654,8 +25654,8 @@ function updateWordPaints() {
   const letters = seedText();
   if (letters) parts.unshift("the letters “" + letters.slice(0, 24) + "”");
   const manner = planManner();
-  const dims = strokePainter.plan?.dims;
-  line.textContent = (manner ? "manner: " + manner.name + (dims ? " · " + dims.name : "") + " · " : "") +
+  const dims = strokePainter.plan?.dims, persp = strokePainter.plan?.scene?.perspective;
+  line.textContent = (manner ? "manner: " + manner.name + (dims ? " · " + dims.name : "") + (persp ? " · " + persp.name : "") + " · " : "") +
     (parts.length ? "paints: " + parts.join(" · ") : "paints: no things it knows yet") +
     (mood.length ? " · mood: " + mood.slice(0, 4).join(", ") : "") +
     (unknown.length ? " · no picture yet: " + unknown.slice(0, 4).join(", ") : "");
@@ -31210,7 +31210,7 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
   plan.lightAngle = -Math.PI / 2 + (lightRng() < 0.5 ? -1 : 1) * (0.35 + lightRng() * 0.75);
   /* Things the words name (visual dictionary, words/hexfield-visual.js): the
    * first one takes the focus, and the painting is built around it. */
-  const scene = planScene(params, width, height, fx, drawSeed);
+  const scene = planScene(params, width, height, fx, drawSeed, ref);
   if (scene?.focus) { plan.fx = scene.focus.fx; plan.fy = scene.focus.fy; }
   plan.scene = scene;
   const { Lf, Lb } = planLuminanceStats(ref, width, height, plan);
@@ -31228,7 +31228,74 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
 const SCENE_STRENGTH = 0.85;
 const SCENE_MIN_CONTRAST = 48;
 
-function planScene(params, width, height, fx, drawSeed) {
+/* One choice on one axis (manner, dimensionality, perspective). Each option
+ * gets a prior - its words' lean, what votes have taught it and a little
+ * chance - and the few with the best priors are rendered small and scored by
+ * taste, which moves them up or down. Rendering every option cost a phone
+ * most of a second at the start of every painting; the rest keep their prior
+ * and can still win. Returns the options, best first. */
+function chooseByTaste(keys, { lean, learned, rng, taste, tasted = 3 }) {
+  const scores = keys.map((key) => ({ key, lean: lean(key), learned: learned(key), chance: (rng() - 0.5) * 1.1, taste: null }));
+  for (const x of scores) x.prior = 0.8 * x.learned + x.lean + x.chance;
+  const ranked = scores.slice().sort((a, b) => b.prior - a.prior);
+  for (let i = 0; i < Math.min(tasted, ranked.length); i++) ranked[i].taste = taste(ranked[i].key);
+  const scored = scores.filter((x) => x.taste !== null);
+  const mean = scored.reduce((sum, x) => sum + x.taste, 0) / Math.max(1, scored.length);
+  for (const x of scores) x.score = x.prior + (x.taste !== null ? 8 * (x.taste - mean) : 0);
+  return scores.sort((a, b) => b.score - a.score);
+}
+
+const summariseChoice = (scores) => scores.map((x) => ({ key: x.key, score: +x.score.toFixed(3),
+  taste: x.taste === null ? null : +x.taste.toFixed(4), lean: +x.lean.toFixed(2), learned: +x.learned.toFixed(2) }));
+
+const perspVoteWord = (key) => "persp" + String(key).replace(/[^a-z]/g, "");
+
+/* A laid-out view at a smaller size (for scoring): boxes and the view's
+ * points scaled together. */
+function scaledLayout(laid, kx, ky) {
+  const items = laid.items.filter((item) => !item.lettering)
+    .map((item) => ({ ...item, box: { x: item.box.x * kx, y: item.box.y * ky, w: item.box.w * kx, h: item.box.h * ky } }));
+  const v = laid.view;
+  const view = v ? { ...v, horizon: v.horizon * ky, ground: v.ground * ky, vanish: [v.vanish[0] * kx, v.vanish[1] * ky] } : null;
+  return { items, view };
+}
+
+/* Where the viewer stands. The things the words name are laid out in each
+ * perspective, painted small over a small copy of the picture and scored by
+ * taste; words, votes and a little chance are added, as for the manner. */
+function chooseScenePerspective(read, width, height, ref, layoutFor, params, drawSeed) {
+  const Craft = globalThis.HexfieldCraft, Visual = globalThis.HexfieldVisual;
+  const rng = mulberry32(((Number(drawSeed) || 0) ^ 0x9e75) >>> 0);
+  const vanishX = 0.5 + (rng() - 0.5) * 0.36;
+  const { pixels: base, sw, sh } = smallCopy(ref, width, height);
+  const small = paintBuffer(sw, sh), sctx = small.getContext("2d", { willReadFrequently: true });
+  const layer = paintBuffer(sw, sh), lctx = layer.getContext("2d");
+  const leans = Craft.perspectiveLeans(params?.__hexfieldWords?.text || "", params?.__hexfieldWords?.axes || {});
+  const perspOf = (key) => {
+    const persp = Craft.perspective(key);
+    if (Number(persp.settings.depth) > 0) persp.settings.vanishX = vanishX;
+    return persp;
+  };
+  const scores = chooseByTaste(Craft.PERSPECTIVE_KEYS, {
+    rng, lean: (key) => leans[key] || 0, learned: (key) => visualLearnedChoice(perspVoteWord(key)),
+    taste: (key) => {
+      const { items, view: sview } = scaledLayout(layoutFor(perspOf(key).settings), sw / width, sh / height);
+      sctx.putImageData(new ImageData(new Uint8ClampedArray(base), sw, sh), 0, 0);
+      lctx.clearRect(0, 0, sw, sh);
+      Visual.paint(lctx, sw, sh, items, mulberry32(0x7e57a), null, null, sview);
+      sctx.globalAlpha = SCENE_STRENGTH;
+      sctx.drawImage(layer, 0, 0);
+      sctx.globalAlpha = 1;
+      return tastePrediction(tasteFeatures(sctx, sw, sh, signature(sctx, sw, sh)));
+    },
+  });
+  small.width = 0; layer.width = 0;
+  const chosen = perspOf(scores[0].key);
+  chosen.scores = summariseChoice(scores);
+  return chosen;
+}
+
+function planScene(params, width, height, fx, drawSeed, ref = null) {
   const Visual = globalThis.HexfieldVisual;
   const text = params?.__hexfieldWords?.text || "";
   const letters = seedText().replace(/\s+/g, " ").slice(0, 24);
@@ -31244,13 +31311,20 @@ function planScene(params, width, height, fx, drawSeed) {
     const v = variations[item.key] || (variations[item.key] = sampleVisualVariation(item.key, rng));
     applyVisualVariation(item, v);
   }
-  const laid = Visual.layout(read, width, height, rng, width >= height ? fx : null);
+  // One layout seed, so every perspective lays out the same things the same way.
+  const layoutSeed = Math.floor(rng() * 4294967296) >>> 0;
+  const layoutFor = (settings) => Visual.layout(read, width, height, mulberry32(layoutSeed), width >= height ? fx : null, settings);
+  const things = read.subjects.length + read.settings.filter((s) => !s.implied).length;
+  const persp = things && ref && globalThis.HexfieldCraft?.perspective && ref.length === width * height * 4
+    ? chooseScenePerspective(read, width, height, ref, layoutFor, params, drawSeed) : null;
+  const laid = layoutFor(persp?.settings || null);
   const literal = Object.values(variations).reduce((sum, v) => sum + v.literal, 0) / Math.max(1, Object.keys(variations).length);
   const scene = {
     words: read.words, items: laid.items, focus: laid.focus, width, height, layer: null,
     variations, votes: { kept: false, rejected: false },
     strength: Math.min(0.95, SCENE_STRENGTH * (1 + 0.15 * literal)),
     lettering: null, sharp: null,
+    perspective: persp, view: laid.view || null,
   };
   if (letters) planLettering(scene, letters, params, read, laid, rng);
   return scene;
@@ -31432,6 +31506,7 @@ function recordVisualVote(liked) {
   const variations = { ...(scene?.variations || {}) };
   if (plan?.manner) variations[mannerVoteWord(plan.manner.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.dims) variations[dimsVoteWord(plan.dims.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  if (scene?.perspective) variations[perspVoteWord(scene.perspective.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (!Object.keys(variations).length) return;
   const votes = scene?.votes || (plan.votes ||= { kept: false, rejected: false });
   const flag = liked ? "kept" : "rejected";
@@ -32104,7 +32179,7 @@ function planSceneLayer(scene) {
   // The same seed both times, so the subjects' coverage matches the full layer.
   const draw = (only) => {
     ctx.clearRect(0, 0, width, height);
-    globalThis.HexfieldVisual.paint(ctx, width, height, scene.items, mulberry32(0x7e57a), only, sceneDims(scene));
+    globalThis.HexfieldVisual.paint(ctx, width, height, scene.items, mulberry32(0x7e57a), only, sceneDims(scene), scene.view);
     if (scene.lettering && only !== "setting") {
       if (!only) chooseLetteringValue(ctx, scene);
       drawSceneLettering(ctx, scene.lettering);
@@ -32692,7 +32767,11 @@ const dimsVoteWord = (key) => "dims" + String(key).replace(/[^a-z]/g, "");
 /* The scene painted as this painting sees solidity: its dimensionality's
  * settings with the painting's one light. */
 function sceneDims(scene) {
-  return scene?.dims ? { ...scene.dims.settings, light: scene.dimsLight } : null;
+  if (!scene?.dims) return null;
+  const view = scene.view;
+  // Solid things recede into the picture's own space.
+  return { ...scene.dims.settings, light: scene.dimsLight,
+    vanish: view && !view.iso ? view.vanish : null, iso: view?.iso || 0, isoDir: view?.isoDir || 1 };
 }
 
 /* How solid this painting's things are - flat, shaded or solid. The scene is
@@ -32706,29 +32785,26 @@ function choosePlanDims(plan, composed, width, height, params) {
   if (!Craft?.dimension || !Visual || !things.length) return null;
   const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0xd1e5) >>> 0);
   const { pixels: base, sw, sh } = smallCopy(composed, width, height);
-  const kx = sw / width, ky = sh / height;
-  const items = scene.items.filter((item) => !item.lettering)
-    .map((item) => ({ ...item, box: { x: item.box.x * kx, y: item.box.y * ky, w: item.box.w * kx, h: item.box.h * ky } }));
+  const { items, view: sview } = scaledLayout({ items: scene.items, view: scene.view }, sw / width, sh / height);
   const small = paintBuffer(sw, sh), sctx = small.getContext("2d", { willReadFrequently: true });
   const layer = paintBuffer(sw, sh), lctx = layer.getContext("2d");
   const leans = Craft.dimensionLeans(params?.__hexfieldWords?.text || "", params?.__hexfieldWords?.axes || {});
-  const scores = [];
-  for (const key of Craft.DIMENSION_KEYS) {
-    const dims = Craft.dimension(key);
-    sctx.putImageData(new ImageData(new Uint8ClampedArray(base), sw, sh), 0, 0);
-    lctx.clearRect(0, 0, sw, sh);
-    Visual.paint(lctx, sw, sh, items, mulberry32(0x7e57a), null, { ...dims.settings, light: plan.lightAngle });
-    sctx.globalAlpha = scene.strength || SCENE_STRENGTH;
-    sctx.drawImage(layer, 0, 0);
-    sctx.globalAlpha = 1;
-    const taste = tastePrediction(tasteFeatures(sctx, sw, sh, signature(sctx, sw, sh)));
-    scores.push({ key, taste, learned: visualLearnedChoice(dimsVoteWord(key)), lean: leans[key] || 0, chance: (rng() - 0.5) * 1.1 });
-  }
+  const scores = chooseByTaste(Craft.DIMENSION_KEYS, {
+    rng, tasted: 2, lean: (key) => leans[key] || 0, learned: (key) => visualLearnedChoice(dimsVoteWord(key)),
+    taste: (key) => {
+      const dims = Craft.dimension(key);
+      sctx.putImageData(new ImageData(new Uint8ClampedArray(base), sw, sh), 0, 0);
+      lctx.clearRect(0, 0, sw, sh);
+      Visual.paint(lctx, sw, sh, items, mulberry32(0x7e57a), null, { ...dims.settings, light: plan.lightAngle,
+        vanish: sview && !sview.iso ? sview.vanish : null, iso: sview?.iso || 0, isoDir: sview?.isoDir || 1 }, sview);
+      sctx.globalAlpha = scene.strength || SCENE_STRENGTH;
+      sctx.drawImage(layer, 0, 0);
+      sctx.globalAlpha = 1;
+      return tastePrediction(tasteFeatures(sctx, sw, sh, signature(sctx, sw, sh)));
+    },
+  });
   small.width = 0; layer.width = 0;
-  const mean = scores.reduce((sum, x) => sum + x.taste, 0) / scores.length;
-  for (const x of scores) x.score = 8 * (x.taste - mean) + 0.8 * x.learned + x.lean + x.chance;
-  scores.sort((a, b) => b.score - a.score);
-  plan.dimsScores = scores.map((x) => ({ key: x.key, score: +x.score.toFixed(3), taste: +x.taste.toFixed(4), lean: +x.lean.toFixed(2) }));
+  plan.dimsScores = summariseChoice(scores);
   return Craft.dimension(scores[0].key);
 }
 
@@ -32744,22 +32820,18 @@ function choosePlanManner(plan, composed, width, height, params) {
   const small = paintBuffer(sw, sh);
   const sctx = small.getContext("2d", { willReadFrequently: true });
   const leans = Craft.wordLeans(params?.__hexfieldWords?.text || "", params?.__hexfieldWords?.axes || {});
-  const scores = [];
-  for (const key of Craft.KEYS) {
-    const manner = Craft.manner(key);
-    // A throwaway plan at the small size: its own palette, no scene layer.
-    const probe = { ...plan, palette: null, manner, scene: null, contourInk: null };
-    const pixels = finishPlanReference(new Uint8ClampedArray(base), sw, sh, probe);
-    sctx.putImageData(new ImageData(pixels, sw, sh), 0, 0);
-    const taste = tastePrediction(tasteFeatures(sctx, sw, sh, signature(sctx, sw, sh)));
-    const learned = visualLearnedChoice(mannerVoteWord(key));
-    scores.push({ key, taste, learned, lean: leans[key] || 0, chance: (rng() - 0.5) * 1.1 });
-  }
+  const scores = chooseByTaste(Craft.KEYS, {
+    rng, lean: (key) => leans[key] || 0, learned: (key) => visualLearnedChoice(mannerVoteWord(key)),
+    taste: (key) => {
+      // A throwaway plan at the small size: its own palette, no scene layer.
+      const probe = { ...plan, palette: null, manner: Craft.manner(key), scene: null, contourInk: null };
+      const pixels = finishPlanReference(new Uint8ClampedArray(base), sw, sh, probe);
+      sctx.putImageData(new ImageData(pixels, sw, sh), 0, 0);
+      return tastePrediction(tasteFeatures(sctx, sw, sh, signature(sctx, sw, sh)));
+    },
+  });
   small.width = 0; small.height = 0;
-  const mean = scores.reduce((sum, s) => sum + s.taste, 0) / scores.length;
-  for (const s of scores) s.score = 8 * (s.taste - mean) + 0.8 * s.learned + s.lean + s.chance;
-  scores.sort((a, b) => b.score - a.score);
-  plan.mannerScores = scores.map((s) => ({ key: s.key, score: +s.score.toFixed(3), taste: +s.taste.toFixed(4), lean: +s.lean.toFixed(2), learned: +s.learned.toFixed(2) }));
+  plan.mannerScores = summariseChoice(scores);
   return Craft.manner(scores[0].key);
 }
 
@@ -32790,7 +32862,8 @@ function prepareStrokeReference(ref, width, height, enhanced = enhanceStrokeRefe
   const composed = applyPlanScene(ground, width, height, plan);
   if (choosing) {
     plan.manner = choosePlanManner(plan, composed, width, height, source?.params);
-    if (plan.style) plan.style.label = plan.manner.name + (plan.dims ? " · " + plan.dims.name : "") + " · " + plan.style.label;
+    if (plan.style) plan.style.label = plan.manner.name + (plan.dims ? " · " + plan.dims.name : "") +
+      (plan.scene?.perspective ? " · " + plan.scene.perspective.name : "") + " · " + plan.style.label;
     updateWordPaints();
   }
   return finishPlanReference(composed, width, height, plan);
@@ -33405,8 +33478,13 @@ function continueMasterDetail(result) {
   if (advanceSceneLettering(strokePainter.plan?.scene)) rebuildSceneForLettering(strokePainter.plan.scene);
   // A changed master reopens one coarser layer, so what changed is repainted
   // as a passage rather than stippled in with the finest brush.
+  // (Not in a painting of named things: the scene is most of its reference
+  // and stays put, so a new master mostly moves the ground's texture - and a
+  // big brush reopened over small, far-off things wiped them out, again and
+  // again, before the fine brushes ever reached them.)
   if (strokePainter.sourceParams !== source.params) {
-    if (strokePainter.sourceParams) strokePainter.layer = Math.max(0, strokePainter.layer - 1);
+    const sceneHeld = strokePainter.plan?.scene?.items?.some((item) => item.entry.kind === "subject");
+    if (strokePainter.sourceParams && !sceneHeld) strokePainter.layer = Math.max(0, strokePainter.layer - 1);
     strokePainter.sourceParams = source.params;
   }
   // After a lettering change, once the reference has caught up, this pass is
