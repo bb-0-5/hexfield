@@ -25656,10 +25656,12 @@ function updateWordPaints() {
   const manner = planManner();
   const dims = strokePainter.plan?.dims, persp = strokePainter.plan?.scene?.perspective;
   const drawn = strokePainter.plan?.scene?.forms;
+  const own = Object.keys(strokePainter.plan?.adopted || {}).map((i) => strokePainter.plan.scene?.items?.[i]?.key).filter(Boolean);
   line.textContent = (manner ? "manner: " + manner.name + (dims ? " · " + dims.name : "") + (persp ? " · " + persp.name : "") +
     (drawn ? " · drawn " + drawn.name : "") + " · " : "") +
     (parts.length ? "paints: " + parts.join(" · ") : "paints: no things it knows yet") +
     (mood.length ? " · mood: " + mood.slice(0, 4).join(", ") : "") +
+    (own.length ? " · prefers its own: " + [...new Set(own)].join(", ") : "") +
     (unknown.length ? " · no picture yet: " + unknown.slice(0, 4).join(", ") : "");
 }
 
@@ -31284,18 +31286,32 @@ const formVoteWord = (key) => "form" + String(key).replace(/[^a-z]/g, "");
 function chooseSceneForms(read, width, height, ref, layoutFor, params, drawSeed) {
   const Craft = globalThis.HexfieldCraft, Visual = globalThis.HexfieldVisual;
   const rng = mulberry32(((Number(drawSeed) || 0) ^ 0xf0e3) >>> 0);
-  // Each thing's pose, once per painting.
+  // Each thing's pose, once per painting - often one it remembers liking.
+  const memory = formMemory();
   for (const s of read.subjects) {
     const base = s.entry.variantOf || s.entry;
     const count = (base.variants?.length || 0) + 1;
-    s.entry = Visual.entryVariant(base, Math.floor(rng() * count));
+    const remembered = memory[s.key];
+    s.remembered = remembered?.length && rng() < 0.55 ? remembered[Math.floor(rng() * remembered.length)] : null;
+    const variant = s.remembered ? Math.min(count - 1, s.remembered.variant || 0) : Math.floor(rng() * count);
+    s.entry = Visual.entryVariant(base, variant);
   }
   const seedOf = (key) => ((Number(drawSeed) || 0) ^ hashText("form|" + key)) >>> 0;
   const apply = (key) => {
     const formRng = mulberry32(seedOf(key));
-    for (const s of read.subjects) s.form = Visual.sampleForm(key, formRng);
+    for (const s of read.subjects) {
+      const fresh = Visual.sampleForm(key, formRng);
+      const genes = s.remembered?.style === key ? s.remembered.genes : null;
+      // From a remembered form, a step away: its genes, nudged.
+      s.form = genes ? { ...fresh, ...genes,
+        warp: Number(genes.warp) * (0.75 + formRng() * 0.5), features: Number(genes.features) * (0.92 + formRng() * 0.16),
+        stretch: Number(genes.stretch) * (0.94 + formRng() * 0.12), lean: Number(genes.lean) + (formRng() - 0.5) * 0.04,
+        seed: (Number(genes.seed) ^ Math.floor(formRng() * 0xffff)) >>> 0, parts: null } : fresh;
+    }
   };
   const leans = Craft?.formLeans ? Craft.formLeans(params?.__hexfieldWords?.text || "") : {};
+  // A remembered style leans that way.
+  for (const s of read.subjects) if (s.remembered?.style) leans[s.remembered.style] = (leans[s.remembered.style] || 0) + 0.35;
   let scores = null;
   if (ref && ref.length === width * height * 4) {
     const { pixels: base, sw, sh } = smallCopy(ref, width, height);
@@ -31584,6 +31600,10 @@ function recordVisualVote(liked) {
   if (plan?.dims) variations[dimsVoteWord(plan.dims.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (scene?.perspective) variations[perspVoteWord(scene.perspective.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (scene?.forms) variations[formVoteWord(scene.forms.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  // A kept painting's things are remembered as forms worth starting from.
+  if (liked && scene?.items && !(scene.votes || plan.votes)?.kept) {
+    for (const item of scene.items) if (item.entry.kind === "subject" && !item.lettering) rememberForm(item, 0.02);
+  }
   if (!Object.keys(variations).length) return;
   const votes = scene?.votes || (plan.votes ||= { kept: false, rejected: false });
   const flag = liked ? "kept" : "rejected";
@@ -32767,6 +32787,8 @@ function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0) {
     if (index < from || next < scene.items.length) return;
     if (strokes.length >= THING_BATCH) { next = index; return; }
     if (item.entry.kind !== "subject" || item.lettering) return;
+    // A thing the studio preferred as painted is left as it is.
+    if (strokePainter.plan?.adopted?.[index]) return;
     const mask = thingMask(scene, index, W, H);
     if (!mask || mask.area < 30) return;
     const inside = (x, y) => {
@@ -32879,6 +32901,102 @@ function paintThingStrokes(result, scene, pass) {
   }
   strokeLogBegin(current, W, H);
   return animateLoggedStrokes(result, strokes, animation);
+}
+
+/* ─── Its own references ───
+ * The reference is only a plan. Once the thing brush has painted a thing,
+ * the studio looks at both - its painted cat and the cat it was painting
+ * toward, the same crop at the same scale - and if its taste prefers the
+ * painting (and it reads as well), the painting becomes the reference there.
+ * From then on nothing drags that cat back toward the plan: the painter has
+ * decided its own is better. The form it drew is remembered too (FORM_MEMORY),
+ * so later cats can start from it. */
+const ADOPT_MARGIN = 0.003;
+
+function applyAdoptions(pixels, width, height, plan) {
+  const adopted = plan?.adopted;
+  if (!adopted) return pixels;
+  for (const a of Object.values(adopted)) {
+    if (a.W !== width || a.H !== height) continue;
+    for (let y = 0; y < a.h; y++) {
+      for (let x = 0; x < a.w; x++) {
+        const k = a.alpha[y * a.w + x];
+        if (k < 128) continue;
+        const t = Math.min(1, (k - 128) / 72), o = ((a.y0 + y) * width + a.x0 + x) * 4, c = (y * a.w + x) * 4;
+        pixels[o] += (a.pixels[c] - pixels[o]) * t;
+        pixels[o + 1] += (a.pixels[c + 1] - pixels[o + 1]) * t;
+        pixels[o + 2] += (a.pixels[c + 2] - pixels[o + 2]) * t;
+      }
+    }
+  }
+  return pixels;
+}
+
+function tasteOfCrop(pixels, w, h) {
+  const sw = Math.min(96, w), sh = Math.max(12, Math.round(sw * h / w));
+  const full = paintBuffer(w, h);
+  full.getContext("2d").putImageData(new ImageData(pixels, w, h), 0, 0);
+  const small = paintBuffer(sw, sh), ctx = small.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(full, 0, 0, sw, sh);
+  full.width = 0;
+  const features = tasteFeatures(ctx, sw, sh, signature(ctx, sw, sh));
+  small.width = 0;
+  return { taste: tastePrediction(features), legibility: Number(features.legibility) || 0 };
+}
+
+async function judgeThings(scene, plan) {
+  const W = view.width, H = view.height;
+  const ref = strokePainter.enhanced;
+  if (!ref || ref.length !== W * H * 4) return;
+  plan.adopted = plan.adopted || {};
+  plan.judged = [];
+  for (let index = 0; index < scene.items.length; index++) {
+    const item = scene.items[index];
+    if (item.entry.kind !== "subject" || item.lettering) continue;
+    const mask = item.brushMask;
+    if (!mask || mask.area < 200) continue;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (strokePainter.plan !== plan || activePaintAnimation) return;
+    const painted = vctx.getImageData(mask.x0, mask.y0, mask.w, mask.h).data;
+    const planned = new Uint8ClampedArray(mask.w * mask.h * 4);
+    for (let y = 0; y < mask.h; y++) {
+      const from = ((mask.y0 + y) * W + mask.x0) * 4;
+      planned.set(ref.subarray(from, from + mask.w * 4), y * mask.w * 4);
+    }
+    const mine = tasteOfCrop(new Uint8ClampedArray(painted), mask.w, mask.h);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const theirs = tasteOfCrop(planned, mask.w, mask.h);
+    const better = mine.taste > theirs.taste + ADOPT_MARGIN && mine.legibility >= theirs.legibility - 0.05;
+    plan.judged.push({ key: item.key, painted: +mine.taste.toFixed(4), planned: +theirs.taste.toFixed(4), adopted: better });
+    if (!better) continue;
+    plan.adopted[index] = { W, H, x0: mask.x0, y0: mask.y0, w: mask.w, h: mask.h, alpha: mask.alpha, pixels: new Uint8ClampedArray(painted) };
+    // At once, too: the prepared reference takes the painting from here on.
+    applyAdoptions(strokePainter.enhanced, W, H, { adopted: { [index]: plan.adopted[index] } });
+    rememberForm(item, mine.taste - theirs.taste);
+  }
+  updateWordPaints();
+}
+
+/* ─── Form memory ───
+ * Forms the studio preferred to its own reference, or that a person kept:
+ * the pose, the drawing style and the genes, a few per word, in this
+ * browser. New paintings often start from one and mutate away from it. */
+const FORM_MEMORY_KEY = "hexfield.formMemory.v1";
+const FORM_MEMORY_KEPT = 6;
+let formMemoryCache = null;
+function formMemory() {
+  if (formMemoryCache) return formMemoryCache;
+  try { formMemoryCache = JSON.parse(localStorage.getItem(FORM_MEMORY_KEY) || "{}") || {}; } catch { formMemoryCache = {}; }
+  return formMemoryCache;
+}
+function rememberForm(item, score) {
+  if (!item?.form || !item.key) return;
+  const memory = formMemory();
+  const { style, warp, features, stretch, lean, facets, smooth, jitter, seed } = item.form;
+  const entry = { variant: item.entry.variantIndex || 0, style, genes: { warp, features, stretch, lean, facets, smooth, jitter, seed },
+    score: +Number(score).toFixed(4), at: Date.now() };
+  memory[item.key] = [...(memory[item.key] || []), entry].sort((a, b) => b.at - a.at).slice(0, FORM_MEMORY_KEPT);
+  try { localStorage.setItem(FORM_MEMORY_KEY, JSON.stringify(memory)); } catch { /* memory only */ }
 }
 
 /* The outline as lines a hand would draw: edge pixels chained into
@@ -33010,7 +33128,8 @@ function finishPlanReference(composed, width, height, plan) {
   if (plan.contourInk && !plan.palette.some((p) => Math.hypot(p[0] - plan.contourInk[0], p[1] - plan.contourInk[1], p[2] - plan.contourInk[2]) < 30)) {
     plan.palette.push(plan.contourInk.slice());
   }
-  return pixels;
+  // Where the painter preferred its own painting, the painting is the plan.
+  return applyAdoptions(pixels, width, height, plan);
 }
 
 /* A small copy by block averages - cheap, and taste reads it the same. */
@@ -33813,6 +33932,12 @@ function continueMasterDetail(result) {
       if ((landed || !detailResult.paintStrokeCount) && (things.item || 0) >= scene.items.length) {
         things.pass++;
         things.item = 0;
+        // Every thing painted: does the studio prefer its painting to its plan?
+        if (things.pass > THING_SILHOUETTE && !things.judging) {
+          things.judging = true;
+          judgeThings(scene, plan).catch((error) => console.warn("judging things failed", error))
+            .finally(() => { things.judging = false; });
+        }
       } else if (!landed) {
         things.item = 0;
       }

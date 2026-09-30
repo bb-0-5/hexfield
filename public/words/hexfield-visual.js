@@ -1687,7 +1687,7 @@
   function entryVariant(entry, index) {
     const variants = entry?.variants || [];
     if (!index || !variants[index - 1]) return entry;
-    return { ...entry, ...variants[index - 1], variantOf: entry };
+    return { ...entry, ...variants[index - 1], variantOf: entry, variantIndex: index };
   }
 
   function shapePath(part, box) {
