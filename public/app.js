@@ -31287,15 +31287,20 @@ function chooseSceneForms(read, width, height, ref, layoutFor, params, drawSeed)
   const Craft = globalThis.HexfieldCraft, Visual = globalThis.HexfieldVisual;
   const rng = mulberry32(((Number(drawSeed) || 0) ^ 0xf0e3) >>> 0);
   // Each thing's pose, once per painting - often one it remembers liking.
+  // Words ask for a pose ("a dancer", "a sleeping dog"), and a thing on
+  // something sits if it can.
   const memory = formMemory();
-  for (const s of read.subjects) {
+  const words = (params?.__hexfieldWords?.text || "").toLowerCase().match(/[a-z]+/g) || [];
+  read.subjects.forEach((s, i) => {
     const base = s.entry.variantOf || s.entry;
     const count = (base.variants?.length || 0) + 1;
+    const asked = Visual.poseFor ? Visual.poseFor(s.key, words, read.subjects[i + 1]?.relation === "on") : null;
     const remembered = memory[s.key];
     s.remembered = remembered?.length && rng() < 0.55 ? remembered[Math.floor(rng() * remembered.length)] : null;
-    const variant = s.remembered ? Math.min(count - 1, s.remembered.variant || 0) : Math.floor(rng() * count);
+    const variant = asked !== null && asked < count ? asked
+      : s.remembered ? Math.min(count - 1, s.remembered.variant || 0) : Math.floor(rng() * count);
     s.entry = Visual.entryVariant(base, variant);
-  }
+  });
   const seedOf = (key) => ((Number(drawSeed) || 0) ^ hashText("form|" + key)) >>> 0;
   const apply = (key) => {
     const formRng = mulberry32(seedOf(key));

@@ -60,6 +60,37 @@
         { shape: "rect", box: [0.18, 0.55, 0.16, 0.15], colour: "window" },
         { shape: "rect", box: [0.66, 0.55, 0.16, 0.15], colour: "window" },
       ],
+      // A tall town house, a flat-roofed one, a round hut.
+      variants: [
+        {
+          aspect: 0.62,
+          parts: [
+            { shape: "rect", box: [0.08, 0.22, 0.84, 0.78], colour: "wall", texture: "brick" },
+            { shape: "poly", pts: [[0.02, 0.25], [0.5, 0], [0.98, 0.25]], colour: "roof", texture: "grain-h" },
+            { shape: "rect", box: [0.2, 0.32, 0.2, 0.15], colour: "window" },
+            { shape: "rect", box: [0.6, 0.32, 0.2, 0.15], colour: "window" },
+            { shape: "rect", box: [0.2, 0.55, 0.2, 0.15], colour: "window" },
+            { shape: "rect", box: [0.6, 0.74, 0.18, 0.26], colour: "door" },
+          ],
+        },
+        {
+          aspect: 1.5,
+          parts: [
+            { shape: "rect", box: [0.04, 0.3, 0.92, 0.7], colour: "wall" },
+            { shape: "rect", box: [0, 0.24, 1, 0.08], colour: "roof", tone: -0.06 },
+            { shape: "rect", box: [0.12, 0.44, 0.44, 0.3], colour: "window" },
+            { shape: "rect", box: [0.68, 0.55, 0.14, 0.45], colour: "door" },
+          ],
+        },
+        {
+          aspect: 1,
+          parts: [
+            { shape: "rect", box: [0.14, 0.5, 0.72, 0.5], colour: "wall", texture: "grain-v" },
+            { shape: "poly", pts: [[0, 0.56], [0.5, 0], [1, 0.56]], colour: "roof", texture: "grain-h" },
+            { shape: "rect", box: [0.42, 0.68, 0.16, 0.32], colour: "door" },
+          ],
+        },
+      ],
     },
     tower: {
       kind: "subject", anchor: "ground", size: 0.92, aspect: 0.32,
@@ -101,6 +132,34 @@
         { shape: "line", pts: [[0.5, 0.55], [0.7, 0.38]], width: 0.04, colour: "bark" },
         { shape: "cluster", box: [0.04, 0, 0.92, 0.62], n: 16, r: 0.22, colour: "leaves", texture: "leafy" },
       ],
+      // A pine, a tall poplar, a windswept tree.
+      variants: [
+        {
+          aspect: 0.56,
+          parts: [
+            { shape: "poly", pts: [[0.45, 1], [0.47, 0.78], [0.53, 0.78], [0.55, 1]], colour: "bark", texture: "bark" },
+            { shape: "poly", pts: [[0.5, 0.36], [0.98, 0.84], [0.02, 0.84]], colour: "leaves", tone: -0.05 },
+            { shape: "poly", pts: [[0.5, 0.16], [0.86, 0.58], [0.14, 0.58]], colour: "leaves" },
+            { shape: "poly", pts: [[0.5, 0], [0.74, 0.32], [0.26, 0.32]], colour: "leaves", tone: 0.04 },
+          ],
+        },
+        {
+          aspect: 0.38,
+          parts: [
+            { shape: "rect", box: [0.44, 0.78, 0.12, 0.22], colour: "bark", texture: "bark" },
+            { shape: "almond", box: [0.1, 0, 0.8, 0.86], vertical: true, colour: "leaves", texture: "leafy" },
+          ],
+        },
+        {
+          aspect: 1,
+          parts: [
+            { shape: "poly", pts: [[0.3, 1], [0.42, 0.5], [0.5, 0.42], [0.44, 0.56], [0.4, 1]], colour: "bark", texture: "bark" },
+            { shape: "line", pts: [[0.45, 0.5], [0.8, 0.3]], width: 0.03, colour: "bark" },
+            { shape: "line", pts: [[0.47, 0.46], [0.66, 0.16]], width: 0.03, colour: "bark" },
+            { shape: "cluster", box: [0.36, 0, 0.62, 0.48], n: 11, r: 0.2, colour: "leaves", texture: "leafy" },
+          ],
+        },
+      ],
     },
     flower: {
       kind: "subject", anchor: "ground", size: 0.46, aspect: 0.55,
@@ -122,6 +181,41 @@
         { shape: "line", pts: [[0.78, 0.22], [0.92, 0.55]], width: 0.12, colour: "clothes", tone: -0.05 },
         { shape: "poly", pts: [[0.2, 0.19], [0.8, 0.19], [0.72, 0.64], [0.28, 0.64]], colour: "clothes", texture: "grain-v" },
         { shape: "ellipse", box: [0.32, 0, 0.36, 0.17], colour: "skin" },
+      ],
+      // Arms up (dancing), walking side-on, sitting.
+      variants: [
+        {
+          aspect: 0.62,
+          parts: [
+            { shape: "line", pts: [[0.44, 0.6], [0.3, 1]], width: 0.1, colour: "legs" },
+            { shape: "line", pts: [[0.56, 0.6], [0.72, 0.98]], width: 0.1, colour: "legs" },
+            { shape: "line", pts: [[0.36, 0.24], [0.14, 0.02]], width: 0.08, colour: "clothes", tone: -0.05 },
+            { shape: "line", pts: [[0.64, 0.24], [0.88, 0.06]], width: 0.08, colour: "clothes", tone: -0.05 },
+            { shape: "poly", pts: [[0.34, 0.2], [0.66, 0.2], [0.6, 0.62], [0.4, 0.62]], colour: "clothes", texture: "grain-v" },
+            { shape: "ellipse", box: [0.39, 0.02, 0.22, 0.16], colour: "skin" },
+          ],
+        },
+        {
+          aspect: 0.42,
+          parts: [
+            { shape: "line", pts: [[0.5, 0.58], [0.3, 1]], width: 0.14, colour: "legs", tone: -0.05 },
+            { shape: "line", pts: [[0.5, 0.58], [0.72, 1]], width: 0.14, colour: "legs" },
+            { shape: "line", pts: [[0.5, 0.24], [0.28, 0.5]], width: 0.11, colour: "clothes", tone: -0.08 },
+            { shape: "poly", pts: [[0.34, 0.18], [0.66, 0.18], [0.64, 0.6], [0.36, 0.6]], colour: "clothes", texture: "grain-v" },
+            { shape: "line", pts: [[0.5, 0.24], [0.72, 0.52]], width: 0.11, colour: "clothes" },
+            { shape: "ellipse", box: [0.3, 0, 0.4, 0.17], colour: "skin" },
+          ],
+        },
+        {
+          aspect: 0.66, size: 0.56,
+          parts: [
+            { shape: "line", pts: [[0.3, 0.62], [0.8, 0.66]], width: 0.16, colour: "legs" },
+            { shape: "line", pts: [[0.8, 0.66], [0.84, 1]], width: 0.13, colour: "legs", tone: -0.05 },
+            { shape: "poly", pts: [[0.18, 0.2], [0.54, 0.2], [0.5, 0.64], [0.2, 0.64]], colour: "clothes", texture: "grain-v" },
+            { shape: "line", pts: [[0.4, 0.26], [0.66, 0.56]], width: 0.1, colour: "clothes", tone: -0.05 },
+            { shape: "ellipse", box: [0.18, 0.01, 0.34, 0.18], colour: "skin" },
+          ],
+        },
       ],
     },
     cat: {
@@ -179,6 +273,74 @@
         },
       ],
     },
+    // ── people of consequence, and what they sit on ────────────────────
+    king: {
+      kind: "subject", anchor: "ground", size: 0.76, aspect: 0.52,
+      colours: { robe: [350, 58, 34], skin: [24, 42, 62], crown: [46, 85, 55], trim: [40, 12, 92] },
+      parts: [
+        { shape: "poly", pts: [[0.26, 0.2], [0.74, 0.2], [0.96, 1], [0.04, 1]], colour: "robe", texture: "grain-v" },
+        { shape: "ellipse", box: [0.22, 0.16, 0.56, 0.1], colour: "trim" },
+        { shape: "line", pts: [[0.82, 0.28], [0.84, 0.82]], width: 0.05, colour: "crown" },
+        { shape: "ellipse", box: [0.78, 0.22, 0.12, 0.08], colour: "crown", tone: 0.1 },
+        { shape: "ellipse", box: [0.36, 0.03, 0.28, 0.16], colour: "skin" },
+        { shape: "poly", pts: [[0.35, 0.07], [0.35, -0.04], [0.42, 0.01], [0.5, -0.06], [0.58, 0.01], [0.65, -0.04], [0.65, 0.07]], colour: "crown" },
+      ],
+      variants: [
+        {
+          aspect: 0.8, size: 0.62,
+          parts: [
+            { shape: "poly", pts: [[0.2, 0.22], [0.6, 0.22], [0.64, 0.66], [0.16, 0.66]], colour: "robe", texture: "grain-v" },
+            { shape: "poly", pts: [[0.16, 0.6], [0.9, 0.62], [0.96, 1], [0.1, 1]], colour: "robe", tone: -0.06 },
+            { shape: "ellipse", box: [0.16, 0.18, 0.48, 0.1], colour: "trim" },
+            { shape: "line", pts: [[0.72, 0.24], [0.76, 0.9]], width: 0.04, colour: "crown" },
+            { shape: "ellipse", box: [0.26, 0.04, 0.28, 0.17], colour: "skin" },
+            { shape: "poly", pts: [[0.25, 0.08], [0.25, -0.03], [0.32, 0.02], [0.4, -0.05], [0.48, 0.02], [0.55, -0.03], [0.55, 0.08]], colour: "crown" },
+          ],
+        },
+      ],
+    },
+    throne: {
+      kind: "subject", anchor: "ground", size: 0.5, aspect: 0.72, seat: 0.56,
+      colours: { gold: [42, 70, 46], cushion: [350, 60, 36] },
+      parts: [
+        { shape: "poly", pts: [[0.2, 0.6], [0.2, 0.1], [0.35, 0], [0.5, 0.08], [0.65, 0], [0.8, 0.1], [0.8, 0.6]], colour: "gold", texture: "grain-v" },
+        { shape: "rect", box: [0.28, 0.14, 0.44, 0.42], colour: "cushion" },
+        { shape: "rect", box: [0.04, 0.4, 0.14, 0.2], colour: "gold", tone: -0.06 },
+        { shape: "rect", box: [0.82, 0.4, 0.14, 0.2], colour: "gold", tone: -0.06 },
+        { shape: "rect", box: [0.08, 0.56, 0.84, 0.12], colour: "cushion", tone: -0.04 },
+        { shape: "rect", box: [0.12, 0.66, 0.1, 0.34], colour: "gold" },
+        { shape: "rect", box: [0.78, 0.66, 0.1, 0.34], colour: "gold" },
+      ],
+    },
+    face: {
+      kind: "subject", anchor: "centre", size: 0.72, aspect: 0.8, centred: true,
+      colours: { skin: [24, 42, 62], hair: [28, 40, 20], eye: [210, 30, 25], lips: [355, 45, 48], clothes: [215, 35, 32] },
+      parts: [
+        { shape: "dome", box: [0.02, 0.8, 0.96, 0.2], colour: "clothes", texture: "grain-v" },
+        { shape: "rect", box: [0.4, 0.66, 0.2, 0.18], colour: "skin", tone: -0.06 },
+        { shape: "ellipse", box: [0.18, 0.02, 0.64, 0.62], colour: "hair" },
+        { shape: "egg", box: [0.24, 0.1, 0.52, 0.64], colour: "skin" },
+        { shape: "dome", box: [0.22, 0.02, 0.56, 0.18], colour: "hair" },
+        { shape: "almond", box: [0.32, 0.34, 0.12, 0.05], colour: "eye" },
+        { shape: "almond", box: [0.56, 0.34, 0.12, 0.05], colour: "eye" },
+        { shape: "line", pts: [[0.5, 0.38], [0.47, 0.5], [0.52, 0.52]], width: 0.02, colour: "skin", tone: -0.14 },
+        { shape: "almond", box: [0.42, 0.57, 0.16, 0.06], colour: "lips" },
+      ],
+      variants: [
+        {
+          aspect: 0.8,
+          parts: [
+            { shape: "dome", box: [0.02, 0.8, 0.96, 0.2], colour: "clothes", texture: "grain-v" },
+            { shape: "rect", box: [0.38, 0.64, 0.2, 0.2], colour: "skin", tone: -0.06 },
+            { shape: "ellipse", box: [0.14, 0.02, 0.62, 0.6], colour: "hair" },
+            { shape: "egg", box: [0.26, 0.1, 0.48, 0.62], colour: "skin" },
+            { shape: "poly", pts: [[0.7, 0.4], [0.8, 0.46], [0.72, 0.5]], colour: "skin" },
+            { shape: "almond", box: [0.52, 0.33, 0.12, 0.05], colour: "eye" },
+            { shape: "almond", box: [0.58, 0.56, 0.12, 0.05], colour: "lips" },
+          ],
+        },
+      ],
+    },
     dog: {
       kind: "subject", anchor: "ground", size: 0.38, aspect: 1.35,
       colours: { fur: [30, 42, 40], dark: [28, 35, 20] },
@@ -192,6 +354,47 @@
         { shape: "ellipse", box: [0.66, 0.06, 0.3, 0.34], colour: "fur" },
         { shape: "ellipse", box: [0.86, 0.2, 0.14, 0.12], colour: "dark" },
         { shape: "ellipse", box: [0.66, 0.06, 0.1, 0.24], colour: "dark" },
+      ],
+      // Sitting, lying down, running.
+      variants: [
+        {
+          aspect: 0.9,
+          parts: [
+            { shape: "line", pts: [[0.14, 0.86], [0.02, 0.7]], width: 0.06, colour: "fur" },
+            { shape: "ellipse", box: [0.08, 0.38, 0.56, 0.6], colour: "fur", texture: "fur" },
+            { shape: "line", pts: [[0.56, 0.5], [0.57, 1]], width: 0.08, colour: "fur", tone: -0.06 },
+            { shape: "line", pts: [[0.67, 0.5], [0.69, 1]], width: 0.08, colour: "fur" },
+            { shape: "ellipse", box: [0.4, 0.2, 0.36, 0.5], colour: "fur" },
+            { shape: "ellipse", box: [0.54, 0.02, 0.36, 0.3], colour: "fur" },
+            { shape: "ellipse", box: [0.8, 0.14, 0.18, 0.12], colour: "dark" },
+            { shape: "ellipse", box: [0.55, 0.04, 0.1, 0.28], colour: "dark" },
+          ],
+        },
+        {
+          aspect: 2,
+          parts: [
+            { shape: "line", pts: [[0.08, 0.8], [0, 0.96]], width: 0.04, colour: "fur" },
+            { shape: "ellipse", box: [0.05, 0.45, 0.72, 0.5], colour: "fur", texture: "fur" },
+            { shape: "line", pts: [[0.62, 0.9], [0.98, 0.94]], width: 0.06, colour: "fur", tone: -0.06 },
+            { shape: "ellipse", box: [0.64, 0.16, 0.26, 0.44], colour: "fur" },
+            { shape: "ellipse", box: [0.84, 0.36, 0.14, 0.14], colour: "dark" },
+            { shape: "ellipse", box: [0.64, 0.18, 0.08, 0.32], colour: "dark" },
+          ],
+        },
+        {
+          aspect: 1.6,
+          parts: [
+            { shape: "line", pts: [[0.26, 0.55], [0.06, 0.9]], width: 0.06, colour: "fur", tone: -0.06 },
+            { shape: "line", pts: [[0.34, 0.58], [0.18, 1]], width: 0.06, colour: "fur" },
+            { shape: "line", pts: [[0.64, 0.55], [0.84, 0.95]], width: 0.06, colour: "fur", tone: -0.06 },
+            { shape: "line", pts: [[0.72, 0.55], [0.98, 0.82]], width: 0.06, colour: "fur" },
+            { shape: "line", pts: [[0.18, 0.4], [0.02, 0.2], [0.04, 0.08]], width: 0.05, colour: "fur" },
+            { shape: "ellipse", box: [0.16, 0.3, 0.6, 0.32], colour: "fur", texture: "fur" },
+            { shape: "ellipse", box: [0.7, 0.05, 0.26, 0.3], colour: "fur" },
+            { shape: "ellipse", box: [0.9, 0.18, 0.1, 0.1], colour: "dark" },
+            { shape: "ellipse", box: [0.7, 0.02, 0.1, 0.2], colour: "dark" },
+          ],
+        },
       ],
     },
     fire: {
@@ -289,6 +492,34 @@
         { shape: "poly", pts: [[0.47, 0.1], [0.47, 0.58], [0.16, 0.58]], colour: "sail", tone: -0.08 },
         { shape: "poly", pts: [[0, 0.62], [1, 0.62], [0.84, 1], [0.16, 1]], colour: "hull", texture: "grain-h" },
       ],
+      // A rowing boat, a steamer, one big leaning sail.
+      variants: [
+        {
+          aspect: 2.2, size: 0.2,
+          parts: [
+            { shape: "line", pts: [[0.32, 0.12], [0.06, 0.9]], width: 0.025, colour: "mast" },
+            { shape: "poly", pts: [[0, 0.35], [1, 0.35], [0.86, 1], [0.14, 1]], colour: "hull", texture: "grain-h" },
+          ],
+        },
+        {
+          aspect: 2,
+          parts: [
+            { shape: "rect", box: [0.56, 0.02, 0.1, 0.3], colour: "hull", tone: -0.12 },
+            { shape: "rect", box: [0.24, 0.28, 0.48, 0.28], colour: "sail" },
+            { shape: "rect", box: [0.3, 0.36, 0.06, 0.08], colour: "mast" },
+            { shape: "rect", box: [0.44, 0.36, 0.06, 0.08], colour: "mast" },
+            { shape: "poly", pts: [[0, 0.55], [1, 0.55], [0.9, 1], [0.08, 1]], colour: "hull", texture: "grain-h" },
+          ],
+        },
+        {
+          aspect: 1.2,
+          parts: [
+            { shape: "line", pts: [[0.45, 0.72], [0.52, 0]], width: 0.03, colour: "mast" },
+            { shape: "poly", pts: [[0.54, 0.02], [0.96, 0.66], [0.52, 0.66]], colour: "sail" },
+            { shape: "poly", pts: [[0.04, 0.72], [0.98, 0.72], [0.8, 1], [0.2, 1]], colour: "hull", texture: "grain-h" },
+          ],
+        },
+      ],
     },
     car: {
       kind: "subject", anchor: "ground", size: 0.3, aspect: 2.2,
@@ -351,6 +582,30 @@
       colours: { body: [222, 18, 18] },
       parts: [
         { shape: "line", pts: [[0, 0.35], [0.24, 0.02], [0.5, 0.5], [0.76, 0.02], [1, 0.35]], width: 0.12, colour: "body" },
+      ],
+      // Perched, and wings spread side-on.
+      variants: [
+        {
+          aspect: 1.2,
+          parts: [
+            { shape: "poly", pts: [[0.24, 0.5], [0, 0.72], [0.26, 0.66]], colour: "body", tone: -0.06 },
+            { shape: "line", pts: [[0.46, 0.74], [0.46, 1]], width: 0.04, colour: "body" },
+            { shape: "line", pts: [[0.56, 0.74], [0.57, 1]], width: 0.04, colour: "body" },
+            { shape: "ellipse", box: [0.2, 0.34, 0.58, 0.42], colour: "body" },
+            { shape: "ellipse", box: [0.6, 0.14, 0.3, 0.3], colour: "body" },
+            { shape: "poly", pts: [[0.88, 0.26], [1, 0.31], [0.88, 0.36]], colour: "body", tone: 0.3 },
+          ],
+        },
+        {
+          aspect: 1.8,
+          parts: [
+            { shape: "poly", pts: [[0.34, 0.52], [0.1, 0.64], [0.34, 0.6]], colour: "body" },
+            { shape: "poly", pts: [[0.52, 0.5], [0.86, 0.08], [0.68, 0.52]], colour: "body", tone: -0.08 },
+            { shape: "ellipse", box: [0.3, 0.44, 0.46, 0.2], colour: "body" },
+            { shape: "poly", pts: [[0.42, 0.5], [0.2, 0], [0.62, 0.46]], colour: "body" },
+            { shape: "ellipse", box: [0.7, 0.4, 0.16, 0.16], colour: "body" },
+          ],
+        },
       ],
     },
     // ── things held up to look at ────────────────────────────────────────
@@ -1262,6 +1517,10 @@
     ship: "boat", yacht: "boat", sailboat: "boat", canoe: "boat",
     man: "person", woman: "person", girl: "person", boy: "person", child: "person", figure: "person",
     people: "person", friend: "person", stranger: "person", mother: "person", father: "person",
+    queen: "king", prince: "king", princess: "king", emperor: "king", empress: "king", ruler: "king", monarch: "king",
+    poplar: "tree", cypress: "tree", aspen: "tree", steamer: "boat", steamboat: "boat", ferry: "boat", liner: "boat",
+    rowboat: "boat", dinghy: "boat", bungalow: "house", shack: "house", townhouse: "house",
+    portrait: "face", head: "face", selfie: "face", dancer: "person", seagull: "bird", gull: "bird",
     kitten: "cat", lion: "cat", tiger: "cat", puppy: "dog", wolf: "dog", fox: "dog", donkey: "horse", pony: "horse",
     rose: "flower", tulip: "flower", daisy: "flower", lily: "flower", blossom: "flower", bloom: "flower",
     flame: "fire", blaze: "fire", bonfire: "fire", campfire: "fire",
@@ -1376,7 +1635,13 @@
     const words = String(text || "").toLowerCase().match(/[a-z]+/g) || [];
     const subjects = [], settings = [];
     let count = 1, colour = null, relation = null;
+    // "A pine tree", "an oak tree", "a sail boat": the general word after a
+    // thing that already names it adds nothing.
+    const HEADS = new Set(["tree", "boat", "house", "bird", "flower", "ship"]);
+    let lastWasThing = false;
     for (const word of words) {
+      if (lastWasThing && HEADS.has(word)) { lastWasThing = false; continue; }
+      lastWasThing = false;
       if (COUNT_WORDS[word]) { count = COUNT_WORDS[word]; continue; }
       if (COLOUR_WORDS[word]) { colour = COLOUR_WORDS[word]; continue; }
       if (RELATIONS[word] && subjects.length) { relation = RELATIONS[word]; continue; }
@@ -1392,13 +1657,15 @@
             subjects[subjects.length - 1].within = key;
           }
         } else if (!subjects.some((s) => s.key === key) && subjects.length < 3) {
-          const many = found.plural ? Math.max(count, 3) : count;
+          // "Two birds" is two; plain "birds" is a few.
+          const many = found.plural ? (count > 1 ? count : 3) : count;
           // "mountains" as a place, not as three separate mountains.
           if (key === "mountain" && found.plural && !settings.some((s) => s.key === "mountains")) {
             settings.push({ key: "mountains", entry: ENTRIES.mountains, colour });
           } else {
             subjects.push({ key, entry, count: Math.min(key === "star" ? 30 : 6, many), colour, relation });
           }
+          lastWasThing = true;
         }
       }
       count = 1; colour = null; relation = null;
@@ -1479,7 +1746,8 @@
       // A second thing is smaller - unless the first sits on it or in it.
       const scale = main || s.relation === "on" || s.relation === "in" ? 1 : 0.68;
       const { w, h } = sizeOf(s.entry, s.count > 1 ? scale * 0.7 : scale);
-      let cx = (main ? mainX : (mainX < 0.5 ? 2 / 3 : 1 / 3) + (index - 1) * 0.12) * W;
+      // A face (or anything that asks to be) sits in the middle, portrait-wise.
+      let cx = (main ? (s.entry.centred ? 0.5 : mainX) : (mainX < 0.5 ? 2 / 3 : 1 / 3) + (index - 1) * 0.12) * W;
       let bottom;
       const anchor = s.entry.anchor;
       if (anchor === "sky") bottom = skyY + h / 2;
@@ -1556,7 +1824,10 @@
         const top = support.y + support.h * (s.entry.seat ?? 0.04);
         for (const other of placed) {
           if (other.key !== lift) continue;
-          other.box = { ...other.box, x: support.x + support.w / 2 - other.box.w / 2, y: top - other.box.h };
+          // Lifted onto a seat it must still fit under the top of the canvas.
+          const k = Math.min(1, (top - H * 0.02) / Math.max(1, other.box.h));
+          const w = other.box.w * k, h = other.box.h * k;
+          other.box = { ...other.box, x: support.x + support.w / 2 - w / 2, y: top - h, w, h };
         }
       }
     });
@@ -1681,6 +1952,29 @@
     form.parts = parts;
     form.partsOf = item.entry;
     return parts;
+  }
+
+  /* Words that ask for a particular way of being: "a dancer" dances, "a
+   * sleeping dog" lies down, "a pine" is a pine. Pose numbers index the
+   * entry's variants (0 = the entry as written). `sit` is the pose a thing
+   * takes when it is on something. */
+  const POSE_WORDS = {
+    cat: { side: 1, profile: 1, curled: 2, sleeping: 2, asleep: 2, lying: 2, loaf: 2, walking: 3, prowling: 3, stalking: 3, sit: 1 },
+    dog: { sitting: 1, sits: 1, lying: 2, sleeping: 2, asleep: 2, resting: 2, running: 3, runs: 3, chasing: 3, sit: 1 },
+    person: { dancing: 1, dancer: 1, dance: 1, dances: 1, cheering: 1, walking: 2, walks: 2, walker: 2, sitting: 3, sits: 3, seated: 3, sit: 3 },
+    tree: { pine: 1, fir: 1, christmas: 1, spruce: 1, poplar: 2, cypress: 2, tall: 2, windswept: 3, bare: 3, lonely: 3 },
+    house: { townhouse: 1, terrace: 1, modern: 2, bungalow: 2, hut: 3, shack: 3 },
+    boat: { rowing: 1, rowboat: 1, dinghy: 1, steamer: 2, steamboat: 2, ship: 2, ferry: 2, sailing: 3, yacht: 3 },
+    bird: { perched: 1, sitting: 1, flying: 2, soaring: 2, sit: 1 },
+    king: { sitting: 1, seated: 1, enthroned: 1, sit: 1 },
+    face: { profile: 1, side: 1 },
+  };
+
+  function poseFor(key, words, sitting = false) {
+    const poses = POSE_WORDS[key];
+    if (!poses) return null;
+    for (const word of words) if (poses[word] !== undefined && word !== "sit") return poses[word];
+    return sitting && poses.sit !== undefined ? poses.sit : null;
   }
 
   /* One of an entry's ways of being (0 is the entry as written). */
@@ -2403,5 +2697,5 @@
   }
 
   global.HexfieldVisual = { ENTRIES, FAMILIES, COLOUR_WORDS, RELATIONS, lookup, read, layout, paint, subjectColours,
-    FORM_STYLES, FORM_KEYS: Object.keys(FORM_STYLES), sampleForm, entryVariant };
+    FORM_STYLES, FORM_KEYS: Object.keys(FORM_STYLES), sampleForm, entryVariant, poseFor };
 })(typeof globalThis !== "undefined" ? globalThis : this);
