@@ -21328,7 +21328,6 @@ async function chooseFreshCandidate(candidates) {
 const CURATOR_URL = "https://hexfield-curator.ranbondyenkendy.workers.dev";
 const CURATOR_VISITOR_KEY = "hexfield.curator.visitor.v1";
 const MUSEUM_FUNCTION_URL = SUPABASE_URL + "/functions/v1/hexfield-museum";
-const LEXICON_FUNCTION_URL = SUPABASE_URL + "/functions/v1/hexfield-lexicon";
 let curatorStatus = "shared learning: waiting for a study";
 let museumStatus = "museum: waiting for a taste cycle";
 
@@ -37554,7 +37553,7 @@ async function pullSharedVisualSymbols() {
       }
       entries.get(key).symbols.push(profile);
     }
-    visualSymbolMemory = mergeVisualSymbolMemories(visualSymbolMemory, remote);
+    visualSymbolMemory = divideVisualSymbolShares(mergeVisualSymbolMemories(visualSymbolMemory, remote));
     sharedVisualSymbolCount = rows.length;
     saveVisualSymbolMemory();
     return rows.length;
@@ -37598,51 +37597,29 @@ function scheduleVisualSymbolClaims(delay = 250) {
   }, Math.max(0, Number(delay) || 0));
 }
 
-function applySharedVisualSymbolCollision(result, claim) {
-  const word = visualSymbolWord(result?.word || claim?.word);
-  const other = visualSymbolWord(result?.ownerWord || result?.nearestWord);
-  if (!word || !other || !claim) return false;
-  const entries = visualSymbolMemory.words[word] || [];
-  for (const entry of entries) {
-    entry.symbols = (entry.symbols || []).filter((symbol) => symbol.id !== claim.materialId);
-  }
-  visualSymbolMemory.words[word] = entries.filter((entry) => entry.symbols?.length);
-  const exact = result.status === "exact_collision";
-  const record = {
-    id: "shared_collision_" + (hashText(word + "|" + other + "|" + claim.materialId) >>> 0).toString(36),
-    word, other, at: Date.now(), distance: exact ? 0 : visualUnit(result.distance, 1),
-    exact, materialId: claim.materialId, role: claim.role,
-    avoid: normalizeVisualSymbolProfile({ id: claim.materialId, role: claim.role, vector: claim.profile }),
-  };
-  visualSymbolMemory.collisions = [record, ...(visualSymbolMemory.collisions || [])
-    .filter((prior) => prior.id !== record.id)].slice(0, VISUAL_SYMBOL_COLLISION_CAP);
-  pendingVisualSymbolCollision = { ...record, attempts: 0 };
-  saveVisualSymbolMemory();
-  return true;
-}
-
 async function pushSharedVisualSymbolClaims() {
   if (!visualSymbolClaimQueue.length) return 0;
   const batch = visualSymbolClaimQueue.splice(0, 20);
   try {
+    /* Claims are evidence rows in the shared catalogue (hexfield_visual_symbols).
+     * Nothing is refused here: contested blobs are divided by every client
+     * from the catalogue (divideVisualSymbolShares). The hexfield-lexicon
+     * function this used to call was never deployed, so until now every
+     * claim failed quietly and each browser's catalogue was its own. */
     const session = await ensureTasteSession();
-    const response = await fetch(LEXICON_FUNCTION_URL, {
+    const response = await fetch(SUPABASE_URL + "/rest/v1/hexfield_visual_symbols?on_conflict=visitor_id,word,material_id", {
       method: "POST",
       headers: {
         apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token,
-        "Content-Type": "application/json",
+        "Content-Type": "application/json", Prefer: "resolution=ignore-duplicates,return=minimal",
       },
-      body: JSON.stringify({ claims: batch.map(({ attempts, ...claim }) => claim) }),
+      body: JSON.stringify(batch.map((claim) => ({
+        material_id: String(claim.materialId).slice(0, 120), word: claim.word, role: claim.role,
+        profile: claim.profile, context: claim.context,
+      }))),
     });
     if (!response.ok) throw new Error("lexicon claim HTTP " + response.status);
-    const body = await response.json();
-    const byKey = new Map(batch.map((claim) => [claim.word + "|" + claim.materialId, claim]));
-    for (const result of body.results || []) {
-      if (result.status !== "exact_collision" && result.status !== "near_collision") continue;
-      applySharedVisualSymbolCollision(result, byKey.get(result.word + "|" + result.materialId));
-    }
-    sharedVisualSymbolCount += (body.results || [])
-      .filter((result) => result.status === "accepted").length;
+    sharedVisualSymbolCount += batch.length;
   } catch {
     // A temporary offline spell does not erase a learned claim, and does not
     // become an infinite hot retry loop either.
@@ -38002,6 +37979,76 @@ function visualSymbolCollision(profile, except = []) {
   return nearest;
 }
 
+/* ── Dividing contested blobs ──────────────────────────────────────────
+ * A blob (or one that reads as the same: within the ownership radius) that
+ * more than one word has claimed is not the first claimant's to keep. It is
+ * divided between the words by the catalogue as it stands: each word's share
+ * follows how well the blob fits that word's *other* claims (its family
+ * resemblance, leaving the contested copies out, or every claimant would
+ * trivially fit perfectly). Fits within VISUAL_SYMBOL_EQUAL_FIT of each other
+ * divide it equally; a word with no other claims yet is given the others'
+ * mean fit, so it is neither favoured nor shut out. Below
+ * VISUAL_SYMBOL_SHARE_FLOOR a word does not hold the blob at all. Every
+ * client computes this from the same shared catalogue, so they agree. */
+const VISUAL_SYMBOL_EQUAL_FIT = 0.05;
+const VISUAL_SYMBOL_SHARE_FLOOR = 0.25;
+const VISUAL_SYMBOL_SHARE_TEMPERATURE = 0.06;
+
+/* `exclude` leaves out claims this close to the profile: copies of the very
+ * blob being divided would make every claimant fit it perfectly. Assigning a
+ * new keep's shapes excludes only the shape itself. */
+function visualSymbolFit(word, profile, memory = visualSymbolMemory, exclude = 0) {
+  const own = (memory.words?.[word] || []).flatMap((entry) => entry.symbols || [])
+    .filter((symbol) => symbol.id !== profile.id && (!exclude || visualSymbolDistance(symbol, profile) >= exclude));
+  if (!own.length) return null;
+  const nearest = own.map((symbol) => 1 - visualSymbolDistance(profile, symbol))
+    .sort((a, b) => b - a).slice(0, 3);
+  return nearest.reduce((sum, value) => sum + value, 0) / nearest.length;
+}
+
+function divideVisualSymbol(words, profile, memory = visualSymbolMemory) {
+  const fits = words.map((word) => visualSymbolFit(word, profile, memory, VISUAL_SYMBOL_MIN_SEPARATION));
+  const known = fits.filter((fit) => fit !== null);
+  const fallback = known.length ? known.reduce((a, b) => a + b, 0) / known.length : 0.5;
+  const values = fits.map((fit) => fit === null ? fallback : fit);
+  const top = Math.max(...values), bottom = Math.min(...values);
+  if (top - bottom <= VISUAL_SYMBOL_EQUAL_FIT) return { shares: words.map(() => 1 / words.length), fits: values, equal: true };
+  const weights = values.map((value) => Math.exp((value - top) / VISUAL_SYMBOL_SHARE_TEMPERATURE));
+  const total = weights.reduce((a, b) => a + b, 0) || 1;
+  return { shares: weights.map((weight) => weight / total), fits: values, equal: false };
+}
+
+// The words (other than `except`) that claim this blob or one that reads as it.
+function visualSymbolClaimants(profile, except = [], memory = visualSymbolMemory) {
+  const ignored = new Set((except || []).map(visualSymbolWord).filter(Boolean));
+  const claimants = [];
+  for (const [word, entries] of Object.entries(memory.words || {})) {
+    if (ignored.has(word)) continue;
+    const claims = entries.some((entry) => (entry.symbols || []).some((symbol) =>
+      (profile.id && symbol.id === profile.id) || visualSymbolDistance(profile, symbol) < VISUAL_SYMBOL_OWNERSHIP_SEPARATION));
+    if (claims) claimants.push(word);
+  }
+  return claimants.sort();
+}
+
+/* Recompute every claim's share from the catalogue as it now stands - after a
+ * keep, and after the shared catalogue is pulled. */
+function divideVisualSymbolShares(memory = visualSymbolMemory) {
+  for (const [word, entries] of Object.entries(memory.words || {})) {
+    for (const entry of entries) {
+      for (const symbol of entry.symbols || []) {
+        const others = visualSymbolClaimants(symbol, [word], memory);
+        if (!others.length) { symbol.share = 1; symbol.sharedWith = []; continue; }
+        const words = [word, ...others];
+        const division = divideVisualSymbol(words, symbol, memory);
+        symbol.share = Number(division.shares[0].toFixed(3));
+        symbol.sharedWith = others;
+      }
+    }
+  }
+  return memory;
+}
+
 function visualSymbolsForWords(named) {
   const words = [named?.subject, named?.object].map(visualSymbolWord).filter(Boolean);
   const symbols = [];
@@ -38048,9 +38095,15 @@ function visualSymbolStatus(composed) {
   const collision = pendingVisualSymbolCollision;
   const separating = collision && [named?.subject, named?.object].map(visualSymbolWord).includes(collision.word)
     ? ` · separating ${collision.word} from ${collision.other}` : "";
+  // Blobs this word holds jointly with another, and its share of them.
+  const shared = visualSymbolsForWords(named).filter((symbol) => symbol.sharedWith?.length);
+  const sharing = shared.length
+    ? " · shared: " + [...new Set(shared.flatMap((symbol) => symbol.sharedWith))].slice(0, 2).join(", ") +
+      " " + Math.round(shared.reduce((sum, symbol) => sum + (Number(symbol.share) || 0), 0) / shared.length * 100) + "%"
+    : "";
   return { count, associations, collision,
     label: count ? " · identifier parts " + count +
-      (associations.length ? " · nearest other words: " + associations.join(", ") : "") + separating : separating };
+      (associations.length ? " · nearest other words: " + associations.join(", ") : "") + sharing + separating : separating };
 }
 
 /* Score existing material against remembered visual symbols.
@@ -38084,14 +38137,21 @@ function visualSymbolReferenceOrder(pool, named) {
       ? clamp01(1 - mostRecent.reduce((best, symbol) => Math.max(best, 1 - visualSymbolDistance(profile, symbol)), 0))
       : 1;
     const collision = profile ? visualSymbolCollision(profile, queryWords) : null;
-    const distinctiveness = collision ? clamp01(collision.distance / ownershipSeparation) : 1;
+    /* A blob another word also claims is divided, not forfeited: this word's
+     * share of it (from the current catalogue) is how much it may lean on it.
+     * Words in the same sentence never contest each other here. */
+    const claimants = profile ? visualSymbolClaimants(profile, queryWords) : [];
+    const share = claimants.length && queryWords.length
+      ? divideVisualSymbol([queryWords[0], ...claimants], profile).shares[0] : 1;
+    const distinctiveness = claimants.length ? share : collision ? clamp01(collision.distance / ownershipSeparation) : 1;
     return {
       shape, index, profile, similarity: ownSimilarity, distinctiveness, variety,
       complexity: visualSymbolComplexity(profile),
       /* Exact IDs and near visual claims are both unavailable. A foreign
        * look-alike must perturb to a new harvested shape, not keep entering the
        * candidate list with a smaller score. */
-      ownedElsewhere: collision?.owned === true,
+      ownedElsewhere: claimants.length > 0 && share < VISUAL_SYMBOL_SHARE_FLOOR,
+      share, sharedWith: claimants,
       collisionWord: collision?.word || null,
       collisionDistance: collision?.distance ?? 1,
     };
@@ -38118,24 +38178,55 @@ function rememberVisualSymbolsFromVote(result, liked) {
   if (!named) return null;
   const words = [...new Set([named.subject, named.object].map(visualSymbolWord).filter(Boolean))];
   if (!words.length) return null;
-  const ownershipSeparation = typeof VISUAL_SYMBOL_OWNERSHIP_SEPARATION === "number"
-    ? VISUAL_SYMBOL_OWNERSHIP_SEPARATION : 0.24;
   const shapes = (autoHarvest?.finishedShapes?.length ? autoHarvest.finishedShapes : autoHarvest?.sourceShapes || [])
     .slice(0, VISUAL_SYMBOL_PER_EXAMPLE * 2);
   if (!shapes.length) return null;
   const changes = [];
+  /* The kept painting's shapes are divided between the sentence's words
+   * equally - the same number each - and by fit: each shape goes to the word
+   * whose current catalogue it resembles most. A shape that two words fit
+   * equally well (both known, within VISUAL_SYMBOL_EQUAL_FIT) is shared by
+   * both. With no catalogue to go on, the shapes are dealt out evenly. */
+  const pool = shapes.map((shape) => visualSymbolProfile(shape)).filter(Boolean);
+  const quota = Math.min(VISUAL_SYMBOL_PER_EXAMPLE, Math.ceil(pool.length / words.length));
+  const assigned = words.map(() => []);
+  const fitted = pool.map((profile, index) => {
+    const fits = words.map((word) => visualSymbolFit(word, profile));
+    const known = fits.map((fit, w) => ({ fit, w })).filter((x) => x.fit !== null).sort((a, b) => b.fit - a.fit);
+    const margin = known.length > 1 ? known[0].fit - known[1].fit : known.length ? 1 : 0;
+    return { profile, index, fits, known, margin };
+  }).sort((a, b) => b.margin - a.margin || a.index - b.index);
+  for (const shape of fitted) {
+    const open = (w) => assigned[w].length < quota;
+    const tied = shape.known.length === words.length && words.length > 1 &&
+      shape.known[0].fit - shape.known[shape.known.length - 1].fit <= VISUAL_SYMBOL_EQUAL_FIT;
+    if (tied) {
+      for (let w = 0; w < words.length; w++) if (open(w)) assigned[w].push(shape.profile);
+      continue;
+    }
+    // Best fit first; with nothing known, the word holding fewest so far.
+    const order = shape.known.length
+      ? [...shape.known.map((x) => x.w), ...words.map((_, w) => w).filter((w) => shape.fits[w] === null)]
+      : words.map((_, w) => w).sort((a, b) => assigned[a].length - assigned[b].length || a - b);
+    const to = order.find(open);
+    if (to !== undefined) assigned[to].push(shape.profile);
+  }
   for (const [wordIndex, word] of words.entries()) {
     const role = wordIndex === 1 ? "object" : "subject";
-    const candidates = shapes.filter((_, index) => index % words.length === wordIndex)
-      .map((shape) => visualSymbolProfile(shape, role)).filter(Boolean);
+    const candidates = assigned[wordIndex].map((profile) => ({ ...profile, role }));
     const symbols = [];
     for (const profile of candidates) {
-      const collision = visualSymbolCollision(profile, [word]);
-      if (collision && (collision.exact || collision.distance < ownershipSeparation)) {
+      /* Words outside this sentence that claim the same blob divide it with
+       * this word from the catalogue; only when this word's share would fall
+       * below the floor is it the other word's, and this word moves on. */
+      const others = visualSymbolClaimants(profile, words);
+      const share = others.length ? divideVisualSymbol([word, ...others], profile).shares[0] : 1;
+      if (others.length && share < VISUAL_SYMBOL_SHARE_FLOOR) {
+        const collision = visualSymbolCollision(profile, [word]);
         const record = {
-          id: "collision_" + (hashText(word + "|" + collision.word + "|" + profile.id + "|" + Date.now()) >>> 0).toString(36),
-          word, other: collision.word, at: Date.now(), distance: collision.distance,
-          exact: collision.exact, materialId: profile.id, role, avoid: profile,
+          id: "collision_" + (hashText(word + "|" + others[0] + "|" + profile.id + "|" + Date.now()) >>> 0).toString(36),
+          word, other: others[0], at: Date.now(), distance: collision?.distance ?? 0,
+          exact: collision?.exact === true, materialId: profile.id, role, avoid: profile,
         };
         visualSymbolMemory.collisions = [record, ...(visualSymbolMemory.collisions || [])
           .filter((prior) => prior.id !== record.id)].slice(0, VISUAL_SYMBOL_COLLISION_CAP);
@@ -38158,7 +38249,7 @@ function rememberVisualSymbolsFromVote(result, liked) {
         blobBases: symbols.map((symbol) => symbol.blobBase?.type).filter(Boolean).slice(0, 3),
       },
       symbols,
-      incomplete: symbols.length < Math.min(VISUAL_SYMBOL_MIN_COMPONENTS, candidates.length),
+      incomplete: symbols.length < Math.min(VISUAL_SYMBOL_MIN_COMPONENTS, candidates.length || 1),
     };
     const existing = visualSymbolMemory.words[word] || [];
     visualSymbolMemory.words[word] = [entry, ...existing.filter((prior) => prior.id !== entry.id)].slice(0, VISUAL_SYMBOL_EXAMPLE_CAP);
@@ -38178,6 +38269,8 @@ function rememberVisualSymbolsFromVote(result, liked) {
     words: Object.fromEntries(rankedWords),
     collisions: (visualSymbolMemory.collisions || []).slice(0, VISUAL_SYMBOL_COLLISION_CAP),
   };
+  // Every share re-divided against the catalogue as it now stands.
+  divideVisualSymbolShares(visualSymbolMemory);
   if (changes.length || pendingVisualSymbolCollision) saveVisualSymbolMemory();
   return changes;
 }
