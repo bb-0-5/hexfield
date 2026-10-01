@@ -15013,7 +15013,7 @@ async function connectTaste() {
       pullGlobalTaste(), pullTasteAgreement(), pullStyleCatalogue(), pullCausalExperiments(),
       pullHarvestMaterials(), pullSharedVisualSymbols(),
       pullVisualSourceCorpus(), fetchKnownCreationHashes(), refreshMuseumStatus(),
-      pullVisualLexicon(), pullFormMemory(), pullSharedKeeps(),
+      pullVisualLexicon(), pullFormMemory(), pullSharedKeeps(), pullStyleOutcomes(),
     ]);
     queueTasteSync();
     scheduleSharedTasteFlush(0);
@@ -25717,7 +25717,8 @@ function updateWordPaints() {
   const own = Object.keys(strokePainter.plan?.adopted || {}).map((i) => strokePainter.plan.scene?.items?.[i]?.key).filter(Boolean);
   line.textContent = (manner ? "manner: " + manner.name + (dims ? " · " + dims.name : "") + (persp ? " · " + persp.name : "") +
     (drawn ? " · drawn " + drawn.name : "") +
-    (manner.brush?.tips ? "" : strokePainter.plan?.tips ? " · brushes: " + strokePainter.plan.tips.key : "") + " · " : "") +
+    (manner.brush?.tips ? "" : strokePainter.plan?.tips ? " · brushes: " + strokePainter.plan.tips.key : "") +
+    (strokePainter.plan?.finish && strokePainter.plan.finish.key !== "none" ? " · finish: " + strokePainter.plan.finish.key : "") + " · " : "") +
     (parts.length ? "paints: " + parts.join(" · ") : "paints: no things it knows yet") +
     (mood.length ? " · mood: " + mood.slice(0, 4).join(", ") : "") +
     (own.length ? " · prefers its own: " + [...new Set(own)].join(", ") : "") +
@@ -31277,6 +31278,7 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
   if (scene?.focus) { plan.fx = scene.focus.fx; plan.fy = scene.focus.fy; }
   plan.scene = scene;
   plan.tips = choosePlanTips(plan, params);
+  plan.finish = choosePlanFinish(plan, params);
   const { Lf, Lb } = planLuminanceStats(ref, width, height, plan);
   plan.lightOnDark = Math.abs(Lf - Lb) > 6 ? Lf > Lb : mulberry32((Number(drawSeed) || 7) >>> 0)() < 0.6;
   return plan;
@@ -31318,22 +31320,34 @@ function chooseByTaste(keys, { lean, learned, rng, taste, tasted = 3, axis = nul
   // Variety: an option chosen in most recent paintings gives way a little.
   const recent = axis && Array.isArray(recentChoices()[axis]) ? recentChoices()[axis] : [];
   const used = (key) => recent.length ? recent.filter((k) => k === key).length / recent.length : 0;
-  const scores = keys.map((key) => ({ key, lean: lean(key), learned: learned(key), chance: (rng() - 0.5) * 1.1, taste: null, used: used(key) }));
+  const scores = keys.map((key) => ({ key, lean: lean(key), learned: learned(key), chance: (rng() - 0.5) * 1.1, taste: null, used: used(key),
+    // How this option's finished paintings have scored (styleOutcomeLean).
+    outcome: styleOutcomeLean(axis, key) }));
   // ...and one not tried lately gets a turn.
   const unused = (x) => recent.length >= 4 && !x.used ? 0.45 : 0;
-  for (const x of scores) x.prior = 0.8 * x.learned + x.lean + x.chance - 0.9 * x.used + unused(x);
+  for (const x of scores) x.prior = 0.8 * x.learned + x.lean + x.chance - 0.9 * x.used + unused(x) + x.outcome;
   const ranked = scores.slice().sort((a, b) => b.prior - a.prior);
   for (let i = 0; i < Math.min(tasted, ranked.length); i++) ranked[i].taste = taste(ranked[i].key);
   const scored = scores.filter((x) => x.taste !== null);
   const mean = scored.reduce((sum, x) => sum + x.taste, 0) / Math.max(1, scored.length);
-  for (const x of scores) x.score = x.prior + (x.taste !== null ? 8 * (x.taste - mean) : 0);
+  // A small preview tastes once; finished paintings (the outcome above) are
+  // the better evidence, so the preview no longer outweighs them.
+  for (const x of scores) x.score = x.prior + (x.taste !== null ? Math.max(-1.5, Math.min(1.5, 5 * (x.taste - mean))) : 0);
   scores.sort((a, b) => b.score - a.score);
+  /* Now and then any option at all, so one that scored badly early still gets
+   * painted again and can show it was unlucky. */
+  if (axis && scores.length > 1 && rng() < STYLE_EXPLORE) {
+    const [pick] = scores.splice(Math.floor(rng() * scores.length), 1);
+    pick.explored = true;
+    scores.unshift(pick);
+  }
   if (axis) rememberChoice(axis, scores[0].key);
   return scores;
 }
 
 const summariseChoice = (scores) => scores.map((x) => ({ key: x.key, score: +x.score.toFixed(3),
-  taste: x.taste === null ? null : +x.taste.toFixed(4), lean: +x.lean.toFixed(2), learned: +x.learned.toFixed(2) }));
+  taste: x.taste === null ? null : +x.taste.toFixed(4), lean: +x.lean.toFixed(2), learned: +x.learned.toFixed(2),
+  outcome: +(x.outcome || 0).toFixed(2) }));
 
 const formVoteWord = (key) => "form" + String(key).replace(/[^a-z]/g, "");
 
@@ -31664,6 +31678,7 @@ function recordVisualVote(liked) {
   if (plan?.manner) variations[mannerVoteWord(plan.manner.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.dims) variations[dimsVoteWord(plan.dims.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.tips) variations[tipsVoteWord(plan.tips.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  if (plan?.finish) variations[finishVoteWord(plan.finish.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (scene?.perspective) variations[perspVoteWord(scene.perspective.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (scene?.forms) variations[formVoteWord(scene.forms.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   // A kept painting's things are remembered as forms worth starting from.
@@ -33649,6 +33664,421 @@ function choosePlanTips(plan, params) {
   return { key: scores[0].key, weights: TIP_KITS[scores[0].key] };
 }
 
+/* ── Finishes: how the finished painting is rendered ────────────────────
+ *
+ * The brushwork is one way to render a picture; the stroke painter used to be
+ * the only one, so every painting came out as brush marks whatever its manner
+ * - and the older render styles (a press print, a flat illustration) were
+ * painted over. A finish is applied to the painting as it stands, last, like
+ * a press or a scanner: the painter keeps working on the brushwork underneath
+ * and never fights it. On screen it is a layer over the canvas, refreshed as
+ * the paint lands; EXPORT applies the same finish to the replayed strokes.
+ *   none   the brushwork as it is
+ *   print  a halftone screen, ink on paper (mono or CMYK)
+ *   flat   a flat illustration: a few colours, clean shapes, an optional line
+ *   ink    pen and ink: hatching for tone, solid blacks, edges drawn
+ *   chalk  chalk on toned paper, broken by its grain
+ * Chosen per painting like the other choices, and learned from how finished
+ * paintings score (styleOutcomeLean) and from votes. */
+const FINISH_KEYS = ["none", "print", "flat", "ink", "chalk"];
+const finishVoteWord = (key) => "finish" + String(key).replace(/[^a-z]/g, "");
+const FINISH_WORDS = {
+  none: ["paint", "painting", "oil", "brush", "canvas"],
+  print: ["print", "newspaper", "comic", "poster", "pop", "magazine", "dots", "retro", "vintage", "news"],
+  flat: ["cartoon", "flat", "simple", "icon", "illustration", "kids", "toy", "cute", "sticker", "logo"],
+  ink: ["ink", "sketch", "drawing", "pen", "etching", "engraving", "woodcut", "storm", "war", "skull", "bone", "winter"],
+  chalk: ["chalk", "pastel", "night", "dream", "blackboard", "dusk", "smoke", "memory", "ghost", "fog"],
+};
+const FINISH_PAPERS = ["#f4f1e8", "#efe9dc", "#f7f4ef", "#e8e2d2"];
+const FINISH_INKS = ["#12110f", "#1a1714", "#141a22", "#2a1712"];
+const CHALK_PAPERS = [[34, 36, 40], [30, 42, 36], [28, 32, 48], [48, 38, 32], [22, 22, 24]];
+
+function choosePlanFinish(plan, params) {
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0xf1a5) >>> 0);
+  const words = (params?.__hexfieldWords?.text || "").toLowerCase().match(/[a-z]+/g) || [];
+  const leans = {};
+  for (const key of FINISH_KEYS) leans[key] = words.filter((word) => FINISH_WORDS[key].includes(word)).length * 0.8;
+  const screened = params?.halftone?.mode && params.halftone.mode !== "off";
+  if (screened) leans.print += 1.2;
+  const scores = chooseByTaste(FINISH_KEYS, {
+    rng, tasted: 0, axis: "finish", lean: (key) => leans[key] || 0,
+    learned: (key) => visualLearnedChoice(finishVoteWord(key)), taste: () => null,
+  });
+  plan.finishScores = summariseChoice(scores);
+  const key = scores[0].key;
+  const pick = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x5e77) >>> 0);
+  const one = (list) => list[Math.floor(pick() * list.length)];
+  const settings = key === "print"
+    ? (screened ? { ...params.halftone } : { mode: pick() < 0.55 ? "mono" : "cmyk", across: Math.round(48 + pick() * 72),
+      angle: one([15, 45, 75]), paper: one(FINISH_PAPERS), ink: one(FINISH_INKS) })
+    : key === "flat" ? { colours: 5 + Math.floor(pick() * 4), outline: pick() < 0.55 }
+    : key === "ink" ? { spacing: 0.007 + pick() * 0.006, angle: one([0.785, -0.785, 0.52, -1.05]), paper: one(FINISH_PAPERS),
+      ink: one(FINISH_INKS), tint: pick() < 0.4 }
+    : key === "chalk" ? { paper: one(CHALK_PAPERS), grain: 0.45 + pick() * 0.35, angle: -0.9 + pick() * 0.6 }
+    : {};
+  return { key, settings };
+}
+
+/* The finished picture of `source` (W×H), on a canvas at most `cap` on its
+ * long side. Every scale in a finish is a fraction of the picture, so the
+ * screen and a 4500px export show the same screen, hatching and grain. */
+function renderFinish(source, W, H, finish, cap = 900, { reuse = false } = {}) {
+  // Flat shapes need no fine detail, and drawn back up they are smoother.
+  const working = cap * (finish?.key === "print" ? 1 : 0.8);
+  const scale = Math.min(1, working / Math.max(W, H));
+  const w = Math.max(1, Math.round(W * scale)), h = Math.max(1, Math.round(H * scale));
+  const out = paintBuffer(w, h);
+  const ctx = out.getContext("2d", { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(source, 0, 0, W, H, 0, 0, w, h);
+  const settings = finish?.settings || {};
+  // A painting prints the way a photograph does: its darks are the ink.
+  if (finish?.key === "print") applyHalftone(ctx, w, h, { ...settings, invert: true });
+  else if (finish?.key === "flat") flatFinish(ctx, w, h, settings, finish, reuse);
+  else if (finish?.key === "ink") inkFinish(ctx, w, h, settings);
+  else if (finish?.key === "chalk") chalkFinish(ctx, w, h, settings);
+  return out;
+}
+
+/* A flat illustration: the picture's own colours reduced to a few (k-means
+ * on a sample), each pixel to its nearest, specks voted away by their
+ * neighbours, and optionally a dark line where two colours meet. The shapes
+ * are always found on the same small map (FLAT_MAP on the long side) and
+ * drawn up from it smoothly, so the screen and a print show the same shapes. */
+const FLAT_MAP = 300;
+function flatFinish(ctx, w, h, settings, finish = null, reuse = false) {
+  const scale = Math.min(1, FLAT_MAP / Math.max(w, h));
+  const bw = Math.max(1, Math.round(w * scale)), bh = Math.max(1, Math.round(h * scale)), n = bw * bh;
+  const small = paintBuffer(bw, bh), sctx = small.getContext("2d", { willReadFrequently: true });
+  sctx.imageSmoothingEnabled = true; sctx.imageSmoothingQuality = "high";
+  sctx.drawImage(ctx.canvas, 0, 0, w, h, 0, 0, bw, bh);
+  const data = sctx.getImageData(0, 0, bw, bh).data;
+  small.width = 0;
+  const k = Math.max(3, Math.min(9, Number(settings.colours) || 6));
+  const samples = [];
+  for (let i = 0; i < n; i += 3) samples.push(i * 4);
+  const lum = (o) => data[o] * 0.299 + data[o + 1] * 0.587 + data[o + 2] * 0.114;
+  samples.sort((a, b) => lum(a) - lum(b));
+  let centres = Array.from({ length: k }, (_, c) => {
+    const o = samples[Math.floor(((c + 0.5) / k) * samples.length)];
+    return [data[o], data[o + 1], data[o + 2]];
+  });
+  const nearest = (r, g, b) => {
+    let best = 0, bestD = Infinity;
+    for (let c = 0; c < centres.length; c++) {
+      const d = (r - centres[c][0]) ** 2 + (g - centres[c][1]) ** 2 + (b - centres[c][2]) ** 2;
+      if (d < bestD) { bestD = d; best = c; }
+    }
+    return best;
+  };
+  // A print reuses the colours the screen found, so it shows the same shapes:
+  // k-means can settle differently on a slightly different picture.
+  const remembered = reuse && Array.isArray(finish?.centres) && finish.centres.length === k ? finish.centres : null;
+  if (remembered) centres = remembered.map((c) => c.slice());
+  for (let round = 0; round < (remembered ? 0 : 6); round++) {
+    const sums = centres.map(() => [0, 0, 0, 0]);
+    for (const o of samples) {
+      const c = nearest(data[o], data[o + 1], data[o + 2]);
+      sums[c][0] += data[o]; sums[c][1] += data[o + 1]; sums[c][2] += data[o + 2]; sums[c][3]++;
+    }
+    centres = centres.map((centre, c) => sums[c][3] ? [sums[c][0] / sums[c][3], sums[c][1] / sums[c][3], sums[c][2] / sums[c][3]] : centre);
+  }
+  if (finish && !reuse) finish.centres = centres.map((c) => c.slice());
+  let index = new Uint8Array(n);
+  for (let i = 0; i < n; i++) index[i] = nearest(data[i * 4], data[i * 4 + 1], data[i * 4 + 2]);
+  const votes = new Uint8Array(k);
+  for (let pass = 0; pass < 2; pass++) {
+    const next = new Uint8Array(index);
+    for (let y = 1; y < bh - 1; y++) {
+      for (let x = 1; x < bw - 1; x++) {
+        votes.fill(0);
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) votes[index[(y + dy) * bw + x + dx]]++;
+        let best = index[y * bw + x];
+        for (let c = 0; c < k; c++) if (votes[c] > votes[best]) best = c;
+        next[y * bw + x] = best;
+      }
+    }
+    index = next;
+  }
+  // Drawn up: each pixel takes the colour whose share of its four nearest map
+  // cells is largest, which rounds the map's steps into smooth edges.
+  const image = ctx.createImageData(w, h), out = image.data;
+  const label = new Uint8Array(w * h);
+  const weights = new Float32Array(k);
+  for (let y = 0; y < h; y++) {
+    const fy = Math.max(0, Math.min(bh - 1.001, (y + 0.5) * bh / h - 0.5)), y0 = Math.floor(fy), ty = fy - y0;
+    for (let x = 0; x < w; x++) {
+      const fx = Math.max(0, Math.min(bw - 1.001, (x + 0.5) * bw / w - 0.5)), x0 = Math.floor(fx), tx = fx - x0;
+      const a = index[y0 * bw + x0], b = index[y0 * bw + x0 + 1], c = index[(y0 + 1) * bw + x0], d = index[(y0 + 1) * bw + x0 + 1];
+      let best = a;
+      if (a !== b || a !== c || a !== d) {
+        weights[a] = 0; weights[b] = 0; weights[c] = 0; weights[d] = 0;
+        weights[a] += (1 - tx) * (1 - ty); weights[b] += tx * (1 - ty); weights[c] += (1 - tx) * ty; weights[d] += tx * ty;
+        for (const e of [b, c, d]) if (weights[e] > weights[best]) best = e;
+      }
+      label[y * w + x] = best;
+    }
+  }
+  const line = Math.max(1, Math.round(w / bw));
+  for (let i = 0; i < w * h; i++) {
+    const centre = centres[label[i]], o = i * 4;
+    let shade = 1;
+    if (settings.outline) {
+      const x = i % w;
+      if ((x + line < w && label[i + line] !== label[i]) || (i + line * w < w * h && label[i + line * w] !== label[i])) shade = 0.5;
+    }
+    out[o] = centre[0] * shade; out[o + 1] = centre[1] * shade; out[o + 2] = centre[2] * shade; out[o + 3] = 255;
+  }
+  ctx.putImageData(image, 0, 0);
+}
+
+/* Pen and ink: paper, solid ink in the darkest places, three layers of
+ * hatching for the tones between (each a little wobbly, as a hand draws),
+ * and the edges drawn. A tinted drawing keeps a wash of the colour. */
+function inkFinish(ctx, w, h, settings) {
+  const image = ctx.getImageData(0, 0, w, h), data = image.data;
+  const hex = (value, fallback) => {
+    const m = /^#?([0-9a-f]{6})$/i.exec(String(value || "")) || /^#?([0-9a-f]{6})$/i.exec(fallback);
+    const v = parseInt(m[1], 16);
+    return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+  };
+  const paper = hex(settings.paper, "#f4f1e8"), ink = hex(settings.ink, "#12110f");
+  const spacing = Math.max(2.5, (Number(settings.spacing) || 0.009) * Math.max(w, h));
+  const angle = Number(settings.angle) || 0.785;
+  const dirs = [angle, angle + Math.PI / 2, angle + Math.PI / 4].map((a) => [Math.cos(a), Math.sin(a)]);
+  const reach = Math.max(1, Math.round(Math.max(w, h) / 480));
+  const L = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) L[i] = (data[i * 4] * 0.299 + data[i * 4 + 1] * 0.587 + data[i * 4 + 2] * 0.114) / 255;
+  const line = (x, y, dir, wobble) => {
+    const d = x * dir[0] + y * dir[1] + Math.sin((x * dir[1] - y * dir[0]) * 0.045 + wobble) * spacing * 0.18;
+    const m = ((d % spacing) + spacing) % spacing;
+    return Math.max(0, 1 - Math.abs(m - spacing / 2) / (spacing * 0.16));
+  };
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x, o = i * 4;
+      const t = L[i];
+      // Edges over a fixed fraction of the picture, not one pixel, so a print
+      // draws the same edges as the screen.
+      const gx = x >= reach && x < w - reach ? L[i + reach] - L[i - reach] : 0;
+      const gy = y >= reach && y < h - reach ? L[i + reach * w] - L[i - reach * w] : 0;
+      let cover = t < 0.14 ? 1 : 0;
+      if (t < 0.7) cover = Math.max(cover, line(x, y, dirs[0], 0) * 0.9);
+      if (t < 0.45) cover = Math.max(cover, line(x, y, dirs[1], 1.7) * 0.9);
+      if (t < 0.26) cover = Math.max(cover, line(x, y, dirs[2], 3.1));
+      if (Math.hypot(gx, gy) > 0.22) cover = 1;
+      const base = settings.tint
+        ? [paper[0] * 0.7 + data[o] * 0.3, paper[1] * 0.7 + data[o + 1] * 0.3, paper[2] * 0.7 + data[o + 2] * 0.3] : paper;
+      data[o] = base[0] + (ink[0] - base[0]) * cover;
+      data[o + 1] = base[1] + (ink[1] - base[1]) * cover;
+      data[o + 2] = base[2] + (ink[2] - base[2]) * cover;
+      data[o + 3] = 255;
+    }
+  }
+  ctx.putImageData(image, 0, 0);
+}
+
+/* Chalk on toned paper: each colour laid where it is, but only where the
+ * chalk catches the paper's grain - fully where the colour is strong, in
+ * flecks where it is faint - with the grain streaked along the stroke. */
+function chalkFinish(ctx, w, h, settings) {
+  const image = ctx.getImageData(0, 0, w, h), data = image.data;
+  const paper = Array.isArray(settings.paper) ? settings.paper : CHALK_PAPERS[0];
+  const grainAmount = Number(settings.grain) || 0.6;
+  const a = Number(settings.angle) || -0.6, ca = Math.cos(a), sa = Math.sin(a);
+  const unit = Math.max(w, h) / 600;
+  const hash = (x, y) => { let v = Math.imul(x, 374761393) + Math.imul(y, 668265263); v = Math.imul(v ^ (v >>> 13), 1274126177); return ((v ^ (v >>> 16)) >>> 0) / 4294967296; };
+  const noise = (x, y) => {
+    const xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi;
+    const top = hash(xi, yi) + (hash(xi + 1, yi) - hash(xi, yi)) * fx;
+    const bottom = hash(xi, yi + 1) + (hash(xi + 1, yi + 1) - hash(xi, yi + 1)) * fx;
+    return top + (bottom - top) * fy;
+  };
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4;
+      const along = (x * ca + y * sa) / unit, across = (-x * sa + y * ca) / unit;
+      const grain = noise(along * 0.045, across * 0.9) * 0.7 + noise(along * 0.3, across * 2.2) * 0.3;
+      // Chalk is lighter and chalkier than paint: a little white in every colour.
+      const r = data[o] * 0.82 + 46, g = data[o + 1] * 0.82 + 46, b = data[o + 2] * 0.82 + 46;
+      const strength = Math.min(1, Math.hypot(data[o] - paper[0], data[o + 1] - paper[1], data[o + 2] - paper[2]) / 150);
+      const caught = strength > grain * grainAmount + (1 - grainAmount) * 0.5 ? 0.92 : strength * 0.1;
+      const tooth = (hash(x, y) - 0.5) * 14;
+      data[o] = paper[0] + tooth + (r - paper[0]) * caught;
+      data[o + 1] = paper[1] + tooth + (g - paper[1]) * caught;
+      data[o + 2] = paper[2] + tooth + (b - paper[2]) * caught;
+      data[o + 3] = 255;
+    }
+  }
+  ctx.putImageData(image, 0, 0);
+}
+
+/* The finish layer over the live canvas. */
+let finishLayer = null;
+let finishLayerTimer = null;
+let finishLayerShown = { revision: -1, plan: null };
+// Counts changes to the painted canvas the finish layer has to follow.
+let finishCanvasRevision = 0;
+function hideFinishLayer() {
+  if (finishLayer) finishLayer.style.display = "none";
+  finishLayerShown = { revision: -1, plan: null };
+}
+function scheduleFinishLayer(delay = isMobileBrowser() ? 3000 : 1200) {
+  if (finishLayerTimer) return;
+  finishLayerTimer = setTimeout(() => { finishLayerTimer = null; refreshFinishLayer(); }, delay);
+}
+function refreshFinishLayer() {
+  const plan = strokePainter.plan, finish = plan?.finish;
+  if (!finish || finish.key === "none" || !view?.width || typeof document === "undefined") { hideFinishLayer(); return null; }
+  if (finishLayerShown.plan === plan && finishLayerShown.revision === finishCanvasRevision && finishLayer?.style.display !== "none") return finishLayer;
+  if (!finishLayer) {
+    finishLayer = document.createElement("canvas");
+    finishLayer.id = "finishView";
+    finishLayer.setAttribute("aria-hidden", "true");
+    finishLayer.style.cssText = "position:absolute;pointer-events:none;display:none;border-radius:5px;background:transparent";
+    view.insertAdjacentElement("afterend", finishLayer);
+  }
+  const out = renderFinish(view, view.width, view.height, finish, isMobileBrowser() ? 560 : 960);
+  finishLayer.width = out.width; finishLayer.height = out.height;
+  finishLayer.getContext("2d").drawImage(out, 0, 0);
+  out.width = 0; out.height = 0;
+  Object.assign(finishLayer.style, { left: view.offsetLeft + "px", top: view.offsetTop + "px",
+    width: view.offsetWidth + "px", height: view.offsetHeight + "px", display: "block" });
+  finishLayerShown = { revision: finishCanvasRevision, plan };
+  return finishLayer;
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("resize", () => {
+    if (finishLayer && finishLayer.style.display !== "none") { finishLayerShown.revision = -1; scheduleFinishLayer(200); }
+  });
+}
+
+/* ── Learning from how paintings turn out ─────────────────────────────────
+ *
+ * Every painting is a chain of choices - manner, brushes, finish, solidity,
+ * perspective, how things are drawn. When a painting is finished, or replaced
+ * by the next one after enough paint has landed, the finished picture (finish
+ * and all) is scored by taste and the score is filed against its chain, here
+ * and in the shared catalogue (hexfield_style_outcomes). Each chooser then
+ * leans toward the options whose paintings scored above the average, by how
+ * much and how often (styleOutcomeLean), and toward options not tried much
+ * yet, so nothing is written off on a few paintings. */
+const STYLE_EXPLORE = 0.08;
+const STYLE_OUTCOME_KEY = "hexfield.styleOutcomes.v1";
+const STYLE_OUTCOME_CAP = 400;
+const STYLE_OUTCOME_MIN_STROKES = 600;
+let styleOutcomes = (() => {
+  try { const rows = JSON.parse(localStorage.getItem(STYLE_OUTCOME_KEY) || "[]"); return Array.isArray(rows) ? rows : []; }
+  catch { return []; }
+})();
+let sharedStyleOutcomes = [];
+let styleOutcomeQueue = [];
+let styleOutcomeStats = null;
+
+function planStyleChain(plan) {
+  return {
+    manner: plan?.manner?.key || null, tips: plan?.tips?.key || null, finish: plan?.finish?.key || null,
+    dims: plan?.dims?.key || null, perspective: plan?.scene?.perspective?.key || null, form: plan?.scene?.forms?.key || null,
+  };
+}
+
+function finishedPictureTaste() {
+  const layer = refreshFinishLayer();
+  const source = layer && layer.style.display !== "none" ? layer : view;
+  const w = 160, h = Math.max(1, Math.round(160 * view.height / view.width));
+  const small = paintBuffer(w, h), sctx = small.getContext("2d", { willReadFrequently: true });
+  sctx.drawImage(source, 0, 0, source.width, source.height, 0, 0, w, h);
+  const score = tastePrediction(tasteFeatures(sctx, w, h, signature(sctx, w, h)));
+  small.width = 0;
+  return score;
+}
+
+function recordStyleOutcome(plan, source) {
+  if (!plan || plan.outcomeRecorded || strokePainter.plan !== plan || !view?.width) return null;
+  if ((strokePainter.strokes || 0) < STYLE_OUTCOME_MIN_STROKES) return null;
+  plan.outcomeRecorded = true;
+  let taste;
+  try { taste = finishedPictureTaste(); } catch { return null; }
+  if (!Number.isFinite(taste)) return null;
+  const row = { id: "so_" + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36),
+    at: Date.now(), chain: planStyleChain(plan), taste: +taste.toFixed(4), source };
+  styleOutcomes = [row, ...styleOutcomes].slice(0, STYLE_OUTCOME_CAP);
+  styleOutcomeStats = null;
+  try { localStorage.setItem(STYLE_OUTCOME_KEY, JSON.stringify(styleOutcomes)); } catch { /* full storage */ }
+  styleOutcomeQueue.push(row);
+  pushStyleOutcomes();
+  return row;
+}
+
+function styleOutcomeRows() {
+  const own = new Set(styleOutcomes.map((row) => row.id));
+  return [...styleOutcomes, ...sharedStyleOutcomes.filter((row) => !own.has(row.id))];
+}
+
+function computeStyleOutcomeStats() {
+  const rows = styleOutcomeRows().filter((row) => Number.isFinite(Number(row.taste)) && row.chain);
+  const mean = rows.length ? rows.reduce((sum, row) => sum + Number(row.taste), 0) / rows.length : 0;
+  const stats = { mean, rows: rows.length };
+  for (const row of rows) {
+    for (const [axis, key] of Object.entries(row.chain)) {
+      if (!key) continue;
+      const slot = ((stats[axis] ||= {})[key] ||= { n: 0, sum: 0 });
+      slot.n++; slot.sum += Number(row.taste) - mean;
+    }
+  }
+  return stats;
+}
+
+function styleOutcomeLean(axis, key) {
+  if (!axis) return 0;
+  const stats = styleOutcomeStats || (styleOutcomeStats = computeStyleOutcomeStats());
+  const slot = stats[axis]?.[key];
+  const n = slot?.n || 0;
+  // Above or below the average painting, shrunk toward nothing while there
+  // are few; and a turn for whatever has hardly been tried.
+  const advantage = n ? slot.sum / (n + 4) : 0;
+  return Math.max(-1.2, Math.min(1.2, advantage * 14)) + 0.3 / Math.sqrt(1 + n);
+}
+
+let styleOutcomePushing = false;
+async function pushStyleOutcomes() {
+  if (styleOutcomePushing || !styleOutcomeQueue.length) return;
+  styleOutcomePushing = true;
+  const batch = styleOutcomeQueue.splice(0, 20);
+  try {
+    const session = await ensureTasteSession();
+    const response = await fetch(SUPABASE_URL + "/rest/v1/hexfield_style_outcomes?on_conflict=visitor_id,client_id", {
+      method: "POST",
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token,
+        "Content-Type": "application/json", Prefer: "resolution=ignore-duplicates,return=minimal" },
+      body: JSON.stringify(batch.map((row) => ({ client_id: row.id, chain: row.chain, taste: row.taste, source: row.source }))),
+    });
+    if (!response.ok) throw new Error("style outcome HTTP " + response.status);
+  } catch {
+    styleOutcomeQueue = [...batch.filter((row) => (row.attempts = (row.attempts || 0) + 1) <= 2), ...styleOutcomeQueue].slice(-60);
+  } finally {
+    styleOutcomePushing = false;
+  }
+}
+
+async function pullStyleOutcomes() {
+  try {
+    const session = await ensureTasteSession();
+    const res = await fetch(SUPABASE_URL +
+      "/rest/v1/hexfield_style_outcomes?select=client_id,chain,taste,source,created_at&order=created_at.desc&limit=800", {
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token },
+    });
+    if (!res.ok) return 0;
+    const rows = await res.json();
+    sharedStyleOutcomes = rows.filter((row) => row.chain && typeof row.chain === "object")
+      .map((row) => ({ id: row.client_id, at: Date.parse(row.created_at || "") || 0, chain: row.chain, taste: Number(row.taste), source: row.source }));
+    styleOutcomeStats = null;
+    return rows.length;
+  } catch { return 0; }
+}
+
 function strokeLength(points) {
   let length = 0;
   for (let i = 1; i < points.length; i++) length += Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]);
@@ -33986,6 +34416,8 @@ function animateLoggedStrokes(result, strokes, animation) {
     const finish = (landed) => {
       strokeLogEnd(animation === activePaintAnimation, logEpoch);
       if (animation === activePaintAnimation) activePaintAnimation = 0;
+      finishCanvasRevision++;
+      scheduleFinishLayer();
       result.paintProgress = 1;
       markPaintTimingCompleted(result);
       paintRevision++;
@@ -34003,6 +34435,8 @@ function animateLoggedStrokes(result, strokes, animation) {
         if (logEpoch === strokeLog.epoch) strokeLog.strokes.push(strokes[cursor]);
       }
       vctx.restore();
+      // The finish over the canvas follows the paint as it lands.
+      if (strokePainter.plan?.finish && strokePainter.plan.finish.key !== "none") { finishCanvasRevision++; scheduleFinishLayer(); }
       result.paintProgress = cursor / strokes.length;
       if (cursor >= strokes.length) { finish(true); return; }
       // A timer, not requestAnimationFrame: rAF stops in a background tab and
@@ -34451,7 +34885,10 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
     const raw = target.getContext("2d").getImageData(0, 0, width, height).data;
     // A new painting, a new plan: focus, value scheme and palette.
     const enhancedRaw = enhanceStrokeReference(raw);
+    // The painting being replaced is scored, finish and all, before it goes.
+    recordStyleOutcome(strokePainter.plan, "replaced");
     strokePainter.plan = makePaintingPlan(enhancedRaw, width, height, result?.drawSeed, result?.params);
+    hideFinishLayer();
     const reference = prepareStrokeReference(raw, width, height, enhancedRaw);
     // Detail passes start from this one while theirs is prepared in the background.
     strokePainter.enhanced = reference;
@@ -36271,6 +36708,7 @@ function checkPaintingFinished() {
       stagnation >= FINISH_AFTER_STAGNATION && painterPass >= FINISH_MIN_PASSES &&
       now - lastInteractionAt > 20000) {
     paintingFinishedAt = now;
+    recordStyleOutcome(strokePainter.plan, "finished");
   }
   return paintingFinishedAt;
 }
@@ -39283,6 +39721,19 @@ $("export").addEventListener("click", async () => {
     const painted = await paintExportFromLog(out, (frac) => {
       setExportStatus(`painting… ${Math.round(frac * 100)}%`);
     });
+    // The painting's finish, applied to the replayed strokes as on screen.
+    const finish = strokePainter.plan?.finish;
+    if (painted && finish && finish.key !== "none") {
+      setExportStatus("finishing…");
+      await new Promise((r) => setTimeout(r, 16));
+      const finished = renderFinish(out, out.width, out.height, finish, 2400, { reuse: true });
+      octx.save();
+      octx.imageSmoothingEnabled = true;
+      octx.imageSmoothingQuality = "high";
+      octx.drawImage(finished, 0, 0, out.width, out.height);
+      octx.restore();
+      finished.width = 0;
+    }
     if (!painted && current.params.field === "fractal") {
       // The chunked fractal renderer draws its own field, so the word has to
       // reach it as a mask exactly as it does on screen - otherwise the export
