@@ -88,7 +88,7 @@
         "a narrow, earthy palette, low in saturation",
       ],
       reference: { saturation: 0.72, warmth: 12, keys: [14, 238], groundDark: 0.65, light: 0.3, blur: 0.5, palette: 7, snap: 0.3 },
-      brush: { alpha: 0.7, bristle: false, jitter: 3, length: 1.1 },
+      brush: { alpha: 0.7, bristle: false, jitter: 3, length: 1.1, tips: { soft: 0.75, filbert: 0.25 } },
       leans: { ene: -0.6, pot: -0.4, val: -0.3 },
       words: ["old", "ancient", "portrait", "saint", "angel", "mist", "fog", "smoke", "dream", "quiet", "candle", "dusk", "memory", "silence"],
     },
@@ -102,7 +102,7 @@
         "the whole surface alive with touches",
       ],
       reference: { saturation: 1.35, keys: [70, 245], palette: 9, snap: 0.4 },
-      brush: { alpha: 0.9, bristle: true, jitter: 42, length: 0.35, width: 0.8, evenDetail: 0.5 },
+      brush: { alpha: 0.9, bristle: true, jitter: 42, length: 0.35, width: 0.8, evenDetail: 0.5, tips: { filbert: 0.45, round: 0.35, flat: 0.2 } },
       leans: { val: 0.5, mul: 0.4, ene: 0.2 },
       words: ["garden", "flower", "flowers", "sun", "summer", "spring", "morning", "meadow", "pond", "picnic", "bloom", "blossom"],
     },
@@ -116,7 +116,7 @@
         "big dark shapes against white",
       ],
       reference: { saturation: 0.35, keys: [14, 238], twoTone: 0.85, palette: 3, snap: 0.9, flatGround: 0.5 },
-      brush: { alpha: 1, bristle: false, jitter: 2, length: 1.4, width: 0.55, hatch: 0.85, evenDetail: 0.4, edgeStop: 48 },
+      brush: { alpha: 1, bristle: false, jitter: 2, length: 1.4, width: 0.55, hatch: 0.85, evenDetail: 0.4, edgeStop: 48, tips: { flat: 1 } },
       leans: { con: 0.5, bnd: 0.4, pot: 0.3 },
       words: ["storm", "wood", "forest", "war", "raven", "crow", "skull", "bone", "winter", "ink", "wolf", "woodcut", "print"],
     },
@@ -128,7 +128,9 @@
     saturation: 1, warmth: 0, keys: [0, 255], groundDark: 0, light: 0, blur: 0,
     palette: 0, snap: -1, contour: 0, twoTone: 0, flatGround: 0,
   };
-  const BRUSH_DEFAULTS = { alpha: 0, bristle: true, round: false, jitter: -1, length: 1, width: 1, hatch: 0, evenDetail: 0, edgeStop: 0 };
+  // `tips`: which brush tips the manner paints with (app.js, BRUSH_TIPS);
+  // null leaves it to the painting's own kit.
+  const BRUSH_DEFAULTS = { alpha: 0, bristle: true, round: false, jitter: -1, length: 1, width: 1, hatch: 0, evenDetail: 0, edgeStop: 0, tips: null };
 
   function manner(key) {
     const entry = MANNERS[key] || MANNERS.painterly;

@@ -25716,7 +25716,8 @@ function updateWordPaints() {
   const drawn = strokePainter.plan?.scene?.forms;
   const own = Object.keys(strokePainter.plan?.adopted || {}).map((i) => strokePainter.plan.scene?.items?.[i]?.key).filter(Boolean);
   line.textContent = (manner ? "manner: " + manner.name + (dims ? " · " + dims.name : "") + (persp ? " · " + persp.name : "") +
-    (drawn ? " · drawn " + drawn.name : "") + " · " : "") +
+    (drawn ? " · drawn " + drawn.name : "") +
+    (manner.brush?.tips ? "" : strokePainter.plan?.tips ? " · brushes: " + strokePainter.plan.tips.key : "") + " · " : "") +
     (parts.length ? "paints: " + parts.join(" · ") : "paints: no things it knows yet") +
     (mood.length ? " · mood: " + mood.slice(0, 4).join(", ") : "") +
     (own.length ? " · prefers its own: " + [...new Set(own)].join(", ") : "") +
@@ -31275,6 +31276,7 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
   const scene = planScene(params, width, height, fx, drawSeed, ref);
   if (scene?.focus) { plan.fx = scene.focus.fx; plan.fy = scene.focus.fy; }
   plan.scene = scene;
+  plan.tips = choosePlanTips(plan, params);
   const { Lf, Lb } = planLuminanceStats(ref, width, height, plan);
   plan.lightOnDark = Math.abs(Lf - Lb) > 6 ? Lf > Lb : mulberry32((Number(drawSeed) || 7) >>> 0)() < 0.6;
   return plan;
@@ -31661,6 +31663,7 @@ function recordVisualVote(liked) {
   const variations = { ...(scene?.variations || {}) };
   if (plan?.manner) variations[mannerVoteWord(plan.manner.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.dims) variations[dimsVoteWord(plan.dims.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  if (plan?.tips) variations[tipsVoteWord(plan.tips.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (scene?.perspective) variations[perspVoteWord(scene.perspective.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (scene?.forms) variations[formVoteWord(scene.forms.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   // A kept painting's things are remembered as forms worth starting from.
@@ -33606,10 +33609,132 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
   return { strokes, candidates: starts.length, cells };
 }
 
+/* ── Brush tips ─────────────────────────────────────────────────────────
+ *
+ * A stroke used to be one even line with square ends, so every mark in a
+ * painting was the same rectangle. Now each stroke has a tip, like a brush
+ * in the hand:
+ *   flat     an even band, its ends cut at the angle it was held, the paint
+ *            thinning as it runs out
+ *   filbert  rounded ends - a short touch is an oval
+ *   round    pressed in quickly, lifted slowly to a point
+ *   dry      broken streaks where the bristles drag over the ground
+ *   soft     a feathered edge, blended into what is under it
+ * Each painting has a kit (TIP_KITS) - how often it reaches for each tip -
+ * chosen with the words, the votes and variety like the other choices; a
+ * manner with its own character (MANNERS[].brush.tips) uses its own. The
+ * biggest blocking-in strokes lean soft, so masses meet in blended edges
+ * rather than seams. The tip is written onto the stroke, so EXPORT replays
+ * the same marks. */
+const BRUSH_TIPS = ["flat", "filbert", "round", "dry", "soft"];
+const TIP_KITS = {
+  flats: { flat: 0.5, filbert: 0.2, dry: 0.15, soft: 0.15 },
+  filberts: { filbert: 0.5, soft: 0.2, flat: 0.15, round: 0.15 },
+  rounds: { round: 0.5, filbert: 0.2, soft: 0.15, dry: 0.15 },
+  dry: { dry: 0.4, flat: 0.3, soft: 0.15, filbert: 0.15 },
+  soft: { soft: 0.55, filbert: 0.25, round: 0.2 },
+};
+const tipsVoteWord = (key) => "tips" + String(key).replace(/[^a-z]/g, "");
+
+function choosePlanTips(plan, params) {
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x71b5) >>> 0);
+  // Energetic words reach for flats and dry brush; quiet ones for soft.
+  const ene = Number(params?.__hexfieldWords?.axes?.ene) || 0;
+  const leans = { flats: 0.15 * ene, dry: 0.25 * ene, soft: -0.3 * ene, filberts: -0.1 * ene, rounds: 0 };
+  const scores = chooseByTaste(Object.keys(TIP_KITS), {
+    rng, tasted: 0, axis: "tips", lean: (key) => leans[key] || 0,
+    learned: (key) => visualLearnedChoice(tipsVoteWord(key)), taste: () => null,
+  });
+  plan.tipScores = summariseChoice(scores);
+  return { key: scores[0].key, weights: TIP_KITS[scores[0].key] };
+}
+
+function strokeLength(points) {
+  let length = 0;
+  for (let i = 1; i < points.length; i++) length += Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]);
+  return length;
+}
+
+function chooseStrokeTip(stroke) {
+  // Ink lines and flat-colour shapes stay crisp.
+  if (stroke.plain && stroke.round) return "ink";
+  const manner = typeof planManner === "function" ? planManner() : null;
+  const own = manner?.brush?.tips;
+  const weights = { ...(own || strokePainter.plan?.tips?.weights || TIP_KITS.filberts) };
+  if (!own) {
+    const short = Math.min(strokePainter.width || 600, strokePainter.height || 600);
+    weights.soft = (weights.soft || 0) + clamp01((stroke.width / short - 0.035) / 0.05) * 0.7;
+  }
+  if (stroke.round) { weights.filbert = (weights.filbert || 0) + (weights.flat || 0); weights.flat = 0; }
+  // A touch shorter than the brush is wide is an oval, not a little square.
+  if (weights.flat && strokeLength(stroke.points) < stroke.width * 1.2 && !own) {
+    weights.filbert = (weights.filbert || 0) + weights.flat; weights.flat = 0;
+  }
+  const total = BRUSH_TIPS.reduce((sum, tip) => sum + (weights[tip] || 0), 0);
+  if (!(total > 0)) return "filbert";
+  let u = ((Number(stroke.bristle) || 0) * 7919.137) % 1 * total;
+  for (const tip of BRUSH_TIPS) { u -= weights[tip] || 0; if (u < 0) return tip; }
+  return "filbert";
+}
+
+/* The stroke's centre line, sampled along the same curve the points make. */
+function strokeSpine(points, width, rnd) {
+  if (points.length === 1) {
+    const angle = rnd() * Math.PI, d = width * 0.3;
+    const [x, y] = points[0];
+    return [[x - Math.cos(angle) * d, y - Math.sin(angle) * d], [x, y], [x + Math.cos(angle) * d, y + Math.sin(angle) * d]];
+  }
+  const out = [[points[0][0], points[0][1]]];
+  let from = points[0];
+  const step = Math.max(1.5, width * 0.4);
+  const along = (control, to) => {
+    const length = Math.hypot(control[0] - from[0], control[1] - from[1]) + Math.hypot(to[0] - control[0], to[1] - control[1]);
+    const n = Math.max(1, Math.min(8, Math.ceil(length / step)));
+    for (let k = 1; k <= n; k++) {
+      const t = k / n, a = (1 - t) * (1 - t), b = 2 * (1 - t) * t, c = t * t;
+      out.push([a * from[0] + b * control[0] + c * to[0], a * from[1] + b * control[1] + c * to[1]]);
+    }
+    from = to;
+  };
+  for (let i = 1; i < points.length; i++) {
+    along(points[i - 1], [(points[i - 1][0] + points[i][0]) / 2, (points[i - 1][1] + points[i][1]) / 2]);
+  }
+  const last = points[points.length - 1];
+  along([(from[0] + last[0]) / 2, (from[1] + last[1]) / 2], last);
+  return out;
+}
+
+/* The brush covers past the ends of its path, as a round line's caps did,
+ * and the outline needs enough points to be a curve rather than a kite. */
+function strokeResample(spine, width, reach) {
+  const n0 = spine.length;
+  const dir = (i, j) => { const dx = spine[j][0] - spine[i][0], dy = spine[j][1] - spine[i][1], l = Math.hypot(dx, dy) || 1; return [dx / l, dy / l]; };
+  const [ax, ay] = dir(0, 1), [bx, by] = dir(n0 - 2, n0 - 1);
+  const path = [[spine[0][0] - ax * width * reach, spine[0][1] - ay * width * reach], ...spine,
+    [spine[n0 - 1][0] + bx * width * reach, spine[n0 - 1][1] + by * width * reach]];
+  const at = [0];
+  for (let i = 1; i < path.length; i++) at.push(at[i - 1] + Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1]));
+  const total = at[at.length - 1];
+  const count = Math.max(8, Math.min(24, Math.ceil(total / Math.max(1, width * 0.45))));
+  const out = [];
+  for (let k = 0, j = 1; k < count; k++) {
+    const d = (k / (count - 1)) * total;
+    while (j < path.length - 1 && at[j] < d) j++;
+    const span = at[j] - at[j - 1] || 1, t = Math.min(1, Math.max(0, (d - at[j - 1]) / span));
+    out.push([path[j - 1][0] + (path[j][0] - path[j - 1][0]) * t, path[j - 1][1] + (path[j][1] - path[j - 1][1]) * t]);
+  }
+  return out;
+}
+
+const tipShade = (colour, shade) => `rgb(${colour.map((c) => Math.max(0, Math.min(255, Math.round(c + shade)))).join(",")})`;
+
 function drawPaintStroke(ctx, stroke) {
   const [r, g, b] = stroke.colour;
   const pts = stroke.points;
-  const path = () => {
+  const tip = stroke.tip || (stroke.tip = chooseStrokeTip(stroke));
+  const alpha = stroke.alpha ? Math.min(1, stroke.alpha * (0.94 + stroke.bristle * 0.06)) : 0.82 + stroke.bristle * 0.14;
+  if (tip === "ink" || stroke.width < 2.5) {
+    // Lines and the finest touches: one even mark.
     ctx.beginPath();
     ctx.moveTo(pts[0][0], pts[0][1]);
     if (pts.length === 1) ctx.lineTo(pts[0][0] + 0.01, pts[0][1]);
@@ -33618,26 +33743,113 @@ function drawPaintStroke(ctx, stroke) {
       ctx.quadraticCurveTo(pts[i - 1][0], pts[i - 1][1], mx, my);
     }
     ctx.lineTo(pts[pts.length - 1][0], pts[pts.length - 1][1]);
-  };
-  // A flat brush leaves square-ish ends; a small round one, a dab.
-  ctx.lineCap = stroke.width >= 8 && !stroke.round ? "butt" : "round";
-  ctx.lineJoin = "round";
-  ctx.globalAlpha = stroke.alpha ? Math.min(1, stroke.alpha * (0.94 + stroke.bristle * 0.06)) : 0.82 + stroke.bristle * 0.14;
-  ctx.strokeStyle = `rgb(${r},${g},${b})`;
-  ctx.lineWidth = stroke.width;
-  path();
-  ctx.stroke();
-  // A bristle line inside the stroke, a shade off, so it reads as paint.
-  if (stroke.width >= 4 && !stroke.plain) {
-    const shade = stroke.bristle < 0.5 ? -18 : 14;
-    ctx.globalAlpha = 0.22;
-    ctx.strokeStyle = `rgb(${Math.max(0, Math.min(255, r + shade))},${Math.max(0, Math.min(255, g + shade))},${Math.max(0, Math.min(255, b + shade))})`;
-    ctx.lineWidth = Math.max(1, stroke.width * 0.28);
-    ctx.save();
-    ctx.translate((stroke.bristle - 0.5) * stroke.width * 0.4, (stroke.bristle - 0.5) * stroke.width * 0.25);
-    path();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = `rgb(${r},${g},${b})`;
+    ctx.lineWidth = stroke.width;
     ctx.stroke();
-    ctx.restore();
+    ctx.globalAlpha = 1;
+    return;
+  }
+  const rnd = mulberry32(((Math.floor((Number(stroke.bristle) || 0) * 2147483647)) ^ (pts.length * 0x9e37)) >>> 0);
+  const w = stroke.width;
+  const spine = strokeResample(strokeSpine(pts, w, rnd), w, tip === "flat" || tip === "dry" ? 0.22 : 0.42);
+  const n = spine.length;
+  const cumulative = [0];
+  for (let i = 1; i < n; i++) cumulative.push(cumulative[i - 1] + Math.hypot(spine[i][0] - spine[i - 1][0], spine[i][1] - spine[i - 1][1]));
+  const L = Math.max(1e-3, cumulative[n - 1]);
+  const normals = spine.map((p, i) => {
+    const a = spine[Math.max(0, i - 1)], c = spine[Math.min(n - 1, i + 1)];
+    const dx = c[0] - a[0], dy = c[1] - a[1], l = Math.hypot(dx, dy) || 1;
+    return [-dy / l, dx / l];
+  });
+  const phase = rnd() * Math.PI * 2, swell = 0.06 + rnd() * 0.08;
+  const crisp = stroke.plain ? 0.3 : 1;
+  // Half the width at each point along the stroke, by tip.
+  const half = spine.map((p, i) => {
+    const t = cumulative[i] / L, s = Math.min(cumulative[i], L - cumulative[i]);
+    let f = 1;
+    if (tip === "flat" || tip === "dry") f = 1 - 0.22 * t * t * t;
+    else if (tip === "round") f = t < 0.18 ? 0.35 + 0.65 * Math.sin((t / 0.18) * Math.PI / 2) : 1 - 0.85 * ((t - 0.18) / 0.82) ** 1.8;
+    else {
+      const radius = Math.min(w / 2, L / 2);
+      f = s < radius ? Math.sqrt(Math.max(0, 1 - (1 - s / radius) ** 2)) : 1;
+    }
+    f *= 1 + swell * crisp * Math.sin(phase + (cumulative[i] / w) * 1.3);
+    return Math.max(0.15, f) * w / 2;
+  });
+  const ragged = (tip === "dry" ? 0.14 : 0.05) * crisp;
+  const left = [], right = [];
+  for (let i = 0; i < n; i++) {
+    const [x, y] = spine[i], [nx, ny] = normals[i];
+    const hl = half[i] * (1 + (rnd() - 0.5) * 2 * ragged), hr = half[i] * (1 + (rnd() - 0.5) * 2 * ragged);
+    left.push([x + nx * hl, y + ny * hl]);
+    right.push([x - nx * hr, y - ny * hr]);
+  }
+  if (tip === "flat" || tip === "dry") {
+    // A flat brush is held at an angle: its ends are cut on the slant.
+    const skew = (rnd() - 0.5) * 0.6 * w;
+    const tangent = (i, j) => { const dx = spine[j][0] - spine[i][0], dy = spine[j][1] - spine[i][1], l = Math.hypot(dx, dy) || 1; return [dx / l, dy / l]; };
+    const [t0x, t0y] = tangent(0, Math.min(1, n - 1)), [t1x, t1y] = tangent(Math.max(0, n - 2), n - 1);
+    left[0] = [left[0][0] - t0x * skew / 2, left[0][1] - t0y * skew / 2];
+    right[0] = [right[0][0] + t0x * skew / 2, right[0][1] + t0y * skew / 2];
+    left[n - 1] = [left[n - 1][0] + t1x * skew / 2, left[n - 1][1] + t1y * skew / 2];
+    right[n - 1] = [right[n - 1][0] - t1x * skew / 2, right[n - 1][1] - t1y * skew / 2];
+  }
+  const body = (scale) => {
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const [x, y] = spine[i];
+      const px = x + (left[i][0] - x) * scale, py = y + (left[i][1] - y) * scale;
+      if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+    }
+    for (let i = n - 1; i >= 0; i--) {
+      const [x, y] = spine[i];
+      ctx.lineTo(x + (right[i][0] - x) * scale, y + (right[i][1] - y) * scale);
+    }
+    ctx.closePath();
+  };
+  ctx.fillStyle = `rgb(${r},${g},${b})`;
+  if (tip === "soft") {
+    // Feathered: wide and faint outside, fuller toward the middle.
+    for (const [scale, a] of [[1.4, 0.24], [1.1, 0.36], [0.75, 0.62]]) {
+      ctx.globalAlpha = alpha * a;
+      body(scale);
+      ctx.fill();
+    }
+  } else {
+    ctx.globalAlpha = tip === "dry" ? alpha * 0.5 : alpha;
+    body(1);
+    ctx.fill();
+  }
+  // Bristle lines, a shade off, some running out before the stroke ends -
+  // all of one stroke's in one path, so they cost one draw.
+  if (!stroke.plain && w >= 6 && tip !== "soft") {
+    const dry = tip === "dry";
+    const count = Math.max(2, Math.min(dry ? 7 : 4, Math.round(w / (dry ? 2.6 : 6))));
+    const shade = (stroke.bristle < 0.5 ? -1 : 1) * (10 + rnd() * 12);
+    ctx.lineCap = "butt";
+    ctx.lineJoin = "round";
+    ctx.globalAlpha = dry ? alpha * 0.8 : 0.16 + rnd() * 0.1;
+    ctx.strokeStyle = tipShade(stroke.colour, dry ? shade * 0.5 : shade);
+    ctx.lineWidth = Math.max(0.8, w * (dry ? 0.4 / count : 0.08));
+    ctx.beginPath();
+    for (let k = 0; k < count; k++) {
+      const offset = (count === 1 ? 0 : k / (count - 1) - 0.5) * 1.6 + (rnd() - 0.5) * 0.2;
+      const t0 = rnd() * (dry ? 0.2 : 0.1), t1 = dry ? 0.45 + rnd() * 0.55 : 0.7 + rnd() * 0.3;
+      let drawing = false;
+      for (let i = 0; i < n; i++) {
+        const t = cumulative[i] / L;
+        // A dry brush skips where the bristle lifts off the ground.
+        if (t < t0 || t > t1 || (dry && rnd() < 0.12)) { drawing = false; continue; }
+        const [x, y] = spine[i], [nx, ny] = normals[i];
+        const px = x + nx * half[i] * offset * 0.5, py = y + ny * half[i] * offset * 0.5;
+        if (drawing) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+        drawing = true;
+      }
+    }
+    ctx.stroke();
   }
   ctx.globalAlpha = 1;
 }
