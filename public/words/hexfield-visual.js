@@ -1952,8 +1952,11 @@
     const added = [];
     scene.subjects.forEach((s) => {
       if (!s.attach) return;
-      const host = scene.subjects[s.attach.host];
-      const hosts = items.filter((it) => it.key === host?.key && !it.attachedTo && it.entry.kind === "subject");
+      // Onto a named thing, or onto one of the painting's own blobs.
+      const onBlob = Number.isInteger(s.attach.blob);
+      const host = onBlob ? null : scene.subjects[s.attach.host];
+      const hosts = onBlob ? [scene.blobs?.[s.attach.blob]].filter(Boolean)
+        : items.filter((it) => it.key === host?.key && !it.attachedTo && it.entry.kind === "subject");
       for (const hostItem of hosts) {
         const frame = frameOf(hostItem, view);
         const copies = s.attach.spot === "canopy" ? Math.max(1, s.count) : 1;
@@ -2026,7 +2029,7 @@
         }
         ctx.setLineDash([]);
       }
-      ctx.strokeStyle = item.attachedTo ? "rgba(255, 90, 200, 0.9)" : "rgba(60, 230, 255, 0.9)";
+      ctx.strokeStyle = item.attachedTo ? "rgba(255, 90, 200, 0.9)" : item.blob ? "rgba(255, 150, 40, 0.95)" : "rgba(60, 230, 255, 0.9)";
       ctx.setLineDash([4, 4]); poly(f.back); ctx.stroke();
       ctx.setLineDash([]); poly(f.front); ctx.stroke();
       ctx.beginPath();

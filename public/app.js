@@ -31304,6 +31304,229 @@ function planLuminanceStats(ref, width, height, plan) {
   return { Lf: wf ? lf / wf : 128, Lb: wb ? lb / wb : 128 };
 }
 
+/* ── The painting's own blobs, as things in space ──────────────────────────
+ *
+ * The big shapes of a painting's reference - abstract or not - are found on a
+ * small copy and each given a frame like a named thing's (HexfieldVisual
+ * frameOf): its outline as the drawing (so a top, a roof line and a mass to
+ * put things in are found the same way), leaning with its own long axis when
+ * it has one, standing on its lowest point. Words can put things onto them,
+ * and the strokes that paint them wrap round them. */
+function findPaintingBlobs(ref, width, height) {
+  if (!ref || ref.length !== width * height * 4) return [];
+  const { pixels, sw, sh } = smallCopy(ref, width, height, 128);
+  const n = sw * sh, k = 5;
+  // The picture's own colours, a few: k-means fitted on every third pixel of
+  // the small copy, then every pixel labelled once.
+  const lum = (o) => pixels[o] * 0.299 + pixels[o + 1] * 0.587 + pixels[o + 2] * 0.114;
+  const sample = [];
+  for (let i = 0; i < n; i += 3) sample.push(i * 4);
+  sample.sort((a, b) => lum(a) - lum(b));
+  let centres = Array.from({ length: k }, (_, c) => { const o = sample[Math.floor(((c + 0.5) / k) * sample.length)]; return [pixels[o], pixels[o + 1], pixels[o + 2]]; });
+  const nearestCentre = (o) => {
+    let best = 0, bestD = Infinity;
+    for (let c = 0; c < k; c++) {
+      const d = (pixels[o] - centres[c][0]) ** 2 + (pixels[o + 1] - centres[c][1]) ** 2 + (pixels[o + 2] - centres[c][2]) ** 2;
+      if (d < bestD) { bestD = d; best = c; }
+    }
+    return best;
+  };
+  for (let round = 0; round < 5; round++) {
+    const sums = centres.map(() => [0, 0, 0, 0]);
+    for (const o of sample) {
+      const c = nearestCentre(o);
+      sums[c][0] += pixels[o]; sums[c][1] += pixels[o + 1]; sums[c][2] += pixels[o + 2]; sums[c][3]++;
+    }
+    centres = centres.map((centre, c) => sums[c][3] ? [sums[c][0] / sums[c][3], sums[c][1] / sums[c][3], sums[c][2] / sums[c][3]] : centre);
+  }
+  const label = new Uint8Array(n);
+  for (let i = 0; i < n; i++) label[i] = nearestCentre(i * 4);
+  // Each connected region of one colour, between a speck and the ground.
+  const seen = new Uint8Array(n), stack = new Int32Array(n), blobs = [];
+  for (let start = 0; start < n; start++) {
+    if (seen[start]) continue;
+    const c = label[start];
+    let top = 0, count = 0;
+    stack[top++] = start; seen[start] = 1;
+    const members = [];
+    while (top) {
+      const i = stack[--top];
+      members.push(i); count++;
+      const x = i % sw;
+      if (x > 0 && !seen[i - 1] && label[i - 1] === c) { seen[i - 1] = 1; stack[top++] = i - 1; }
+      if (x < sw - 1 && !seen[i + 1] && label[i + 1] === c) { seen[i + 1] = 1; stack[top++] = i + 1; }
+      if (i >= sw && !seen[i - sw] && label[i - sw] === c) { seen[i - sw] = 1; stack[top++] = i - sw; }
+      if (i + sw < n && !seen[i + sw] && label[i + sw] === c) { seen[i + sw] = 1; stack[top++] = i + sw; }
+    }
+    if (count < n * 0.015 || count > n * 0.45) continue;
+    // Ground or sky, not a shape: a slab across the picture that reaches its
+    // top or its foot, or anything touching three of its edges.
+    let left = sw, right = 0, upper = sh, lower = 0;
+    for (const i of members) {
+      const x = i % sw, y = (i / sw) | 0;
+      if (x < left) left = x; if (x > right) right = x; if (y < upper) upper = y; if (y > lower) lower = y;
+    }
+    const edges = (left === 0) + (right === sw - 1) + (upper === 0) + (lower === sh - 1);
+    if (edges >= 3 || (right - left + 1 >= sw * 0.92 && (upper === 0 || lower === sh - 1))) continue;
+    const blob = regionBlob(members, sw, sh, width, height, centres[c]);
+    if (blob) blobs.push(blob);
+  }
+  return blobs.sort((a, b) => b.area - a.area).slice(0, 6);
+}
+
+// A region of the small copy as a thing with a frame: its box, its lean
+// along its long axis, and its outline as the drawing.
+function regionBlob(members, sw, sh, width, height, rgb) {
+  const inRegion = new Uint8Array(sw * sh);
+  let x0 = sw, y0 = sh, x1 = 0, y1 = 0, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+  for (const i of members) {
+    inRegion[i] = 1;
+    const x = i % sw, y = (i / sw) | 0;
+    if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    sx += x; sy += y; sxx += x * x; syy += y * y; sxy += x * y;
+  }
+  const m = members.length, mx = sx / m, my = sy / m;
+  const cxx = sxx / m - mx * mx, cyy = syy / m - my * my, cxy = sxy / m - mx * my;
+  const kx = width / sw, ky = height / sh;
+  const box = { x: x0 * kx, y: y0 * ky, w: Math.max(1, (x1 - x0 + 1) * kx), h: Math.max(1, (y1 - y0 + 1) * ky) };
+  // The long axis, measured in the picture's own proportions.
+  const axx = cxx * kx * kx, ayy = cyy * ky * ky, axy = cxy * kx * ky;
+  const angle = 0.5 * Math.atan2(2 * axy, axx - ayy);
+  const spread = Math.sqrt(Math.max(0, (axx - ayy) ** 2 / 4 + axy * axy));
+  const l1 = (axx + ayy) / 2 + spread, l2 = Math.max(1e-6, (axx + ayy) / 2 - spread);
+  // Upright-ish and clearly longer one way: it leans with that axis.
+  const fromVertical = angle - Math.PI / 2 * Math.sign(angle || 1);
+  const leaning = l1 / l2 > 1.6 && Math.abs(fromVertical) < 0.9 ? fromVertical : 0;
+  // Its outline: from its centre, the farthest member along each of 20 rays.
+  const pts = [];
+  const bw = x1 - x0 + 1, bh = y1 - y0 + 1, reach = Math.hypot(bw, bh);
+  for (let r = 0; r < VISUAL_FORM_POINTS; r++) {
+    const a = (r / VISUAL_FORM_POINTS) * Math.PI * 2, dx = Math.cos(a), dy = Math.sin(a);
+    let far = 0;
+    for (let d = 0; d < reach; d += 0.5) {
+      const x = Math.round(mx + dx * d), y = Math.round(my + dy * d);
+      if (x < 0 || y < 0 || x >= sw || y >= sh) break;
+      if (inRegion[y * sw + x]) far = d;
+    }
+    pts.push([Math.max(0, Math.min(1, (mx + dx * far - x0 + 0.5) / bw)), Math.max(0, Math.min(1, (my + dy * far - y0 + 0.5) / bh))]);
+  }
+  const hsl = rgbToHsl(rgb[0], rgb[1], rgb[2]);
+  return {
+    key: "blob", blob: true, box, area: m,
+    form: { lean: Math.max(-0.8, Math.min(0.8, Math.tan(leaning) * box.h / box.w)) },
+    entry: { kind: "subject", anchor: "ground", size: box.h / height, aspect: box.w / box.h, depth: 0.6,
+      colours: { c0: [Math.round(hsl.h), Math.round(hsl.s * 100), Math.round(hsl.l * 100)] },
+      parts: [{ shape: "poly", smooth: true, pts, colour: "c0" }] },
+    pitch: 0,
+  };
+}
+
+// A blob's pitch, against the scene's eye (or the middle of the picture).
+function setBlobPitch(blobs, plan, height) {
+  const eyeY = plan.scene?.view?.horizon ?? height * 0.5;
+  for (const blob of blobs || []) blob.pitch = Math.max(-1, Math.min(1, (blob.box.y + blob.box.h / 2 - eyeY) / height * 2.4));
+}
+
+/* Things that can be put onto a blob when the words name nothing to put
+ * them on: "a hat", "a flag", "apples". */
+const BLOB_ADDABLE = new Set(["hat", "crown", "flag", "chimney", "apple", "flower", "bird", "star", "candle", "balloon", "umbrella"]);
+function blobSpot(subject) {
+  if (["apple", "flower", "bird", "star"].includes(subject.key) && subject.count > 1) return "canopy";
+  return subject.key === "chimney" ? "roof" : "top";
+}
+
+/* Strokes wrap round forms. Each named thing and each blob is a frame; a
+ * stroke inside one leans toward running across it - along its width, in
+ * its perspective - and, on a round form, along the curve a level slice
+ * through it makes when seen from above or below (rounder the further it is
+ * from the eye). A field of those directions is made once per painting. */
+const FORM_CELL = 4;
+function roundEntry(entry) {
+  let round = 0, square = 0;
+  for (const part of entry?.parts || []) {
+    const b = part.box || null;
+    const area = b ? b[2] * b[3] : 0.05;
+    if (["ellipse", "egg", "dome", "cluster", "almond", "cloud", "blob"].includes(part.shape)) round += area;
+    else if (part.shape === "rect" || part.shape === "poly") square += area;
+  }
+  return round >= square;
+}
+
+function buildFormField(plan, width, height) {
+  const Visual = globalThis.HexfieldVisual;
+  if (!Visual?.frameOf) return null;
+  const view = plan.scene?.view || null;
+  const forms = [];
+  for (const item of plan.scene?.items || []) {
+    if (item.entry.kind === "subject" && !item.lettering) forms.push({ item, round: roundEntry(item.entry), weight: 1 });
+  }
+  // A blob is a looser form than a named thing: its strokes lean round it less.
+  for (const blob of plan.liveBlobs || plan.blobs || []) forms.push({ item: blob, round: true, weight: 0.6 });
+  if (!forms.length) return null;
+  const gw = Math.ceil(width / FORM_CELL), gh = Math.ceil(height / FORM_CELL);
+  const dir = new Float32Array(gw * gh * 4), slope = new Float32Array(gw * gh), at = new Float32Array(gw * gh);
+  const has = new Uint8Array(gw * gh), weightOf = new Float32Array(gw * gh);
+  // Bigger forms first, so a smaller one standing in front writes over them.
+  forms.sort((a, b) => b.item.box.w * b.item.box.h - a.item.box.w * a.item.box.h);
+  for (const { item, round, weight } of forms) {
+    const f = Visual.frameOf(item, view), { tl, tr, br, bl } = f.front;
+    const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const left = mid(tl, bl), right = mid(tr, br), top = mid(tl, tr), foot = mid(bl, br);
+    let ax = right[0] - left[0], ay = right[1] - left[1];
+    const half = Math.hypot(ax, ay) / 2 || 1; ax /= half * 2; ay /= half * 2;
+    let ux = top[0] - foot[0], uy = top[1] - foot[1];
+    const ul = Math.hypot(ux, uy) || 1; ux /= ul; uy /= ul;
+    const cx = (left[0] + right[0]) / 2, cy = (left[1] + right[1]) / 2;
+    const s = round ? Math.max(-0.6, Math.min(0.6, Math.sin(item.pitch || 0))) : 0;
+    const quad = [tl, tr, br, bl];
+    const inside = (x, y) => {
+      let sign = 0;
+      for (let i = 0; i < 4; i++) {
+        const [x1, y1] = quad[i], [x2, y2] = quad[(i + 1) % 4];
+        const c = (x2 - x1) * (y - y1) - (y2 - y1) * (x - x1);
+        if (c !== 0) { if (sign && Math.sign(c) !== sign) return false; sign = Math.sign(c); }
+      }
+      return true;
+    };
+    const xs = quad.map((q) => q[0]), ys = quad.map((q) => q[1]);
+    const gx0 = Math.max(0, Math.floor(Math.min(...xs) / FORM_CELL)), gx1 = Math.min(gw - 1, Math.ceil(Math.max(...xs) / FORM_CELL));
+    const gy0 = Math.max(0, Math.floor(Math.min(...ys) / FORM_CELL)), gy1 = Math.min(gh - 1, Math.ceil(Math.max(...ys) / FORM_CELL));
+    for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
+      const x = (gx + 0.5) * FORM_CELL, y = (gy + 0.5) * FORM_CELL;
+      if (!inside(x, y)) continue;
+      const i = gy * gw + gx;
+      dir[i * 4] = ax; dir[i * 4 + 1] = ay; dir[i * 4 + 2] = ux; dir[i * 4 + 3] = uy;
+      slope[i] = s;
+      at[i] = Math.max(-0.97, Math.min(0.97, ((x - cx) * ax + (y - cy) * ay) / half));
+      has[i] = 1;
+      weightOf[i] = weight;
+    }
+  }
+  return { gw, gh, dir, slope, at, has, weight: weightOf, plan };
+}
+
+// The direction a stroke at (x, y) leans toward, blended into (dx, dy).
+function wrapDirection(x, y, dx, dy, strength) {
+  if (!strength || !strokePainter.plan) return [dx, dy];
+  // Made the first time a painting's strokes ask for it.
+  if (strokePainter.formField?.plan !== strokePainter.plan) {
+    strokePainter.formField = buildFormField(strokePainter.plan, view.width, view.height) || { plan: strokePainter.plan, empty: true };
+  }
+  const field = strokePainter.formField;
+  if (field.empty) return [dx, dy];
+  const gx = Math.min(field.gw - 1, Math.max(0, (x / FORM_CELL) | 0)), gy = Math.min(field.gh - 1, Math.max(0, (y / FORM_CELL) | 0));
+  const i = gy * field.gw + gx;
+  if (!field.has[i]) return [dx, dy];
+  const t = field.at[i], bend = field.slope[i] * t / Math.sqrt(1 - t * t);
+  let fx = field.dir[i * 4] + field.dir[i * 4 + 2] * bend, fy = field.dir[i * 4 + 1] + field.dir[i * 4 + 3] * bend;
+  const fl = Math.hypot(fx, fy) || 1; fx /= fl; fy /= fl;
+  if (fx * dx + fy * dy < 0) { fx = -fx; fy = -fy; }
+  strength *= field.weight[i];
+  let ox = dx * (1 - strength) + fx * strength, oy = dy * (1 - strength) + fy * strength;
+  const ol = Math.hypot(ox, oy) || 1;
+  return [ox / ol, oy / ol];
+}
+
 function makePaintingPlan(ref, width, height, drawSeed, params = null) {
   let { fx, fy } = strokeReferenceGradient(ref, width, height).focus;
   // Toward the thirds along the long side, toward the middle across it.
@@ -31317,9 +31540,11 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
   plan.lightAngle = -Math.PI / 2 + (lightRng() < 0.5 ? -1 : 1) * (0.35 + lightRng() * 0.75);
   /* Things the words name (visual dictionary, words/hexfield-visual.js): the
    * first one takes the focus, and the painting is built around it. */
-  const scene = planScene(params, width, height, fx, drawSeed, ref);
+  plan.blobs = findPaintingBlobs(ref, width, height);
+  const scene = planScene(params, width, height, fx, drawSeed, ref, plan.blobs);
   if (scene?.focus) { plan.fx = scene.focus.fx; plan.fy = scene.focus.fy; }
   plan.scene = scene;
+  setBlobPitch(plan.blobs, plan, height);
   plan.tips = choosePlanTips(plan, params);
   plan.finish = choosePlanFinish(plan, params);
   const { Lf, Lb } = planLuminanceStats(ref, width, height, plan);
@@ -31509,13 +31734,21 @@ function chooseScenePerspective(read, width, height, ref, layoutFor, params, dra
   return chosen;
 }
 
-function planScene(params, width, height, fx, drawSeed, ref = null) {
+function planScene(params, width, height, fx, drawSeed, ref = null, blobs = null) {
   const Visual = globalThis.HexfieldVisual;
   const text = params?.__hexfieldWords?.text || "";
   const letters = seedText().replace(/\s+/g, " ").slice(0, 24);
   if (!Visual || (!text && !letters)) return null;
   const read = Visual.read(text);
   if (!read.subjects.length && !read.settings.length && !letters) return null;
+  /* Words that name only things to put onto something - "a hat", "a flag",
+   * "apples" - put them onto the painting's main blob, in its tilt and
+   * perspective: the abstract shape becomes what wears the hat. */
+  const hostless = read.subjects.filter((s) => !s.attach);
+  if (blobs?.length && hostless.length && hostless.every((s) => BLOB_ADDABLE.has(s.key))) {
+    read.blobs = blobs;
+    for (const s of hostless) s.attach = { blob: 0, spot: blobSpot(s) };
+  }
   const rng = mulberry32(((Number(drawSeed) || 0) ^ 0x5ce4e) >>> 0);
   // Each named thing is painted a little differently each time, around what
   // votes have taught that word so far (see "Words learn their look").
@@ -32987,6 +33220,8 @@ function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0) {
             dx = -gY / mag; dy = gX / mag;
             if (lastDx * dx + lastDy * dy < 0) { dx = -dx; dy = -dy; }
           }
+          // A thing's own brush wraps round it.
+          [dx, dy] = wrapDirection(x, y, dx, dy, mag < STROKE_GRADIENT_MIN ? 0.8 : 0.5);
           if (step > 1) {
             dx = 0.45 * dx + 0.55 * lastDx; dy = 0.45 * dy + 0.55 * lastDy;
             const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
@@ -33560,6 +33795,13 @@ function scheduleStrokeReference(ref, width, height, refKey) {
     // A new picture under the same master key needs its own contours.
     strokePainter.refKey = null;
     strokeReferenceJob = null;
+    // ...and its own blobs: the strokes wrap round the picture being painted
+    // now, not the one the painting began from.
+    await pause();
+    if (!stillWanted()) return;
+    plan.liveBlobs = findPaintingBlobs(strokePainter.enhanced, width, height);
+    setBlobPitch(plan.liveBlobs, plan, height);
+    strokePainter.formField = null;
   })().catch((error) => {
     console.warn("stroke reference preparation failed", error);
     if (strokeReferenceJob === job) strokeReferenceJob = null;
@@ -33693,6 +33935,9 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
         dx = -gY / mag; dy = gX / mag;
         if (lastDx * dx + lastDy * dy < 0) { dx = -dx; dy = -dy; }
       }
+      // Round the form the stroke is on - most where the picture has no
+      // direction of its own.
+      [dx, dy] = wrapDirection(x, y, dx, dy, mag < STROKE_GRADIENT_MIN ? 0.75 : 0.4);
       if (hatch && layer < 3) {
         const sign = dx * hx + dy * hy < 0 ? -1 : 1;
         dx = dx * (1 - hatch) + sign * hx * hatch; dy = dy * (1 - hatch) + sign * hy * hatch;
@@ -34095,11 +34340,14 @@ function refreshFramesLayer() {
   }
   Object.assign(framesLayer.style, { left: view.offsetLeft + "px", top: view.offsetTop + "px",
     width: view.offsetWidth + "px", height: view.offsetHeight + "px" });
-  if (framesShownFor === scene) return;
-  framesShownFor = scene;
+  const plan = strokePainter.plan;
+  const blobs = plan?.liveBlobs || plan?.blobs;
+  if (framesShownFor === blobs && framesLayer.width === view.width) return;
+  framesShownFor = blobs;
   framesLayer.width = view.width; framesLayer.height = view.height;
   const ctx = framesLayer.getContext("2d");
   ctx.clearRect(0, 0, framesLayer.width, framesLayer.height);
+  if (blobs?.length) Visual.drawFrames(ctx, blobs, scene?.view || null, view.width, view.height);
   if (scene?.items) Visual.drawFrames(ctx, scene.items, scene.view, view.width, view.height);
 }
 if (SHOW_FRAMES && typeof window !== "undefined") setInterval(refreshFramesLayer, 1000);
