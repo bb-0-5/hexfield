@@ -31959,6 +31959,7 @@ function recordVisualVote(liked) {
   if (plan?.dims) variations[dimsVoteWord(plan.dims.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.tips) variations[tipsVoteWord(plan.tips.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.finish) variations[finishVoteWord(plan.finish.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  if (plan?.finish?.look) variations[lookVoteWord(plan.finish.look)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (scene?.perspective) variations[perspVoteWord(scene.perspective.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (scene?.forms) variations[formVoteWord(scene.forms.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   // A kept painting's things are remembered as forms worth starting from.
@@ -34073,16 +34074,75 @@ function choosePlanFinish(plan, params) {
   const key = scores[0].key;
   const pick = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x5e77) >>> 0);
   const one = (list) => list[Math.floor(pick() * list.length)];
-  const settings = key === "print"
-    ? (screened ? { ...params.halftone } : { mode: pick() < 0.55 ? "mono" : "cmyk", across: Math.round(48 + pick() * 72),
-      angle: one([15, 45, 75]), paper: one(FINISH_PAPERS), ink: one(FINISH_INKS) })
-    : key === "flat" ? { colours: 5 + Math.floor(pick() * 4), outline: pick() < 0.55 }
-    : key === "ink" ? { spacing: 0.007 + pick() * 0.006, angle: one([0.785, -0.785, 0.52, -1.05]), paper: one(FINISH_PAPERS),
-      ink: one(FINISH_INKS), tint: pick() < 0.4 }
-    : key === "chalk" ? { paper: one(CHALK_PAPERS), grain: 0.45 + pick() * 0.35, angle: -0.9 + pick() * 0.6 }
-    : {};
-  return { key, settings };
+  // A screen the field already carries is kept as it is.
+  if (key === "print" && screened) return { key, look: null, settings: { ...params.halftone } };
+  const looks = FINISH_LOOKS[key];
+  if (!looks) return { key, look: null, settings: {} };
+  /* Which look within the finish, chosen like the finish itself - by how
+   * its paintings have scored, alongside the choices already made, and by
+   * votes and words. The finish is left out of `given`: every painting in
+   * one of its looks had it. */
+  const given = planStyleChain(plan);
+  delete given.finish;
+  const lookScores = chooseByTaste(Object.keys(looks).map((look) => key + "." + look), {
+    rng, tasted: 0, axis: "look", given,
+    lean: (look) => words.filter((word) => (LOOK_WORDS[look] || []).includes(word)).length * 0.6,
+    learned: (look) => visualLearnedChoice(lookVoteWord(look)), taste: () => null,
+  });
+  plan.lookScores = summariseChoice(lookScores);
+  const look = lookScores[0].key;
+  return { key, look, settings: looks[look.slice(key.length + 1)](pick, one) };
 }
+
+/* The looks within each finish: the settings that change a finish the most,
+ * in a few bands, each a recognisably different picture - a coarse screen
+ * and a fine one are nearly different styles. What is left within a band
+ * (angles, paper, ink) is still left to chance. */
+const FINISH_LOOKS = {
+  print: {
+    "mono-coarse": (pick, one) => ({ mode: "mono", across: Math.round(46 + pick() * 30), angle: one([15, 45, 75]), paper: one(FINISH_PAPERS), ink: one(FINISH_INKS) }),
+    "mono-fine": (pick, one) => ({ mode: "mono", across: Math.round(82 + pick() * 40), angle: one([15, 45, 75]), paper: one(FINISH_PAPERS), ink: one(FINISH_INKS) }),
+    "cmyk-coarse": (pick, one) => ({ mode: "cmyk", across: Math.round(46 + pick() * 30), angle: one([15, 45, 75]), paper: one(FINISH_PAPERS), ink: one(FINISH_INKS) }),
+    "cmyk-fine": (pick, one) => ({ mode: "cmyk", across: Math.round(82 + pick() * 40), angle: one([15, 45, 75]), paper: one(FINISH_PAPERS), ink: one(FINISH_INKS) }),
+  },
+  flat: {
+    "few-line": (pick) => ({ colours: 4 + Math.floor(pick() * 2), outline: true }),
+    "few-clean": (pick) => ({ colours: 4 + Math.floor(pick() * 2), outline: false }),
+    "many-line": (pick) => ({ colours: 7 + Math.floor(pick() * 3), outline: true }),
+    "many-clean": (pick) => ({ colours: 7 + Math.floor(pick() * 3), outline: false }),
+  },
+  ink: {
+    "tight-plain": (pick, one) => ({ spacing: 0.0065 + pick() * 0.0025, angle: one([0.785, -0.785, 0.52, -1.05]), paper: one(FINISH_PAPERS), ink: one(FINISH_INKS), tint: false }),
+    "tight-tint": (pick, one) => ({ spacing: 0.0065 + pick() * 0.0025, angle: one([0.785, -0.785, 0.52, -1.05]), paper: one(FINISH_PAPERS), ink: one(FINISH_INKS), tint: true }),
+    "open-plain": (pick, one) => ({ spacing: 0.0105 + pick() * 0.0035, angle: one([0.785, -0.785, 0.52, -1.05]), paper: one(FINISH_PAPERS), ink: one(FINISH_INKS), tint: false }),
+    "open-tint": (pick, one) => ({ spacing: 0.0105 + pick() * 0.0035, angle: one([0.785, -0.785, 0.52, -1.05]), paper: one(FINISH_PAPERS), ink: one(FINISH_INKS), tint: true }),
+  },
+  // The grain shows far more than the paper, which only shows where the
+  // chalk misses it.
+  chalk: {
+    "dark-smooth": (pick, one) => ({ paper: one([[34, 36, 40], [22, 22, 24]]), grain: 0.3 + pick() * 0.15, angle: -0.9 + pick() * 0.6 }),
+    "dark-broken": (pick, one) => ({ paper: one([[34, 36, 40], [22, 22, 24]]), grain: 0.78 + pick() * 0.17, cover: 0.66 + pick() * 0.1, angle: -0.9 + pick() * 0.6 }),
+    "tinted-smooth": (pick, one) => ({ paper: one([[30, 42, 36], [28, 32, 48], [48, 38, 32]]), grain: 0.3 + pick() * 0.15, angle: -0.9 + pick() * 0.6 }),
+    "tinted-broken": (pick, one) => ({ paper: one([[30, 42, 36], [28, 32, 48], [48, 38, 32]]), grain: 0.78 + pick() * 0.17, cover: 0.66 + pick() * 0.1, angle: -0.9 + pick() * 0.6 }),
+  },
+};
+const LOOK_WORDS = {
+  "print.mono-coarse": ["newspaper", "news", "poster", "retro"],
+  "print.cmyk-coarse": ["comic", "pop", "poster", "retro", "vintage"],
+  "print.cmyk-fine": ["magazine", "glossy", "photo"],
+  "print.mono-fine": ["photo", "newspaper"],
+  "flat.few-line": ["cartoon", "kids", "toy", "sticker", "logo", "icon"],
+  "flat.few-clean": ["simple", "minimal", "icon", "logo"],
+  "flat.many-clean": ["illustration", "poster"],
+  "ink.tight-plain": ["etching", "engraving", "storm", "war"],
+  "ink.open-plain": ["sketch", "pen", "drawing"],
+  "ink.open-tint": ["sketch", "watercolour", "watercolor"],
+  "chalk.dark-smooth": ["pastel", "dream", "soft"],
+  "chalk.dark-broken": ["night", "smoke", "ghost", "fog", "storm"],
+  "chalk.tinted-smooth": ["blackboard", "school", "classroom", "dusk"],
+  "chalk.tinted-broken": ["memory", "old", "autumn", "dust"],
+};
+const lookVoteWord = (look) => "look" + String(look).replace(/[^a-z]/g, "").slice(0, 20);
 
 /* The finished picture of `source` (W×H), on a canvas at most `cap` on its
  * long side. Every scale in a finish is a fraction of the picture, so the
@@ -34262,6 +34322,34 @@ function chalkFinish(ctx, w, h, settings) {
     const bottom = hash(xi, yi + 1) + (hash(xi + 1, yi + 1) - hash(xi, yi + 1)) * fx;
     return top + (bottom - top) * fy;
   };
+  /* How hard the chalk is pressed: the stronger a colour must be to cover
+   * the grain. Broken chalk (`cover`) is pressed lightly enough to cover
+   * about that share of this picture, found on a sample of it - a fixed
+   * pressure left a dark painting nearly bare and a bright one untouched. */
+  let bite = 150;
+  const cover = Number(settings.cover);
+  if (cover > 0 && cover < 1) {
+    const step = Math.max(1, Math.round(Math.max(w, h) / 120));
+    const dist = [], grains = [];
+    for (let y = 0; y < h; y += step) {
+      for (let x = 0; x < w; x += step) {
+        const o = (y * w + x) * 4;
+        const along = (x * ca + y * sa) / unit, across = (-x * sa + y * ca) / unit;
+        dist.push(Math.hypot(data[o] - paper[0], data[o + 1] - paper[1], data[o + 2] - paper[2]));
+        grains.push(noise(along * 0.045, across * 0.9) * 0.7 + noise(along * 0.3, across * 2.2) * 0.3);
+      }
+    }
+    const covered = (b) => {
+      let caught = 0;
+      for (let i = 0; i < dist.length; i++) if (Math.min(1, dist[i] / b) > grains[i] * grainAmount + (1 - grainAmount) * 0.5) caught++;
+      return caught / dist.length;
+    };
+    let lo = 150, hi = 700;
+    if (covered(lo) > cover) {
+      for (let i = 0; i < 10; i++) { const mid = (lo + hi) / 2; if (covered(mid) > cover) lo = mid; else hi = mid; }
+      bite = (lo + hi) / 2;
+    }
+  }
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const o = (y * w + x) * 4;
@@ -34269,7 +34357,7 @@ function chalkFinish(ctx, w, h, settings) {
       const grain = noise(along * 0.045, across * 0.9) * 0.7 + noise(along * 0.3, across * 2.2) * 0.3;
       // Chalk is lighter and chalkier than paint: a little white in every colour.
       const r = data[o] * 0.82 + 46, g = data[o + 1] * 0.82 + 46, b = data[o + 2] * 0.82 + 46;
-      const strength = Math.min(1, Math.hypot(data[o] - paper[0], data[o + 1] - paper[1], data[o + 2] - paper[2]) / 150);
+      const strength = Math.min(1, Math.hypot(data[o] - paper[0], data[o + 1] - paper[1], data[o + 2] - paper[2]) / bite);
       const caught = strength > grain * grainAmount + (1 - grainAmount) * 0.5 ? 0.92 : strength * 0.1;
       const tooth = (hash(x, y) - 0.5) * 14;
       data[o] = paper[0] + tooth + (r - paper[0]) * caught;
@@ -34383,6 +34471,7 @@ function planStyleChain(plan) {
   return {
     manner: plan?.manner?.key || null, tips: plan?.tips?.key || null, finish: plan?.finish?.key || null,
     dims: plan?.dims?.key || null, perspective: plan?.scene?.perspective?.key || null, form: plan?.scene?.forms?.key || null,
+    look: plan?.finish?.look || null,
   };
 }
 
@@ -34490,7 +34579,7 @@ function computeStyleOutcomeStats() {
 /* A chain's choices as small numbers (axis and option), worked out once per
  * row: counting every pair of hundreds of chains by name cost a phone tens
  * of milliseconds. */
-const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form"];
+const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form", "look"];
 const styleKeyCodes = new Map();
 const styleChainCodeCache = new WeakMap();
 function styleCode(axis, key) {
