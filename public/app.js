@@ -31584,18 +31584,19 @@ function rememberChoice(axis, key) {
   try { localStorage.setItem(RECENT_CHOICES_KEY, JSON.stringify(all)); } catch { /* memory only */ }
 }
 
-function chooseByTaste(keys, { lean, learned, rng, taste, tasted = 3, axis = null }) {
+function chooseByTaste(keys, { lean, learned, rng, taste, tasted = 3, axis = null, given = null }) {
   // Each preview is a small render; a phone tastes two at most.
   if (isMobileBrowser()) tasted = Math.min(tasted, 2);
   // Variety: an option chosen in most recent paintings gives way a little.
   const recent = axis && Array.isArray(recentChoices()[axis]) ? recentChoices()[axis] : [];
   const used = (key) => recent.length ? recent.filter((k) => k === key).length / recent.length : 0;
   const scores = keys.map((key) => ({ key, lean: lean(key), learned: learned(key), chance: (rng() - 0.5) * 1.1, taste: null, used: used(key),
-    // How this option's finished paintings have scored (styleOutcomeLean).
-    outcome: styleOutcomeLean(axis, key) }));
+    // How this option's finished paintings have scored (styleOutcomeLean),
+    // and how it has done with the choices already made (stylePairLean).
+    outcome: styleOutcomeLean(axis, key), pair: stylePairLean(axis, key, given) }));
   // ...and one not tried lately gets a turn.
   const unused = (x) => recent.length >= 4 && !x.used ? 0.45 : 0;
-  for (const x of scores) x.prior = 0.8 * x.learned + x.lean + x.chance - 0.9 * x.used + unused(x) + x.outcome;
+  for (const x of scores) x.prior = 0.8 * x.learned + x.lean + x.chance - 0.9 * x.used + unused(x) + x.outcome + x.pair;
   const ranked = scores.slice().sort((a, b) => b.prior - a.prior);
   for (let i = 0; i < Math.min(tasted, ranked.length); i++) ranked[i].taste = taste(ranked[i].key);
   const scored = scores.filter((x) => x.taste !== null);
@@ -31617,7 +31618,7 @@ function chooseByTaste(keys, { lean, learned, rng, taste, tasted = 3, axis = nul
 
 const summariseChoice = (scores) => scores.map((x) => ({ key: x.key, score: +x.score.toFixed(3),
   taste: x.taste === null ? null : +x.taste.toFixed(4), lean: +x.lean.toFixed(2), learned: +x.learned.toFixed(2),
-  outcome: +(x.outcome || 0).toFixed(2) }));
+  outcome: +(x.outcome || 0).toFixed(2), pair: +(x.pair || 0).toFixed(2) }));
 
 const formVoteWord = (key) => "form" + String(key).replace(/[^a-z]/g, "");
 
@@ -31702,7 +31703,7 @@ function scaledLayout(laid, kx, ky) {
 /* Where the viewer stands. The things the words name are laid out in each
  * perspective, painted small over a small copy of the picture and scored by
  * taste; words, votes and a little chance are added, as for the manner. */
-function chooseScenePerspective(read, width, height, ref, layoutFor, params, drawSeed) {
+function chooseScenePerspective(read, width, height, ref, layoutFor, params, drawSeed, given = null) {
   const Craft = globalThis.HexfieldCraft, Visual = globalThis.HexfieldVisual;
   const rng = mulberry32(((Number(drawSeed) || 0) ^ 0x9e75) >>> 0);
   const vanishX = 0.5 + (rng() - 0.5) * 0.36;
@@ -31716,7 +31717,7 @@ function chooseScenePerspective(read, width, height, ref, layoutFor, params, dra
     return persp;
   };
   const scores = chooseByTaste(Craft.PERSPECTIVE_KEYS, {
-    rng, axis: "perspective", lean: (key) => leans[key] || 0, learned: (key) => visualLearnedChoice(perspVoteWord(key)),
+    rng, axis: "perspective", given, lean: (key) => leans[key] || 0, learned: (key) => visualLearnedChoice(perspVoteWord(key)),
     taste: (key) => {
       const { items, view: sview } = scaledLayout(layoutFor(perspOf(key).settings), sw / width, sh / height);
       sctx.putImageData(new ImageData(new Uint8ClampedArray(base), sw, sh), 0, 0);
@@ -31765,7 +31766,7 @@ function planScene(params, width, height, fx, drawSeed, ref = null, blobs = null
     ? chooseSceneForms(read, width, height, ref, layoutFor, params, drawSeed) : null;
   const things = read.subjects.length + read.settings.filter((s) => !s.implied).length;
   const persp = things && ref && globalThis.HexfieldCraft?.perspective && ref.length === width * height * 4
-    ? chooseScenePerspective(read, width, height, ref, layoutFor, params, drawSeed) : null;
+    ? chooseScenePerspective(read, width, height, ref, layoutFor, params, drawSeed, { form: forms?.key || null }) : null;
   const laid = layoutFor(persp?.settings || null);
   const literal = Object.values(variations).reduce((sum, v) => sum + v.literal, 0) / Math.max(1, Object.keys(variations).length);
   const scene = {
@@ -33653,7 +33654,7 @@ function choosePlanDims(plan, composed, width, height, params) {
   const layer = paintBuffer(sw, sh), lctx = layer.getContext("2d");
   const leans = Craft.dimensionLeans(params?.__hexfieldWords?.text || "", params?.__hexfieldWords?.axes || {});
   const scores = chooseByTaste(Craft.DIMENSION_KEYS, {
-    rng, tasted: 2, axis: "dims", lean: (key) => leans[key] || 0, learned: (key) => visualLearnedChoice(dimsVoteWord(key)),
+    rng, tasted: 2, axis: "dims", given: planStyleChain(plan), lean: (key) => leans[key] || 0, learned: (key) => visualLearnedChoice(dimsVoteWord(key)),
     taste: (key) => {
       const dims = Craft.dimension(key);
       sctx.putImageData(new ImageData(new Uint8ClampedArray(base), sw, sh), 0, 0);
@@ -33684,7 +33685,7 @@ function choosePlanManner(plan, composed, width, height, params) {
   const sctx = small.getContext("2d", { willReadFrequently: true });
   const leans = Craft.wordLeans(params?.__hexfieldWords?.text || "", params?.__hexfieldWords?.axes || {});
   const scores = chooseByTaste(Craft.KEYS, {
-    rng, axis: "manner", lean: (key) => leans[key] || 0, learned: (key) => visualLearnedChoice(mannerVoteWord(key)),
+    rng, axis: "manner", given: planStyleChain(plan), lean: (key) => leans[key] || 0, learned: (key) => visualLearnedChoice(mannerVoteWord(key)),
     taste: (key) => {
       // A throwaway plan at the small size: its own palette, no scene layer.
       const probe = { ...plan, palette: null, manner: Craft.manner(key), scene: null, contourInk: null };
@@ -34021,7 +34022,7 @@ function choosePlanTips(plan, params) {
   const ene = Number(params?.__hexfieldWords?.axes?.ene) || 0;
   const leans = { flats: 0.15 * ene, dry: 0.25 * ene, soft: -0.3 * ene, filberts: -0.1 * ene, rounds: 0 };
   const scores = chooseByTaste(Object.keys(TIP_KITS), {
-    rng, tasted: 0, axis: "tips", lean: (key) => leans[key] || 0,
+    rng, tasted: 0, axis: "tips", given: planStyleChain(plan), lean: (key) => leans[key] || 0,
     learned: (key) => visualLearnedChoice(tipsVoteWord(key)), taste: () => null,
   });
   plan.tipScores = summariseChoice(scores);
@@ -34065,7 +34066,7 @@ function choosePlanFinish(plan, params) {
   const screened = params?.halftone?.mode && params.halftone.mode !== "off";
   if (screened) leans.print += 1.2;
   const scores = chooseByTaste(FINISH_KEYS, {
-    rng, tasted: 0, axis: "finish", lean: (key) => leans[key] || 0,
+    rng, tasted: 0, axis: "finish", given: planStyleChain(plan), lean: (key) => leans[key] || 0,
     learned: (key) => visualLearnedChoice(finishVoteWord(key)), taste: () => null,
   });
   plan.finishScores = summariseChoice(scores);
@@ -34361,7 +34362,11 @@ if (SHOW_FRAMES && typeof window !== "undefined") setInterval(refreshFramesLayer
  * and in the shared catalogue (hexfield_style_outcomes). Each chooser then
  * leans toward the options whose paintings scored above the average, by how
  * much and how often (styleOutcomeLean), and toward options not tried much
- * yet, so nothing is written off on a few paintings. */
+ * yet, so nothing is written off on a few paintings. Choices are made one
+ * after another, and each also leans by how it has done alongside the ones
+ * already made for this painting (stylePairLean): taste is in the
+ * combinations, and a finish that is good on average can be poor with one
+ * kind of brush. */
 const STYLE_EXPLORE = 0.08;
 const STYLE_OUTCOME_KEY = "hexfield.styleOutcomes.v1";
 const STYLE_OUTCOME_CAP = 400;
@@ -34457,17 +34462,86 @@ function computeStyleOutcomeStats() {
   const rows = styleOutcomeRows().filter((row) => row.chain &&
     (Number.isFinite(Number(row.taste)) || row.source === "kept" || row.source === "rejected"));
   const scored = styleOutcomeScores(rows);
-  const stats = { rows: rows.length };
+  const stats = { rows: rows.length, pairs: new Map() };
   for (const row of rows) {
     const { score, weight } = scored.get(row) || { score: 0, weight: 0 };
     if (!weight) continue;
-    for (const [axis, key] of Object.entries(row.chain)) {
-      if (!key) continue;
+    const chosen = styleChainCodes(row);
+    for (let i = 0; i < chosen.length; i++) {
+      const axis = STYLE_AXES[chosen[i] >> 8], key = row.chain[axis];
       const slot = ((stats[axis] ||= {})[key] ||= { n: 0, weight: 0, sum: 0 });
       slot.n++; slot.weight += weight; slot.sum += score * weight;
     }
+    // Every two choices made together, so a choice can be judged by the
+    // company it keeps.
+    for (let i = 0; i < chosen.length; i++) {
+      for (let j = 0; j < chosen.length; j++) {
+        if (i === j) continue;
+        const id = chosen[i] * 65536 + chosen[j];
+        let slot = stats.pairs.get(id);
+        if (!slot) stats.pairs.set(id, slot = { n: 0, weight: 0, sum: 0 });
+        slot.n++; slot.weight += weight; slot.sum += score * weight;
+      }
+    }
   }
   return stats;
+}
+
+/* A chain's choices as small numbers (axis and option), worked out once per
+ * row: counting every pair of hundreds of chains by name cost a phone tens
+ * of milliseconds. */
+const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form"];
+const styleKeyCodes = new Map();
+const styleChainCodeCache = new WeakMap();
+function styleCode(axis, key) {
+  const a = STYLE_AXES.indexOf(axis);
+  if (a < 0 || !key) return -1;
+  const name = axis + ":" + key;
+  let code = styleKeyCodes.get(name);
+  if (code === undefined) {
+    // Room for 256 options in all - far more than there are; a stray name
+    // from a shared row beyond that is simply not counted.
+    if (styleKeyCodes.size > 255) return -1;
+    styleKeyCodes.set(name, code = (a << 8) | styleKeyCodes.size);
+  }
+  return code;
+}
+function styleChainCodes(row) {
+  let codes = styleChainCodeCache.get(row);
+  if (!codes) {
+    codes = [];
+    for (const axis of STYLE_AXES) { const code = styleCode(axis, row.chain[axis]); if (code >= 0) codes.push(code); }
+    styleChainCodeCache.set(row, codes);
+  }
+  return codes;
+}
+
+/* How much better (or worse) an option has done alongside the choices this
+ * painting has already made than it does on its own: ink with flat brushes,
+ * say, rather than ink at large. For each choice already made, the paintings
+ * that had both, against this option's own average, shrunk toward nothing
+ * while they are few - so a pair speaks once it has been painted a few times,
+ * and says nothing until then. Several choices' worth of chance would add up
+ * to a lean of its own, so the sum is divided by the square root of how many
+ * spoke: a real pairing still shows, the noise of five does not pile up. */
+const STYLE_PAIR = { shrink: 6, spread: 0.5 };
+function stylePairLean(axis, key, given) {
+  if (!axis || !given) return 0;
+  const stats = styleOutcomeStats || (styleOutcomeStats = computeStyleOutcomeStats());
+  const slot = stats[axis]?.[key];
+  if (!slot?.weight) return 0;
+  const usual = slot.sum / slot.weight;
+  const own = styleCode(axis, key);
+  let lean = 0, spoke = 0;
+  for (const [other, otherKey] of Object.entries(given)) {
+    if (!otherKey || other === axis) continue;
+    const code = styleCode(other, otherKey);
+    const pair = code >= 0 ? stats.pairs.get(own * 65536 + code) : null;
+    if (!pair?.weight) continue;
+    lean += (pair.sum - usual * pair.weight) / (pair.weight + STYLE_PAIR.shrink);
+    spoke++;
+  }
+  return spoke ? Math.max(-1, Math.min(1, 5 * lean / Math.pow(spoke, STYLE_PAIR.spread))) : 0;
 }
 
 function styleOutcomeLean(axis, key) {
