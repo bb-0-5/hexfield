@@ -9328,6 +9328,7 @@ function applyHalftone(ctx, W, H, cfg) {
     const cx = W / 2, cy = H / 2;
     const reach = Math.ceil(Math.hypot(W, H) / 2 / pitch) + 1;
     ctx.fillStyle = colour;
+    ctx.beginPath();
     for (let j = -reach; j <= reach; j++) {
       for (let i = -reach; i <= reach; i++) {
         const gx = i * pitch, gy = j * pitch;
@@ -9345,11 +9346,14 @@ function applyHalftone(ctx, W, H, cfg) {
         // midtones far too light.
         const r = Math.sqrt(Math.min(1, coverage)) * pitch * 0.62;
         if (r < 0.12) continue;
-        ctx.beginPath();
+        ctx.moveTo(x + r, y);
         ctx.arc(x, y, r, 0, Math.PI * 2);
-        ctx.fill();
       }
     }
+    // One fill per screen rather than one per dot: tens of thousands of fills
+    // were most of a print's cost. (Dots of one ink that touch now merge as
+    // ink does, rather than darkening each other.)
+    ctx.fill();
   };
 
   const lumOf = (px) => (0.2126 * px.r + 0.7152 * px.g + 0.0722 * px.b) / 255;
@@ -9495,9 +9499,12 @@ function applyFinishExperiment(ctx, W, H, p) {
       const horizontal = Math.abs(luminance(offset - 4) - luminance(offset + 4));
       const vertical = Math.abs(luminance(offset - sourceWidth * 4) - luminance(offset + sourceWidth * 4));
       const edge = Math.max(horizontal, vertical, Math.abs(centre - luminance(offset + (sourceWidth + 1) * 4)));
+      // The edge test first: the hash is only needed where there is an edge,
+      // and a string hash for every pixel was most of this pass's cost.
+      if (edge < threshold) continue;
       const broken = treatment !== "broken-contour" ||
         ((hashText(`finish-line|${seed}|${x}|${y}`) >>> 0) % 100) >= 38;
-      if (edge < threshold || !broken) continue;
+      if (!broken) continue;
       const alpha = Math.min(140, Math.round(baseOpacity + (edge - threshold) * 0.6));
       output.data[offset] = red;
       output.data[offset + 1] = green;
@@ -9629,7 +9636,10 @@ function applyPaletteBudget(ctx, W, H, params, { record = true } = {}) {
     const colour = ((r - center.r) ** 2 + (g - center.g) ** 2 + (b - center.b) ** 2) / (255 * 255 * 3);
     return colour * 0.58 + value * value * 1.42;
   };
+  /* Each 15-bit colour's nearest ink, worked out once: a flat table rather
+   * than a Map, because this runs for every pixel of every candidate. */
   const cache = new Map();
+  const table = new Int32Array(32768).fill(-1);
   const nearest = (key) => {
     let hit = cache.get(key);
     if (hit) return hit;
@@ -9641,6 +9651,7 @@ function applyPaletteBudget(ctx, W, H, params, { record = true } = {}) {
     }
     hit = [Math.round(winner.r), Math.round(winner.g), Math.round(winner.b)];
     cache.set(key, hit);
+    table[key] = (hit[0] << 16) | (hit[1] << 8) | hit[2];
     return hit;
   };
   let errorSum = 0, errorN = 0;
@@ -9649,11 +9660,12 @@ function applyPaletteBudget(ctx, W, H, params, { record = true } = {}) {
     errorSum += distance(bin.r, bin.g, bin.b, { r: rgb[0], g: rgb[1], b: rgb[2] });
     errorN++;
   }
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const o = (y * W + x) * 4;
+  for (let o = 0, end = W * H * 4; o < end; o += 4) {
     if (data[o + 3] < 8) continue;
-    const rgb = nearest((data[o] >> 3) | ((data[o + 1] >> 3) << 5) | ((data[o + 2] >> 3) << 10));
-    data[o] = rgb[0]; data[o + 1] = rgb[1]; data[o + 2] = rgb[2];
+    const key = (data[o] >> 3) | ((data[o + 1] >> 3) << 5) | ((data[o + 2] >> 3) << 10);
+    let packed = table[key];
+    if (packed < 0) { nearest(key); packed = table[key]; }
+    data[o] = packed >> 16; data[o + 1] = (packed >> 8) & 255; data[o + 2] = packed & 255;
   }
   ctx.putImageData(image, 0, 0);
   const error = clamp01(errorSum / Math.max(1, errorN));
@@ -22640,7 +22652,10 @@ const FIELD_WORKER_FNS = [
 const FIELD_WORKER_GLUE = `
 function renderJob(job) {
   const canvas = new OffscreenCanvas(job.w, job.h);
-  const ctx = canvas.getContext("2d");
+  // Drawn on the CPU, so the bitmap the main thread receives is in memory:
+  // a GPU-backed bitmap made every read of the picture it was drawn into wait
+  // for a copy back from the GPU - 25-40ms each on a phone, dozens a pass.
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
   renderField(ctx, job.w, job.h, job.params, mulberry32(job.seed));
   return canvas.transferToImageBitmap();
 }
@@ -26168,6 +26183,8 @@ async function enrichFinalists(finalists) {
 
   const items = [];
   for (const cand of pending) {
+    // A breath between compositions on a phone: each is a full probe render.
+    if (items.length && isMobileBrowser()) await new Promise((resolve) => setTimeout(resolve, 0));
     composeCandidateOnProbe(cand);
     const pixels = pctx.getImageData(0, 0, probe.width, probe.height);
     items.push({ id: cand.drawSeed + "|" + probe.width, pixels: pixels.data.buffer,
@@ -26234,7 +26251,7 @@ async function simulateGenerateSearch(text, forcedField, effort, overlay, reques
     if (cancelled()) return cancelSearch(fields);
     const plan = plans[index];
     candidates.push(makeSearchCandidate(text, forcedField, index, plan, fields.get(plan.id) || null));
-    if (index === effort - 1 || index % 3 === 2) {
+    if (index === effort - 1 || index % 3 === 2 || isMobileBrowser()) {
       overlay.textContent = "simulating " + (index + 1) + "/" + effort + " - measuring pixels";
       showSimulationProgress(candidates, effort, "measuring field " + (index + 1) + "/" + effort);
       // Yield so the decision trace is visible instead of pretending a
@@ -31317,6 +31334,8 @@ function rememberChoice(axis, key) {
 }
 
 function chooseByTaste(keys, { lean, learned, rng, taste, tasted = 3, axis = null }) {
+  // Each preview is a small render; a phone tastes two at most.
+  if (isMobileBrowser()) tasted = Math.min(tasted, 2);
   // Variety: an option chosen in most recent paintings gives way a little.
   const recent = axis && Array.isArray(recentChoices()[axis]) ? recentChoices()[axis] : [];
   const used = (key) => recent.length ? recent.filter((k) => k === key).length / recent.length : 0;
@@ -32590,17 +32609,22 @@ function blurPixels(pixels, width, height, radius) {
   const src = new Float32Array(width * height * 3);
   for (let i = 0, o = 0; o < pixels.length; o += 4, i += 3) { src[i] = pixels[o]; src[i + 1] = pixels[o + 1]; src[i + 2] = pixels[o + 2]; }
   const tmp = new Float32Array(src.length);
+  // The three channels in one sweep: the same sums as one sweep per channel,
+  // with a third of the index arithmetic.
   const pass = (from, to, n, lines, stride, step) => {
     const span = 2 * r + 1;
     for (let line = 0; line < lines; line++) {
       const base = line * stride;
-      for (let c = 0; c < 3; c++) {
-        let sum = 0;
-        for (let k = -r; k <= r; k++) sum += from[base + Math.max(0, Math.min(n - 1, k)) * step + c];
-        for (let i = 0; i < n; i++) {
-          to[base + i * step + c] = sum / span;
-          sum += from[base + Math.min(n - 1, i + r + 1) * step + c] - from[base + Math.max(0, i - r) * step + c];
-        }
+      let s0 = 0, s1 = 0, s2 = 0;
+      for (let k = -r; k <= r; k++) {
+        const at = base + Math.max(0, Math.min(n - 1, k)) * step;
+        s0 += from[at]; s1 += from[at + 1]; s2 += from[at + 2];
+      }
+      for (let i = 0; i < n; i++) {
+        const at = base + i * step;
+        to[at] = s0 / span; to[at + 1] = s1 / span; to[at + 2] = s2 / span;
+        const add = base + Math.min(n - 1, i + r + 1) * step, sub = base + Math.max(0, i - r) * step;
+        s0 += from[add] - from[sub]; s1 += from[add + 1] - from[sub + 1]; s2 += from[add + 2] - from[sub + 2];
       }
     }
   };
@@ -32616,7 +32640,7 @@ function blurPixels(pixels, width, height, radius) {
 /* The manner's values and colour, before the palette: key range, dark ground,
  * a side light, two-tone, saturation and warmth, then soft edges. In place,
  * except the blur, which returns a new array. Lettering keeps its edges. */
-function applyMannerReference(pixels, width, height, plan, manner) {
+function applyMannerReference(pixels, width, height, plan, manner, only = null) {
   const m = manner?.reference;
   if (!m || manner.key === "painterly") return pixels;
   const sigma = planFocusSigma(width, height, plan.style);
@@ -32628,6 +32652,11 @@ function applyMannerReference(pixels, width, height, plan, manner) {
   const layer = plan.scene?.layer;
   const cover = layer?.cover?.length === width * height ? layer.cover : null;
   const groundOf = (i, w) => (1 - w) * (cover ? 1 - cover[i] / 255 : 1);
+  // The focus falloff is a row factor times a column factor: two small tables
+  // instead of an exp for every pixel.
+  const fx = new Float32Array(width), fy = new Float32Array(height);
+  for (let x = 0; x < width; x++) fx[x] = Math.exp(-((x - cx) ** 2) / (2 * sigma * sigma));
+  for (let y = 0; y < height; y++) fy[y] = Math.exp(-((y - cy) ** 2) / (2 * sigma * sigma));
   /* A flat ground: away from the focus and the named things, the picture
    * settles toward one colour - the ground's own average - so figures stand
    * on a field instead of in a texture. */
@@ -32669,8 +32698,10 @@ function applyMannerReference(pixels, width, height, plan, manner) {
   for (let y = 0; y < height; y++) {
     const dy = y - cy;
     for (let x = 0; x < width; x++) {
+      // `only`: the pixels the caller will keep (a deposit's changed ones).
+      if (only && !only[y * width + x]) continue;
       const o = (y * width + x) * 4, dx = x - cx;
-      const w = Math.exp(-(dx * dx + dy * dy) / (2 * sigma * sigma));
+      const w = fx[x] * fy[y];
       if (flat) {
         const k = m.flatGround * Math.min(1, 1.6 * groundOf(y * width + x, w));
         pixels[o] += (flat[0] - pixels[o]) * k; pixels[o + 1] += (flat[1] - pixels[o + 1]) * k; pixels[o + 2] += (flat[2] - pixels[o + 2]) * k;
@@ -32703,10 +32734,11 @@ function applyMannerReference(pixels, width, height, plan, manner) {
     for (let x = 0; x < width; x++) {
       const o = (y * width + x) * 4;
       if (lettering && x >= lettering.x && x <= lettering.x + lettering.w && y >= lettering.y && y <= lettering.y + lettering.h) continue;
-      const dx = x - cx, dy = y - cy;
       // The focus and the named things keep most of their edges: soft all
-      // round, sharp where it matters.
-      const keep = Math.max(0.85 * Math.exp(-(dx * dx + dy * dy) / (2 * sigma * sigma * 0.5)),
+      // round, sharp where it matters. (exp(-d/σ²) is the square of the
+      // falloff above.)
+      const focus = fx[x] * fy[y];
+      const keep = Math.max(0.85 * focus * focus,
         cover ? 0.6 * cover[y * width + x] / 255 : 0);
       const k = 1 - keep;
       pixels[o] += (soft[o] - pixels[o]) * k;
@@ -33249,11 +33281,18 @@ function mannerDeposit(ref, width, height, plan) {
   const canvas = vctx.getImageData(0, 0, width, height).data;
   if (canvas.length !== ref.length) return ref;
   const manner = plan.manner;
+  // Only the changed pixels are kept, so only they are treated: a deposit is
+  // usually a small part of the picture, and treating all of it was most of
+  // the cost of every accepted change.
+  const changed = new Uint8Array(width * height);
+  for (let i = 0, o = 0; o < ref.length; o += 4, i++) {
+    changed[i] = Math.abs(ref[o] - canvas[o]) + Math.abs(ref[o + 1] - canvas[o + 1]) + Math.abs(ref[o + 2] - canvas[o + 2]) < 24 ? 0 : 1;
+  }
   const treated = applyMannerReference(new Uint8ClampedArray(ref), width, height, plan,
-    { ...manner, reference: { ...manner.reference, blur: 0 } });
+    { ...manner, reference: { ...manner.reference, blur: 0 } }, changed);
   const out = new Uint8ClampedArray(ref);
-  for (let o = 0; o < out.length; o += 4) {
-    if (Math.abs(ref[o] - canvas[o]) + Math.abs(ref[o + 1] - canvas[o + 1]) + Math.abs(ref[o + 2] - canvas[o + 2]) < 24) continue;
+  for (let i = 0, o = 0; o < out.length; o += 4, i++) {
+    if (!changed[i]) continue;
     out[o] = treated[o]; out[o + 1] = treated[o + 1]; out[o + 2] = treated[o + 2];
   }
   return snapToPalette(out, plan.palette, planSnapAmount(plan));
@@ -33722,12 +33761,14 @@ function choosePlanFinish(plan, params) {
 /* The finished picture of `source` (W×H), on a canvas at most `cap` on its
  * long side. Every scale in a finish is a fraction of the picture, so the
  * screen and a 4500px export show the same screen, hatching and grain. */
-function renderFinish(source, W, H, finish, cap = 900, { reuse = false } = {}) {
-  // Flat shapes need no fine detail, and drawn back up they are smoother.
+function renderFinish(source, W, H, finish, cap = 900, { reuse = false, into = null } = {}) {
   const working = cap * (finish?.key === "print" ? 1 : 0.8);
   const scale = Math.min(1, working / Math.max(W, H));
   const w = Math.max(1, Math.round(W * scale)), h = Math.max(1, Math.round(H * scale));
-  const out = paintBuffer(w, h);
+  // Into a given canvas (the screen's layer), resized only when it must be:
+  // resizing drops its buffer, and rebuilding it cost more than the finish.
+  const out = into || paintBuffer(w, h);
+  if (out.width !== w || out.height !== h) { out.width = w; out.height = h; }
   const ctx = out.getContext("2d", { willReadFrequently: true });
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
@@ -33939,10 +33980,13 @@ function refreshFinishLayer() {
     finishLayer.style.cssText = "position:absolute;pointer-events:none;display:none;border-radius:5px;background:transparent";
     view.insertAdjacentElement("afterend", finishLayer);
   }
-  const out = renderFinish(view, view.width, view.height, finish, isMobileBrowser() ? 560 : 960);
-  finishLayer.width = out.width; finishLayer.height = out.height;
-  finishLayer.getContext("2d").drawImage(out, 0, 0);
-  out.width = 0; out.height = 0;
+  // A painting's flat colours are kept while it paints, and found again once
+  // enough paint has landed to have changed them.
+  const fresh = finish.key === "flat" && (!Array.isArray(finish.centres) ||
+    (strokePainter.strokes || 0) - (finish.centresAt || 0) > 1500 || (strokePainter.strokes || 0) < (finish.centresAt || 0));
+  renderFinish(view, view.width, view.height, finish, isMobileBrowser() ? 560 : 960,
+    { into: finishLayer, reuse: finish.key === "flat" && !fresh });
+  if (fresh) finish.centresAt = strokePainter.strokes || 0;
   Object.assign(finishLayer.style, { left: view.offsetLeft + "px", top: view.offsetTop + "px",
     width: view.offsetWidth + "px", height: view.offsetHeight + "px", display: "block" });
   finishLayerShown = { revision: finishCanvasRevision, plan };
