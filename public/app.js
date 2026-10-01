@@ -7185,22 +7185,45 @@ function autoHarvestFromCanvas(ctx, W, H, force = false, stage = "finished") {
   const key = autoHarvestKey(W, H, stage);
   const keyName = stage === "source" ? "sourceKey" : "finishedKey";
   const shapesName = stage === "source" ? "sourceShapes" : "finishedShapes";
-  const piecesName = stage === "source" ? "sourcePieces" : "finishedPieces";
   if (!force && autoHarvest[keyName] === key) return autoHarvest[shapesName];
+  const shapes = extractShapes(ctx, W, H, 12, 0.0016, 0.58).map(measureHarvestShape);
+  return commitAutoHarvest(shapes, key, stage);
+}
 
-  const shapes = extractShapes(ctx, W, H, 12, 0.0016, 0.58).map((shape) => {
-    shape.orientation = shape.orientation || shapeOrientationDescriptor(shape.canvas);
-    shape.edge = shape.edge || analyzeHarvestShapeEdges(shape.canvas);
-    shape.id = shape.id || shapeIdentity(shape.canvas);
-    shape.__hexfieldDescriptor = shape.__hexfieldDescriptor || shapeDescriptorOf(shape.canvas);
-    shape.canvas.__hexfieldDescriptor = shape.__hexfieldDescriptor;
-    shape.canvas.__hexfieldAxiomVotes = shape.canvas.__hexfieldAxiomVotes || fuzzyMatchLetter(shape.__hexfieldDescriptor);
-    // Assign random prime cycle for staggered harvesting; stored so it persists across renders
-    if (!shape.harvestCycleLength) {
-      shape.harvestCycleLength = HARVEST_PRIMES[Math.floor(Math.random() * HARVEST_PRIMES.length)];
-    }
-    return shape;
-  });
+/* The same harvest with the page free between shapes: the pieces are cut
+ * from the canvas in one go (so they are all of one instant; `cut` runs right
+ * after, for a caller that measures that same instant), then each is measured
+ * as its own step. Measuring a shape reads only its own copy. */
+async function autoHarvestFromCanvasStepped(ctx, W, H, stage, pause, cut = null) {
+  const key = autoHarvestKey(W, H, stage);
+  const pieces = extractShapes(ctx, W, H, 12, 0.0016, 0.58);
+  if (cut) cut();
+  const shapes = [];
+  for (const shape of pieces) {
+    await pause();
+    shapes.push(measureHarvestShape(shape));
+  }
+  return commitAutoHarvest(shapes, key, stage);
+}
+
+function measureHarvestShape(shape) {
+  shape.orientation = shape.orientation || shapeOrientationDescriptor(shape.canvas);
+  shape.edge = shape.edge || analyzeHarvestShapeEdges(shape.canvas);
+  shape.id = shape.id || shapeIdentity(shape.canvas);
+  shape.__hexfieldDescriptor = shape.__hexfieldDescriptor || shapeDescriptorOf(shape.canvas);
+  shape.canvas.__hexfieldDescriptor = shape.__hexfieldDescriptor;
+  shape.canvas.__hexfieldAxiomVotes = shape.canvas.__hexfieldAxiomVotes || fuzzyMatchLetter(shape.__hexfieldDescriptor);
+  // Assign random prime cycle for staggered harvesting; stored so it persists across renders
+  if (!shape.harvestCycleLength) {
+    shape.harvestCycleLength = HARVEST_PRIMES[Math.floor(Math.random() * HARVEST_PRIMES.length)];
+  }
+  return shape;
+}
+
+function commitAutoHarvest(shapes, key, stage) {
+  const keyName = stage === "source" ? "sourceKey" : "finishedKey";
+  const shapesName = stage === "source" ? "sourceShapes" : "finishedShapes";
+  const piecesName = stage === "source" ? "sourcePieces" : "finishedPieces";
   const pieces = shapes.map((shape) => shape.canvas);
   if (stage === "source" && !harvestTemplateShapes.length) {
     harvestTemplateShapes = shapes.map((shape) => ({ ...shape, role: "template" }));
@@ -33310,8 +33333,18 @@ function planSnapAmount(plan) {
 /* Composed picture -> the manner's reference: values and colour, the palette
  * (made once per painting, here), the snap onto it, then the outline. */
 function finishPlanReference(composed, width, height, plan) {
+  const steps = finishPlanReferenceSteps(composed, width, height, plan);
+  let step;
+  do step = steps.next(); while (!step.done);
+  return step.value;
+}
+
+/* The same, a step at a time (values and colour; the palette; the outline;
+ * adoptions), for a new painting prepared with the page free in between. */
+function* finishPlanReferenceSteps(composed, width, height, plan) {
   const manner = plan.manner || plainManner();
   let pixels = applyMannerReference(composed, width, height, plan, manner);
+  yield;
   if (!plan.palette) {
     plan.palette = paletteFromPixels(pixels, planPaletteSize(plan),
       mulberry32(((Number(plan.drawSeed) || 0) ^ 0x51f15e) >>> 0), width * height < 12000 ? 600 : 3000);
@@ -33323,7 +33356,9 @@ function finishPlanReference(composed, width, height, plan) {
     }
   }
   pixels = snapToPalette(pixels, plan.palette, planSnapAmount(plan));
+  yield;
   pixels = applyMannerContour(pixels, width, height, plan, manner);
+  yield;
   if (plan.contourInk && !plan.palette.some((p) => Math.hypot(p[0] - plan.contourInk[0], p[1] - plan.contourInk[1], p[2] - plan.contourInk[2]) < 30)) {
     plan.palette.push(plan.contourInk.slice());
   }
@@ -33426,6 +33461,47 @@ function choosePlanManner(plan, composed, width, height, params) {
 
 /* A reference as this painting paints it: enhanced, composed to the plan and
  * mixed from its palette. The first reference of a painting makes the plan. */
+/* A new painting's plan and reference, prepared a step at a time.
+ *
+ * This was one task - enhance, plan, compose, choose solidity, draw the
+ * scene, choose the manner, values, palette, outline - and on a phone it held
+ * the page for 1-1.7s every time a painting began. Now each step is its own
+ * task. The same steps in the same order as prepareStrokeReference with a
+ * fresh plan, so the painting is the same; `alive` stops it as soon as a newer
+ * painting has begun. Resolves { plan, reference }, or null if superseded. */
+async function prepareNewPainting(result, raw, width, height, alive) {
+  const pause = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const step = async () => { await pause(); return alive(); };
+  if (!await step()) return null;
+  const enhanced = enhanceStrokeReference(raw);
+  if (!await step()) return null;
+  const plan = makePaintingPlan(enhanced, width, height, result?.drawSeed, result?.params);
+  if (!await step()) return null;
+  const ground = composeStrokeReference(enhanced, width, height, plan);
+  const source = bestRun?.params ? bestRun : current;
+  if (!await step()) return null;
+  plan.dims = choosePlanDims(plan, ground, width, height, source?.params);
+  if (plan.scene) {
+    plan.scene.dims = plan.dims;
+    plan.scene.dimsLight = plan.lightAngle;
+    plan.scene.layer = null;
+    plan.scene.readable = false;
+  }
+  if (!await step()) return null;
+  const composed = applyPlanScene(ground, width, height, plan);
+  if (!await step()) return null;
+  plan.manner = choosePlanManner(plan, composed, width, height, source?.params);
+  if (plan.style) plan.style.label = plan.manner.name + (plan.dims ? " · " + plan.dims.name : "") +
+    (plan.scene?.perspective ? " · " + plan.scene.perspective.name : "") + " · " + plan.style.label;
+  const steps = finishPlanReferenceSteps(composed, width, height, plan);
+  let next;
+  do {
+    if (!await step()) return null;
+    next = steps.next();
+  } while (!next.done);
+  return { plan, reference: next.value };
+}
+
 function prepareStrokeReference(ref, width, height, enhanced = enhanceStrokeReference(ref)) {
   let fresh = false;
   if (!strokePainter.plan) {
@@ -34494,18 +34570,24 @@ function animateLoggedStrokes(result, strokes, animation) {
 /* A new painting starts on a toned ground - one colour, the reference's
  * average, the way a painter stains a canvas before the first mark. Everything
  * else, even the soft gradients, arrives through strokes. */
+function toneOf(reference) {
+  let r = 0, g = 0, b = 0, n = 0;
+  for (let o = 0; o < reference.length; o += 4 * 11) { r += reference[o]; g += reference[o + 1]; b += reference[o + 2]; n++; }
+  return [Math.round(r / Math.max(1, n)), Math.round(g / Math.max(1, n)), Math.round(b / Math.max(1, n))];
+}
+
 function paintTonedGround(reference, width, height) {
   // One colour: the prepared reference's average. A blurred copy already
   // matched the soft areas, so the first brush left them as an unpainted wash.
-  let r = 0, g = 0, b = 0, n = 0;
-  for (let o = 0; o < reference.length; o += 4 * 11) { r += reference[o]; g += reference[o + 1]; b += reference[o + 2]; n++; }
+  const tone = toneOf(reference);
   vctx.save();
   vctx.globalCompositeOperation = "source-over";
   vctx.globalAlpha = 1;
   vctx.clearRect(0, 0, width, height);
-  vctx.fillStyle = `rgb(${Math.round(r / n)},${Math.round(g / n)},${Math.round(b / n)})`;
+  vctx.fillStyle = `rgb(${tone[0]},${tone[1]},${tone[2]})`;
   vctx.fillRect(0, 0, width, height);
   vctx.restore();
+  return tone;
 }
 
 /* The painting on screen, as something EXPORT can redraw at print size: the
@@ -34682,6 +34764,8 @@ async function paintExportFromLog(out, onProgress = null) {
 }
 
 function continueMasterDetail(result) {
+  // A new painting still being prepared has nothing to detail yet.
+  if (strokePainter.preparing) return false;
   const source = bestRun?.params ? bestRun : current?.params ? current : result;
   if (!source?.params || !view?.width || !view?.height) return false;
   result.paintCanvasCoverage = 1;
@@ -34927,18 +35011,20 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
     result.paintCanvasCoverage = 1;
     result.paintCanvasFilled = true;
     const raw = target.getContext("2d").getImageData(0, 0, width, height).data;
-    // A new painting, a new plan: focus, value scheme and palette.
-    const enhancedRaw = enhanceStrokeReference(raw);
     // The painting being replaced is scored, finish and all, before it goes.
     recordStyleOutcome(strokePainter.plan, "replaced");
-    strokePainter.plan = makePaintingPlan(enhancedRaw, width, height, result?.drawSeed, result?.params);
-    hideFinishLayer();
-    const reference = prepareStrokeReference(raw, width, height, enhancedRaw);
-    // Detail passes start from this one while theirs is prepared in the background.
-    strokePainter.enhanced = reference;
+    /* A new painting, a new plan: focus, value scheme and palette - prepared
+     * in steps (prepareNewPainting). Meanwhile the canvas is toned at once, so
+     * the new painting visibly begins, and nothing else paints until it is
+     * ready. */
+    const token = {};
+    strokePainter.preparing = token;
+    strokePainter.plan = null;
+    strokePainter.enhanced = null;
     strokePainter.enhancedKey = null;
-    strokePainter.enhancedPlan = strokePainter.plan;
-    paintTonedGround(reference, width, height);
+    strokePainter.enhancedPlan = null;
+    hideFinishLayer();
+    const quickTone = paintTonedGround(raw, width, height);
     strokePainter.layer = 0;
     strokePainter.layerBatches = 0;
     strokePainter.strokes = 0;
@@ -34946,9 +35032,25 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
     strokePainter.settleAngle = -0.7 + mulberry32((Number(result?.drawSeed) || 1) >>> 0)() * 0.9;
     paintRevision++;
     view.dataset.paintRevision = String(paintRevision);
-    visiblePaintCompletion = paintTowardReference(result, reference, width, height,
-      { layer: 0, limit: STROKE_BATCH * 2, prepared: true })
-      .then((landed) => { paintVisibleGlyphOverlay(result); return true; });
+    const alive = () => strokePainter.preparing === token;
+    visiblePaintCompletion = prepareNewPainting(result, raw, width, height, alive).then((ready) => {
+      if (!ready || !alive()) return false;
+      strokePainter.preparing = null;
+      strokePainter.plan = ready.plan;
+      // Detail passes start from this one while theirs is prepared in the background.
+      strokePainter.enhanced = ready.reference;
+      strokePainter.enhancedKey = null;
+      strokePainter.enhancedPlan = ready.plan;
+      // The ground in the prepared reference's own tone, if the quick one was off.
+      const tone = toneOf(ready.reference);
+      if (Math.hypot(tone[0] - quickTone[0], tone[1] - quickTone[1], tone[2] - quickTone[2]) > 10) {
+        paintTonedGround(ready.reference, width, height);
+      }
+      updateWordPaints();
+      return paintTowardReference(result, ready.reference, width, height,
+        { layer: 0, limit: STROKE_BATCH * 2, prepared: true })
+        .then(() => { paintVisibleGlyphOverlay(result); return true; });
+    }).catch((error) => { console.warn("preparing a new painting failed", error); if (alive()) strokePainter.preparing = null; return false; });
   }
   const seedMasterCommitted = !refinement && result.paintCanvasFilled === true;
   paintProgressStatus(result, seedMasterCommitted ? 1 : 0, seedMasterCommitted ? 1 : 0, 1);
@@ -34956,6 +35058,14 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
 }
 
 function drawImmediate(result, { refinement = false } = {}) {
+  // While a new painting is being prepared a refinement has nothing to
+  // refine: held, without rendering a target for it.
+  if (refinement && strokePainter.preparing) {
+    painterPass++;
+    result.paintChangeRatio = 0;
+    result.paintCommit = "held";
+    return false;
+  }
   const prioritySceneEdit = refinement && paintCommitEarned(result) &&
     result?.strokeEvidence?.origin === "dislike-counterfactual";
   if (refinement && paintOpening?.remaining > 0 && !prioritySceneEdit) {
@@ -35048,7 +35158,20 @@ async function analyseRender(result) {
   // that the rest of this function depends on.
   harvestSourceField(result.params);
   const sourceShapes = autoHarvest.sourceShapes || [];
-  const finishedShapes = autoHarvestFromCanvas(vctx, view.width, view.height, true, "finished");
+  /* On a phone the measuring passes read a half-size copy: 660px across is
+   * still far above the 440px probe the search measures at, and each pass
+   * costs a quarter as much - these were the last long tasks left once the
+   * stroke painter was in (about 0.3s each on a phone-speed CPU). */
+  const scale = isMobileBrowser() ? Math.min(1, 660 / Math.max(1, view.width)) : 1;
+  const W = Math.max(1, Math.round(view.width * scale)), H = Math.max(1, Math.round(view.height * scale));
+  const snapshot = paintBuffer(W, H);
+  const snap = snapshot.getContext("2d", { willReadFrequently: true });
+  snap.imageSmoothingEnabled = true;
+  snap.imageSmoothingQuality = "high";
+  // The pieces are measured a shape at a time; the snapshot is taken the
+  // instant they are cut, so every pass below describes the same picture.
+  const finishedShapes = await autoHarvestFromCanvasStepped(vctx, view.width, view.height, "finished", yieldToPainter,
+    () => snap.drawImage(view, 0, 0, W, H));
   /* How good this field was to harvest.
    *
    * The letterform is made from what the harvester pulls out of the picture -
@@ -35066,17 +35189,6 @@ async function analyseRender(result) {
    * reported the same quality because the flag was stale. The shapes themselves
    * are the evidence, and they are already in hand. */
   const harvestQuality = harvestQualityOf(finishedShapes);
-  /* On a phone the measuring passes read a half-size copy: 660px across is
-   * still far above the 440px probe the search measures at, and each pass
-   * costs a quarter as much - these were the last long tasks left once the
-   * stroke painter was in (about 0.3s each on a phone-speed CPU). */
-  const scale = isMobileBrowser() ? Math.min(1, 660 / Math.max(1, view.width)) : 1;
-  const W = Math.max(1, Math.round(view.width * scale)), H = Math.max(1, Math.round(view.height * scale));
-  const snapshot = paintBuffer(W, H);
-  const snap = snapshot.getContext("2d", { willReadFrequently: true });
-  snap.imageSmoothingEnabled = true;
-  snap.imageSmoothingQuality = "high";
-  snap.drawImage(view, 0, 0, W, H);
   const sourceParamsGrammar = result.params.__hexfieldGrammar;
   await yieldToPainter();
   /* One edge analysis for both grammars below. The snapshot does not change
