@@ -751,7 +751,7 @@
       colours: { cloth: [352, 70, 46], handle: [28, 30, 22] },
       parts: [
         { shape: "line", pts: [[0.5, 0.3], [0.5, 0.94], [0.43, 1], [0.37, 0.94]], width: 0.035, colour: "handle" },
-        { shape: "dome", box: [0, 0.02, 1, 0.42], colour: "cloth" },
+        { shape: "dome", box: [0, 0.02, 1, 0.42], colour: "cloth", rim: true },
         { shape: "line", pts: [[0.5, 0.03], [0.25, 0.44]], width: 0.015, colour: "cloth", tone: -0.15 },
         { shape: "line", pts: [[0.5, 0.03], [0.75, 0.44]], width: 0.015, colour: "cloth", tone: -0.15 },
         { shape: "line", pts: [[0.5, 0], [0.5, 0.44]], width: 0.015, colour: "cloth", tone: -0.15 },
@@ -912,7 +912,7 @@
       colours: { cap: [4, 76, 46], stem: [40, 26, 88], spot: [40, 20, 96] },
       parts: [
         { shape: "rect", box: [0.34, 0.42, 0.32, 0.58], colour: "stem", r: 0.3 },
-        { shape: "dome", box: [0, 0, 1, 0.56], colour: "cap" },
+        { shape: "dome", box: [0, 0, 1, 0.56], colour: "cap", rim: true },
         { shape: "ellipse", box: [0.22, 0.2, 0.14, 0.1], colour: "spot" },
         { shape: "ellipse", box: [0.52, 0.1, 0.16, 0.12], colour: "spot" },
         { shape: "ellipse", box: [0.7, 0.32, 0.1, 0.08], colour: "spot" },
@@ -1338,7 +1338,7 @@
       kind: "subject", anchor: "ground", size: 0.2, aspect: 2,
       colours: { glaze: [200, 32, 66] },
       parts: [
-        { shape: "dome", box: [0, 0, 1, 1], down: true, colour: "glaze", texture: "grain-h" },
+        { shape: "dome", box: [0, 0, 1, 1], down: true, colour: "glaze", texture: "grain-h", rim: true },
         { shape: "ellipse", box: [0, -0.1, 1, 0.2], colour: "glaze", tone: -0.2 },
       ],
     },
@@ -1618,6 +1618,8 @@
     under: "below", below: "below", beneath: "below", underneath: "below",
     in: "in", inside: "in", within: "in", into: "in",
     beside: "beside", by: "beside", near: "beside", with: "beside", and: "beside",
+    // Along a thing's guide lines: "a cat behind a dog", "a well to the left of a house".
+    behind: "behind", left: "left", right: "right", next: "beside",
   };
 
   /* ── Adding onto a thing ────────────────────────────────────────────────
@@ -1631,7 +1633,7 @@
   const ATTACH_WORDS = { wearing: "head", wears: "head", wear: "head", holding: "hand", holds: "hand", hold: "hand",
     carrying: "hand", carries: "hand", with: "auto", has: "auto", having: "auto" };
   const PART_WORDS = { head: "head", heads: "head", hat: null, hand: "hand", hands: "hand", paw: "hand", top: "top",
-    roof: "roof", rooftop: "roof", back: "back", behind: "back", front: "front", side: "side", feet: "base", foot: "base",
+    roof: "roof", rooftop: "roof", back: "back", front: "front", side: "side", feet: "base", foot: "base",
     base: "base", branches: "canopy", branch: "canopy", canopy: "canopy", leaves: "canopy", mast: "top" };
   const HEADWEAR = new Set(["hat", "crown", "flower", "bird", "candle"]);
   const HELD = new Set(["flag", "umbrella", "sword", "guitar", "book", "cup", "balloon", "flower", "candle", "apple",
@@ -1694,7 +1696,10 @@
       if (ATTACH_WORDS[word] && hostIndex() >= 0) { attach = ATTACH_WORDS[word]; relation = null; continue; }
       // "...on its head", "...on the roof": where the last thing goes. After
       // "a bird on the cat", the bird is put onto the cat at that spot.
-      if (PART_WORDS[word] && subjects.length) {
+      // "in front of": the relation, not the front of something.
+      if (word === "front" && relation === "in") { relation = "front"; continue; }
+      const partContext = subjects.length && (subjects[subjects.length - 1].attach || subjects[subjects.length - 1].relation === "on");
+      if (PART_WORDS[word] && partContext) {
         const last = subjects[subjects.length - 1];
         if (last.attach) last.attach.spot = PART_WORDS[word];
         else if (last.relation === "on" && subjects.length >= 2 && !subjects[subjects.length - 2].attach) {
@@ -1803,7 +1808,21 @@
     const face = (f) => lerp2(lerp2(f.bl, f.br, u), lerp2(f.tl, f.tr, u), v);
     return lerp2(face(frame.front), face(frame.back), w);
   }
-  const frameScale = (frame, w) => 1 + (frame.kBack - 1) * w;
+  const frameScale = (frame, w) => Math.max(0.2, 1 + (frame.kBack - 1) * w);
+  /* The guide lines out of a frame, each from a face outward: forward toward
+   * the eye, back toward the vanishing point, left and right along the
+   * ground, up and down along the thing's own upright. (u, v, w) beyond 0..1
+   * carries on along the same lines, so a thing placed along a guide is in
+   * the same perspective. */
+  const FRAME_GUIDES = {
+    forward: [[0.5, 0, 0], [0.5, 0, -1.6]], back: [[0.5, 0, 1], [0.5, 0, 3.5]],
+    left: [[0, 0, 0.5], [-1.6, 0, 0.5]], right: [[1, 0, 0.5], [2.6, 0, 0.5]],
+    up: [[0.5, 1, 0.5], [0.5, 1.8, 0.5]], down: [[0.5, 0, 0.5], [0.5, -0.4, 0.5]],
+  };
+  function frameGuides(frame) {
+    return Object.fromEntries(Object.entries(FRAME_GUIDES).map(([dir, [a, b]]) =>
+      [dir, [framePoint(frame, ...a), framePoint(frame, ...b)]]));
+  }
 
   /* Spots on a drawing, found from its own parts (so every pose, and a drawing
    * the painter learned, has them): in the face's units, x across, y down. */
@@ -1998,6 +2017,15 @@
         }
         ctx.stroke();
       }
+      if (!item.attachedTo) {
+        const colours = { forward: "rgba(80, 220, 120, 0.8)", back: "rgba(255, 170, 40, 0.8)", left: "rgba(120, 140, 255, 0.8)",
+          right: "rgba(120, 140, 255, 0.8)", up: "rgba(240, 240, 240, 0.8)", down: "rgba(240, 240, 240, 0.8)" };
+        for (const [dir, [a, b]] of Object.entries(frameGuides(f))) {
+          ctx.strokeStyle = colours[dir]; ctx.setLineDash([2, 3]);
+          ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.stroke();
+        }
+        ctx.setLineDash([]);
+      }
       ctx.strokeStyle = item.attachedTo ? "rgba(255, 90, 200, 0.9)" : "rgba(60, 230, 255, 0.9)";
       ctx.setLineDash([4, 4]); poly(f.back); ctx.stroke();
       ctx.setLineDash([]); poly(f.front); ctx.stroke();
@@ -2063,8 +2091,10 @@
     const depthK = Number(persp?.depth) || 0, iso = Number(persp?.iso) || 0;
     const vanishX = (Number.isFinite(persp?.vanishX) ? persp.vanishX : 0.5) * W;
     const isoDir = fx != null && fx > 0.5 ? -1 : 1;
+    // The view as far as frames need it, while things are still being placed.
+    const provisional = depthK || iso ? { horizon: horizonY, vanish: [vanishX, horizonY], iso, isoDir } : null;
     const skyY = (horizon != null ? horizon * 0.42 : 0.26) * H;
-    const mainX = Number.isFinite(fx) ? fx : (rng() < 0.5 ? 1 / 3 : 2 / 3);
+    let mainX = Number.isFinite(fx) ? fx : (rng() < 0.5 ? 1 / 3 : 2 / 3);
     const placed = [];
     const sizeOf = (entry, scale) => {
       let h = entry.size * H * scale;
@@ -2073,11 +2103,24 @@
       if (w > maxW) { h *= maxW / w; w = maxW; }
       return { w, h };
     };
+    /* Two things side by side ("a tree to the left of a house") share the
+     * width: the first goes to the side that leaves the second room, and
+     * both are scaled together until they fit. */
+    const GUIDED = ["behind", "front", "left", "right"];
+    const pair = scene.subjects.filter((s) => !s.attach);
+    let pairScale = 1;
+    if (pair[1] && (pair[1].relation === "left" || pair[1].relation === "right")) {
+      mainX = pair[1].relation === "left" ? 0.3 : 0.7;
+      const total = sizeOf(pair[0].entry, 1).w + sizeOf(pair[1].entry, 1).w * 1.25;
+      pairScale = Math.max(0.4, Math.min(1, (W * 0.9) / total));
+    }
     scene.subjects.forEach((s, index) => {
       if (s.attach) return;
       const main = index === 0;
       // A second thing is smaller - unless the first sits on it or in it.
-      const scale = main || s.relation === "on" || s.relation === "in" ? 1 : 0.68;
+      // (Things standing together along guide lines keep their own sizes;
+      // only their distance changes them.)
+      const scale = (main || s.relation === "on" || s.relation === "in" || GUIDED.includes(s.relation) ? 1 : 0.68) * pairScale;
       const { w, h } = sizeOf(s.entry, s.count > 1 ? scale * 0.7 : scale);
       // A face (or anything that asks to be) sits in the middle, portrait-wise.
       let cx = (main ? (s.entry.centred ? 0.5 : mainX) : (mainX < 0.5 ? 2 / 3 : 1 / 3) + (index - 1) * 0.12) * W;
@@ -2099,6 +2142,7 @@
       const before = placed[placed.length - 1];
       let z = 0;
       let lift = null;
+      let guideK = 1, guideDepth = null;
       if (before && s.relation) {
         const b = before.box, under = b.x + b.w / 2;
         // The earlier thing is <relation> this one. Above and below keep their
@@ -2107,6 +2151,21 @@
         if (s.relation === "below") bottom = Math.min(b.y - h * 0.1, bottom);
         if (s.relation === "on") { cx = under; z = -1; lift = before.key; }
         if (s.relation === "in") { cx = under; bottom = b.y + b.h / 2 + h * 0.55; z = -1; }
+        /* Along the other's guide lines, on the same ground: "a cat behind a
+         * dog" puts the dog on the cat's forward line (nearer, larger), "a
+         * dog in front of a house" the house on the dog's back line (further,
+         * smaller), "a well to the left of a house" the house on the well's
+         * right line. */
+        if (["behind", "front", "left", "right"].includes(s.relation)) {
+          const f = frameOf(before, provisional), gap = 0.25, across = w / Math.max(1, before.box.w);
+          const [u, back] = s.relation === "behind" ? [0.5, -(0.55 + gap)] : s.relation === "front" ? [0.5, 1.6 + gap]
+            : s.relation === "left" ? [1 + gap + across / 2, 0.5] : [-(gap + across / 2), 0.5];
+          const at = framePoint(f, u, 0, back);
+          guideK = frameScale(f, back);
+          cx = at[0]; bottom = at[1];
+          guideDepth = (before.depth || 0) + (back > 0.5 ? 0.12 : back < 0 ? -0.12 : 0.01);
+          z = before.z || 0;
+        }
       }
       // Whatever stands on something keeps its top inside the canvas.
       const fit = Math.min(1, (bottom - H * 0.02) / h);
@@ -2120,7 +2179,7 @@
           else y = bottom + (rng() - 0.5) * h * 0.08;
           k = 0.7 + rng() * 0.5;
         }
-        let bw = w * k * fit * importance * towering * (s.form?.stretch || 1), bh = h * k * fit * importance * towering;
+        let bw = w * k * fit * importance * towering * guideK * (s.form?.stretch || 1), bh = h * k * fit * importance * towering * guideK;
         if (bw > W * 0.9) { bh *= W * 0.9 / bw; bw = W * 0.9; }
         /* Set back in depth: the first thing stands in front; the others (and
          * copies, spread through the depth) further back - smaller, higher
@@ -2138,6 +2197,7 @@
             bw *= sc; bh *= sc;
           }
         }
+        if (guideDepth !== null) depth = guideDepth;
         // A towering thing still keeps its top on the canvas.
         const room = Math.min(H - bh * 0.02, y) - H * 0.02;
         if (bh > room && room > 0) { bw *= room / bh; bh = room; }
@@ -2174,6 +2234,15 @@
     items.sort((a, b) => (a.entry.kind === "setting" ? -2 : a.z || 0) - (b.entry.kind === "setting" ? -2 : b.z || 0) ||
       (b.depth || 0) - (a.depth || 0));
     orderAttachments(items, added);
+    /* Each thing's pitch: how far above or below the eye it is (+ looking
+     * down on it). The eye is the view's horizon; straight on, it is at the
+     * main thing's own height; isometric looks down on everything. */
+    const main = placed[0];
+    const eyeY = persp && Number.isFinite(persp.horizon) ? persp.horizon * H : main ? main.box.y + main.box.h / 2 : H * 0.5;
+    for (const item of items) {
+      if (item.entry.kind !== "subject") continue;
+      item.pitch = iso ? 0.55 : Math.max(-1, Math.min(1, (item.box.y + item.box.h / 2 - eyeY) / H * 2.4));
+    }
     const first = placed[0];
     const focus = first
       ? { fx: (first.box.x + first.box.w / 2) / W, fy: (first.box.y + first.box.h / 2) / H }
@@ -2803,9 +2872,66 @@
     }
   }
 
+  /* Round rims in perspective. A circle lying level - an umbrella's edge, a
+   * mushroom's cap, a bowl's mouth - is seen as an ellipse, rounder the
+   * further it is above or below the eye (the item's pitch: + looking down
+   * on it, - looking up at it). Its near edge bows toward the eye, so the
+   * straight edge of a front-on drawing bends; from below, a canopy shows its
+   * underside and the ribs running to its hub; from above, a bowl shows its
+   * inside. Only parts marked `rim` - a shoulder or a head of hair is not. */
+  function rimParts(parts, item) {
+    const pitch = item.pitch || 0;
+    if (Math.abs(pitch) < 0.05 || !parts.some((p) => p.rim && p.shape === "dome" && p.box)) return parts;
+    const s = Math.min(0.6, Math.abs(Math.sin(pitch)));
+    const wide = item.box.w / Math.max(1, item.box.h);
+    const out = [], rims = [];
+    for (const part of parts) {
+      if (!part.rim || part.shape !== "dome" || !part.box) { out.push(part); continue; }
+      const [x, y, w, h] = part.box, rx = w / 2, cx = x + rx;
+      // Half the rim's depth, in the drawing's height units.
+      const ey = rx * s * wide;
+      const rimY = part.down ? y : y + h;
+      const inside = part.down ? pitch > 0 : pitch < 0;
+      rims.push({ cx, rx, rimY, ey, inside, box: part.box, down: Boolean(part.down) });
+      out.push(part);
+      out.push({ shape: "ellipse", box: [x, rimY - ey, w, 2 * ey], colour: part.colour, tone: part.tone || 0 });
+      if (inside) {
+        out.push({ shape: "ellipse", box: [x + w * 0.025, rimY - ey * 0.95, w * 0.95, 2 * ey * 0.95], colour: part.colour, tone: (part.tone || 0) - 0.24 });
+        if (!part.down) {
+          const hubY = rimY - ey * 0.25, n = 8;
+          for (let i = 0; i < n; i++) {
+            const a = ((i + 0.5) / n) * Math.PI * 2;
+            out.push({ shape: "line", pts: [[cx, hubY], [cx + Math.cos(a) * rx * 0.95, rimY + Math.sin(a) * ey * 0.95]],
+              width: 0.012, colour: part.colour, tone: (part.tone || 0) - 0.4, rimRib: true });
+          }
+        }
+      }
+    }
+    // Lines on a rimmed part: seen from below, the outside seams are hidden;
+    // seen from above, where they meet the rim they bend with it.
+    return out.filter((part) => {
+      if (part.rimRib || part.shape !== "line" || !part.pts) return true;
+      const rim = rims.find((r) => r.inside && !r.down && part.pts.every(([px, py]) =>
+        px >= r.box[0] - 0.02 && px <= r.box[0] + r.box[2] + 0.02 && py >= r.box[1] - 0.04 && py <= r.rimY + 0.04));
+      return !rim;
+    }).map((part) => {
+      if (part.rimRib || part.shape !== "line" || !part.pts) return part;
+      let bent = null;
+      for (const r of rims) {
+        if (r.inside || r.down) continue;
+        part.pts.forEach(([px, py], i) => {
+          if (Math.abs(py - r.rimY) > 0.04 || Math.abs(px - r.cx) > r.rx) return;
+          bent ||= part.pts.map((pt) => pt.slice());
+          bent[i][1] = py + r.ey * Math.sqrt(Math.max(0, 1 - ((px - r.cx) / r.rx) ** 2));
+        });
+      }
+      return bent ? { ...part, pts: bent } : part;
+    });
+  }
+
   function paintItem(ctx, item, rng) {
     const box = item.box;
-    for (const part of formParts(item)) {
+    for (const part of rimParts(formParts(item), item)) {
       if (part.cut) {
         const path = shapePath(part, box);
         if (!path) continue;
