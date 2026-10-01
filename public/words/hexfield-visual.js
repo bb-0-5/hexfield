@@ -1520,7 +1520,7 @@
     queen: "king", prince: "king", princess: "king", emperor: "king", empress: "king", ruler: "king", monarch: "king",
     poplar: "tree", cypress: "tree", aspen: "tree", steamer: "boat", steamboat: "boat", ferry: "boat", liner: "boat",
     rowboat: "boat", dinghy: "boat", bungalow: "house", shack: "house", townhouse: "house",
-    portrait: "face", head: "face", selfie: "face", dancer: "person", seagull: "bird", gull: "bird",
+    portrait: "face", head: "face", selfie: "face", dancer: "person", seagull: "bird",
     kitten: "cat", lion: "cat", tiger: "cat", puppy: "dog", wolf: "dog", fox: "dog", donkey: "horse", pony: "horse",
     rose: "flower", tulip: "flower", daisy: "flower", lily: "flower", blossom: "flower", bloom: "flower",
     flame: "fire", blaze: "fire", bonfire: "fire", campfire: "fire",
@@ -1614,6 +1614,17 @@
 
   /* ── Reading ─────────────────────────────────────────────────────────── */
 
+  /* Drawings the painter grew itself, from the shapes people kept with a word
+   * the dictionary does not have (app.js, learnedVisualEntry). A written entry
+   * always comes first: a learned drawing never replaces one. */
+  const LEARNED = {};
+  function learn(word, entry) {
+    if (!word || ENTRIES[word] || FAMILIES[word]) return false;
+    if (entry) LEARNED[word] = entry; else delete LEARNED[word];
+    return true;
+  }
+  const entryOf = (key) => ENTRIES[key] || LEARNED[key];
+
   function lookup(word) {
     if (ENTRIES[word]) return { keys: [word], plural: false };
     if (FAMILIES[word]) return { keys: [].concat(FAMILIES[word]), plural: false };
@@ -1625,6 +1636,8 @@
       if (ENTRIES[single]) return { keys: [single], plural: true };
       if (FAMILIES[single]) return { keys: [].concat(FAMILIES[single]), plural: true };
     }
+    if (LEARNED[word]) return { keys: [word], plural: false };
+    for (const single of singulars) if (LEARNED[single]) return { keys: [single], plural: true };
     return null;
   }
 
@@ -1648,7 +1661,7 @@
       const found = lookup(word);
       if (!found) continue;
       for (const key of found.keys) {
-        const entry = ENTRIES[key];
+        const entry = entryOf(key);
         if (entry.kind === "setting") {
           if (!settings.some((s) => s.key === key) && settings.length < 3) settings.push({ key, entry, colour });
           // "A whale under the sea", "a fish in the river": in water, a thing
@@ -2696,6 +2709,6 @@
     return out;
   }
 
-  global.HexfieldVisual = { ENTRIES, FAMILIES, COLOUR_WORDS, RELATIONS, lookup, read, layout, paint, subjectColours,
-    FORM_STYLES, FORM_KEYS: Object.keys(FORM_STYLES), sampleForm, entryVariant, poseFor };
+  global.HexfieldVisual = { ENTRIES, FAMILIES, COLOUR_WORDS, RELATIONS, LEARNED, lookup, read, layout, paint, subjectColours,
+    FORM_STYLES, FORM_KEYS: Object.keys(FORM_STYLES), sampleForm, entryVariant, poseFor, learn };
 })(typeof globalThis !== "undefined" ? globalThis : this);

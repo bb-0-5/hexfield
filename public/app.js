@@ -10230,6 +10230,7 @@ function extractShapes(ctx, W, H, maxShapes = 20, minAreaFrac = 0.0012, maxAreaF
     c.width = cw; c.height = ch;
     const cctx = c.getContext("2d");
     const img = cctx.createImageData(cw, ch);
+    let red = 0, green = 0, blue = 0, inked = 0;
     for (let y = b.minY; y <= b.maxY; y++) {
       const dy = Math.min(ch - 1, Math.floor((y - b.minY + pad) * scale));
       for (let x = b.minX; x <= b.maxX; x++) {
@@ -10237,10 +10238,19 @@ function extractShapes(ctx, W, H, maxShapes = 20, minAreaFrac = 0.0012, maxAreaF
         const dx = Math.min(cw - 1, Math.floor((x - b.minX + pad) * scale));
         const o = (dy * cw + dx) * 4;
         img.data[o] = 255; img.data[o + 1] = 255; img.data[o + 2] = 255; img.data[o + 3] = 255;
+        const src = (y * W + x) * 4;
+        red += data[src]; green += data[src + 1]; blue += data[src + 2]; inked++;
       }
     }
     cctx.putImageData(img, 0, 0);
-    return { canvas: c, area: b.area, orientation: shapeOrientationDescriptor(c) };
+    /* Where the piece sat in the picture and what colour it was: the silhouette
+     * alone cannot be put back together into the thing it came from. `frame`
+     * is the box inside the padded canvas, as fractions of the picture, and
+     * `aspect` the picture's width over height. */
+    return { canvas: c, area: b.area, orientation: shapeOrientationDescriptor(c),
+      frame: [b.minX / W, b.minY / H, bw / W, bh / H], aspect: W / H,
+      inner: [pad * scale / cw, pad * scale / ch, bw * scale / cw, bh * scale / ch],
+      rgb: inked ? [Math.round(red / inked), Math.round(green / inked), Math.round(blue / inked)] : null };
   });
 }
 
@@ -37431,7 +37441,51 @@ function normalizeVisualSymbolProfile(raw) {
     attachments: (Array.isArray(blob.attachments) ? blob.attachments : [])
       .map((value) => visualSymbolWord(value)).filter(Boolean).slice(0, 6),
   } : null;
-  return { id: String(raw.id || "").slice(0, 120), role: raw.role === "object" ? "object" : "subject", vector, ...(blobBase ? { blobBase } : {}) };
+  const form = normalizeVisualSymbolForm(raw.form);
+  return { id: String(raw.id || "").slice(0, 120), role: raw.role === "object" ? "object" : "subject", vector,
+    ...(blobBase ? { blobBase } : {}), ...(form ? { form } : {}) };
+}
+
+/* A claimed shape's drawing: where it sat in the picture (`f`, fractions of
+ * the picture; `a`, the picture's width over height), its colour (`c`) and
+ * its outline (`p`, VISUAL_FORM_POINTS points as 0..99 inside its box). */
+const VISUAL_FORM_POINTS = 20;
+function normalizeVisualSymbolForm(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const f = Array.isArray(raw.f) && raw.f.length === 4 ? raw.f.map((v) => visualUnit(v, NaN)) : null;
+  const c = Array.isArray(raw.c) && raw.c.length === 3 ? raw.c.map((v) => Math.round(Number(v))) : null;
+  const p = Array.isArray(raw.p) && raw.p.length === VISUAL_FORM_POINTS * 2 ? raw.p.map((v) => Math.round(Number(v))) : null;
+  const a = Number(raw.a);
+  if (!f || f.some((v) => !Number.isFinite(v)) || f[2] <= 0 || f[3] <= 0) return null;
+  if (!c || c.some((v) => !(v >= 0 && v <= 255)) || !p || p.some((v) => !(v >= 0 && v <= 99))) return null;
+  if (!(a > 0.1 && a < 10)) return null;
+  return { f: f.map((v) => +v.toFixed(3)), a: +a.toFixed(3), c, p };
+}
+
+/* Read a harvested shape's outline: from its centre, the farthest inked
+ * pixel along each of VISUAL_FORM_POINTS rays. Only shapes that know where
+ * they sat (extractShapes' `frame`) can be drawn again; tiles cannot. */
+function visualSymbolForm(shape) {
+  const canvas = shape?.canvas;
+  if (!canvas?.width || !Array.isArray(shape.frame) || !Array.isArray(shape.inner) || !shape.rgb) return null;
+  const w = canvas.width, h = canvas.height;
+  let data;
+  try { data = canvas.getContext("2d").getImageData(0, 0, w, h).data; } catch { return null; }
+  const inked = (x, y) => x >= 0 && y >= 0 && x < w && y < h && data[(y * w + x) * 4 + 3] > 127;
+  let sx = 0, sy = 0, n = 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (data[(y * w + x) * 4 + 3] > 127) { sx += x; sy += y; n++; }
+  if (n < 6) return null;
+  const cx = sx / n, cy = sy / n, reach = Math.hypot(w, h);
+  const [ix, iy, iw, ih] = shape.inner;
+  const p = [];
+  for (let k = 0; k < VISUAL_FORM_POINTS; k++) {
+    const angle = (k / VISUAL_FORM_POINTS) * Math.PI * 2, dx = Math.cos(angle), dy = Math.sin(angle);
+    let far = 0;
+    for (let r = 0; r < reach; r += 0.75) if (inked(Math.round(cx + dx * r), Math.round(cy + dy * r))) far = r;
+    const u = ((cx + dx * far) / w - ix) / iw, v = ((cy + dy * far) / h - iy) / ih;
+    p.push(Math.round(clamp01(u) * 99), Math.round(clamp01(v) * 99));
+  }
+  return normalizeVisualSymbolForm({ f: shape.frame, a: shape.aspect, c: shape.rgb, p });
 }
 
 function normalizeVisualSymbolMemory(raw) {
@@ -37522,7 +37576,7 @@ async function pullSharedVisualSymbols() {
   try {
     const session = await ensureTasteSession();
     const res = await fetch(SUPABASE_URL +
-      "/rest/v1/hexfield_visual_symbols?select=material_id,word,role,profile,context,evidence_count,created_at&order=created_at.desc&limit=320", {
+      "/rest/v1/hexfield_visual_symbols?select=material_id,word,role,profile,form,context,evidence_count,created_at&order=created_at.desc&limit=320", {
       headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token },
     });
     if (!res.ok) return 0;
@@ -37532,7 +37586,7 @@ async function pullSharedVisualSymbols() {
     for (const row of rows) {
       const word = visualSymbolWord(row.word);
       const profile = normalizeVisualSymbolProfile({
-        id: row.material_id, role: row.role, vector: row.profile,
+        id: row.material_id, role: row.role, vector: row.profile, form: row.form,
       });
       if (!word || !profile) continue;
       const context = row.context && typeof row.context === "object" ? row.context : {};
@@ -37556,6 +37610,7 @@ async function pullSharedVisualSymbols() {
     visualSymbolMemory = divideVisualSymbolShares(mergeVisualSymbolMemories(visualSymbolMemory, remote));
     sharedVisualSymbolCount = rows.length;
     saveVisualSymbolMemory();
+    refreshLearnedVisualWords();
     return rows.length;
   } catch { return 0; }
 }
@@ -37578,7 +37633,8 @@ function queueSharedVisualSymbolClaims(word, entry) {
   for (const symbol of entry.symbols) {
     const claim = {
       word, materialId: symbol.id, role: symbol.role,
-      profile: { ...symbol.vector, blobBase: symbol.blobBase || null }, context, attempts: 0,
+      profile: { ...symbol.vector, blobBase: symbol.blobBase || null }, form: symbol.form || null,
+      context, attempts: 0,
     };
     const key = word + "|" + symbol.id;
     visualSymbolClaimQueue = [
@@ -37616,6 +37672,8 @@ async function pushSharedVisualSymbolClaims() {
       body: JSON.stringify(batch.map((claim) => ({
         material_id: String(claim.materialId).slice(0, 120), word: claim.word, role: claim.role,
         profile: claim.profile, context: claim.context,
+        // Its own column: the profile alone is close to that column's size cap.
+        form: claim.form || null,
       }))),
     });
     if (!response.ok) throw new Error("lexicon claim HTTP " + response.status);
@@ -38097,10 +38155,14 @@ function visualSymbolStatus(composed) {
     ? ` · separating ${collision.word} from ${collision.other}` : "";
   // Blobs this word holds jointly with another, and its share of them.
   const shared = visualSymbolsForWords(named).filter((symbol) => symbol.sharedWith?.length);
-  const sharing = shared.length
+  let sharing = shared.length
     ? " · shared: " + [...new Set(shared.flatMap((symbol) => symbol.sharedWith))].slice(0, 2).join(", ") +
       " " + Math.round(shared.reduce((sum, symbol) => sum + (Number(symbol.share) || 0), 0) / shared.length * 100) + "%"
     : "";
+  const learned = [named?.subject, named?.object].map(visualSymbolWord)
+    .map((word) => word && globalThis.HexfieldVisual?.LEARNED?.[word] && word + " (" + globalThis.HexfieldVisual.LEARNED[word].learned.examples + " kept)")
+    .filter(Boolean);
+  if (learned.length) sharing += " · learned drawing: " + learned.join(", ");
   return { count, associations, collision,
     label: count ? " · identifier parts " + count +
       (associations.length ? " · nearest other words: " + associations.join(", ") : "") + sharing + separating : separating };
@@ -38187,7 +38249,11 @@ function rememberVisualSymbolsFromVote(result, liked) {
    * whose current catalogue it resembles most. A shape that two words fit
    * equally well (both known, within VISUAL_SYMBOL_EQUAL_FIT) is shared by
    * both. With no catalogue to go on, the shapes are dealt out evenly. */
-  const pool = shapes.map((shape) => visualSymbolProfile(shape)).filter(Boolean);
+  const pool = shapes.map((shape) => {
+    const profile = visualSymbolProfile(shape);
+    const form = profile && visualSymbolForm(shape);
+    return form ? { ...profile, form } : profile;
+  }).filter(Boolean);
   const quota = Math.min(VISUAL_SYMBOL_PER_EXAMPLE, Math.ceil(pool.length / words.length));
   const assigned = words.map(() => []);
   const fitted = pool.map((profile, index) => {
@@ -38272,8 +38338,112 @@ function rememberVisualSymbolsFromVote(result, liked) {
   // Every share re-divided against the catalogue as it now stands.
   divideVisualSymbolShares(visualSymbolMemory);
   if (changes.length || pendingVisualSymbolCollision) saveVisualSymbolMemory();
+  if (changes.length) refreshLearnedVisualWords();
   return changes;
 }
+
+/* ── Learned drawings: words the dictionary does not have ─────────────────
+ *
+ * A word with no written entry still collects shapes: every KEEP of a
+ * painting it named gives it some of that painting's pieces, each with where
+ * it sat, its colour and its outline. Once VISUAL_LEARNED_MIN_EXAMPLES kept
+ * paintings have given it pieces, those pieces become a drawing - the kept
+ * example whose pieces best fit the word's whole catalogue (its pieces
+ * resemble the word's other pieces, and are not mostly another word's), put
+ * back together as they sat. The next-best examples are its variants. It is
+ * then drawn like any dictionary thing: in every style, pose and
+ * perspective, by the thing brush, and adopted when the painting beats it.
+ * Each new keep can change which example leads. */
+const VISUAL_LEARNED_MIN_EXAMPLES = 3;
+const VISUAL_LEARNED_PARTS = 6;
+const VISUAL_LEARNED_VARIANTS = 3;
+
+function learnedVisualDrawing(parts) {
+  const a = parts[0].form.a;
+  const boxes = parts.map(({ form }) => [form.f[0] * a, form.f[1], form.f[2] * a, form.f[3]]);
+  const minX = Math.min(...boxes.map((b) => b[0])), minY = Math.min(...boxes.map((b) => b[1]));
+  const maxX = Math.max(...boxes.map((b) => b[0] + b[2])), maxY = Math.max(...boxes.map((b) => b[1] + b[3]));
+  const U = Math.max(1e-3, maxX - minX), V = Math.max(1e-3, maxY - minY);
+  const colours = {};
+  // Biggest first, so the small pieces sit on top as they did.
+  const order = parts.map((part, i) => i).sort((i, j) => boxes[j][2] * boxes[j][3] - boxes[i][2] * boxes[i][3]);
+  const drawn = order.map((i, n) => {
+    const [bx, by, bw, bh] = boxes[i], { p, c } = parts[i].form;
+    const hsl = rgbToHsl(c[0], c[1], c[2]);
+    colours["c" + n] = [Math.round(hsl.h), Math.round(hsl.s * 100), Math.round(hsl.l * 100)];
+    const pts = [];
+    for (let k = 0; k < p.length; k += 2) {
+      pts.push([+((bx + (p[k] / 99) * bw - minX) / U).toFixed(3), +((by + (p[k + 1] / 99) * bh - minY) / V).toFixed(3)]);
+    }
+    return { shape: "poly", smooth: true, pts, colour: "c" + n };
+  });
+  return { centre: (minY + maxY) / 2, size: V, aspect: U / V, colours, parts: drawn };
+}
+
+/* The pieces of one kept painting that make one thing: the piece that fits
+ * the word best, and the pieces that sat beside it. A piece the size of the
+ * ground (VISUAL_LEARNED_GROUND of the picture or more) is where things
+ * stand, not a thing; pieces far apart are separate things. */
+const VISUAL_LEARNED_GROUND = 0.3;
+const VISUAL_LEARNED_GAP = 0.12;
+function learnedVisualCluster(word, symbols, memory) {
+  const scored = symbols
+    .filter((symbol) => symbol.form && (symbol.share ?? 1) >= VISUAL_SYMBOL_SHARE_FLOOR &&
+      symbol.form.f[2] * symbol.form.f[3] < VISUAL_LEARNED_GROUND && symbol.form.f[2] < 0.9 && symbol.form.f[3] < 0.9)
+    .map((symbol) => ({ symbol, fit: (visualSymbolFit(word, symbol, memory) ?? 0.5) * (symbol.share ?? 1) }))
+    .sort((x, y) => y.fit - x.fit);
+  if (!scored.length) return null;
+  const a = scored[0].symbol.form.a;
+  const box = ({ form }) => [form.f[0] * a, form.f[1], form.f[0] * a + form.f[2] * a, form.f[1] + form.f[3]];
+  const taken = [scored[0]];
+  let union = box(scored[0].symbol);
+  for (let grew = true; grew && taken.length < VISUAL_LEARNED_PARTS;) {
+    grew = false;
+    for (const candidate of scored) {
+      if (taken.includes(candidate) || taken.length >= VISUAL_LEARNED_PARTS) continue;
+      const b = box(candidate.symbol);
+      const gap = Math.max(0, b[0] - union[2], union[0] - b[2], b[1] - union[3], union[1] - b[3]);
+      if (gap > VISUAL_LEARNED_GAP) continue;
+      taken.push(candidate); grew = true;
+      union = [Math.min(union[0], b[0]), Math.min(union[1], b[1]), Math.max(union[2], b[2]), Math.max(union[3], b[3])];
+    }
+  }
+  return { parts: taken.map((x) => x.symbol), fit: taken.reduce((sum, x) => sum + x.fit, 0) / taken.length };
+}
+
+function learnedVisualEntry(word, memory = visualSymbolMemory) {
+  const examples = (memory?.words?.[word] || []).map((entry) => {
+    const cluster = learnedVisualCluster(word, entry.symbols || [], memory);
+    return cluster && { id: entry.id, ...cluster };
+  }).filter(Boolean).sort((x, y) => y.fit - x.fit || String(x.id).localeCompare(String(y.id)));
+  if (examples.length < VISUAL_LEARNED_MIN_EXAMPLES) return null;
+  const [lead, ...rest] = examples.slice(0, 1 + VISUAL_LEARNED_VARIANTS).map((example) => learnedVisualDrawing(example.parts));
+  return {
+    kind: "subject",
+    anchor: lead.centre < 0.36 ? "sky" : lead.centre > 0.58 ? "ground" : "centre",
+    size: Math.min(0.62, Math.max(0.24, lead.size)),
+    aspect: Math.min(4, Math.max(0.25, lead.aspect)),
+    colours: lead.colours, parts: lead.parts,
+    variants: rest.map((drawing) => ({ aspect: Math.min(4, Math.max(0.25, drawing.aspect)), colours: drawing.colours, parts: drawing.parts })),
+    learned: { examples: examples.length, fit: +examples[0].fit.toFixed(3), from: examples[0].id },
+  };
+}
+
+function refreshLearnedVisualWords() {
+  const Visual = globalThis.HexfieldVisual;
+  if (!Visual?.learn) return [];
+  const learned = [];
+  for (const word of Object.keys(Visual.LEARNED || {})) if (!visualSymbolMemory.words[word]) Visual.learn(word, null);
+  for (const word of Object.keys(visualSymbolMemory.words || {})) {
+    if (Visual.ENTRIES[word] || Visual.FAMILIES[word]) continue;
+    const entry = learnedVisualEntry(word);
+    Visual.learn(word, entry);
+    if (entry) learned.push(word);
+  }
+  return learned;
+}
+divideVisualSymbolShares(visualSymbolMemory);
+refreshLearnedVisualWords();
 
 /* The visible negotiation surface uses the catalogue's real claims. Within a
  * word, examples attract toward a medoid; every other word repels it. The
