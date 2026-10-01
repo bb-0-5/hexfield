@@ -1294,6 +1294,14 @@
         { shape: "rect", box: [0.08, 0.86, 0.84, 0.1], colour: "frame" },
       ],
     },
+    chimney: {
+      kind: "subject", anchor: "ground", size: 0.2, aspect: 0.55,
+      colours: { brick: [8, 46, 38], cap: [20, 10, 22] },
+      parts: [
+        { shape: "rect", box: [0.12, 0.16, 0.76, 0.84], colour: "brick", texture: "brick" },
+        { shape: "rect", box: [0, 0.06, 1, 0.16], colour: "cap" },
+      ],
+    },
     hat: {
       kind: "subject", anchor: "centre", size: 0.26, aspect: 1.6,
       colours: { felt: [0, 0, 14], band: [352, 60, 42] },
@@ -1612,6 +1620,30 @@
     beside: "beside", by: "beside", near: "beside", with: "beside", and: "beside",
   };
 
+  /* ── Adding onto a thing ────────────────────────────────────────────────
+   *
+   * "A cat wearing a hat", "a house with a chimney", "a person holding a
+   * flag", "a tree with apples", "a bird on the cat's head": the second thing
+   * is put onto the first, at a spot on its 3D frame (frameOf) - head, hand,
+   * top, roof, canopy, base, front, back, side - and drawn in the first
+   * thing's own perspective. "With" adds on only what can be added on (a hat,
+   * a chimney, apples); "a man with a dog" still stands them side by side. */
+  const ATTACH_WORDS = { wearing: "head", wears: "head", wear: "head", holding: "hand", holds: "hand", hold: "hand",
+    carrying: "hand", carries: "hand", with: "auto", has: "auto", having: "auto" };
+  const PART_WORDS = { head: "head", heads: "head", hat: null, hand: "hand", hands: "hand", paw: "hand", top: "top",
+    roof: "roof", rooftop: "roof", back: "back", behind: "back", front: "front", side: "side", feet: "base", foot: "base",
+    base: "base", branches: "canopy", branch: "canopy", canopy: "canopy", leaves: "canopy", mast: "top" };
+  const HEADWEAR = new Set(["hat", "crown", "flower", "bird", "candle"]);
+  const HELD = new Set(["flag", "umbrella", "sword", "guitar", "book", "cup", "balloon", "flower", "candle", "apple",
+    "ball", "fish", "bone", "lamp", "star"]);
+  const TOPPERS = new Set(["chimney", "flag", "bird", "star", "moon", "candle"]);
+  const FRUIT = new Set(["apple", "flower", "bird", "star", "balloon"]);
+  const TREES = new Set(["tree", "pine", "palm", "bush", "forest"]);
+  const ANIMATE = new Set(["person", "king", "queen", "face", "cat", "dog", "horse", "cow", "rabbit", "bear", "fox",
+    "wolf", "lion", "tiger", "elephant", "deer", "monkey", "owl", "duck", "frog", "mouse", "penguin", "bird", "pig",
+    "sheep", "snowman", "robot", "ghost", "angel", "knight", "witch", "wizard", "clown", "child", "baby", "girl", "boy",
+    "man", "woman"]);
+
   /* ── Reading ─────────────────────────────────────────────────────────── */
 
   /* Drawings the painter grew itself, from the shapes people kept with a word
@@ -1647,7 +1679,9 @@
   function read(text) {
     const words = String(text || "").toLowerCase().match(/[a-z]+/g) || [];
     const subjects = [], settings = [];
-    let count = 1, colour = null, relation = null;
+    let count = 1, colour = null, relation = null, attach = null;
+    // The nearest thing named that is not itself added onto another.
+    const hostIndex = () => { for (let i = subjects.length - 1; i >= 0; i--) if (!subjects[i].attach) return i; return -1; };
     // "A pine tree", "an oak tree", "a sail boat": the general word after a
     // thing that already names it adds nothing.
     const HEADS = new Set(["tree", "boat", "house", "bird", "flower", "ship"]);
@@ -1657,6 +1691,19 @@
       lastWasThing = false;
       if (COUNT_WORDS[word]) { count = COUNT_WORDS[word]; continue; }
       if (COLOUR_WORDS[word]) { colour = COLOUR_WORDS[word]; continue; }
+      if (ATTACH_WORDS[word] && hostIndex() >= 0) { attach = ATTACH_WORDS[word]; relation = null; continue; }
+      // "...on its head", "...on the roof": where the last thing goes. After
+      // "a bird on the cat", the bird is put onto the cat at that spot.
+      if (PART_WORDS[word] && subjects.length) {
+        const last = subjects[subjects.length - 1];
+        if (last.attach) last.attach.spot = PART_WORDS[word];
+        else if (last.relation === "on" && subjects.length >= 2 && !subjects[subjects.length - 2].attach) {
+          subjects[subjects.length - 2].attach = { host: subjects.length - 1, spot: PART_WORDS[word] };
+          last.relation = null;
+        }
+        relation = null;
+        continue;
+      }
       if (RELATIONS[word] && subjects.length) { relation = RELATIONS[word]; continue; }
       const found = lookup(word);
       if (!found) continue;
@@ -1669,7 +1716,16 @@
           if ((relation === "below" || relation === "in") && subjects.length && ["sea", "underwater", "river"].includes(key)) {
             subjects[subjects.length - 1].within = key;
           }
-        } else if (!subjects.some((s) => s.key === key) && subjects.length < 3) {
+        } else if (attach && hostIndex() >= 0 && subjects.filter((s) => s.attach).length < 3) {
+          const host = hostIndex();
+          const spot = attach === "auto" ? autoSpot(subjects[host], key, entry) : attach;
+          const many = found.plural ? (count > 1 ? count : 3) : count;
+          if (spot) subjects.push({ key, entry, count: Math.min(6, many), colour, attach: { host, spot } });
+          else if (!subjects.some((s) => s.key === key) && subjects.filter((s) => !s.attach).length < 3) {
+            subjects.push({ key, entry, count: Math.min(6, many), colour, relation: "beside" });
+          }
+          lastWasThing = true;
+        } else if (!subjects.some((s) => s.key === key && !s.attach) && subjects.filter((s) => !s.attach).length < 3) {
           // "Two birds" is two; plain "birds" is a few.
           const many = found.plural ? (count > 1 ? count : 3) : count;
           // "mountains" as a place, not as three separate mountains.
@@ -1681,7 +1737,7 @@
           lastWasThing = true;
         }
       }
-      count = 1; colour = null; relation = null;
+      count = 1; colour = null; relation = null; attach = null;
     }
     /* A thing in the sky, or ground that runs to a horizon, implies a sky
      * above it - otherwise whatever the field happens to be fills that half
@@ -1696,6 +1752,269 @@
       settings.unshift({ key, entry: ENTRIES[key], colour: null, implied: true });
     }
     return { subjects, settings, words: subjects.map((s) => s.key).concat(settings.map((s) => s.key)) };
+  }
+
+  /* Where a "with" puts one thing on another, or null if it does not. */
+  function autoSpot(host, key, entry) {
+    const he = host.entry;
+    if (HEADWEAR.has(key) && key !== "flower" && key !== "bird" && key !== "candle") return headOf(he) ? "head" : "top";
+    if (TREES.has(host.key)) return key === "star" || key === "flag" ? "top" : FRUIT.has(key) ? "canopy" : null;
+    if (ANIMATE.has(host.key)) {
+      if (HELD.has(key) && handOf(he)) return "hand";
+      if (key === "bird" || key === "crown") return headOf(he) ? "head" : "top";
+      return entry.size <= he.size * 0.6 ? "base" : null;
+    }
+    if (TOPPERS.has(key)) return key === "chimney" ? "roof" : "top";
+    return entry.size <= he.size * 0.5 ? "front" : null;
+  }
+
+  /* ── A thing's frame ────────────────────────────────────────────────────
+   *
+   * Every placed thing is held in a box in space: its face is the box it was
+   * laid out in (narrowed at the top or the foot by a keystone, leaning with
+   * its form), and its back is that face set back by the thing's depth -
+   * toward the vanishing point in a one-point view, along the 30-degree axis
+   * isometric, up and across otherwise. A point on or in it is (u, v, w):
+   * u across from the left, v up from the foot, w back from the face. */
+  const lerp2 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  function frameOf(item, view = null) {
+    const b = item.box, ks = item.keystone && item.keystone !== 1 ? item.keystone : 1;
+    const lean = (item.form?.lean || 0) * b.w, cx = b.x + b.w / 2;
+    const front = { tl: [cx - b.w / 2 * ks + lean, b.y], tr: [cx + b.w / 2 * ks + lean, b.y], br: [b.x + b.w, b.y + b.h], bl: [b.x, b.y + b.h] };
+    const depth = Math.min(b.w, b.h) * (item.entry.depth ?? 0.6);
+    const map = (f) => Object.fromEntries(Object.entries(front).map(([k, p]) => [k, f(p)]));
+    let back, kBack = 1, mode;
+    if (view?.iso) {
+      mode = "iso";
+      const dx = 0.87 * (view.isoDir || 1) * depth * 0.55, dy = -0.5 * depth * 0.55;
+      back = map(([x, y]) => [x + dx, y + dy]);
+    } else if (view?.vanish) {
+      mode = "vanish";
+      const [vx, vy] = view.vanish;
+      kBack = 1 - 0.3 * Math.min(1, depth / Math.max(1, b.w, b.h));
+      back = map(([x, y]) => [vx + (x - vx) * kBack, vy + (y - vy) * kBack]);
+    } else {
+      mode = "oblique";
+      back = map(([x, y]) => [x + 0.72 * depth * 0.4, y - 0.62 * depth * 0.4]);
+    }
+    return { front, back, kBack, mode, vanish: view?.vanish || null, iso: Boolean(view?.iso) };
+  }
+  function framePoint(frame, u, v, w = 0) {
+    const face = (f) => lerp2(lerp2(f.bl, f.br, u), lerp2(f.tl, f.tr, u), v);
+    return lerp2(face(frame.front), face(frame.back), w);
+  }
+  const frameScale = (frame, w) => 1 + (frame.kBack - 1) * w;
+
+  /* Spots on a drawing, found from its own parts (so every pose, and a drawing
+   * the painter learned, has them): in the face's units, x across, y down. */
+  function partBounds(part) {
+    if (part.box) { const [x, y, w, h] = part.box; return { x0: x, y0: y, x1: x + w, y1: y + h }; }
+    if (part.pts) {
+      const pad = (part.width || 0) / 2, xs = part.pts.map((p) => p[0]), ys = part.pts.map((p) => p[1]);
+      return { x0: Math.min(...xs) - pad, y0: Math.min(...ys) - pad, x1: Math.max(...xs) + pad, y1: Math.max(...ys) + pad };
+    }
+    return null;
+  }
+  // The head: the highest roundish part of a moderate size.
+  function headOf(entry) {
+    let best = null;
+    for (const part of entry?.parts || []) {
+      if (!part.box || part.cut || !["ellipse", "egg", "dome", "almond"].includes(part.shape)) continue;
+      const [x, y, w, h] = part.box, area = w * h;
+      if (area < 0.008 || area > 0.3 || y > 0.45) continue;
+      if (!best || y < best.y) best = { x: x + w / 2, y, w };
+    }
+    return best;
+  }
+  // A hand: the far end of an arm - the outermost end of a line part between
+  // shoulder and knee, toward the right.
+  function handOf(entry) {
+    let best = null;
+    for (const part of entry?.parts || []) {
+      if (part.shape !== "line" || !part.pts || part.pts.length < 2) continue;
+      const end = part.pts[part.pts.length - 1];
+      if (end[1] < 0.02 || end[1] > 0.8 || end[0] < 0.55) continue;
+      if (!best || end[0] > best.x) best = { x: end[0], y: end[1] };
+    }
+    return best;
+  }
+  // How high the drawing reaches at x (its top surface there), or null.
+  function surfaceAt(entry, x) {
+    let top = null;
+    for (const part of entry?.parts || []) {
+      if (part.cut || part.shape === "glow") continue;
+      if (part.pts && part.shape === "poly") {
+        const pts = part.pts;
+        for (let i = 0; i < pts.length; i++) {
+          const a = pts[i], b = pts[(i + 1) % pts.length];
+          if ((a[0] - x) * (b[0] - x) > 0 || a[0] === b[0]) continue;
+          const y = a[1] + (b[1] - a[1]) * (x - a[0]) / (b[0] - a[0]);
+          if (top === null || y < top) top = y;
+        }
+      } else {
+        const bnd = partBounds(part);
+        if (bnd && bnd.x0 <= x && x <= bnd.x1 && (top === null || bnd.y0 < top)) top = bnd.y0;
+      }
+    }
+    return top;
+  }
+  function topOf(entry) {
+    let best = null;
+    for (const part of entry?.parts || []) {
+      if (part.cut || part.shape === "glow") continue;
+      if (part.pts) for (const [x, y] of part.pts) if (!best || y < best.y) best = { x, y };
+      const bnd = part.box && partBounds(part);
+      if (bnd && (!best || bnd.y0 < best.y)) best = { x: (bnd.x0 + bnd.x1) / 2, y: bnd.y0 };
+    }
+    return best || { x: 0.5, y: 0 };
+  }
+  // The leafy mass: the biggest rounded, clustered or many-sided part in the
+  // upper part of the drawing (a pine's triangles count).
+  function canopyOf(entry) {
+    let best = null;
+    for (const part of entry?.parts || []) {
+      if (part.cut || part.shape === "line") continue;
+      if (part.box && !["ellipse", "egg", "dome", "cloud", "blob", "cluster"].includes(part.shape)) continue;
+      if (!part.box && part.shape !== "poly") continue;
+      const bnd = partBounds(part);
+      if (!bnd) continue;
+      const x = bnd.x0, y = bnd.y0, w = bnd.x1 - bnd.x0, h = bnd.y1 - bnd.y0;
+      if (y + h / 2 > 0.65 || w * h < 0.04) continue;
+      if (!best || w * h > best.w * best.h) best = { x, y, w, h };
+    }
+    return best;
+  }
+
+  /* Where on a frame a spot is: (u, v, w), how the added thing sits there
+   * ("on" it, "centre"d on it, or "grip"ped by its handle there), how far it
+   * sinks in, and its size as a share of the thing it is added to. */
+  function spotOn(entry, spot, guest, rng, toward = 1, copy = 0, copies = 1) {
+    const ratio = (cap, floor = 0.1) => Math.max(floor, Math.min(cap, (guest.size || 0.3) / Math.max(0.05, entry.size || 0.4)));
+    if (spot === "head") {
+      const h = headOf(entry);
+      if (h) return { at: [h.x, 1 - h.y, 0.35], sit: "on", sink: 0.14, width: h.w * 1.35 };
+      spot = "top";
+    }
+    if (spot === "hand") {
+      const h = handOf(entry);
+      if (h) return { at: [h.x, 1 - h.y, 0.15], sit: "grip", height: ratio(0.6, 0.22) };
+      spot = "side";
+    }
+    if (spot === "roof") {
+      const y = surfaceAt(entry, 0.72);
+      return { at: [0.72, 1 - (y ?? 0), 0.5], sit: "on", sink: 0.3, height: ratio(0.32, 0.16) };
+    }
+    if (spot === "canopy") {
+      const c = canopyOf(entry);
+      if (c) {
+        // Spread round the canopy, not bunched: each its own share of the circle.
+        const a = ((copy + 0.2 + rng() * 0.6) / copies) * Math.PI * 2, r = 0.18 + rng() * 0.2;
+        return { at: [c.x + c.w / 2 + Math.cos(a) * c.w * r, 1 - (c.y + c.h / 2 + Math.sin(a) * c.h * r), 0], sit: "centre", height: 0.1 };
+      }
+      spot = "top";
+    }
+    if (spot === "top") {
+      const t = topOf(entry);
+      return { at: [t.x, 1 - t.y, 0.4], sit: "on", sink: 0.06, height: ratio(0.32, 0.12) };
+    }
+    // Beside: on whichever side faces the middle of the picture (`toward`).
+    const beside = toward > 0 ? 1.04 : -0.04;
+    if (spot === "base") return { at: [beside, 0, 0.15], sit: "on", sink: 0, height: ratio(0.35, 0.14) };
+    if (spot === "back") return { at: [0.5, 0.7, 1], sit: "centre", height: ratio(0.5, 0.2) };
+    if (spot === "side") return { at: [beside, 0.5, 0.5], sit: "centre", height: ratio(0.45, 0.18) };
+    return { at: [0.5, 0.28, 0], sit: "centre", height: ratio(0.4, 0.16) };
+  }
+  // Where a held thing is held: its handle, in its own box.
+  const GRIPS = { flag: [0.06, 0.82], umbrella: [0.5, 0.96], sword: [0.5, 0.9], guitar: [0.2, 0.8], balloon: [0.5, 1],
+    candle: [0.5, 0.85], lamp: [0.5, 0.9], star: [0.5, 0.5] };
+
+  /* Put the added things onto the things they were added to, in place. */
+  function placeAttachments(scene, items, view, rng, W) {
+    const added = [];
+    scene.subjects.forEach((s) => {
+      if (!s.attach) return;
+      const host = scene.subjects[s.attach.host];
+      const hosts = items.filter((it) => it.key === host?.key && !it.attachedTo && it.entry.kind === "subject");
+      for (const hostItem of hosts) {
+        const frame = frameOf(hostItem, view);
+        const copies = s.attach.spot === "canopy" ? Math.max(1, s.count) : 1;
+        for (let c = 0; c < copies; c++) {
+          const toward = hostItem.box.x + hostItem.box.w / 2 < W / 2 ? 1 : -1;
+          const spot = spotOn(hostItem.entry, s.attach.spot, s.entry, rng, toward, c, copies);
+          const [u, v, w] = spot.at;
+          const p = framePoint(frame, u, v, w), k = frameScale(frame, w);
+          const hb = hostItem.box, aspect = s.entry.aspect || 1;
+          let gw, gh;
+          if (spot.width) { gw = spot.width * hb.w * k; gh = gw / aspect; }
+          else { gh = spot.height * hb.h * k; gw = gh * aspect; }
+          let box;
+          if (spot.sit === "on") box = { x: p[0] - gw / 2, y: p[1] - gh * (1 - (spot.sink || 0)), w: gw, h: gh };
+          else if (spot.sit === "grip") {
+            const [gx, gy] = GRIPS[s.key] || [0.5, 0.75];
+            box = { x: p[0] - gx * gw, y: p[1] - gy * gh, w: gw, h: gh };
+          } else box = { x: p[0] - gw / 2, y: p[1] - gh / 2, w: gw, h: gh };
+          const item = { ...s, box, alpha: 1, depth: hostItem.depth, z: hostItem.z, attachedTo: hostItem.key, spot: s.attach.spot };
+          if (hostItem.keystone) item.keystone = hostItem.keystone;
+          if (hostItem.aerial) item.aerial = hostItem.aerial;
+          if (s.form) item.form = c ? { ...s.form, seed: (s.form.seed + c * 7919) >>> 0, parts: null } : s.form;
+          // In front of the thing, or behind it if it is set back past the middle.
+          added.push({ item, host: hostItem, behind: w > 0.5 });
+        }
+      }
+    });
+    return added;
+  }
+  /* Each added thing goes next to its own thing in the painting order - just
+   * after it, or just before it if it is behind - so whatever stands in front
+   * of the thing stands in front of what is on it too. */
+  function orderAttachments(items, added) {
+    for (const { item, host, behind } of added) {
+      const at = items.indexOf(host);
+      if (at < 0) { items.push(item); continue; }
+      let end = at + 1;
+      while (end < items.length && items[end].attachedTo === host.key) end++;
+      items.splice(behind ? at : end, 0, item);
+    }
+  }
+
+  /* The frames drawn over a picture, for checking: each thing's box (face
+   * solid, back dashed), the lines from the vanishing point through its
+   * corners - the radial guides anything added along its depth follows - and
+   * its spots. */
+  function drawFrames(ctx, items, view, W, H) {
+    ctx.save();
+    ctx.lineWidth = Math.max(1, Math.min(W, H) / 300);
+    for (const item of items) {
+      if (item.entry.kind !== "subject" || item.lettering) continue;
+      const f = frameOf(item, view);
+      const order = ["tl", "tr", "br", "bl"];
+      const poly = (face) => { ctx.beginPath(); order.forEach((k, i) => (i ? ctx.lineTo(...face[k]) : ctx.moveTo(...face[k]))); ctx.closePath(); };
+      if (f.vanish && !f.iso) {
+        ctx.strokeStyle = "rgba(255, 210, 60, 0.35)"; ctx.setLineDash([]);
+        ctx.beginPath();
+        for (const k of order) {
+          const [x, y] = f.front[k], [vx, vy] = f.vanish;
+          ctx.moveTo(vx, vy); ctx.lineTo(vx + (x - vx) * 1.6, vy + (y - vy) * 1.6);
+        }
+        ctx.stroke();
+      }
+      ctx.strokeStyle = item.attachedTo ? "rgba(255, 90, 200, 0.9)" : "rgba(60, 230, 255, 0.9)";
+      ctx.setLineDash([4, 4]); poly(f.back); ctx.stroke();
+      ctx.setLineDash([]); poly(f.front); ctx.stroke();
+      ctx.beginPath();
+      for (const k of order) { ctx.moveTo(...f.front[k]); ctx.lineTo(...f.back[k]); }
+      ctx.stroke();
+      if (!item.attachedTo) {
+        ctx.fillStyle = "rgba(255, 90, 200, 0.95)";
+        for (const spot of ["head", "hand", "top", "roof"]) {
+          const at = spotOn(item.entry, spot, { size: 0.2 }, () => 0.5);
+          if ((spot === "head" && !headOf(item.entry)) || (spot === "hand" && !handOf(item.entry))) continue;
+          const [x, y] = framePoint(f, at.at[0], at.at[1], at.at[2]);
+          ctx.beginPath(); ctx.arc(x, y, Math.max(2, W / 200), 0, Math.PI * 2); ctx.fill();
+        }
+      }
+    }
+    ctx.restore();
   }
 
   /* ── Placing ────────────────────────────────────────────────────────────
@@ -1755,6 +2074,7 @@
       return { w, h };
     };
     scene.subjects.forEach((s, index) => {
+      if (s.attach) return;
       const main = index === 0;
       // A second thing is smaller - unless the first sits on it or in it.
       const scale = main || s.relation === "on" || s.relation === "in" ? 1 : 0.68;
@@ -1844,17 +2164,20 @@
         }
       }
     });
+    const view = persp && (depthK || iso || persp.lines) ? {
+      horizon: horizonY, vanish: [vanishX, horizonY], lines: Number(persp.lines) || 0, iso, isoDir, ground: groundY,
+    } : null;
+    // Things added onto things, on their frames, in the same view.
+    const added = placeAttachments(scene, items, view, rng, W);
     // Containers first, so what is in them is painted over them; and further
     // back before nearer, so nearer things overlap them.
     items.sort((a, b) => (a.entry.kind === "setting" ? -2 : a.z || 0) - (b.entry.kind === "setting" ? -2 : b.z || 0) ||
       (b.depth || 0) - (a.depth || 0));
+    orderAttachments(items, added);
     const first = placed[0];
     const focus = first
       ? { fx: (first.box.x + first.box.w / 2) / W, fy: (first.box.y + first.box.h / 2) / H }
       : null;
-    const view = persp && (depthK || iso || persp.lines) ? {
-      horizon: horizonY, vanish: [vanishX, horizonY], lines: Number(persp.lines) || 0, iso, isoDir, ground: groundY,
-    } : null;
     return { items, focus, horizon, view };
   }
 
@@ -2710,5 +3033,6 @@
   }
 
   global.HexfieldVisual = { ENTRIES, FAMILIES, COLOUR_WORDS, RELATIONS, LEARNED, lookup, read, layout, paint, subjectColours,
-    FORM_STYLES, FORM_KEYS: Object.keys(FORM_STYLES), sampleForm, entryVariant, poseFor, learn };
+    FORM_STYLES, FORM_KEYS: Object.keys(FORM_STYLES), sampleForm, entryVariant, poseFor, learn,
+    frameOf, framePoint, drawFrames };
 })(typeof globalThis !== "undefined" ? globalThis : this);

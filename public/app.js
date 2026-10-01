@@ -34079,6 +34079,31 @@ if (typeof window !== "undefined") {
   });
 }
 
+/* ?frames: each thing's frame drawn over the painting - its box in space,
+ * the radial guides through its corners and its spots - for checking what
+ * things added onto it are placed against. */
+const SHOW_FRAMES = (() => { try { return new URLSearchParams(location.search).has("frames"); } catch { return false; } })();
+let framesLayer = null, framesShownFor = null;
+function refreshFramesLayer() {
+  const Visual = globalThis.HexfieldVisual, scene = strokePainter.plan?.scene;
+  if (!SHOW_FRAMES || !Visual?.drawFrames || !view?.width) return;
+  if (!framesLayer) {
+    framesLayer = document.createElement("canvas");
+    framesLayer.id = "framesView";
+    framesLayer.style.cssText = "position:absolute;pointer-events:none;border-radius:5px;background:transparent;z-index:2";
+    view.insertAdjacentElement("afterend", framesLayer);
+  }
+  Object.assign(framesLayer.style, { left: view.offsetLeft + "px", top: view.offsetTop + "px",
+    width: view.offsetWidth + "px", height: view.offsetHeight + "px" });
+  if (framesShownFor === scene) return;
+  framesShownFor = scene;
+  framesLayer.width = view.width; framesLayer.height = view.height;
+  const ctx = framesLayer.getContext("2d");
+  ctx.clearRect(0, 0, framesLayer.width, framesLayer.height);
+  if (scene?.items) Visual.drawFrames(ctx, scene.items, scene.view, view.width, view.height);
+}
+if (SHOW_FRAMES && typeof window !== "undefined") setInterval(refreshFramesLayer, 1000);
+
 /* ── Learning from how paintings turn out ─────────────────────────────────
  *
  * Every painting is a chain of choices - manner, brushes, finish, solidity,
