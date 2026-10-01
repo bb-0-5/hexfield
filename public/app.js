@@ -14951,6 +14951,9 @@ async function pushRemoteTaste() {
           visualProcess: compactVisualProcessMemory(),
         },
         sample_count: taste.samples.length,
+        // Nothing on the table sets this on an update, so it said a profile
+        // was days old while it was being rewritten every few minutes.
+        updated_at: new Date().toISOString(),
       }),
     });
     if (!res.ok) throw new Error("taste write HTTP " + res.status);
@@ -31715,6 +31718,7 @@ function applyVisualVariation(item, v) {
 function recordVisualVote(liked) {
   const plan = strokePainter.plan;
   const scene = plan?.scene;
+  recordStyleVote(plan, liked);
   // The manner is voted on with every painting, words or none.
   const variations = { ...(scene?.variations || {}) };
   if (plan?.manner) variations[mannerVoteWord(plan.manner.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
@@ -34137,15 +34141,57 @@ function styleOutcomeRows() {
   return [...styleOutcomes, ...sharedStyleOutcomes.filter((row) => !own.has(row.id))];
 }
 
-function computeStyleOutcomeStats() {
-  const rows = styleOutcomeRows().filter((row) => Number.isFinite(Number(row.taste)) && row.chain);
-  const mean = rows.length ? rows.reduce((sum, row) => sum + Number(row.taste), 0) / rows.length : 0;
-  const stats = { mean, rows: rows.length };
+/* What a row says about its chain, from -0.5 (the worst) to +0.5 (the best).
+ *
+ * A taste score is only comparable with the same visitor's other scores: each
+ * visitor's taste model has its own scale, and one that saturates (scoring
+ * paintings 0.998 and 1.000) would otherwise drown everybody else. So a
+ * finished painting counts by its rank among that visitor's own paintings -
+ * better or worse than they usually get - and a visitor with only a few
+ * counts for less. A KEEP or a REJECT is a person saying so outright: it
+ * counts as the top or the bottom, several times over. */
+const STYLE_VOTE_WEIGHT = 3;
+function styleOutcomeScores(rows) {
+  const byVisitor = new Map();
   for (const row of rows) {
+    if (row.source === "kept" || row.source === "rejected") continue;
+    const visitor = row.visitor || "self";
+    if (!byVisitor.has(visitor)) byVisitor.set(visitor, []);
+    byVisitor.get(visitor).push(row);
+  }
+  const scored = new Map();
+  for (const own of byVisitor.values()) {
+    const tastes = own.map((row) => Number(row.taste)).sort((a, b) => a - b);
+    const n = tastes.length;
+    const weight = n / (n + 3);
+    for (const row of own) {
+      const t = Number(row.taste);
+      // The middle of the run of equal scores, so ties sit together.
+      let below = 0, equal = 0;
+      for (const v of tastes) { if (v < t) below++; else if (v === t) equal++; }
+      const rank = n > 1 ? (below + (equal - 1) / 2) / (n - 1) : 0.5;
+      scored.set(row, { score: rank - 0.5, weight });
+    }
+  }
+  for (const row of rows) {
+    if (row.source === "kept") scored.set(row, { score: 0.5, weight: STYLE_VOTE_WEIGHT });
+    else if (row.source === "rejected") scored.set(row, { score: -0.5, weight: STYLE_VOTE_WEIGHT });
+  }
+  return scored;
+}
+
+function computeStyleOutcomeStats() {
+  const rows = styleOutcomeRows().filter((row) => row.chain &&
+    (Number.isFinite(Number(row.taste)) || row.source === "kept" || row.source === "rejected"));
+  const scored = styleOutcomeScores(rows);
+  const stats = { rows: rows.length };
+  for (const row of rows) {
+    const { score, weight } = scored.get(row) || { score: 0, weight: 0 };
+    if (!weight) continue;
     for (const [axis, key] of Object.entries(row.chain)) {
       if (!key) continue;
-      const slot = ((stats[axis] ||= {})[key] ||= { n: 0, sum: 0 });
-      slot.n++; slot.sum += Number(row.taste) - mean;
+      const slot = ((stats[axis] ||= {})[key] ||= { n: 0, weight: 0, sum: 0 });
+      slot.n++; slot.weight += weight; slot.sum += score * weight;
     }
   }
   return stats;
@@ -34156,10 +34202,30 @@ function styleOutcomeLean(axis, key) {
   const stats = styleOutcomeStats || (styleOutcomeStats = computeStyleOutcomeStats());
   const slot = stats[axis]?.[key];
   const n = slot?.n || 0;
-  // Above or below the average painting, shrunk toward nothing while there
-  // are few; and a turn for whatever has hardly been tried.
-  const advantage = n ? slot.sum / (n + 4) : 0;
-  return Math.max(-1.2, Math.min(1.2, advantage * 14)) + 0.3 / Math.sqrt(1 + n);
+  // Better or worse than the visitors' usual, shrunk toward nothing while the
+  // evidence is thin; and a turn for whatever has hardly been tried.
+  const advantage = slot ? slot.sum / (slot.weight + 4) : 0;
+  return Math.max(-1.2, Math.min(1.2, advantage * 5)) + 0.3 / Math.sqrt(1 + n);
+}
+
+/* KEEP and REJECT, filed against the whole chain of the painting voted on -
+ * once each way per painting. */
+function recordStyleVote(plan, liked) {
+  if (!plan) return null;
+  const source = liked ? "kept" : "rejected";
+  plan.styleVotes ||= {};
+  if (plan.styleVotes[source]) return null;
+  plan.styleVotes[source] = true;
+  let taste = 0.5;
+  try { if (view?.width && strokePainter.plan === plan) taste = finishedPictureTaste(); } catch { /* the vote is the evidence */ }
+  const row = { id: "sv_" + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36),
+    at: Date.now(), chain: planStyleChain(plan), taste: Number.isFinite(taste) ? +taste.toFixed(4) : 0.5, source };
+  styleOutcomes = [row, ...styleOutcomes].slice(0, STYLE_OUTCOME_CAP);
+  styleOutcomeStats = null;
+  try { localStorage.setItem(STYLE_OUTCOME_KEY, JSON.stringify(styleOutcomes)); } catch { /* full storage */ }
+  styleOutcomeQueue.push(row);
+  pushStyleOutcomes();
+  return row;
 }
 
 let styleOutcomePushing = false;
@@ -34187,13 +34253,14 @@ async function pullStyleOutcomes() {
   try {
     const session = await ensureTasteSession();
     const res = await fetch(SUPABASE_URL +
-      "/rest/v1/hexfield_style_outcomes?select=client_id,chain,taste,source,created_at&order=created_at.desc&limit=800", {
+      "/rest/v1/hexfield_style_outcomes?select=client_id,visitor_id,chain,taste,source,created_at&order=created_at.desc&limit=800", {
       headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token },
     });
     if (!res.ok) return 0;
     const rows = await res.json();
     sharedStyleOutcomes = rows.filter((row) => row.chain && typeof row.chain === "object")
-      .map((row) => ({ id: row.client_id, at: Date.parse(row.created_at || "") || 0, chain: row.chain, taste: Number(row.taste), source: row.source }));
+      .map((row) => ({ id: row.client_id, visitor: row.visitor_id, at: Date.parse(row.created_at || "") || 0,
+        chain: row.chain, taste: Number(row.taste), source: row.source }));
     styleOutcomeStats = null;
     return rows.length;
   } catch { return 0; }
