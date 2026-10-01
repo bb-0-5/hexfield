@@ -2988,40 +2988,162 @@
    * `light` is the direction toward the light, in radians (canvas y down,
    * so a light above has a negative sine). Only subjects take it; settings
    * are the space they stand in. */
-  function tintedCopy(source, W, H, fill) {
-    const copy = document.createElement("canvas");
-    copy.width = W; copy.height = H;
-    const c = copy.getContext("2d");
-    c.drawImage(source, 0, 0);
+  /* A copy of one thing's layer in a single colour - of only the part
+   * around it (its box and a margin): a copy of the whole picture per thing
+   * per effect was most of the cost of a lit scene. Drawn back at (x, y). */
+  function tintedPatch(source, W, H, box, fill) {
+    const m = Math.max(box.w, box.h) * 0.3;
+    const x = Math.max(0, Math.floor(box.x - m)), y = Math.max(0, Math.floor(box.y - m));
+    const w = Math.max(1, Math.min(W, Math.ceil(box.x + box.w + m)) - x), h = Math.max(1, Math.min(H, Math.ceil(box.y + box.h + m)) - y);
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const c = canvas.getContext("2d");
+    c.drawImage(source, x, y, w, h, 0, 0, w, h);
     c.globalCompositeOperation = "source-atop";
     c.fillStyle = fill;
-    c.fillRect(0, 0, W, H);
-    return copy;
+    c.fillRect(0, 0, w, h);
+    return { canvas, x, y, w, h };
   }
 
-  function dimensionItem(ctx, layer, lctx, item, W, H, dims) {
+  /* ── Light ────────────────────────────────────────────────────────────
+   * With a painting's light (hexfield-craft.js, LIGHTS) a thing is lit as a
+   * body in space rather than washed across: the light is a direction in
+   * three dimensions - across the picture, up, and toward or away from the
+   * viewer - or a lamp at a point in the picture, and each face of a thing's
+   * box takes as much of it as it turns toward it. Faces toward the light
+   * take its colour; faces away fall into the shade's colour; an edge toward
+   * a light behind the thing is rimmed. Shadows are thrown along the ground
+   * as long as the light is low, away from it (or spreading out from a
+   * lamp), and climb onto whatever stands behind. Where a thing stands or
+   * rests on another, the light is shut out: a dark contact under its foot
+   * and a soft shade where it overlaps what is behind it. */
+  const LIT_ROUND = new Set(["ellipse", "dome", "egg", "almond", "ring", "glow", "cluster", "petals", "heart"]);
+  function roundness(item) {
+    let round = 0, all = 0;
+    for (const part of item.entry.parts || []) {
+      if (!part.box || part.cut) continue;
+      const area = part.box[2] * part.box[3];
+      all += area;
+      if (LIT_ROUND.has(part.shape)) round += area;
+    }
+    return all ? round / all : 0;
+  }
+  const rgba = (c, a, k = 1) => `rgba(${Math.round(c[0] * k)}, ${Math.round(c[1] * k)}, ${Math.round(c[2] * k)}, ${Math.max(0, Math.min(1, a)).toFixed(3)})`;
+
+  /* The light as it reaches one thing: the direction toward it in space
+   * (x right, y down, z into the picture), and along the ground the way its
+   * shadow falls and how long it is for its height. */
+  function lightOn(item, W, H, dims) {
+    const L = dims.lighting, b = item.box;
+    const foot = [b.x + b.w / 2, b.y + b.h];
+    let side = Math.cos(dims.light), elev = L.elev, front = Math.max(-0.95, Math.min(0.95, L.front));
+    let away = null;
+    if (L.point && L.at) {
+      // A lamp: the direction from this thing to it, and its height over the
+      // ground below it.
+      const lx = L.at[0] * W, ly = L.at[1] * H, lift = (L.lift ?? 0.3) * H;
+      const gx = foot[0] - lx, gy = foot[1] - (ly + lift);
+      const ground = Math.hypot(gx, gy / 0.35) || 1;
+      elev = Math.atan2(lift, ground);
+      side = Math.max(-1, Math.min(1, -gx / ground));
+      front = Math.max(-0.95, Math.min(0.95, gy / 0.35 / ground));
+      away = [gx / ground, -gy / 0.35 / ground];
+    }
+    const c = Math.cos(elev), across = side * Math.sqrt(1 - front * front);
+    const v = [across * c, -Math.sin(elev), -front * c];
+    const n = Math.hypot(...v) || 1;
+    const dir = v.map((x) => x / n);
+    // Along the ground, away from the light: x across, and "back" into the
+    // picture (up the canvas, foreshortened).
+    if (!away) { const g = Math.hypot(across, front) || 1; away = [-across / g, front / g]; }
+    const length = Math.max(0.15, Math.min(3.2, c / Math.max(0.05, Math.sin(elev))));
+    return { dir, away, length, elev, foot };
+  }
+
+  function dimensionItem(ctx, layer, lctx, item, W, H, dims, behind = null) {
     const b = item.box;
+    const L = dims.lighting || null;
     const sx = Math.cos(dims.light), sy = Math.sin(dims.light);
     const anchor = item.entry.anchor;
     const grounded = anchor !== "sky" && anchor !== "centre";
+    const lit = L ? lightOn(item, W, H, dims) : null;
+    const shade = L ? L.ambient : [10, 12, 26];
+    const strength = L ? L.strength : 1;
+    // Where a shadow may fall: the ground, and whatever is already painted
+    // behind this thing.
+    const clipToBehind = (c) => {
+      if (!behind) return;
+      const path = new Path2D();
+      path.rect(0, Math.max(0, behind.horizon), W, H);
+      for (const r of behind.boxes) path.rect(r.x, r.y, r.w, r.h);
+      c.clip(path);
+    };
     // A shadow on the ground, thrown away from the light and lying flat.
     if (dims.cast > 0 && grounded) {
-      const shadow = tintedCopy(layer, W, H, "rgb(12, 12, 24)");
-      const yb = b.y + b.h, k = -sx * 1.1;
+      const shadow = tintedPatch(layer, W, H, b, L ? rgba(shade, 1, 0.3) : "rgb(12, 12, 24)");
+      const yb = b.y + b.h;
+      let A, B;
+      if (lit) { A = lit.away[0] * lit.length; B = -0.35 * lit.away[1] * lit.length; }
+      else { A = -sx * 1.1; B = -0.28; }
       ctx.save();
-      ctx.globalAlpha = (item.alpha ?? 1) * dims.cast * 0.75;
-      if ("filter" in ctx) ctx.filter = `blur(${Math.max(1, Math.round(Math.min(b.w, b.h) * 0.03))}px)`;
-      ctx.setTransform(1, 0, -k, 0.28, k * yb, 0.72 * yb);
-      ctx.drawImage(shadow, 0, 0);
+      clipToBehind(ctx);
+      ctx.globalAlpha = (item.alpha ?? 1) * dims.cast * 0.75 * (L ? strength * (1 - 0.45 * L.soft) : 1);
+      const blur = Math.min(b.w, b.h) * (0.03 + (L ? L.soft * 0.12 + lit.length * 0.01 : 0));
+      if ("filter" in ctx) ctx.filter = `blur(${Math.max(1, Math.round(blur))}px)`;
+      ctx.setTransform(1, 0, -A, -B, A * yb, yb * (1 + B));
+      ctx.drawImage(shadow.canvas, shadow.x, shadow.y);
       ctx.restore();
-      shadow.width = 0;
+      shadow.canvas.width = 0;
+    }
+    // Where it stands, the light is shut out: a dark contact at the foot.
+    if (L && grounded && (dims.model > 0 || dims.cast > 0)) {
+      const cx = b.x + b.w / 2, cy = b.y + b.h, rx = b.w * 0.46, ry = Math.max(2, b.h * 0.05);
+      ctx.save();
+      clipToBehind(ctx);
+      ctx.translate(cx, cy);
+      ctx.scale(1, ry / rx);
+      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
+      g.addColorStop(0, rgba(shade, 0.55 * strength * (0.6 + 0.4 * L.soft), 0.3));
+      g.addColorStop(1, rgba(shade, 0, 0.3));
+      ctx.fillStyle = g;
+      ctx.fillRect(-rx, -rx, 2 * rx, 2 * rx);
+      ctx.restore();
+    }
+    // Where it overlaps something behind it, a soft shade on that thing.
+    if (L && behind?.boxes.length && (dims.model > 0 || dims.cast > 0)) {
+      const overlapping = behind.boxes.filter((r) => r.x < b.x + b.w && r.x + r.w > b.x && r.y < b.y + b.h && r.y + r.h > b.y);
+      if (overlapping.length) {
+        const halo = tintedPatch(layer, W, H, b, rgba(shade, 1, 0.3));
+        const reach = Math.min(b.w, b.h) * 0.05;
+        ctx.save();
+        const path = new Path2D();
+        for (const r of overlapping) path.rect(r.x, r.y, r.w, r.h);
+        ctx.clip(path);
+        ctx.globalAlpha = 0.45 * strength;
+        if ("filter" in ctx) ctx.filter = `blur(${Math.max(1, Math.round(reach * 1.6))}px)`;
+        ctx.drawImage(halo.canvas, halo.x - lit.dir[0] * reach, halo.y - lit.dir[1] * reach);
+        ctx.restore();
+        halo.canvas.width = 0;
+      }
     }
     /* An extruded body: the face's own colours, darkened, stepped back. In a
      * one-point view it recedes toward the vanishing point, shrinking as it
      * goes; isometric, along the fixed 30-degree depth axis; otherwise up and
-     * away from the light. */
+     * away from the light. With a light, the sides it shows (the top, and the
+     * side it steps toward) are lit as far as they turn to the light. */
     if (dims.depth > 0 && anchor !== "sky") {
-      const side = tintedCopy(layer, W, H, "rgba(10, 12, 26, 0.5)");
+      let ex, ey;
+      if (dims.vanish && !dims.iso) { ex = Math.sign(dims.vanish[0] - (b.x + b.w / 2)) || 1; ey = Math.sign(dims.vanish[1] - (b.y + b.h / 2)) || -1; }
+      else { ex = dims.iso ? 0.87 * (dims.isoDir || 1) : -Math.sign(sx || 1) * 0.72; ey = dims.iso ? -0.5 : -0.62; }
+      let tint = "rgba(10, 12, 26, 0.5)";
+      if (lit) {
+        const sideLit = Math.max(0, Math.sign(ex) * lit.dir[0]);
+        const topLit = ey < 0 ? Math.max(0, -lit.dir[1]) : 0;
+        const k = Math.min(1, 0.6 * sideLit + 0.6 * topLit);
+        const mix = shade.map((c0, i) => c0 * 0.45 * (1 - k) + L.colour[i] * 0.8 * k);
+        tint = rgba(mix, 0.5);
+      }
+      const body = tintedPatch(layer, W, H, b, tint);
       const steps = Math.max(4, Math.round(dims.depth * 14));
       ctx.save();
       ctx.globalAlpha = item.alpha ?? 1;
@@ -3030,18 +3152,17 @@
         for (let i = steps; i >= 1; i--) {
           const k = 1 - dims.depth * 0.3 * (i / steps);
           ctx.setTransform(k, 0, 0, k, vx * (1 - k), vy * (1 - k));
-          ctx.drawImage(side, 0, 0);
+          ctx.drawImage(body.canvas, body.x, body.y);
         }
       } else {
         const reach = dims.depth * Math.min(b.w, b.h) * 0.32;
-        const ex = dims.iso ? 0.87 * (dims.isoDir || 1) : -Math.sign(sx || 1) * 0.72, ey = dims.iso ? -0.5 : -0.62;
-        for (let i = steps; i >= 1; i--) ctx.drawImage(side, ex * reach * i / steps, ey * reach * i / steps);
+        for (let i = steps; i >= 1; i--) ctx.drawImage(body.canvas, body.x + ex * reach * i / steps, body.y + ey * reach * i / steps);
       }
       ctx.restore();
-      side.width = 0;
+      body.canvas.width = 0;
     }
     // Light and shade across the form.
-    if (dims.model > 0) {
+    if (dims.model > 0 && !lit) {
       const cx = b.x + b.w / 2, cy = b.y + b.h / 2, R = Math.max(b.w, b.h) * 0.6;
       const g = lctx.createLinearGradient(cx + sx * R, cy + sy * R, cx - sx * R, cy - sy * R);
       g.addColorStop(0, `rgba(255, 246, 228, ${0.42 * dims.model})`);
@@ -3054,6 +3175,112 @@
       lctx.fillRect(b.x - b.w, b.y - b.h, b.w * 3, b.h * 3);
       lctx.restore();
     }
+    if (dims.model > 0 && lit) modelForm(lctx, item, W, H, dims, lit);
+  }
+
+  /* The face of a thing under the light. How much of the face is lit
+   * depends on where the light is: from the viewer's side most of it, from
+   * the side half, from behind only an edge. A round thing turns through its
+   * light gradually, with a highlight toward the light and a little light
+   * bounced back into its far side; a boxy one turns at a harder edge. */
+  function modelForm(lctx, item, W, H, dims, lit) {
+    const L = dims.lighting, b = item.box, m = dims.model;
+    const [lx, ly, lz] = lit.dir;
+    const facing = Math.max(0, -lz);              // the face toward the viewer
+    const flat = Math.hypot(lx, ly) || 1;
+    const px = lx / flat, py = ly / flat;          // across the face, toward the light
+    const cx = b.x + b.w / 2, cy = b.y + b.h / 2, R = Math.max(b.w, b.h) * 0.6;
+    const round = roundness(item);
+    const soft = L.soft, strength = L.strength;
+    // The terminator: where the face turns away from the light, from the
+    // lit edge (0) to the far edge (1).
+    const term = Math.max(0.12, Math.min(0.92, 0.5 + 0.42 * (facing - Math.max(0, lz))));
+    const spread = 0.06 + 0.3 * soft + 0.2 * round;
+    const shadeA = strength * m * (0.75 - 0.25 * facing);
+    const shade = L.ambient;
+    lctx.save();
+    lctx.globalCompositeOperation = "source-atop";
+    // The whole face: in the light's colour if it turns toward it, in shade
+    // if the light is behind.
+    lctx.fillStyle = lz > 0.2 ? rgba(shade, Math.min(0.6, lz * 0.75) * strength * m, 0.45) : rgba(L.colour, 0.16 * facing * m);
+    lctx.fillRect(b.x - b.w, b.y - b.h, b.w * 3, b.h * 3);
+    let g;
+    if (round > 0.45) {
+      const hx = cx + px * R * 0.45 * (1 - facing * 0.4), hy = cy + py * R * 0.45 * (1 - facing * 0.4);
+      g = lctx.createRadialGradient(hx, hy, R * 0.2, cx - px * R * 0.1, cy - py * R * 0.1, R * 1.15);
+      g.addColorStop(0, rgba(L.colour, 0.3 * m * (1 - 0.75 * soft)));
+      g.addColorStop(Math.max(0.05, term - spread), rgba(L.colour, 0));
+      g.addColorStop(Math.min(0.97, term + spread * 0.5), rgba(shade, shadeA, 0.45));
+      g.addColorStop(1, rgba(shade, shadeA * 0.7, 0.6));   // light bounced back into the far side
+    } else {
+      // A flat face has one normal: one tone all over, lit as far as it
+      // turns to the light - with only a breath of fall-off across it.
+      const turned = Math.max(0, Math.min(1, facing * 1.4));
+      lctx.fillStyle = turned > 0.35 ? rgba(L.colour, 0.22 * m * turned) : rgba(shade, strength * m * 0.5 * (1 - turned / 0.35), 0.45);
+      lctx.fillRect(b.x - b.w, b.y - b.h, b.w * 3, b.h * 3);
+      g = lctx.createLinearGradient(cx + px * R, cy + py * R, cx - px * R, cy - py * R);
+      g.addColorStop(0, rgba(L.colour, 0.12 * m));
+      g.addColorStop(0.5, rgba(L.colour, 0));
+      g.addColorStop(1, rgba(shade, 0.18 * strength * m, 0.45));
+    }
+    lctx.fillStyle = g;
+    lctx.fillRect(b.x - b.w, b.y - b.h, b.w * 3, b.h * 3);
+    lctx.restore();
+    // A rim of light along the edges toward a light from the side or behind.
+    const rimA = m * Math.max(0, 0.15 + Math.max(0, lz) * 0.9 - facing * 0.35);
+    if (rimA > 0.05) {
+      const r = Math.max(1.2, Math.min(b.w, b.h) * 0.018);
+      const rim = tintedPatch(lctx.canvas, W, H, b, rgba(L.colour, 1));
+      const rc = rim.canvas.getContext("2d");
+      rc.globalCompositeOperation = "destination-out";
+      rc.drawImage(lctx.canvas, rim.x, rim.y, rim.w, rim.h, -px * r, -py * r, rim.w, rim.h);
+      lctx.save();
+      lctx.globalCompositeOperation = "source-atop";
+      lctx.globalAlpha = Math.min(0.7, rimA);
+      lctx.drawImage(rim.canvas, rim.x, rim.y);
+      lctx.restore();
+      rim.canvas.width = 0;
+    }
+  }
+
+  /* The light itself, where it can be seen: a sun or moon in the sky on the
+   * light's side (low when the light is low), or the glow of a lamp. */
+  function paintLightSource(ctx, W, H, dims, view) {
+    const L = dims?.lighting;
+    if (!L) return;
+    let x, y, r;
+    if (L.point && L.at) {
+      x = L.at[0] * W; y = L.at[1] * H; r = Math.min(W, H) * 0.32;
+    } else if (L.sky && L.sun && (view ? view.horizon : H * 0.5) > H * 0.12) {
+      x = L.sun[0] * W; y = L.sun[1] * H;
+      r = Math.min(W, H) * (L.sky === "moon" ? 0.2 : 0.38);
+    } else return;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, rgba(L.colour, 0.55));
+    g.addColorStop(0.18, rgba(L.colour, 0.28));
+    g.addColorStop(1, rgba(L.colour, 0));
+    ctx.fillStyle = g;
+    ctx.fillRect(x - r, y - r, 2 * r, 2 * r);
+    ctx.restore();
+    // On the ground, a lamp stands on a post.
+    if (L.point && L.lift) {
+      const foot = Math.min(H, y + L.lift * H), wide = Math.max(1.5, Math.min(W, H) * 0.008);
+      ctx.save();
+      ctx.fillStyle = rgba(L.ambient, 0.95, 0.35);
+      ctx.fillRect(x - wide / 2, y, wide, foot - y);
+      ctx.fillRect(x - wide * 2.2, y - wide * 2.4, wide * 4.4, wide * 2.4);
+      ctx.restore();
+    }
+    // The disc of the sun or moon, or the flame of the lamp.
+    ctx.save();
+    const core = L.point ? r * 0.06 : r * (L.sky === "moon" ? 0.16 : 0.12);
+    ctx.fillStyle = L.sky === "moon" ? "rgba(236, 240, 255, 0.95)" : rgba(L.colour.map((c0) => Math.min(255, c0 + 40)), 0.95);
+    ctx.beginPath();
+    ctx.arc(x, y, core, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
   /* ── Perspective ───────────────────────────────────────────────────────
@@ -3119,16 +3346,23 @@
     // not the others are painted with it.
     const seeds = items.map(() => Math.floor(rng() * 4294967296) >>> 0);
     const solid = dims && (dims.model > 0 || dims.cast > 0 || dims.depth > 0);
-    // The ground's lines go down once the places are painted, under the things.
+    // The ground's lines go down once the places are painted, under the things
+    // - and the light, where it can be seen.
     let cued = !view || only === "subject" || pick !== null;
+    let sourced = only === "subject" || pick !== null;
+    // What is already painted, for shadows to fall on.
+    // Without a view, the ground is taken to start halfway up.
+    const behind = dims?.lighting ? { horizon: view ? view.horizon : H * 0.5, boxes: [] } : null;
     for (let index = 0; index < items.length; index++) {
       const item = items[index];
       if (!cued && item.entry.kind !== "setting") { groundCues(ctx, W, H, view); cued = true; }
+      if (!sourced && item.entry.kind !== "setting") { paintLightSource(ctx, W, H, dims, view); sourced = true; }
       if (only && item.entry.kind !== only) continue;
       if (pick !== null && index !== pick) continue;
       lctx.clearRect(0, 0, W, H);
       paintItem(lctx, item, seededRandom(seeds[index]));
-      if (solid && item.entry.kind === "subject" && !item.lettering) dimensionItem(ctx, layer, lctx, item, W, H, dims);
+      if (solid && item.entry.kind === "subject" && !item.lettering) dimensionItem(ctx, layer, lctx, item, W, H, dims, behind);
+      if (behind && item.entry.kind === "subject" && !item.lettering && item.entry.anchor !== "sky") behind.boxes.push(item.box);
       // Distance: far things fade toward the air.
       if (item.aerial) {
         lctx.save();
@@ -3144,6 +3378,7 @@
       ctx.restore();
     }
     if (!cued) groundCues(ctx, W, H, view);
+    if (!sourced) paintLightSource(ctx, W, H, dims, view);
     layer.width = 0; layer.height = 0;
   }
 

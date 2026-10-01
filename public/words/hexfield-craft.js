@@ -208,6 +208,69 @@
     return out;
   }
 
+  /* ── Light ────────────────────────────────────────────────────────────
+   * The one light a painting is lit by: how high it stands, whether it comes
+   * from the viewer's side or from behind the things, its colour and the
+   * colour of the shade it leaves, and how soft. Read by the visual
+   * dictionary's paint (hexfield-visual.js, lighting):
+   *   elev     how high the light is, in radians: low light, long shadows
+   *   front    1 from behind the viewer onto the faces, -1 from behind the
+   *            things toward the viewer (faces in shade, rims lit)
+   *   colour   the light's colour; ambient, the colour of the shade
+   *   soft     0 a crisp shadow and a hard edge to the shade, 1 overcast
+   *   strength how dark the shade and shadows go
+   *   point    a lamp in the picture: shadows spread out from it
+   *   sky      a sun or moon seen in the sky, where there is sky
+   *   grade    how far the whole picture is tinted by the light
+   *   exposure how bright the picture is under it: night is dark, and a
+   *            lamp lights its surroundings and falls off away from it */
+  const LIGHTS = {
+    noon: {
+      name: "noon sun", settings: { elev: 1.15, front: 0.4, colour: [255, 247, 230], ambient: [86, 104, 150], soft: 0.15, strength: 0.8, point: false, sky: null, grade: 0.1, exposure: 1 },
+      base: 0.1, words: ["noon", "summer", "beach", "desert", "midday", "sunny", "bright", "day"],
+    },
+    golden: {
+      name: "golden hour", settings: { elev: 0.38, front: 0.5, colour: [255, 196, 120], ambient: [70, 78, 150], soft: 0.25, strength: 0.75, point: false, sky: "sun", grade: 0.22, exposure: 0.96 },
+      base: 0.1, words: ["morning", "golden", "autumn", "warm", "harvest", "afternoon", "field"],
+    },
+    dusk: {
+      name: "dusk", settings: { elev: 0.12, front: 0.2, colour: [255, 128, 96], ambient: [58, 46, 116], soft: 0.4, strength: 0.7, point: false, sky: "sun", grade: 0.3, exposure: 0.8 },
+      words: ["sunset", "dusk", "evening", "twilight", "sundown", "sunrise", "dawn"],
+    },
+    moon: {
+      name: "moonlight", settings: { elev: 0.8, front: 0.3, colour: [176, 196, 255], ambient: [22, 26, 62], soft: 0.3, strength: 0.9, point: false, sky: "moon", grade: 0.32, exposure: 0.55 },
+      words: ["night", "moon", "moonlight", "midnight", "stars", "dark", "ghost", "owl"],
+    },
+    overcast: {
+      name: "overcast", settings: { elev: 1.35, front: 0.6, colour: [232, 234, 240], ambient: [118, 124, 140], soft: 0.95, strength: 0.45, point: false, sky: null, grade: 0.12, exposure: 0.92 },
+      words: ["cloudy", "rain", "fog", "grey", "gray", "mist", "winter", "snow", "quiet", "calm"],
+    },
+    backlit: {
+      name: "backlit", settings: { elev: 0.3, front: -0.85, colour: [255, 214, 160], ambient: [52, 58, 96], soft: 0.3, strength: 0.85, point: false, sky: "sun", grade: 0.2, exposure: 0.9 },
+      words: ["silhouette", "behind", "glow", "halo", "against", "shadow", "dramatic"],
+    },
+    lamp: {
+      name: "lamplight", settings: { elev: 0.55, front: 0.55, colour: [255, 190, 118], ambient: [34, 30, 52], soft: 0.25, strength: 0.9, point: true, sky: null, grade: 0.28, exposure: 0.5 },
+      words: ["lamp", "candle", "fire", "fireplace", "lantern", "cosy", "cozy", "room", "indoors", "bedroom", "kitchen", "cafe"],
+    },
+  };
+
+  function light(key) {
+    const entry = LIGHTS[key] || LIGHTS.noon;
+    return { key: LIGHTS[key] ? key : "noon", name: entry.name, settings: { ...entry.settings } };
+  }
+
+  function lightLeans(text) {
+    const words = new Set((String(text || "").toLowerCase().match(/[a-z]+/g) || []));
+    const out = {};
+    for (const [key, entry] of Object.entries(LIGHTS)) {
+      let lean = Number(entry.base) || 0;
+      for (const word of entry.words) if (words.has(word)) lean += 0.7;
+      out[key] = lean;
+    }
+    return out;
+  }
+
   /* ── Perspective ──────────────────────────────────────────────────────
    * A third axis: where the viewer stands and how space is projected. The
    * settings are read by the visual dictionary's layout and paint (see the
@@ -310,5 +373,6 @@
     MANNERS, KEYS: Object.keys(MANNERS), manner, wordLeans,
     DIMENSIONS, DIMENSION_KEYS: Object.keys(DIMENSIONS), dimension, dimensionLeans,
     PERSPECTIVES, PERSPECTIVE_KEYS: Object.keys(PERSPECTIVES), perspective, perspectiveLeans,
+    LIGHTS, LIGHT_KEYS: Object.keys(LIGHTS), light, lightLeans,
   };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -31545,6 +31545,7 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
   if (scene?.focus) { plan.fx = scene.focus.fx; plan.fy = scene.focus.fy; }
   plan.scene = scene;
   setBlobPitch(plan.blobs, plan, height);
+  plan.light = choosePlanLight(plan, params);
   plan.tips = choosePlanTips(plan, params);
   plan.finish = choosePlanFinish(plan, params);
   const { Lf, Lb } = planLuminanceStats(ref, width, height, plan);
@@ -31960,6 +31961,7 @@ function recordVisualVote(liked) {
   if (plan?.tips) variations[tipsVoteWord(plan.tips.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.finish) variations[finishVoteWord(plan.finish.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.finish?.look) variations[lookVoteWord(plan.finish.look)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  if (plan?.light) variations[lightVoteWord(plan.light.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (scene?.perspective) variations[perspVoteWord(scene.perspective.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (scene?.forms) variations[formVoteWord(scene.forms.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   // A kept painting's things are remembered as forms worth starting from.
@@ -32656,6 +32658,49 @@ function planSceneLayer(scene) {
 
 /* Paint the scene into a composed reference, in place. */
 function applyPlanScene(pixels, width, height, plan) {
+  return applyPlanLight(applySceneLayer(pixels, width, height, plan), width, height, plan);
+}
+
+/* The painting under its light: the lights of the picture toward the
+ * light's colour, the darks toward the colour of its shade - golden hour
+ * warm, moonlight blue - as far as the light grades. In place. */
+function applyPlanLight(pixels, width, height, plan) {
+  const L = plan?.light?.settings;
+  const grade = Number(L?.grade) || 0;
+  if (!grade) return pixels;
+  const top = Math.max(...L.colour, 1);
+  const lit = L.colour.map((c) => c / top);
+  const dark = L.ambient;
+  const exposure = Number(L.exposure) || 1;
+  // A lamp lights what is near it: full where it stands, the exposure far
+  // off; and a sun or moon is itself as bright as ever.
+  const source = planLighting(plan);
+  const at = L.point && L.at ? L.at : source?.sun || null;
+  const lamp = at && exposure < 1 ? [at[0] * width, at[1] * height] : null;
+  const reach = (L.point ? 0.42 : 0.1) * Math.min(width, height), fall = new Float32Array(lamp ? width : 0), rows = new Float32Array(lamp ? height : 0);
+  if (lamp) {
+    for (let x = 0; x < width; x++) fall[x] = Math.exp(-((x - lamp[0]) ** 2) / (2 * reach * reach));
+    for (let y = 0; y < height; y++) rows[y] = Math.exp(-((y - lamp[1]) ** 2) / (2 * reach * reach));
+  }
+  // How far toward the light and toward the shade, by brightness (0..255).
+  const upBy = new Float32Array(256), downBy = new Float32Array(256);
+  for (let v = 0; v < 256; v++) { const l = v / 255; upBy[v] = grade * l; downBy[v] = grade * 0.7 * (1 - l) * (1 - l); }
+  const lr = lit[0] - 1, lg = lit[1] - 1, lb = lit[2] - 1;
+  for (let o = 0, i = 0, x = 0, y = 0; o < pixels.length; o += 4, i++) {
+    let e = exposure;
+    if (lamp) { e += (1.05 - exposure) * fall[x] * rows[y]; if (++x === width) { x = 0; y++; } }
+    const r = pixels[o] * e, g = pixels[o + 1] * e, b = pixels[o + 2] * e;
+    const v = Math.min(255, (54 * r + 183 * g + 19 * b) >> 8);
+    const up = upBy[v], down = downBy[v];
+    pixels[o] = r + r * lr * up + (dark[0] - r) * down;
+    pixels[o + 1] = g + g * lg * up + (dark[1] - g) * down;
+    pixels[o + 2] = b + b * lb * up + (dark[2] - b) * down;
+  }
+  return pixels;
+}
+
+/* The scene's layer painted into a composed reference, in place. */
+function applySceneLayer(pixels, width, height, plan) {
   const scene = plan?.scene;
   if (!scene || scene.width !== width || scene.height !== height || !globalThis.HexfieldVisual) return pixels;
   const { all, cover } = planSceneLayer(scene);
@@ -33635,7 +33680,7 @@ function sceneDims(scene) {
   if (!scene?.dims) return null;
   const view = scene.view;
   // Solid things recede into the picture's own space.
-  return { ...scene.dims.settings, light: scene.dimsLight,
+  return { ...scene.dims.settings, light: scene.dimsLight, lighting: scene.lighting || null,
     vanish: view && !view.iso ? view.vanish : null, iso: view?.iso || 0, isoDir: view?.isoDir || 1 };
 }
 
@@ -33660,7 +33705,7 @@ function choosePlanDims(plan, composed, width, height, params) {
       const dims = Craft.dimension(key);
       sctx.putImageData(new ImageData(new Uint8ClampedArray(base), sw, sh), 0, 0);
       lctx.clearRect(0, 0, sw, sh);
-      Visual.paint(lctx, sw, sh, items, mulberry32(0x7e57a), null, { ...dims.settings, light: plan.lightAngle,
+      Visual.paint(lctx, sw, sh, items, mulberry32(0x7e57a), null, { ...dims.settings, light: plan.lightAngle, lighting: planLighting(plan),
         vanish: sview && !sview.iso ? sview.vanish : null, iso: sview?.iso || 0, isoDir: sview?.isoDir || 1 }, sview);
       sctx.globalAlpha = scene.strength || SCENE_STRENGTH;
       sctx.drawImage(layer, 0, 0);
@@ -33725,6 +33770,7 @@ async function prepareNewPainting(result, raw, width, height, alive) {
   if (plan.scene) {
     plan.scene.dims = plan.dims;
     plan.scene.dimsLight = plan.lightAngle;
+    plan.scene.lighting = planLighting(plan);
     plan.scene.layer = null;
     plan.scene.readable = false;
   }
@@ -33761,6 +33807,7 @@ function prepareStrokeReference(ref, width, height, enhanced = enhanceStrokeRefe
     if (plan.scene) {
       plan.scene.dims = plan.dims;
       plan.scene.dimsLight = plan.lightAngle;
+      plan.scene.lighting = planLighting(plan);
       plan.scene.layer = null;
       plan.scene.readable = false;
     }
@@ -34016,6 +34063,59 @@ const TIP_KITS = {
   soft: { soft: 0.55, filbert: 0.25, round: 0.2 },
 };
 const tipsVoteWord = (key) => "tips" + String(key).replace(/[^a-z]/g, "");
+
+/* ── The light ──────────────────────────────────────────────────────────
+ * Which light the painting is lit by (hexfield-craft.js, LIGHTS): noon sun,
+ * golden hour, dusk, moonlight, overcast, backlit or a lamp in the picture.
+ * Chosen like the other choices - the words lean it (night, sunset, candle),
+ * how its paintings have scored and with what, votes and a little chance.
+ * Its direction across the picture is the painting's light angle, so the
+ * manner's side light and the hatching agree with the shadows. A lamp
+ * stands beside the focus, on the light's side, above it. */
+const lightVoteWord = (key) => "light" + String(key).replace(/[^a-z]/g, "");
+function choosePlanLight(plan, params) {
+  const Craft = globalThis.HexfieldCraft;
+  if (!Craft?.light) return null;
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x119b8) >>> 0);
+  const leans = Craft.lightLeans(params?.__hexfieldWords?.text || "");
+  const scores = chooseByTaste(Craft.LIGHT_KEYS, {
+    rng, tasted: 0, axis: "light", given: planStyleChain(plan), lean: (key) => leans[key] || 0,
+    learned: (key) => visualLearnedChoice(lightVoteWord(key)), taste: () => null,
+  });
+  plan.lightScores = summariseChoice(scores);
+  const light = Craft.light(scores[0].key);
+  if (light.settings.point) {
+    const side = Math.cos(plan.lightAngle) < 0 ? -1 : 1;
+    // Beside the main thing, standing on the ground it stands on, a little
+    // taller than it; without one, above and beside the focus.
+    const main = plan.scene?.items?.find((item) => item.entry.kind === "subject" && !item.lettering && item.entry.anchor !== "sky");
+    const W = plan.scene?.width, H = plan.scene?.height;
+    if (main && W && H) {
+      const b = main.box, lift = Math.min(0.4, Math.max(0.1, (b.h / H) * (0.8 + rng() * 0.4)));
+      const x = (b.x + b.w / 2 + side * b.w * (0.75 + rng() * 0.3)) / W;
+      light.settings.at = [Math.max(0.06, Math.min(0.94, x)), Math.max(0.05, (b.y + b.h) / H - lift)];
+      light.settings.lift = lift;
+    } else {
+      light.settings.at = [Math.max(0.08, Math.min(0.92, plan.fx + side * (0.2 + rng() * 0.1))), Math.max(0.08, Math.min(0.7, plan.fy - 0.22 - rng() * 0.1))];
+      light.settings.lift = 0;
+    }
+  }
+  return light;
+}
+/* The light as the scene painter reads it, with where a sun or moon stands
+ * in the sky - on the light's side, low when the light is low, nearer the
+ * middle behind the things when it is behind them. */
+function planLighting(plan) {
+  if (!plan?.light) return null;
+  const L = { ...plan.light.settings };
+  const view = plan.scene?.view, H = plan.scene?.height;
+  if (L.sky && H) {
+    // Without a view the ground is taken to start halfway up.
+    const hz = view ? view.horizon / H : 0.5, side = Math.cos(plan.lightAngle);
+    L.sun = [0.5 + side * (L.front < 0 ? 0.12 : 0.36), Math.max(0.07, hz - Math.sin(L.elev) * hz * 1.1)];
+  }
+  return L;
+}
 
 function choosePlanTips(plan, params) {
   const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x71b5) >>> 0);
@@ -34471,7 +34571,7 @@ function planStyleChain(plan) {
   return {
     manner: plan?.manner?.key || null, tips: plan?.tips?.key || null, finish: plan?.finish?.key || null,
     dims: plan?.dims?.key || null, perspective: plan?.scene?.perspective?.key || null, form: plan?.scene?.forms?.key || null,
-    look: plan?.finish?.look || null,
+    look: plan?.finish?.look || null, light: plan?.light?.key || null,
   };
 }
 
@@ -34579,7 +34679,7 @@ function computeStyleOutcomeStats() {
 /* A chain's choices as small numbers (axis and option), worked out once per
  * row: counting every pair of hundreds of chains by name cost a phone tens
  * of milliseconds. */
-const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form", "look"];
+const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form", "look", "light"];
 const styleKeyCodes = new Map();
 const styleChainCodeCache = new WeakMap();
 function styleCode(axis, key) {
