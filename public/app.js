@@ -25759,7 +25759,7 @@ function updateWordPaints() {
   line.textContent = (manner ? "manner: " + manner.name + (dims ? " · " + dims.name : "") + (persp ? " · " + persp.name : "") +
     (drawn ? " · drawn " + drawn.name : "") +
     (manner.brush?.tips ? "" : strokePainter.plan?.tips ? " · brushes: " + strokePainter.plan.tips.key : "") +
-    (strokePainter.plan?.finish && strokePainter.plan.finish.key !== "none" ? " · finish: " + strokePainter.plan.finish.key : "") + " · " : "") +
+    (hasFinish(strokePainter.plan?.finish) ? " · finish: " + finishLabel(strokePainter.plan.finish) : "") + " · " : "") +
     (parts.length ? "paints: " + parts.join(" · ") : "paints: no things it knows yet") +
     (mood.length ? " · mood: " + mood.slice(0, 4).join(", ") : "") +
     (own.length ? " · prefers its own: " + [...new Set(own)].join(", ") : "") +
@@ -34487,14 +34487,356 @@ function choosePlanFinish(plan, params) {
     learned: (look) => visualLearnedChoice(lookVoteWord(look)), taste: () => null,
   });
   plan.lookScores = summariseChoice(lookScores);
-  const look = lookScores[0].key;
-  return { key, look, settings: looks[look.slice(key.length + 1)](pick, one) };
+  const build = (look) => {
+    const settings = looks[look.slice(key.length + 1)](pick, one);
+    tuneFromLearning(key, look, settings, pick);
+    const finish = { key, look, settings, combo: "single", layers: [] };
+    chooseFinishCombo(plan, finish, words, rng, pick, one);
+    return finish;
+  };
+  let finish = build(lookScores[0].key);
+  /* No converging on one recipe: the same filters, looks and combination
+   * as one of the last few paintings takes the next look instead. */
+  const recent = recentChoices().recipe || [];
+  if (recent.slice(-FINISH_NO_REPEAT).includes(finishSignature(finish)) && lookScores.length > 1) {
+    finish = build(lookScores[1].key);
+    finish.varied = true;
+  }
+  rememberChoice("recipe", finishSignature(finish));
+  return finish;
+}
+const FINISH_NO_REPEAT = 4;
+const finishSignature = (f) => [f.look || f.key, f.combo || "single", f.layers?.[0]?.look || f.layers?.[0]?.key || ""].join("|");
+
+/* ── Filters together ───────────────────────────────────────────────────
+ * A painting's finish can be more than one filter: a second one over part
+ * of it ("split" - over the named things, or without any over the biggest
+ * shapes the painting is made of, so a print's ground can hold an inked
+ * figure) or over all of it at part strength ("stack" - chalk grain over a
+ * flat illustration, a halftone over ink). Whether to, which second filter
+ * and which look of it are chosen like everything else, and learned. */
+const FINISH_COMBOS = ["single", "split", "stack"];
+const COMBO_WORDS = {
+  split: ["collage", "mixed", "cutout", "patchwork", "contrast"],
+  stack: ["layered", "layers", "texture", "grain", "worn", "aged", "distressed", "overlay"],
+};
+function chooseFinishCombo(plan, finish, words, rng, pick, one) {
+  const given = planStyleChain({ ...plan, finish });
+  const comboScores = chooseByTaste(FINISH_COMBOS, {
+    rng, tasted: 0, axis: "combo", given,
+    // One filter stays the usual: a combination has to earn its place.
+    lean: (key) => (key === "single" ? 0.35 : 0) + words.filter((w) => (COMBO_WORDS[key] || []).includes(w)).length * 0.6,
+    learned: () => 0, taste: () => null,
+  });
+  plan.comboScores = summariseChoice(comboScores);
+  const combo = comboScores[0].key;
+  if (combo === "single") return;
+  // The second filter: anything but the first; over part of the picture,
+  // even none (the brushwork itself, kept clean).
+  const keys = FINISH_KEYS.filter((k) => k !== finish.key && (combo === "split" || k !== "none"));
+  if (!keys.length) return;
+  const secondScores = chooseByTaste(keys, {
+    rng, tasted: 0, axis: "finish2", given: { ...given, combo }, lean: () => 0, learned: () => 0, taste: () => null,
+  });
+  const key = secondScores[0].key;
+  const layer = { key, look: null, settings: {}, mode: combo };
+  if (FINISH_LOOKS[key]) {
+    const lookScores = chooseByTaste(Object.keys(FINISH_LOOKS[key]).map((l) => key + "." + l), {
+      rng, tasted: 0, axis: "look2", given: { ...given, combo, finish2: key }, lean: () => 0, learned: () => 0, taste: () => null,
+    });
+    layer.look = lookScores[0].key;
+    layer.settings = FINISH_LOOKS[key][layer.look.slice(key.length + 1)](pick, one);
+  }
+  if (combo === "stack") {
+    layer.strength = 0.25 + pick() * 0.3;
+    // Ink and print darken what they lie on, as ink does.
+    layer.blend = key === "print" || key === "ink" ? "multiply" : "source-over";
+  } else {
+    layer.region = planHasThings(plan) ? "things" : "shapes";
+  }
+  finish.combo = combo;
+  finish.layers = [layer];
+}
+
+/* Whether a painting has any filter to show. */
+const hasFinish = (finish) => Boolean(finish && (finish.key !== "none" || finish.layers?.length));
+
+/* Where a split filter goes, as an alpha mask w x h: the named things (their
+ * own coverage), or the biggest of the painting's shapes; feathered so the
+ * two filters meet softly. Kept until the shapes or the size change. */
+function finishRegionMask(plan, layer, w, h) {
+  const blobs = plan?.liveBlobs || plan?.blobs || null;
+  const key = w + "x" + h + ":" + layer.region;
+  if (layer.mask && layer.maskKey === key && layer.maskFor === (layer.region === "things" ? plan.scene?.layer : blobs)) return layer.mask;
+  const mask = paintBuffer(w, h), mctx = mask.getContext("2d");
+  const cover = plan?.scene?.layer?.cover;
+  if (layer.region === "things" && cover && plan.scene) {
+    const { width: sw, height: sh } = plan.scene;
+    const full = paintBuffer(sw, sh), fctx = full.getContext("2d");
+    const img = fctx.createImageData(sw, sh);
+    for (let i = 0; i < cover.length; i++) { img.data[i * 4 + 3] = cover[i]; }
+    fctx.putImageData(img, 0, 0);
+    if ("filter" in mctx) mctx.filter = `blur(${Math.max(1, Math.round(Math.min(w, h) * 0.008))}px)`;
+    mctx.drawImage(full, 0, 0, w, h);
+    full.width = 0;
+  } else if (blobs?.length && globalThis.HexfieldVisual && view?.width) {
+    const big = blobs.slice().sort((a, b) => b.area - a.area).slice(0, 2);
+    const { items } = scaledLayout({ items: big, view: null }, w / view.width, h / view.height);
+    const shapes = paintBuffer(w, h), sctx = shapes.getContext("2d");
+    globalThis.HexfieldVisual.paint(sctx, w, h, items, mulberry32(0x7e57a));
+    if ("filter" in mctx) mctx.filter = `blur(${Math.max(1, Math.round(Math.min(w, h) * 0.012))}px)`;
+    mctx.drawImage(shapes, 0, 0);
+    shapes.width = 0;
+  } else {
+    // Nothing to go by: the focus.
+    const cx = (plan?.fx ?? 0.5) * w, cy = (plan?.fy ?? 0.5) * h, r = Math.min(w, h) * 0.3;
+    const g = mctx.createRadialGradient(cx, cy, r * 0.6, cx, cy, r * 1.2);
+    g.addColorStop(0, "rgba(0,0,0,1)"); g.addColorStop(1, "rgba(0,0,0,0)");
+    mctx.fillStyle = g; mctx.fillRect(0, 0, w, h);
+  }
+  if (layer.mask) layer.mask.width = 0;
+  layer.mask = mask; layer.maskKey = key; layer.maskFor = layer.region === "things" ? plan.scene?.layer : blobs;
+  return mask;
+}
+
+/* The whole finish: the first filter over everything, then each further
+ * filter split in by its region or stacked at its strength. */
+/* `reuse`: true keeps a flat filter's colours while they are fresh enough;
+ * "always" keeps them as they are (EXPORT, so the file shows the screen). */
+function renderFinishRecipe(source, W, H, finish, cap = 900, { reuse = false, into = null, plan = strokePainter.plan } = {}) {
+  const keep = (f) => reuse === "always" || (reuse && !flatNeedsFresh(f));
+  const out = renderFinish(source, W, H, finish, cap, { reuse: keep(finish), into });
+  for (const layer of finish.layers || []) {
+    const piece = renderFinish(source, W, H, layer, cap, { reuse: keep(layer) });
+    const octx = out.getContext("2d");
+    octx.save();
+    if (layer.mode === "stack") {
+      octx.globalAlpha = Math.max(0, Math.min(1, Number(layer.strength) || 0.4));
+      octx.globalCompositeOperation = layer.blend || "source-over";
+      octx.drawImage(piece, 0, 0, out.width, out.height);
+    } else {
+      const cut = paintBuffer(out.width, out.height), cctx = cut.getContext("2d");
+      cctx.drawImage(piece, 0, 0, out.width, out.height);
+      cctx.globalCompositeOperation = "destination-in";
+      cctx.drawImage(finishRegionMask(plan, layer, out.width, out.height), 0, 0);
+      octx.drawImage(cut, 0, 0);
+      cut.width = 0;
+    }
+    octx.restore();
+    piece.width = 0;
+  }
+  return out;
+}
+/* A flat filter keeps its colours while the painting paints, and finds them
+ * again once enough paint has landed to have changed them. */
+function flatNeedsFresh(f) {
+  return f?.key === "flat" && (!Array.isArray(f.centres) ||
+    (strokePainter.strokes || 0) - (f.centresAt || 0) > 1500 || (strokePainter.strokes || 0) < (f.centresAt || 0));
+}
+function finishLabel(finish) {
+  const name = (f) => f.look || f.key;
+  const layer = finish.layers?.[0];
+  return name(finish) + (layer ? (layer.mode === "stack" ? " + " : " | ") + name(layer) +
+    (layer.mode === "stack" ? " " + Math.round((layer.strength || 0) * 100) + "%" : " on " + layer.region) : "") +
+    (finish.tuned ? " · tuned " + finish.tuned + "x" : "") + (finish.redundant ? " · dropped " + finish.redundant : "");
+}
+
+/* ── Filters that tune themselves ───────────────────────────────────────
+ * While a painting paints, its filter tries a small change to one of its
+ * settings now and then - a finer or coarser screen, a colour more or
+ * fewer, closer hatching, more grain, a stack a little stronger - and keeps
+ * it if the finished picture tastes better (both drawn small, the same
+ * canvas). A setting tuned past the edge of its look takes the painting
+ * into the next look, and that is what its outcome is filed under; the
+ * tuned value is filed too (chain.tune), and a new painting in that look
+ * starts near the values that turned out best (tuneFromLearning). */
+const FINISH_TUNE = { every: 7000, everyPhone: 16000, minStrokes: 700, margin: 0.002, size: 180, maxChanges: 6, maxTries: 24 };
+/* No redundant filters: a second filter that hardly changes the picture
+ * (its area nearly nothing or nearly everything, or its difference from the
+ * first filter alone too small to see) is dropped, and the painting is
+ * filed as one filter - what it is. */
+const FINISH_REDUNDANT = { meanDiff: 5, minArea: 0.04, maxArea: 0.9 };
+const TUNE_SPECS = {
+  print: [{ name: "across", step: 12, min: 40, max: 130, round: true }],
+  flat: [{ name: "colours", step: 1, min: 3, max: 10, round: true }, { name: "outline", flip: true }],
+  ink: [{ name: "spacing", step: 0.0012, min: 0.0055, max: 0.016 }, { name: "tint", flip: true }],
+  chalk: [{ name: "grain", step: 0.08, min: 0.25, max: 0.98 }, { name: "cover", step: 0.06, min: 0.5, max: 0.92, optional: true }],
+};
+/* Which look a filter's settings now belong to. */
+function lookOf(key, s) {
+  if (key === "print") return "print." + (s.mode === "cmyk" ? "cmyk" : "mono") + "-" + (Number(s.across) < 79 ? "coarse" : "fine");
+  if (key === "flat") return "flat." + (Number(s.colours) <= 6 ? "few" : "many") + "-" + (s.outline ? "line" : "clean");
+  if (key === "ink") return "ink." + (Number(s.spacing) < 0.0098 ? "tight" : "open") + "-" + (s.tint ? "tint" : "plain");
+  if (key === "chalk") {
+    const dark = Array.isArray(s.paper) && CHALK_DARK.some((p) => p.every((c, i) => c === s.paper[i]));
+    return "chalk." + (dark ? "dark" : "tinted") + "-" + (Number(s.cover) > 0 ? "broken" : "smooth");
+  }
+  return null;
+}
+/* The value a look is tuned by, for filing (chain.tune) and learning. */
+function tuneValue(key, s) {
+  if (key === "print") return Math.round(Number(s.across) || 0);
+  if (key === "flat") return Number(s.colours) || 0;
+  if (key === "ink") return +((Number(s.spacing) || 0) * 1000).toFixed(2);
+  if (key === "chalk") return Math.round((Number(s.grain) || 0) * 100);
+  return null;
+}
+function setTuneValue(key, s, v) {
+  if (key === "print") s.across = Math.round(v);
+  else if (key === "flat") s.colours = Math.round(v);
+  else if (key === "ink") s.spacing = v / 1000;
+  else if (key === "chalk") s.grain = v / 100;
+}
+/* A new filter in a look starts nearer the value its best paintings had -
+ * part of the way, and scattered about it by as much as those paintings
+ * disagree (never less than TUNE_SPREAD), so the look does not settle on
+ * one value for ever. */
+const TUNE_SPREAD = { print: 8, flat: 1, ink: 0.8, chalk: 8 };
+function tuneFromLearning(key, look, settings, pick = Math.random) {
+  const learned = computeStyleOutcomeStatsCached().tunes?.[look];
+  if (!learned || learned.n < 3 || !(learned.weight > 0)) return settings;
+  const centre = learned.sum / learned.weight, own = tuneValue(key, settings);
+  if (own === null || !Number.isFinite(centre)) return settings;
+  const spread = Math.max(TUNE_SPREAD[key] || 0, Math.sqrt(Math.max(0, learned.sumSq / learned.weight - centre * centre)));
+  setTuneValue(key, settings, own + (centre - own) * (0.25 + pick() * 0.35) + (pick() - 0.5) * 2 * spread);
+  // Kept inside its look: learning moves a value, the look is chosen.
+  if (lookOf(key, settings) !== look) setTuneValue(key, settings, own);
+  return settings;
+}
+function computeStyleOutcomeStatsCached() {
+  return styleOutcomeStats || (styleOutcomeStats = computeStyleOutcomeStats());
+}
+
+let finishTunedAt = 0, finishTuning = false;
+function finishTasteOf(finish) {
+  const w = FINISH_TUNE.size, h = Math.max(1, Math.round(w * view.height / view.width));
+  const pic = renderFinishRecipe(view, view.width, view.height, finish, w / 0.8, { reuse: "always" });
+  const small = paintBuffer(w, h), sctx = small.getContext("2d", { willReadFrequently: true });
+  sctx.drawImage(pic, 0, 0, pic.width, pic.height, 0, 0, w, h);
+  const score = tastePrediction(tasteFeatures(sctx, w, h, signature(sctx, w, h)));
+  pic.width = 0; small.width = 0;
+  return score;
+}
+/* One small change to one setting of one of the filters, or null: which
+ * part (0 the first filter, 1 its second), which setting, from what to what. */
+function proposeFinishChange(finish, rng) {
+  const parts = [finish, ...(finish.layers || [])].map((f, index) => ({ f, index })).filter(({ f }) => TUNE_SPECS[f.key] || f.mode === "stack");
+  if (!parts.length) return null;
+  const { f: part, index } = parts[Math.floor(rng() * parts.length)];
+  const specs = [...(TUNE_SPECS[part.key] || [])];
+  if (part.mode === "stack") specs.push({ name: "strength", step: 0.08, min: 0.15, max: 0.7, on: "layer" });
+  const spec = specs[Math.floor(rng() * specs.length)];
+  const before = (spec.on === "layer" ? part : part.settings)[spec.name];
+  let after;
+  if (spec.flip) after = !before;
+  else if (spec.optional && !(Number(before) > 0)) return null;
+  else {
+    after = Math.max(spec.min, Math.min(spec.max, Number(before) + (rng() < 0.5 ? -1 : 1) * spec.step * (0.5 + rng())));
+    if (spec.round) after = Math.round(after);
+    if (after === before) return null;
+  }
+  return { index, partKey: part.key, onLayer: spec.on === "layer", name: spec.name, before, after };
+}
+function applyFinishChange(finish, change, value) {
+  const part = change.index ? finish.layers[change.index - 1] : finish;
+  (change.onLayer ? part : part.settings)[change.name] = value;
+  if (part.key === "flat" && change.name === "colours") part.centres = null;
+}
+/* A copy to try a change on, so the screen never shows one being tried. */
+const cloneFinish = (f) => ({ ...f, settings: { ...f.settings }, layers: (f.layers || []).map((l) => ({ ...l, settings: { ...l.settings } })) });
+
+async function dropRedundantLayer(plan, finish) {
+  const layer = finish.layers[0];
+  let why = null;
+  if (layer.mode === "split") {
+    const w = 96, h = Math.max(1, Math.round(w * view.height / view.width));
+    const data = finishRegionMask(plan, layer, w, h).getContext("2d").getImageData(0, 0, w, h).data;
+    let area = 0;
+    for (let i = 3; i < data.length; i += 4) area += data[i] / 255;
+    area /= w * h;
+    if (area < FINISH_REDUNDANT.minArea || area > FINISH_REDUNDANT.maxArea) why = "area " + Math.round(area * 100) + "%";
+  }
+  if (!why) {
+    const w = FINISH_TUNE.size, h = Math.max(1, Math.round(w * view.height / view.width));
+    const draw = (f) => { const pic = renderFinishRecipe(view, view.width, view.height, f, w / 0.8, { reuse: "always" });
+      const c = paintBuffer(w, h), x = c.getContext("2d", { willReadFrequently: true }); x.drawImage(pic, 0, 0, pic.width, pic.height, 0, 0, w, h);
+      const d = x.getImageData(0, 0, w, h).data; pic.width = 0; c.width = 0; return d; };
+    const both = draw(finish);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (strokePainter.plan !== plan || !finish.layers.length) return false;
+    const alone = draw({ ...finish, layers: [] });
+    let diff = 0;
+    for (let o = 0; o < both.length; o += 4) diff += (Math.abs(both[o] - alone[o]) + Math.abs(both[o + 1] - alone[o + 1]) + Math.abs(both[o + 2] - alone[o + 2])) / 3;
+    diff /= both.length / 4;
+    if (diff < FINISH_REDUNDANT.meanDiff) why = "adds " + diff.toFixed(1);
+  }
+  if (!why) return false;
+  finish.redundant = layer.key + " (" + why + ")";
+  finish.layers = [];
+  finish.combo = "single";
+  finishLayerShown.revision = -1;
+  scheduleFinishLayer(50);
+  return true;
+}
+
+/* A few steps, each its own task: the painter keeps painting between them. */
+async function tuneFinishStep() {
+  const plan = strokePainter.plan, finish = plan?.finish;
+  if (finishTuning || !hasFinish(finish) || !view?.width) return;
+  const now = performance.now();
+  if (now - finishTunedAt < (isMobileBrowser() ? FINISH_TUNE.everyPhone : FINISH_TUNE.every)) return;
+  if ((strokePainter.strokes || 0) < FINISH_TUNE.minStrokes || strokePainter.preparing) return;
+  finishTunedAt = now;
+  finishTuning = true;
+  const pause = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const still = () => strokePainter.plan === plan && plan.finish === finish;
+  try {
+    if (finish.layers?.length && !finish.layerChecked) {
+      finish.layerChecked = true;
+      await dropRedundantLayer(plan, finish);
+      return;
+    }
+    // A painting's filter tunes a little, not without end: past a few
+    // changes it would only walk toward whatever the taste model likes best.
+    finish.tries = (finish.tries || 0) + 1;
+    if ((finish.tuned || 0) >= FINISH_TUNE.maxChanges || finish.tries > FINISH_TUNE.maxTries) return;
+    plan.tuneRng ||= mulberry32(((Number(plan.drawSeed) || 0) ^ 0x7a7e) >>> 0);
+    const change = proposeFinishChange(finish, plan.tuneRng);
+    if (!change) return;
+    // No going back: a setting is not returned to a value it was just tuned
+    // away from - the canvas moves between tries, and undoing a change on a
+    // slightly different canvas is chasing noise, not taste.
+    if ((finish.trail || []).slice(-4).some((t) => t.part === change.partKey && t.name === change.name &&
+      (t.from === change.after || (typeof t.from === "number" && Math.abs(t.from - change.after) < 1e-9)))) return;
+    await pause();
+    if (!still()) return;
+    const was = finishTasteOf(finish);
+    await pause();
+    if (!still()) return;
+    const trial = cloneFinish(finish);
+    applyFinishChange(trial, change, change.after);
+    const now2 = finishTasteOf(trial);
+    if (!still() || !(now2 > was + FINISH_TUNE.margin)) return;
+    applyFinishChange(finish, change, change.after);
+    finish.tuned = (finish.tuned || 0) + 1;
+    (finish.trail ||= []).push({ at: strokePainter.strokes || 0, part: change.partKey, name: change.name, from: change.before, to: change.after, gain: +(now2 - was).toFixed(4) });
+    if (finish.trail.length > 20) finish.trail.shift();
+    // Tuned past the edge of its look: now it is the next look.
+    for (const f of [finish, ...(finish.layers || [])]) { const look = lookOf(f.key, f.settings || {}); if (look) f.look = look; }
+    finishLayerShown.revision = -1;
+    scheduleFinishLayer(50);
+  } catch (error) {
+    console.warn("finish tuning skipped", error);
+  } finally {
+    finishTuning = false;
+  }
 }
 
 /* The looks within each finish: the settings that change a finish the most,
  * in a few bands, each a recognisably different picture - a coarse screen
  * and a fine one are nearly different styles. What is left within a band
  * (angles, paper, ink) is still left to chance. */
+const CHALK_DARK = [[34, 36, 40], [22, 22, 24]];
 const FINISH_LOOKS = {
   print: {
     "mono-coarse": (pick, one) => ({ mode: "mono", across: Math.round(46 + pick() * 30), angle: one([15, 45, 75]), paper: one(FINISH_PAPERS), ink: one(FINISH_INKS) }),
@@ -34517,8 +34859,8 @@ const FINISH_LOOKS = {
   // The grain shows far more than the paper, which only shows where the
   // chalk misses it.
   chalk: {
-    "dark-smooth": (pick, one) => ({ paper: one([[34, 36, 40], [22, 22, 24]]), grain: 0.3 + pick() * 0.15, angle: -0.9 + pick() * 0.6 }),
-    "dark-broken": (pick, one) => ({ paper: one([[34, 36, 40], [22, 22, 24]]), grain: 0.78 + pick() * 0.17, cover: 0.66 + pick() * 0.1, angle: -0.9 + pick() * 0.6 }),
+    "dark-smooth": (pick, one) => ({ paper: one(CHALK_DARK), grain: 0.3 + pick() * 0.15, angle: -0.9 + pick() * 0.6 }),
+    "dark-broken": (pick, one) => ({ paper: one(CHALK_DARK), grain: 0.78 + pick() * 0.17, cover: 0.66 + pick() * 0.1, angle: -0.9 + pick() * 0.6 }),
     "tinted-smooth": (pick, one) => ({ paper: one([[30, 42, 36], [28, 32, 48], [48, 38, 32]]), grain: 0.3 + pick() * 0.15, angle: -0.9 + pick() * 0.6 }),
     "tinted-broken": (pick, one) => ({ paper: one([[30, 42, 36], [28, 32, 48], [48, 38, 32]]), grain: 0.78 + pick() * 0.17, cover: 0.66 + pick() * 0.1, angle: -0.9 + pick() * 0.6 }),
   },
@@ -34782,7 +35124,7 @@ function scheduleFinishLayer(delay = isMobileBrowser() ? 3000 : 1200) {
 }
 function refreshFinishLayer() {
   const plan = strokePainter.plan, finish = plan?.finish;
-  if (!finish || finish.key === "none" || !view?.width || typeof document === "undefined") { hideFinishLayer(); return null; }
+  if (!hasFinish(finish) || !view?.width || typeof document === "undefined") { hideFinishLayer(); return null; }
   if (finishLayerShown.plan === plan && finishLayerShown.revision === finishCanvasRevision && finishLayer?.style.display !== "none") return finishLayer;
   if (!finishLayer) {
     finishLayer = document.createElement("canvas");
@@ -34791,16 +35133,15 @@ function refreshFinishLayer() {
     finishLayer.style.cssText = "position:absolute;pointer-events:none;display:none;border-radius:5px;background:transparent";
     view.insertAdjacentElement("afterend", finishLayer);
   }
-  // A painting's flat colours are kept while it paints, and found again once
-  // enough paint has landed to have changed them.
-  const fresh = finish.key === "flat" && (!Array.isArray(finish.centres) ||
-    (strokePainter.strokes || 0) - (finish.centresAt || 0) > 1500 || (strokePainter.strokes || 0) < (finish.centresAt || 0));
-  renderFinish(view, view.width, view.height, finish, isMobileBrowser() ? 560 : 960,
-    { into: finishLayer, reuse: finish.key === "flat" && !fresh });
-  if (fresh) finish.centresAt = strokePainter.strokes || 0;
+  // A painting's flat colours are kept while it paints (flatNeedsFresh).
+  const fresh = [finish, ...(finish.layers || [])].filter(flatNeedsFresh);
+  renderFinishRecipe(view, view.width, view.height, finish, isMobileBrowser() ? 560 : 960, { into: finishLayer, reuse: true });
+  for (const f of fresh) f.centresAt = strokePainter.strokes || 0;
   Object.assign(finishLayer.style, { left: view.offsetLeft + "px", top: view.offsetTop + "px",
     width: view.offsetWidth + "px", height: view.offsetHeight + "px", display: "block" });
   finishLayerShown = { revision: finishCanvasRevision, plan };
+  // Now and then, in its own task, the filter tries a change (tuneFinishStep).
+  setTimeout(tuneFinishStep, 0);
   return finishLayer;
 }
 
@@ -34869,6 +35210,10 @@ function planStyleChain(plan) {
     manner: plan?.manner?.key || null, tips: plan?.tips?.key || null, finish: plan?.finish?.key || null,
     dims: plan?.dims?.key || null, perspective: plan?.scene?.perspective?.key || null, form: plan?.scene?.forms?.key || null,
     look: plan?.finish?.look || null, light: plan?.light?.key || null,
+    combo: plan?.finish ? plan.finish.combo || "single" : null, finish2: plan?.finish?.layers?.[0]?.key || null,
+    look2: plan?.finish?.layers?.[0]?.look || null,
+    // The tuned value of the first filter's look, and of a stack's strength.
+    tune: plan?.finish ? compactTune(plan.finish) : null,
   };
 }
 
@@ -34948,10 +35293,17 @@ function computeStyleOutcomeStats() {
   const rows = styleOutcomeRows().filter((row) => row.chain &&
     (Number.isFinite(Number(row.taste)) || row.source === "kept" || row.source === "rejected"));
   const scored = styleOutcomeScores(rows);
-  const stats = { rows: rows.length, pairs: new Map() };
+  const stats = { rows: rows.length, pairs: new Map(), tunes: {} };
   for (const row of rows) {
     const { score, weight } = scored.get(row) || { score: 0, weight: 0 };
     if (!weight) continue;
+    // A look's tuned value, weighted toward its better paintings.
+    const tv = Number(row.chain?.tune?.v);
+    if (row.chain?.look && Number.isFinite(tv) && score > -0.1) {
+      const t = (stats.tunes[row.chain.look] ||= { n: 0, weight: 0, sum: 0 });
+      const w = weight * (score + 0.1) * (score + 0.1);
+      t.n++; t.weight += w; t.sum += tv * w; t.sumSq = (t.sumSq || 0) + tv * tv * w;
+    }
     const chosen = styleChainCodes(row);
     for (let i = 0; i < chosen.length; i++) {
       const axis = STYLE_AXES[chosen[i] >> 8], key = row.chain[axis];
@@ -34976,7 +35328,15 @@ function computeStyleOutcomeStats() {
 /* A chain's choices as small numbers (axis and option), worked out once per
  * row: counting every pair of hundreds of chains by name cost a phone tens
  * of milliseconds. */
-const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form", "look", "light"];
+const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form", "look", "light", "combo", "finish2", "look2"];
+function compactTune(finish) {
+  const v = tuneValue(finish.key, finish.settings || {});
+  const layer = finish.layers?.[0];
+  const out = {};
+  if (v !== null) out.v = v;
+  if (layer?.mode === "stack") out.s = +(Number(layer.strength) || 0).toFixed(2);
+  return Object.keys(out).length ? out : null;
+}
 const styleKeyCodes = new Map();
 const styleChainCodeCache = new WeakMap();
 function styleCode(axis, key) {
@@ -35456,7 +35816,7 @@ function animateLoggedStrokes(result, strokes, animation) {
       }
       vctx.restore();
       // The finish over the canvas follows the paint as it lands.
-      if (strokePainter.plan?.finish && strokePainter.plan.finish.key !== "none") { finishCanvasRevision++; scheduleFinishLayer(); }
+      if (hasFinish(strokePainter.plan?.finish)) { finishCanvasRevision++; scheduleFinishLayer(); }
       result.paintProgress = cursor / strokes.length;
       if (cursor >= strokes.length) { finish(true); return; }
       // A timer, not requestAnimationFrame: rAF stops in a background tab and
@@ -40779,10 +41139,10 @@ $("export").addEventListener("click", async () => {
     });
     // The painting's finish, applied to the replayed strokes as on screen.
     const finish = strokePainter.plan?.finish;
-    if (painted && finish && finish.key !== "none") {
+    if (painted && hasFinish(finish)) {
       setExportStatus("finishing…");
       await new Promise((r) => setTimeout(r, 16));
-      const finished = renderFinish(out, out.width, out.height, finish, 2400, { reuse: true });
+      const finished = renderFinishRecipe(out, out.width, out.height, finish, 2400, { reuse: "always" });
       octx.save();
       octx.imageSmoothingEnabled = true;
       octx.imageSmoothingQuality = "high";
