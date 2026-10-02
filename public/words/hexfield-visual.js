@@ -2318,7 +2318,8 @@
   /* The entry's parts, drawn in this item's form (cached on the form). */
   function formParts(item) {
     const form = item.form;
-    if (!form) return item.entry.parts;
+    // A shape found in a painting carries only its lean, for its frame.
+    if (!form || !Number.isFinite(form.seed)) return item.entry.parts;
     if (form.parts && form.partsOf === item.entry) return form.parts;
     const field = formField(form.seed), rng = seededRandom((form.seed ^ 0x51ab) >>> 0);
     const move = ([x, y]) => {
@@ -3019,6 +3020,8 @@
    * and a soft shade where it overlaps what is behind it. */
   const LIT_ROUND = new Set(["ellipse", "dome", "egg", "almond", "ring", "glow", "cluster", "petals", "heart"]);
   function roundness(item) {
+    // A shape found in the painting is lit as a soft, rounded mass.
+    if (item.blob) return 0.8;
     let round = 0, all = 0;
     for (const part of item.entry.parts || []) {
       if (!part.box || part.cut) continue;

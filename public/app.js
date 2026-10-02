@@ -32690,9 +32690,65 @@ function sceneLightMap(scene) {
   return any ? { map, sw, sh } : null;
 }
 
+/* Without named things, the light falls on the shapes the painting itself
+ * is made of (findPaintingBlobs - the same masses the strokes wrap round):
+ * each lit as a rounded body on the side toward the light and shaded on the
+ * far side, throwing its shadow onto what lies behind it, with a contact
+ * shade at its foot. Gentler than for a named thing - a shape found in the
+ * paint is a guess at a form, not a drawing of one. Painted into the
+ * reference (applyPlanLight) and read by the brushwork and the manners like
+ * the scene's own map. `BLOB_LIGHT.strength` 0 keeps the map (for measuring)
+ * but lets nothing use it. */
+const BLOB_LIGHT = { strength: 1, model: 0.75, cast: 0.55, reference: 0.4 };
+function planHasThings(plan) {
+  return Boolean(plan?.scene?.items?.some((item) => item.entry.kind === "subject" && !item.lettering));
+}
+function blobLightMap(plan, width, height) {
+  const blobs = plan?.liveBlobs || plan?.blobs;
+  const L = planLighting(plan);
+  if (!L || !blobs?.length || planHasThings(plan) || !globalThis.HexfieldVisual) return null;
+  const sw = Math.max(24, Math.round(width / LIGHT_MAP_SCALE)), sh = Math.max(24, Math.round(height / LIGHT_MAP_SCALE));
+  // Biggest first: the big masses behind, the small ones in front of them.
+  const { items } = scaledLayout({ items: blobs.slice().sort((a, b) => b.area - a.area), view: null }, sw / width, sh / height);
+  const canvas = paintBuffer(sw, sh), ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.fillStyle = "rgb(128, 128, 128)";
+  ctx.fillRect(0, 0, sw, sh);
+  globalThis.HexfieldVisual.paint(ctx, sw, sh, items, mulberry32(0x7e57a), null, {
+    model: BLOB_LIGHT.model, cast: BLOB_LIGHT.cast, depth: 0, light: plan.lightAngle, mono: true,
+    lighting: { ...L, colour: [255, 255, 255], ambient: [0, 0, 0] }, vanish: null, iso: 0, isoDir: 1,
+  }, null);
+  const data = ctx.getImageData(0, 0, sw, sh).data;
+  canvas.width = 0; canvas.height = 0;
+  const map = new Float32Array(sw * sh);
+  let any = false;
+  for (let i = 0; i < map.length; i++) {
+    const v = Math.max(-1, Math.min(1, ((data[i * 4] + data[i * 4 + 1] + data[i * 4 + 2]) / 3 - 128) / 110));
+    map[i] = v;
+    if (Math.abs(v) > 0.04) any = true;
+  }
+  return any ? { map, sw, sh, blobs: true } : null;
+}
+/* The painting's shapes found again in the picture as composed - the one
+ * the light is painted into and the brush works toward (the field as it
+ * first arrives is reshaped by the plan, and its shapes are not these) -
+ * and the light on them. */
+function refreshPlanShapes(plan, pixels, width, height) {
+  plan.liveBlobs = findPaintingBlobs(pixels, width, height);
+  setBlobPitch(plan.liveBlobs, plan, height);
+  strokePainter.formField = null;
+  plan.blobLight = blobLightMap(plan, width, height);
+}
+
+/* The map the painting's light is read from: its named things', or else
+ * its own shapes'. */
+function planLightMap(plan) {
+  if (plan?.scene?.layer?.light) return plan.scene.layer.light;
+  return plan?.blobLight && BLOB_LIGHT.strength > 0 ? plan.blobLight : null;
+}
+
 /* The light at (x, y) of a picture `width` x `height`: -1..1, 0 without a map. */
 function lightAt(plan, x, y, width, height) {
-  const lm = plan?.scene?.layer?.light;
+  const lm = planLightMap(plan);
   if (!lm) return 0;
   const mx = Math.max(0, Math.min(lm.sw - 1, Math.floor(x / width * lm.sw)));
   const my = Math.max(0, Math.min(lm.sh - 1, Math.floor(y / height * lm.sh)));
@@ -32710,6 +32766,7 @@ function applyPlanScene(pixels, width, height, plan) {
 function applyPlanLight(pixels, width, height, plan) {
   const L = plan?.light?.settings;
   const grade = Number(L?.grade) || 0;
+  if (L) applyBlobLight(pixels, width, height, plan);
   if (!grade) return pixels;
   const top = Math.max(...L.colour, 1);
   const lit = L.colour.map((c) => c / top);
@@ -32738,6 +32795,32 @@ function applyPlanLight(pixels, width, height, plan) {
     pixels[o] = r + r * lr * up + (dark[0] - r) * down;
     pixels[o + 1] = g + g * lg * up + (dark[1] - g) * down;
     pixels[o + 2] = b + b * lb * up + (dark[2] - b) * down;
+  }
+  return pixels;
+}
+
+/* The painting's own shapes lit (blobLightMap), in place: toward the
+ * light's colour and lighter where it falls, toward the shade's colour and
+ * darker in shade and cast shadow. */
+function applyBlobLight(pixels, width, height, plan) {
+  const lm = plan.blobLight, L = plan.light.settings;
+  const k = BLOB_LIGHT.reference * BLOB_LIGHT.strength;
+  if (!lm || !k || planHasThings(plan)) return pixels;
+  const top = Math.max(...L.colour, 1), lit = L.colour.map((c) => c / top * 1.2), dark = L.ambient.map((c) => c * 0.6);
+  const col = new Int32Array(width);
+  for (let x = 0; x < width; x++) col[x] = Math.min(lm.sw - 1, Math.floor(x / width * lm.sw));
+  for (let y = 0; y < height; y++) {
+    const row = Math.min(lm.sh - 1, Math.floor(y / height * lm.sh)) * lm.sw;
+    for (let x = 0; x < width; x++) {
+      const v = lm.map[row + col[x]];
+      if (!v) continue;
+      const o = (y * width + x) * 4, a = Math.abs(v) * k;
+      if (v > 0) {
+        pixels[o] += (pixels[o] * lit[0] - pixels[o]) * a; pixels[o + 1] += (pixels[o + 1] * lit[1] - pixels[o + 1]) * a; pixels[o + 2] += (pixels[o + 2] * lit[2] - pixels[o + 2]) * a;
+      } else {
+        pixels[o] += (dark[0] - pixels[o]) * a; pixels[o + 1] += (dark[1] - pixels[o + 1]) * a; pixels[o + 2] += (dark[2] - pixels[o + 2]) * a;
+      }
+    }
   }
   return pixels;
 }
@@ -33046,7 +33129,7 @@ function applyMannerReference(pixels, width, height, plan, manner, only = null) 
     if (tn && gn) flipThings = (ts / tn > 0.5) === (gs / gn > 0.5);
   }
   // The light map, by row and column, for the two-value split and full chroma.
-  const lm = plan.scene?.layer?.light;
+  const lm = planLightMap(plan);
   const lmCol = lm ? new Int32Array(width) : null, lmRow = lm ? new Int32Array(height) : null;
   if (lm) {
     for (let x = 0; x < width; x++) lmCol[x] = Math.min(lm.sw - 1, Math.floor(x / width * lm.sw));
@@ -33861,6 +33944,8 @@ async function prepareNewPainting(result, raw, width, height, alive) {
   const ground = composeStrokeReference(enhanced, width, height, plan);
   const source = bestRun?.params ? bestRun : current;
   if (!await step()) return null;
+  refreshPlanShapes(plan, ground, width, height);
+  if (!await step()) return null;
   plan.dims = choosePlanDims(plan, ground, width, height, source?.params);
   if (plan.scene) {
     plan.scene.dims = plan.dims;
@@ -33893,6 +33978,7 @@ function prepareStrokeReference(ref, width, height, enhanced = enhanceStrokeRefe
   }
   const plan = strokePainter.plan;
   const ground = composeStrokeReference(enhanced, width, height, plan);
+  if (fresh) refreshPlanShapes(plan, ground, width, height);
   const choosing = fresh || !plan.manner;
   const source = bestRun?.params ? bestRun : current;
   // Solidity first (it changes how the scene is painted into the picture),
@@ -33930,7 +34016,15 @@ function scheduleStrokeReference(ref, width, height, refKey) {
     const enhanced = enhanceStrokeReference(ref);
     await pause();
     if (!stillWanted()) return;
-    const composed = applyPlanScene(composeStrokeReference(enhanced, width, height, plan), width, height, plan);
+    const ground = composeStrokeReference(enhanced, width, height, plan);
+    await pause();
+    if (!stillWanted()) return;
+    // Its own shapes, and the light on them: the strokes wrap round the
+    // picture being painted now, not the one the painting began from.
+    refreshPlanShapes(plan, ground, width, height);
+    await pause();
+    if (!stillWanted()) return;
+    const composed = applyPlanScene(ground, width, height, plan);
     await pause();
     if (!stillWanted()) return;
     strokePainter.enhanced = finishPlanReference(composed, width, height, plan);
@@ -33939,13 +34033,6 @@ function scheduleStrokeReference(ref, width, height, refKey) {
     // A new picture under the same master key needs its own contours.
     strokePainter.refKey = null;
     strokeReferenceJob = null;
-    // ...and its own blobs: the strokes wrap round the picture being painted
-    // now, not the one the painting began from.
-    await pause();
-    if (!stillWanted()) return;
-    plan.liveBlobs = findPaintingBlobs(strokePainter.enhanced, width, height);
-    setBlobPitch(plan.liveBlobs, plan, height);
-    strokePainter.formField = null;
   })().catch((error) => {
     console.warn("stroke reference preparation failed", error);
     if (strokeReferenceJob === job) strokeReferenceJob = null;
@@ -35247,7 +35334,7 @@ function paintTowardReference(result, ref, width, height,
   // and still hold the painting's subject: a change may reshape the picture
   // around the door, but it does not paint the door away.
   const palette = enhance || prepared ? null : strokePainter.plan?.palette || null;
-  if (!enhance && !prepared && strokePainter.plan?.scene) {
+  if (!enhance && !prepared && (strokePainter.plan?.scene || strokePainter.plan?.light)) {
     ref = applyPlanScene(new Uint8ClampedArray(ref), width, height, strokePainter.plan);
   }
   // ...and in the painting's manner: an accepted deposit arrives as raw field
