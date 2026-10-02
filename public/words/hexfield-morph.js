@@ -16,6 +16,8 @@
  *   arc     a line that turns as it goes
  *   loop    an enclosure: a mass with its middle taken out
  *   branch  a fork: one line becoming two
+ *   point   a spike: an outline drawn out to a tip - ears, horns, beaks,
+ *           thorns, a crest
  * ...and relations:
  *   symmetry   none, mirror (left = right) or radial (n-fold)
  *   repeat     a body in segments, each smaller or larger than the last
@@ -33,7 +35,7 @@
 (function (global) {
   "use strict";
 
-  const PRIME_FORMS = ["mass", "line", "arc", "loop", "branch"];
+  const PRIME_FORMS = ["mass", "line", "arc", "loop", "branch", "point"];
   const PRIME_RELATIONS = ["symmetry", "repeat", "nest", "taper", "radiate"];
   const SYMMETRIES = ["mirror", "radial", "none"];
   const LIMB_PRIMES = ["line", "arc", "mass"];
@@ -64,12 +66,31 @@
         spread: 0.3 + rng() * 1.2, down: rng() < 0.6, width: 0.06 + rng() * 0.1, taper: 0.5 + rng() * 0.4,
         depth: Math.floor(rng() * 3), forkAngle: 0.3 + rng() * 0.8, forkShrink: 0.5 + rng() * 0.3, curl: (rng() - 0.5) * 1.2,
       },
-      head: { on: rng() < 0.6, prime: rng() < 0.85 ? "mass" : "loop", size: 0.35 + rng() * 0.4, eyes: Math.floor(rng() * 3.4) },
+      head: { on: rng() < 0.6, prime: rng() < 0.85 ? "mass" : "loop", size: 0.35 + rng() * 0.4, eyes: Math.floor(rng() * 3.4),
+        points: { n: rng() < 0.45 ? 1 + Math.floor(rng() * 2) : 0, at: 0.3 + rng() * 0.6, length: 0.3 + rng() * 0.6, width: 0.15 + rng() * 0.25 } },
+      points: { n: rng() < 0.3 ? 1 + Math.floor(rng() * 5) : 0, at: rng() * 0.8, spread: 0.2 + rng() * 1.2, length: 0.2 + rng() * 0.5, width: 0.08 + rng() * 0.2 },
+      tail: { on: rng() < 0.35, prime: rng() < 0.6 ? "arc" : "line", length: 0.5 + rng() * 1.0, curl: (rng() - 0.5) * 2, width: 0.05 + rng() * 0.08, side: rng() < 0.5 ? 1 : -1 },
       surface: { texture: pickOf(rng, TEXTURES) },
       colour: { h: Math.floor(rng() * 360), s: 35 + Math.floor(rng() * 50), l: 30 + Math.floor(rng() * 35), accent: 120 + Math.floor(rng() * 120), limbShift: (rng() - 0.5) * 60 },
       anchor: rng() < 0.7 ? "ground" : rng() < 0.6 ? "sky" : "centre",
       size: 0.25 + rng() * 0.25,
     };
+  }
+
+  /* A genome from before a rule existed gets that rule switched off, so an
+   * old population keeps breeding (the point prime and the tail came later). */
+  const DEFAULTS = {
+    head: { points: { n: 0, at: 0.5, length: 0.5, width: 0.2 } },
+    points: { n: 0, at: 0, spread: 0.6, length: 0.35, width: 0.15 },
+    tail: { on: false, prime: "arc", length: 0.8, curl: 0.6, width: 0.07, side: 1 },
+  };
+  function normalise(g) {
+    if (!g) return g;
+    g.head ||= { on: false, prime: "mass", size: 0.5, eyes: 0 };
+    g.head.points ||= { ...DEFAULTS.head.points };
+    g.points ||= { ...DEFAULTS.points };
+    g.tail ||= { ...DEFAULTS.tail };
+    return g;
   }
 
   /* ── Growth ─────────────────────────────────────────────────────────────
@@ -94,6 +115,17 @@
       pts.push([cx + Math.sin(t) * rx * r, cy - Math.cos(t) * ry * r]);
     }
     return pts;
+  }
+
+  /* A point: the outline of an ellipse (cx, cy, rx, ry) drawn out at angle
+   * `a` (0 = straight up, clockwise) to a tip `length` beyond it, `width` of
+   * a turn wide at its foot. */
+  function growPoint(out, cx, cy, rx, ry, a, length, width, colour, tone = 0) {
+    const at = (t, k = 1) => [cx + Math.sin(t) * rx * k, cy - Math.cos(t) * ry * k];
+    const r = Math.hypot(Math.sin(a) * rx, Math.cos(a) * ry);
+    const tip = [cx + Math.sin(a) * (rx + r * length), cy - Math.cos(a) * (ry + r * length)];
+    // Its foot sunk a little into the body, so the two read as one.
+    out.masses.push({ pts: [at(a - width, 0.82), tip, at(a + width, 0.82), at(a, 0.6)], colour, tone, point: true });
   }
 
   // A limb, grown and forked: strokes (line, arc) or a chain of small masses.
@@ -124,7 +156,7 @@
   }
 
   function develop(genome) {
-    const g = genome;
+    const g = normalise(genome);
     const out = { masses: [], lines: [], loops: [] };
     // The body: segments along an axis, each a scaled copy.
     const seg = g.segments, n = Math.max(1, Math.min(5, seg.n));
@@ -161,11 +193,29 @@
       const sx = base.cx + Math.cos(a) * base.rx * 0.82, sy = base.cy + Math.sin(a) * base.ry * 0.82;
       growLimb(g, out, sx, sy, a, L.length * 0.5, L.width, Math.max(0, Math.min(3, L.depth)));
     }
+    // A tail: one limb off the side of the last segment, curling.
+    if (g.tail.on) {
+      const t = centres[centres.length - 1], side = g.tail.side || 1;
+      const a = seg.vertical ? (side > 0 ? 0.35 : Math.PI - 0.35) : (side > 0 ? 0 : Math.PI);
+      const sx = t.cx + Math.cos(a) * t.rx * 0.8, sy = t.cy + Math.sin(a) * t.ry * 0.8 + (seg.vertical ? t.ry * 0.3 : 0);
+      const tailLimb = { ...g, limbs: { ...g.limbs, prime: g.tail.prime, curl: g.tail.curl * side, taper: 0.7 } };
+      growLimb(tailLimb, out, sx, sy, a - (seg.vertical ? 0.9 * side : 0), g.tail.length * 0.5, g.tail.width, 0);
+    }
     // Bodies over limbs: segments last to first, so the first is in front.
     for (let i = centres.length - 1; i >= 0; i--) {
       const c = centres[i];
       if (g.body.prime === "loop") out.loops.push({ pts: outline(g, c.cx, c.cy, c.rx, c.ry), inner: outline(g, c.cx, c.cy, c.rx * 0.55, c.ry * 0.55), colour: "body" });
       else out.masses.push({ pts: outline(g, c.cx, c.cy, c.rx, c.ry), colour: "body", tone: 0, texture: i === 0 ? g.surface.texture : null });
+      // Points on the first segment: a crest, horns, thorns - in pairs about
+      // the top (mirror), evenly round (radial), or one-sided (none).
+      const P = g.points;
+      if (i === 0 && P.n > 0) {
+        const n = Math.min(8, P.n), angles = [];
+        if (g.symmetry === "radial") for (let k = 0; k < n; k++) angles.push(P.at * Math.PI + (k / n) * Math.PI * 2);
+        else if (g.symmetry === "mirror") for (let k = 0; k < Math.ceil(n / 2); k++) { const a = P.at * Math.PI * 0.5 + k * P.spread * 0.5; angles.push(a, -a); }
+        else for (let k = 0; k < n; k++) angles.push(P.at * Math.PI + k * P.spread * 0.4);
+        for (const a of angles) growPoint(out, c.cx, c.cy, c.rx, c.ry, a, P.length, P.width, "body", 0.04);
+      }
       // Nested: the form inside itself, smaller, another tone.
       let k = 1;
       for (let d = 0; d < (g.nest.depth || 0); d++) {
@@ -179,6 +229,12 @@
       const hr = 0.5 * g.head.size;
       const hx = seg.vertical ? lead.cx : lead.cx + lead.rx + hr * 0.6;
       const hy = seg.vertical ? lead.cy - lead.ry - hr * 0.6 : lead.cy - lead.ry * 0.3;
+      // Points on the head first (ears, horns), so the head covers their feet.
+      const HP = g.head.points;
+      for (let k = 0; k < Math.min(3, HP.n || 0); k++) {
+        const a = HP.at * Math.PI * 0.5 + k * 0.5;
+        for (const side of (g.symmetry === "none" ? [1] : [1, -1])) growPoint(out, hx, hy, hr, hr, side * a, HP.length, HP.width, "body", 0.06);
+      }
       if (g.head.prime === "loop") out.loops.push({ pts: outline(g, hx, hy, hr, hr, 20), inner: outline(g, hx, hy, hr * 0.5, hr * 0.5, 20), colour: "body" });
       else out.masses.push({ pts: outline(g, hx, hy, hr, hr, 20), colour: "body", tone: 0.06 });
       const eyes = Math.max(0, Math.min(3, g.head.eyes));
@@ -207,7 +263,7 @@
       parts.push({ shape: "poly", smooth: true, pts: l.inner.map(U), colour: l.colour, cut: true });
     }
     for (const m of out.masses) {
-      if (m.pts) parts.push({ shape: "poly", smooth: true, pts: m.pts.map(U), colour: m.colour, tone: m.tone || 0, ...(m.texture ? { texture: m.texture } : {}) });
+      if (m.pts) parts.push({ shape: "poly", smooth: !m.point, pts: m.pts.map(U), colour: m.colour, tone: m.tone || 0, ...(m.texture ? { texture: m.texture } : {}) });
       else parts.push({ shape: "ellipse", box: [+((m.cx - m.rx - x0) / bw).toFixed(4), +((m.cy - m.ry - y0) / bh).toFixed(4), +(2 * m.rx / bw).toFixed(4), +(2 * m.ry / bh).toFixed(4)], colour: m.colour, tone: m.tone || 0 });
     }
     const c = g.colour;
@@ -231,10 +287,14 @@
     ["limbs.curl", -1.5, 1.5, 0.25], ["head.size", 0.2, 0.9, 0.06], ["head.eyes", 0, 3, 1, true],
     ["colour.h", 0, 359, 18, true], ["colour.s", 15, 95, 8, true], ["colour.l", 18, 75, 6, true], ["colour.accent", 60, 300, 20, true],
     ["colour.limbShift", -60, 60, 10], ["size", 0.15, 0.55, 0.04],
+    ["points.n", 0, 8, 1, true], ["points.at", 0, 1, 0.08], ["points.spread", 0.1, 1.6, 0.12], ["points.length", 0.1, 1, 0.08], ["points.width", 0.05, 0.35, 0.03],
+    ["head.points.n", 0, 3, 1, true], ["head.points.at", 0.1, 1, 0.08], ["head.points.length", 0.15, 1.2, 0.08], ["head.points.width", 0.08, 0.45, 0.04],
+    ["tail.length", 0.3, 2, 0.15], ["tail.curl", -1.6, 1.6, 0.25], ["tail.width", 0.03, 0.15, 0.015],
   ];
   const CATEGORICAL = [
     ["body.prime", BODY_PRIMES], ["symmetry", SYMMETRIES], ["segments.vertical", [true, false]], ["limbs.prime", LIMB_PRIMES],
     ["limbs.down", [true, false]], ["head.on", [true, false]], ["head.prime", BODY_PRIMES], ["surface.texture", TEXTURES], ["anchor", ANCHORS],
+    ["tail.on", [true, false]], ["tail.prime", ["arc", "line"]], ["tail.side", [1, -1]],
   ];
   const getAt = (o, path) => path.split(".").reduce((v, k) => (v == null ? v : v[k]), o);
   const setAt = (o, path, value) => { const ks = path.split("."); const last = ks.pop(); ks.reduce((v, k) => v[k], o)[last] = value; };
@@ -243,7 +303,7 @@
   /* A child a step from its parent: a few rules nudged, now and then one
    * switched outright. `rate` 0..1: how many rules move. */
   function mutate(genome, rng, rate = 0.25) {
-    const g = copy(genome);
+    const g = normalise(copy(genome));
     for (const [path, lo, hi, step, int] of NUMERIC) {
       if (rng() > rate) continue;
       let v = Number(getAt(g, path)) + gauss(rng) * step;
@@ -261,8 +321,9 @@
   /* A child of two: each rule group (body, symmetry, segments, nest, limbs,
    * head, surface, colour, anchor and size) whole from one parent or the
    * other - so legs come with their branching, a head with its eyes. */
-  const GROUPS = ["body", "symmetry", "radialN", "segments", "nest", "limbs", "head", "surface", "colour", "anchor", "size"];
+  const GROUPS = ["body", "symmetry", "radialN", "segments", "nest", "limbs", "head", "surface", "colour", "anchor", "size", "points", "tail"];
   function crossover(a, b, rng) {
+    normalise(a); normalise(b);
     const child = {};
     for (const key of GROUPS) child[key] = copy((rng() < 0.5 ? a : b)[key]);
     return child;
@@ -270,6 +331,7 @@
 
   /* How unalike two genomes are, 0 (the same rules) up. */
   function distance(a, b) {
+    normalise(a); normalise(b);
     let d = 0, n = 0;
     for (const [path, lo, hi] of NUMERIC) {
       let x = Number(getAt(a, path)), y = Number(getAt(b, path));
@@ -282,7 +344,10 @@
 
   /* What a genome is made of, in primes, for the readout. */
   function primesOf(g) {
+    normalise(g);
     const forms = new Set([g.body.prime]);
+    if (g.points.n > 0 || (g.head.on && g.head.points.n > 0)) forms.add("point");
+    if (g.tail.on) forms.add(g.tail.prime);
     if (g.limbs.n > 0) forms.add(g.limbs.prime === "mass" ? "mass" : g.limbs.prime);
     if (g.limbs.n > 0 && g.limbs.depth > 0) forms.add("branch");
     if (g.head.on) forms.add(g.head.prime);
@@ -293,5 +358,5 @@
     return { forms: [...forms], relations: relations.filter(Boolean) };
   }
 
-  global.HexfieldMorph = { PRIME_FORMS, PRIME_RELATIONS, randomGenome, develop, mutate, crossover, distance, primesOf };
+  global.HexfieldMorph = { PRIME_FORMS, PRIME_RELATIONS, randomGenome, develop, mutate, crossover, distance, primesOf, normalise };
 })(typeof window !== "undefined" ? window : globalThis);
