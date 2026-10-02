@@ -3353,6 +3353,11 @@
     // What is already painted, for shadows to fall on.
     // Without a view, the ground is taken to start halfway up.
     const behind = dims?.lighting ? { horizon: view ? view.horizon : H * 0.5, boxes: [] } : null;
+    /* `mono`: the light alone, for a light map - every thing a mid grey, lit
+     * toward white and shaded toward black, with its shadows; no lines, no
+     * glow, no air. */
+    const mono = Boolean(dims?.mono);
+    if (mono) { cued = true; sourced = true; }
     for (let index = 0; index < items.length; index++) {
       const item = items[index];
       if (!cued && item.entry.kind !== "setting") { groundCues(ctx, W, H, view); cued = true; }
@@ -3361,10 +3366,18 @@
       if (pick !== null && index !== pick) continue;
       lctx.clearRect(0, 0, W, H);
       paintItem(lctx, item, seededRandom(seeds[index]));
+      if (mono) {
+        if (item.entry.kind !== "subject" || item.lettering) continue;
+        lctx.save();
+        lctx.globalCompositeOperation = "source-atop";
+        lctx.fillStyle = "rgb(128, 128, 128)";
+        lctx.fillRect(0, 0, W, H);
+        lctx.restore();
+      }
       if (solid && item.entry.kind === "subject" && !item.lettering) dimensionItem(ctx, layer, lctx, item, W, H, dims, behind);
       if (behind && item.entry.kind === "subject" && !item.lettering && item.entry.anchor !== "sky") behind.boxes.push(item.box);
       // Distance: far things fade toward the air.
-      if (item.aerial) {
+      if (item.aerial && !mono) {
         lctx.save();
         lctx.globalCompositeOperation = "source-atop";
         lctx.fillStyle = `rgba(196, 208, 226, ${item.aerial})`;

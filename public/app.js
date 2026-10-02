@@ -32652,8 +32652,51 @@ function planSceneLayer(scene) {
   canvas.width = 0; canvas.height = 0;
   const cover = new Uint8Array(width * height);
   for (let i = 0; i < cover.length; i++) cover[i] = subjects[i * 4 + 3];
-  scene.layer = { all, cover };
+  scene.layer = { all, cover, light: sceneLightMap(scene) };
   return scene.layer;
+}
+
+/* ── The light map ──────────────────────────────────────────────────────
+ * Where the painting's light falls and where it does not, from -1 (deep
+ * shade, a cast shadow) through 0 (untouched) to 1 (full light): the scene
+ * painted small in light alone (HexfieldVisual.paint, `mono`). The scene's
+ * lighting is in the reference already, but the palette and the manner
+ * flatten it - a few colours, two values - and the brush mixes from them.
+ * The map lets the brushwork and the manners put the light back: lit sides
+ * warm and loaded, shade cool and thin, a two-value split along the form. */
+const LIGHT_MAP_SCALE = 4;
+function sceneLightMap(scene) {
+  const dims = scene.dims?.settings, L = scene.lighting;
+  if (!dims || !L || !(dims.model > 0 || dims.cast > 0 || dims.depth > 0) || !globalThis.HexfieldVisual) return null;
+  const sw = Math.max(24, Math.round(scene.width / LIGHT_MAP_SCALE)), sh = Math.max(24, Math.round(scene.height / LIGHT_MAP_SCALE));
+  const { items, view } = scaledLayout({ items: scene.items, view: scene.view }, sw / scene.width, sh / scene.height);
+  const canvas = paintBuffer(sw, sh), ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.fillStyle = "rgb(128, 128, 128)";
+  ctx.fillRect(0, 0, sw, sh);
+  globalThis.HexfieldVisual.paint(ctx, sw, sh, items, mulberry32(0x7e57a), null, {
+    ...dims, light: scene.dimsLight, mono: true,
+    lighting: { ...L, colour: [255, 255, 255], ambient: [0, 0, 0] },
+    vanish: view && !view.iso ? view.vanish : null, iso: view?.iso || 0, isoDir: view?.isoDir || 1,
+  }, view);
+  const data = ctx.getImageData(0, 0, sw, sh).data;
+  canvas.width = 0; canvas.height = 0;
+  const map = new Float32Array(sw * sh);
+  let any = false;
+  for (let i = 0; i < map.length; i++) {
+    const v = Math.max(-1, Math.min(1, ((data[i * 4] + data[i * 4 + 1] + data[i * 4 + 2]) / 3 - 128) / 110));
+    map[i] = v;
+    if (Math.abs(v) > 0.04) any = true;
+  }
+  return any ? { map, sw, sh } : null;
+}
+
+/* The light at (x, y) of a picture `width` x `height`: -1..1, 0 without a map. */
+function lightAt(plan, x, y, width, height) {
+  const lm = plan?.scene?.layer?.light;
+  if (!lm) return 0;
+  const mx = Math.max(0, Math.min(lm.sw - 1, Math.floor(x / width * lm.sw)));
+  const my = Math.max(0, Math.min(lm.sh - 1, Math.floor(y / height * lm.sh)));
+  return lm.map[my * lm.sw + mx];
 }
 
 /* Paint the scene into a composed reference, in place. */
@@ -33002,11 +33045,38 @@ function applyMannerReference(pixels, width, height, plan, manner, only = null) 
     }
     if (tn && gn) flipThings = (ts / tn > 0.5) === (gs / gn > 0.5);
   }
+  // The light map, by row and column, for the two-value split and full chroma.
+  const lm = plan.scene?.layer?.light;
+  const lmCol = lm ? new Int32Array(width) : null, lmRow = lm ? new Int32Array(height) : null;
+  if (lm) {
+    for (let x = 0; x < width; x++) lmCol[x] = Math.min(lm.sw - 1, Math.floor(x / width * lm.sw));
+    for (let y = 0; y < height; y++) lmRow[y] = Math.min(lm.sh - 1, Math.floor(y / height * lm.sh)) * lm.sw;
+  }
+  const chroma = Number(m.chroma) || 0;
+  // Full chroma turns hues by value against the picture's own middle.
+  let chromaMid = 0.5;
+  const table = chroma ? fullChromaTable() : null, route = chroma ? chromaRoute(plan) : null;
+  // Where the light map says nothing, every pixel of one hue and value comes
+  // out the same: worked out once here (index 360 is grey).
+  let unlit = null;
+  if (chroma) {
+    let sum = 0, n = 0;
+    for (let o = 0; o < pixels.length; o += 4 * 7) { sum += lo + (0.2126 * pixels[o] + 0.7152 * pixels[o + 1] + 0.0722 * pixels[o + 2]) / 255 * (hi - lo); n++; }
+    chromaMid = n ? sum / n / 255 : 0.5;
+    unlit = new Int32Array(361 * CHROMA_LEVELS);
+    for (let h = 0; h <= 360; h++) {
+      for (let level = 0; level < CHROMA_LEVELS; level++) {
+        const value = (level + 0.5) / CHROMA_LEVELS;
+        unlit[h * CHROMA_LEVELS + level] = (chromaHue(h === 360 ? -1 : h, value, 0, chromaMid, route) * CHROMA_LEVELS + level) * 3;
+      }
+    }
+  }
   for (let y = 0; y < height; y++) {
     const dy = y - cy;
     for (let x = 0; x < width; x++) {
       // `only`: the pixels the caller will keep (a deposit's changed ones).
       if (only && !only[y * width + x]) continue;
+      const lit = lm ? lm.map[lmRow[y] + lmCol[x]] : 0;
       const o = (y * width + x) * 4, dx = x - cx;
       const w = fx[x] * fy[y];
       if (flat) {
@@ -33024,13 +33094,27 @@ function applyMannerReference(pixels, width, height, plan, manner, only = null) 
       // (It was the other way round, lighting pictures from below.)
       if (m.light) L *= 1 + m.light * Math.max(-0.8, Math.min(0.8, (dx * lx + dy * ly) / diag * 2.2));
       if (m.twoTone) {
-        let paper = L > split;
+        // Paper where the light falls, ink in the shade, along the form.
+        let paper = L + lit * 70 > split;
         if (flipThings && cover && cover[y * width + x] > 110) paper = !paper;
         L += ((paper ? hi : lo) - L) * m.twoTone;
       }
       pixels[o] = L + (r - l) * m.saturation + warm[0];
       pixels[o + 1] = L + (g - l) * m.saturation + warm[1];
       pixels[o + 2] = L + (b - l) * m.saturation + warm[2];
+      if (chroma) {
+        // Inline (no array per pixel): the hue, then the full colour of it
+        // at this value from the table.
+        const value = Math.max(0, Math.min(1, L / 255));
+        const max = r > g ? (r > b ? r : b) : (g > b ? g : b), min = r < g ? (r < b ? r : b) : (g < b ? g : b), d = max - min;
+        let h = -1;
+        if (d >= 14) { h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4; h *= 60; if (h < 0) h += 360; }
+        const t = lit ? (chromaHue(h, value, lit, chromaMid, route) * CHROMA_LEVELS + chromaLevel(value, lit)) * 3
+          : unlit[(h < 0 ? 360 : Math.round(h) % 360) * CHROMA_LEVELS + chromaLevel(value, 0)];
+        pixels[o] += (table[t] - pixels[o]) * chroma;
+        pixels[o + 1] += (table[t + 1] - pixels[o + 1]) * chroma;
+        pixels[o + 2] += (table[t + 2] - pixels[o + 2]) * chroma;
+      }
     }
   }
   if (!m.blur) return pixels;
@@ -33640,6 +33724,17 @@ function* finishPlanReferenceSteps(composed, width, height, plan) {
       const d = Math.hypot(near[0] - colour[0], near[1] - colour[1], near[2] - colour[2]);
       if (d > 40 && plan.palette.length < planPaletteSize(plan) + 4) plan.palette.push(colour);
     }
+    // ...and under the light, their lit and shaded sides, so the palette can
+    // still say where the light falls.
+    if (plan.scene?.layer?.light) {
+      for (const colour of globalThis.HexfieldVisual.subjectColours(plan.scene.items)) {
+        for (const lit of [0.8, -0.8]) {
+          const c = litStrokeColour(colour, lit, plan).map(Math.round);
+          const near = nearestPaletteColour(plan.palette, c[0], c[1], c[2]);
+          if (Math.hypot(near[0] - c[0], near[1] - c[1], near[2] - c[2]) > 36 && plan.palette.length < planPaletteSize(plan) + 8) plan.palette.push(c);
+        }
+      }
+    }
   }
   pixels = snapToPalette(pixels, plan.palette, planSnapAmount(plan));
   yield;
@@ -33859,6 +33954,117 @@ function scheduleStrokeReference(ref, width, height, refKey) {
 
 /* Plan one batch of strokes: where the canvas is furthest from the reference
  * at this brush size, and which way each stroke runs. Pure; nothing is drawn. */
+/* ── Full chroma ────────────────────────────────────────────────────────
+ * Value told by hue, at full strength, instead of by white and black. Every
+ * hue has a value of its own - yellow the lightest, then orange and green,
+ * red and cyan, blue and violet the darkest - so a run from light to dark
+ * can be a run round the colour wheel: from the light's own hue (a warm
+ * yellow in sunlight, a cold cyan under the moon) to the shade's (blue,
+ * violet). There are two ways round, and each colour takes the way it is
+ * already on: a red apple goes orange and yellow into the light and magenta
+ * and violet into the shade, a green tree yellow-green and teal and blue.
+ * The value of every pixel is kept and so is its own hue where it sits at
+ * the picture's middle value; lighter than that it turns toward the light's
+ * hue, darker toward the shade's, as far as it is from the middle - so a
+ * flat colour stays itself, at full strength, and a gradient travels. */
+let chromaTable = null;
+const CHROMA_LEVELS = 64;
+function fullChromaTable() {
+  if (chromaTable) return chromaTable;
+  chromaTable = new Uint8Array(360 * CHROMA_LEVELS * 3);
+  const rgbOf = (h, l) => {
+    const a = Math.min(l, 1 - l);
+    const f = (n) => { const k = (n + h / 30) % 12; return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); };
+    return [f(0), f(8), f(4)];
+  };
+  for (let h = 0; h < 360; h++) {
+    for (let level = 0; level < CHROMA_LEVELS; level++) {
+      const target = (level + 0.5) / CHROMA_LEVELS;
+      let lo = 0, hi = 1, rgb = [0, 0, 0];
+      for (let i = 0; i < 10; i++) {
+        const mid = (lo + hi) / 2;
+        rgb = rgbOf(h, mid);
+        if (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2] < target) lo = mid; else hi = mid;
+      }
+      const o = (h * CHROMA_LEVELS + level) * 3;
+      chromaTable[o] = Math.round(rgb[0] * 255); chromaTable[o + 1] = Math.round(rgb[1] * 255); chromaTable[o + 2] = Math.round(rgb[2] * 255);
+    }
+  }
+  return chromaTable;
+}
+const hueOf = (r, g, b) => {
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  if (d < 1e-6) return -1;
+  let h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  h *= 60;
+  return h < 0 ? h + 360 : h;
+};
+/* The run for this painting: from the shade's hue (lo) to the light's (hi). */
+function chromaRoute(plan) {
+  if (plan.chromaRoute) return plan.chromaRoute;
+  const L = plan.light?.settings;
+  let hi = 55, lo = 245;
+  if (L) {
+    const lh = hueOf(...L.colour), ls = (Math.max(...L.colour) - Math.min(...L.colour)) / Math.max(1, Math.max(...L.colour));
+    // A cool light lights toward cyan; a white one toward yellow.
+    hi = lh >= 150 && lh <= 270 ? 178 : ls < 0.2 ? 55 : lh;
+    const ah = hueOf(...L.ambient);
+    lo = ah >= 0 ? ah : 245;
+    // Too near the light's hue, the shade's is pushed a quarter turn away
+    // from it, the way it already lies.
+    const apart = Math.abs(((hi - lo + 540) % 360) - 180);
+    if (apart < 90) lo = (hi + ((lo - hi + 360) % 360 < 180 ? 90 : 270)) % 360;
+  }
+  plan.chromaRoute = { lo, hi, span: (hi - lo + 360) % 360 };
+  return plan.chromaRoute;
+}
+/* The hue a colour of hue `h` (or -1 for a grey) and value `value` takes in
+ * full chroma, against the picture's middle value `mid`, the light pushing
+ * it along its run (`lit`, -1..1). */
+const CHROMA_TURN = 75;
+function chromaHue(h, value, lit, mid, route) {
+  if (h < 0) h = (route.lo + route.span / 2) % 360;    // a grey takes the warm way round
+  // How far toward the light's end (+) or the shade's (-).
+  const push = Math.max(-1, Math.min(1, (value - mid) * 2.2 + 0.5 * lit));
+  const along = (h - route.lo + 360) % 360;
+  const warmWay = along <= route.span, dir = warmWay ? 1 : -1;
+  // Along its own run to either end, and the turn toward one of them.
+  const turn = push > 0 ? dir * Math.min(warmWay ? route.span - along : along - route.span, CHROMA_TURN * push)
+    : -dir * Math.min(warmWay ? along : 360 - along, -CHROMA_TURN * push);
+  return Math.round(h + turn + 720) % 360;
+}
+const chromaLevel = (value, lit) => Math.max(0, Math.min(CHROMA_LEVELS - 1, Math.floor(Math.max(0, Math.min(1, value + 0.08 * lit)) * CHROMA_LEVELS)));
+/* One colour in full chroma (see chromaHue), as RGB. */
+function chromaColour(r, g, b, plan, lit = 0, v = null, mid = 0.5) {
+  const table = fullChromaTable(), route = chromaRoute(plan);
+  const value = v ?? (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  const grey = Math.max(r, g, b) - Math.min(r, g, b) < 14;
+  const o = (chromaHue(grey ? -1 : hueOf(r, g, b), value, lit, mid, route) * CHROMA_LEVELS + chromaLevel(value, lit)) * 3;
+  return [table[o], table[o + 1], table[o + 2]];
+}
+
+/* A stroke's colour under the light: toward the light's own colour and up
+ * in value where it falls, toward the shade's colour and down where it does
+ * not - by the manner's say (`lightHold`); a full-chroma painting turns its
+ * hue toward the light's end of its run instead. */
+function litStrokeColour(colour, lit, plan) {
+  const L = plan?.light?.settings;
+  const hold = Number(plan?.manner?.reference?.lightHold ?? 0.5);
+  if (!L || !hold) return colour;
+  if (plan.manner?.reference?.chroma) {
+    // Only the light's push here: the colour's value against the middle is
+    // in the reference already.
+    const v = (0.2126 * colour[0] + 0.7152 * colour[1] + 0.0722 * colour[2]) / 255;
+    return chromaColour(colour[0], colour[1], colour[2], plan, lit * hold, v, v);
+  }
+  const k = Math.abs(lit) * hold;
+  if (lit > 0) {
+    const top = Math.max(...L.colour, 1);
+    return colour.map((c, i) => Math.min(255, c + (c * L.colour[i] / top * 1.25 - c) * k * 0.6));
+  }
+  return colour.map((c, i) => c + (L.ambient[i] * 0.7 - c) * k * 0.55);
+}
+
 function planStrokeBatch(current, ref, gradient, width, height, radius, rng, hand = null, limit = STROKE_BATCH,
                          tolerance = STROKE_ERROR_TOLERANCE, layer = 0, palette = null) {
   const cell = Math.max(2, Math.round(radius));
@@ -33967,6 +34173,9 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       const p = nearestPaletteColour(palette, colour[0], colour[1], colour[2]);
       colour = colour.map((c, i) => c + (p[i] - c) * planSnapAmount(strokePainter.plan));
     }
+    // The light, put back after the palette has flattened it.
+    const lit = lightAt(strokePainter.plan, start.x, start.y, width, height);
+    if (lit) colour = litStrokeColour(colour, lit, strokePainter.plan);
     const points = [[start.x, start.y]];
     let x = start.x, y = start.y, lastDx = 0, lastDy = 0;
     // Where the reference has no direction of its own, a stroke sweeps straight
@@ -34024,7 +34233,8 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
     const jitter = Number(brush?.jitter) >= 0 ? Number(brush.jitter) : 6 + 10 * Math.max(0, ene);
     const stroke = {
       points,
-      width: width2 * 2 * (0.8 + rng() * 0.35),
+      // Paint is loaded where the light falls and thin in the shade.
+      width: width2 * 2 * (0.8 + rng() * 0.35) * (1 + (lit > 0 ? 0.16 : 0.1) * lit),
       colour: colour.map((c) => Math.max(0, Math.min(255, Math.round(c + (rng() - 0.5) * jitter)))),
       bristle: rng(),
     };

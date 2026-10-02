@@ -29,6 +29,11 @@
  *   twoTone      0..1: values pushed toward two, paper and ink
  *   flatGround   0..1: away from the focus and the named things, the ground
  *                settles to one colour (figures on a field, not a texture)
+ *   chroma       0..1: value told by hue at full strength instead of by
+ *                white and black (app.js, full chroma)
+ *   lightHold    0..1: how much of the painting's light the brushwork puts
+ *                back after the palette flattens it (lit warm and loaded,
+ *                shade cool and thin)
  *
  * brush - how each stroke is laid
  *   alpha        opacity of a stroke (low = glazes that build up slowly)
@@ -73,7 +78,7 @@
         "few colours, fully saturated",
         "the same energy all over the picture, no quiet ground",
       ],
-      reference: { saturation: 1.45, keys: [18, 240], palette: 5, snap: 1, contour: 1, flatGround: 0.9 },
+      reference: { saturation: 1.45, keys: [18, 240], palette: 5, snap: 1, contour: 1, flatGround: 0.9, lightHold: 0.35 },
       brush: { alpha: 1, bristle: false, round: true, jitter: 0, length: 1.5, evenDetail: 0.85, edgeStop: 22 },
       leans: { pot: 0.6, ene: 0.4, con: 0.3 },
       words: ["pop", "cartoon", "comic", "neon", "graffiti", "dance", "party", "bold", "loud", "sign", "poster", "street"],
@@ -87,7 +92,7 @@
         "a dark, warm ground with the light gathered at the focus",
         "a narrow, earthy palette, low in saturation",
       ],
-      reference: { saturation: 0.72, warmth: 12, keys: [14, 238], groundDark: 0.65, light: 0.3, blur: 0.5, palette: 7, snap: 0.3 },
+      reference: { saturation: 0.72, warmth: 12, keys: [14, 238], groundDark: 0.65, light: 0.3, blur: 0.5, palette: 7, snap: 0.3, lightHold: 0.6 },
       brush: { alpha: 0.7, bristle: false, jitter: 3, length: 1.1, tips: { soft: 0.75, filbert: 0.25 } },
       leans: { ene: -0.6, pot: -0.4, val: -0.3 },
       words: ["old", "ancient", "portrait", "saint", "angel", "mist", "fog", "smoke", "dream", "quiet", "candle", "dusk", "memory", "silence"],
@@ -101,7 +106,7 @@
         "warm light against cool shade",
         "the whole surface alive with touches",
       ],
-      reference: { saturation: 1.35, keys: [70, 245], palette: 9, snap: 0.4 },
+      reference: { saturation: 1.35, keys: [70, 245], palette: 9, snap: 0.4, lightHold: 0.6 },
       brush: { alpha: 0.9, bristle: true, jitter: 42, length: 0.35, width: 0.8, evenDetail: 0.5, tips: { filbert: 0.45, round: 0.35, flat: 0.2 } },
       leans: { val: 0.5, mul: 0.4, ene: 0.2 },
       words: ["garden", "flower", "flowers", "sun", "summer", "spring", "morning", "meadow", "pond", "picnic", "bloom", "blossom"],
@@ -115,10 +120,24 @@
         "tone made by hatching in a single direction",
         "big dark shapes against white",
       ],
-      reference: { saturation: 0.35, keys: [14, 238], twoTone: 0.85, palette: 3, snap: 0.9, flatGround: 0.5 },
+      reference: { saturation: 0.35, keys: [14, 238], twoTone: 0.85, palette: 3, snap: 0.9, flatGround: 0.5, lightHold: 0.2 },
       brush: { alpha: 1, bristle: false, jitter: 2, length: 1.4, width: 0.55, hatch: 0.85, evenDetail: 0.4, edgeStop: 48, tips: { flat: 1 } },
       leans: { con: 0.5, bnd: 0.4, pot: 0.3 },
       words: ["storm", "wood", "forest", "war", "raven", "crow", "skull", "bone", "winter", "ink", "wolf", "woodcut", "print"],
+    },
+
+    "full-chroma": {
+      name: "full chroma",
+      principles: [
+        "every colour at full strength; nothing greyed, nothing black",
+        "light and shade told by hue: toward the light's colour in the light, toward the shade's in the shade",
+        "each colour turns the way round the wheel it is already on - warm through orange and red, cool through green and blue",
+        "gradients that travel through the spectrum instead of fading",
+      ],
+      reference: { chroma: 0.85, saturation: 1.3, keys: [16, 248], palette: 12, snap: 0.2, lightHold: 0.75 },
+      brush: { alpha: 0.95, jitter: 16, length: 0.9, tips: { filbert: 0.4, flat: 0.3, round: 0.3 } },
+      leans: { val: 0.4, ene: 0.4, mul: 0.3 },
+      words: ["vivid", "rainbow", "wild", "psychedelic", "tropical", "carnival", "festival", "colourful", "colorful", "jungle", "parrot", "fauve", "spectrum", "prism"],
     },
   };
 
@@ -126,7 +145,7 @@
    * where the manner says nothing. */
   const REFERENCE_DEFAULTS = {
     saturation: 1, warmth: 0, keys: [0, 255], groundDark: 0, light: 0, blur: 0,
-    palette: 0, snap: -1, contour: 0, twoTone: 0, flatGround: 0,
+    palette: 0, snap: -1, contour: 0, twoTone: 0, flatGround: 0, chroma: 0, lightHold: 0.5,
   };
   // `tips`: which brush tips the manner paints with (app.js, BRUSH_TIPS);
   // null leaves it to the painting's own kit.
