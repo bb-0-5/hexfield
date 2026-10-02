@@ -31533,6 +31533,10 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
   const toThird = (v) => v + ((Math.abs(v - 1 / 3) < Math.abs(v - 2 / 3) ? 1 / 3 : 2 / 3) - v) * 0.6;
   if (width >= height) { fx = toThird(fx); fy += (0.45 - fy) * 0.4; } else { fy = toThird(fy); fx += (0.5 - fx) * 0.4; }
   const plan = { fx, fy, lightOnDark: true, palette: null, drawSeed, style: paintingBrushStyle(params), scene: null };
+  // Where the painting's focus goes - chosen, learned, and not the same as
+  // the last few paintings (choosePlanComposition).
+  plan.comp = choosePlanComposition(plan, ref, width, height, params);
+  if (plan.comp) { plan.fx = plan.comp.fx; plan.fy = plan.comp.fy; fx = plan.fx; fy = plan.fy; }
   /* One light for the whole painting - the side light of a manner, the
    * modelling and cast shadows of solid things, the hatching of a print. The
    * direction toward it, always from above, left or right of overhead. */
@@ -31541,7 +31545,7 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
   /* Things the words name (visual dictionary, words/hexfield-visual.js): the
    * first one takes the focus, and the painting is built around it. */
   plan.blobs = findPaintingBlobs(ref, width, height);
-  const scene = planScene(params, width, height, fx, drawSeed, ref, plan.blobs);
+  const scene = planScene(params, width, height, fx, drawSeed, ref, plan.blobs, plan.comp ? fy : null);
   if (scene?.focus) { plan.fx = scene.focus.fx; plan.fy = scene.focus.fy; }
   plan.scene = scene;
   setBlobPitch(plan.blobs, plan, height);
@@ -31551,6 +31555,45 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
   const { Lf, Lb } = planLuminanceStats(ref, width, height, plan);
   plan.lightOnDark = Math.abs(Lf - Lb) > 6 ? Lf > Lb : mulberry32((Number(drawSeed) || 7) >>> 0)() < 0.6;
   return plan;
+}
+
+/* ── Composition ────────────────────────────────────────────────────────
+ * Where a painting's focus goes, on the thirds of the picture: nine places
+ * (the four crossings, the middle of each side's third, the centre). The
+ * picture's own focus leans toward the place nearest it; the words can ask
+ * (a sky, a horizon, a portrait); the places the last few paintings used
+ * give way hard - no painting has the same composition as the one before
+ * it - and how the paintings in each place have scored is learned like
+ * every other choice (axis "comp"). The focus is then put there, kept a
+ * little toward where the picture had it. */
+const COMP_ZONES = {
+  centre: [0.5, 0.5], high: [0.5, 1 / 3], low: [0.5, 2 / 3], left: [1 / 3, 0.5], right: [2 / 3, 0.5],
+  "left-high": [1 / 3, 1 / 3], "right-high": [2 / 3, 1 / 3], "left-low": [1 / 3, 2 / 3], "right-low": [2 / 3, 2 / 3],
+};
+const COMP_WORDS = {
+  high: ["sky", "bird", "moon", "sun", "flying", "kite", "cloud", "clouds", "star"], low: ["ground", "sea", "field", "beach", "grass", "floor", "lake"],
+  centre: ["portrait", "face", "icon", "symbol", "mandala", "logo"],
+};
+// The last paintings' places give way: the last one most.
+const COMP_REPEAT_PENALTY = [1.6, 1, 0.6];
+function choosePlanComposition(plan, ref, width, height, params) {
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0xc0e1) >>> 0);
+  const words = (params?.__hexfieldWords?.text || "").toLowerCase().match(/[a-z]+/g) || [];
+  const recent = (recentChoices().comp || []).slice().reverse();
+  const keys = Object.keys(COMP_ZONES);
+  const near = (k) => Math.hypot(COMP_ZONES[k][0] - plan.fx, COMP_ZONES[k][1] - plan.fy);
+  const nearest = keys.slice().sort((a, b) => near(a) - near(b));
+  const scores = chooseByTaste(keys, {
+    rng, tasted: 0, axis: "comp", given: null,
+    lean: (k) => (k === nearest[0] ? 0.5 : k === nearest[1] ? 0.2 : 0) +
+      words.filter((w) => (COMP_WORDS[k] || []).some((z) => w === z)).length * 0.5 +
+      words.filter((w) => (COMP_WORDS[k.split("-")[1]] || []).includes(w)).length * 0.3 -
+      recent.slice(0, COMP_REPEAT_PENALTY.length).reduce((sum, r, i) => sum + (r === k ? COMP_REPEAT_PENALTY[i] : 0), 0),
+    learned: () => 0, taste: () => null,
+  });
+  plan.compScores = summariseChoice(scores);
+  const key = scores[0].key, [zx, zy] = COMP_ZONES[key];
+  return { key, fx: zx + (plan.fx - zx) * 0.2, fy: zy + (plan.fy - zy) * 0.2 };
 }
 
 /* ─── What the words name ───
@@ -31736,7 +31779,7 @@ function chooseScenePerspective(read, width, height, ref, layoutFor, params, dra
   return chosen;
 }
 
-function planScene(params, width, height, fx, drawSeed, ref = null, blobs = null) {
+function planScene(params, width, height, fx, drawSeed, ref = null, blobs = null, fy = null) {
   const Visual = globalThis.HexfieldVisual;
   const text = params?.__hexfieldWords?.text || "";
   const letters = seedText().replace(/\s+/g, " ").slice(0, 24);
@@ -31762,7 +31805,10 @@ function planScene(params, width, height, fx, drawSeed, ref = null, blobs = null
   }
   // One layout seed, so every perspective lays out the same things the same way.
   const layoutSeed = Math.floor(rng() * 4294967296) >>> 0;
-  const layoutFor = (settings) => Visual.layout(read, width, height, mulberry32(layoutSeed), width >= height ? fx : null, settings);
+  // Where the composition puts the main thing: across (fx) and, through the
+  // ground line, up or down (fy) - on a phone too.
+  const layoutFor = (settings) => Visual.layout(read, width, height, mulberry32(layoutSeed), fx,
+    Number.isFinite(fy) ? { ...(settings || {}), placeY: fy } : settings);
   const forms = read.subjects.length && globalThis.HexfieldVisual.sampleForm
     ? chooseSceneForms(read, width, height, ref, layoutFor, params, drawSeed) : null;
   const things = read.subjects.length + read.settings.filter((s) => !s.implied).length;
@@ -35210,6 +35256,7 @@ function planStyleChain(plan) {
     manner: plan?.manner?.key || null, tips: plan?.tips?.key || null, finish: plan?.finish?.key || null,
     dims: plan?.dims?.key || null, perspective: plan?.scene?.perspective?.key || null, form: plan?.scene?.forms?.key || null,
     look: plan?.finish?.look || null, light: plan?.light?.key || null,
+    comp: plan?.comp?.key || null,
     combo: plan?.finish ? plan.finish.combo || "single" : null, finish2: plan?.finish?.layers?.[0]?.key || null,
     look2: plan?.finish?.layers?.[0]?.look || null,
     // The tuned value of the first filter's look, and of a stack's strength.
@@ -35328,7 +35375,7 @@ function computeStyleOutcomeStats() {
 /* A chain's choices as small numbers (axis and option), worked out once per
  * row: counting every pair of hundreds of chains by name cost a phone tens
  * of milliseconds. */
-const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form", "look", "light", "combo", "finish2", "look2"];
+const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form", "look", "light", "combo", "finish2", "look2", "comp"];
 function compactTune(finish) {
   const v = tuneValue(finish.key, finish.settings || {});
   const layer = finish.layers?.[0];

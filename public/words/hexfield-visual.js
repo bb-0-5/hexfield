@@ -2089,8 +2089,17 @@
     }
     if (horizon == null && eye != null) horizon = eye;
     const groundShare = persp && Number.isFinite(persp.ground) ? persp.ground : 0.62;
-    const groundY = (horizon != null ? horizon + (1 - horizon) * groundShare : 0.92) * H;
+    let groundY = (horizon != null ? horizon + (1 - horizon) * groundShare : 0.92) * H;
     const horizonY = (horizon ?? 0.62) * H;
+    /* `placeY`: where the painting's composition wants the main thing's
+     * middle, 0 top to 1 bottom. Things that stand stand on one ground, so
+     * the ground line moves - never above the horizon, never off the foot
+     * of the picture. */
+    const firstStanding = scene.subjects.find((s) => !s.attach && s.entry.anchor !== "sky" && s.entry.anchor !== "centre");
+    if (Number.isFinite(persp?.placeY) && firstStanding) {
+      const mainH = Math.min(firstStanding.entry.size * H, W * 0.8 / Math.max(0.05, firstStanding.entry.aspect));
+      groundY = Math.max(horizonY + 0.06 * H, Math.min(H * 0.97, persp.placeY * H + mainH * 0.5));
+    }
     const depthK = Number(persp?.depth) || 0, iso = Number(persp?.iso) || 0;
     const vanishX = (Number.isFinite(persp?.vanishX) ? persp.vanishX : 0.5) * W;
     const isoDir = fx != null && fx > 0.5 ? -1 : 1;
@@ -2180,7 +2189,9 @@
           x = (s.key === "star" ? rng() : cx / W + (c / (copies - 1) - 0.5) * spread + (rng() - 0.5) * 0.06) * W;
           if (anchor === "sky") y = (s.key === "star" ? 0.06 + rng() * 0.5 : 0.1 + rng() * 0.3) * H + h / 2;
           else y = bottom + (rng() - 0.5) * h * 0.08;
-          k = 0.7 + rng() * 0.5;
+          // Each copy its own size, spread through the range, so no two are
+          // the same thing at the same size side by side.
+          k = 0.7 + ((c + 0.2 + rng() * 0.6) / copies) * 0.5;
         }
         let bw = w * k * fit * importance * towering * guideK * (s.form?.stretch || 1), bh = h * k * fit * importance * towering * guideK;
         if (bw > W * 0.9) { bh *= W * 0.9 / bw; bw = W * 0.9; }
@@ -2205,7 +2216,7 @@
         const room = Math.min(H - bh * 0.02, y) - H * 0.02;
         if (bh > room && room > 0) { bw *= room / bh; bh = room; }
         const box = { x: x - bw / 2, y: Math.min(H - bh * 0.02, y) - bh, w: bw, h: bh };
-        const item = { ...s, box, alpha: 1, z, depth };
+        const item = { ...s, box, alpha: 1, z, depth, relTo: s.relation && before ? before.key : null };
         // Copies are cousins, not clones: the same style, their own genes.
         if (s.form) item.form = c ? { ...s.form, seed: (s.form.seed + c * 7919) >>> 0, parts: null } : s.form;
         if (persp?.aerial && depth) item.aerial = Math.min(0.7, depth * persp.aerial);
@@ -2227,6 +2238,7 @@
         }
       }
     });
+    separateThings(placed, W, H);
     const view = persp && (depthK || iso || persp.lines) ? {
       horizon: horizonY, vanish: [vanishX, horizonY], lines: Number(persp.lines) || 0, iso, isoDir, ground: groundY,
     } : null;
@@ -2251,6 +2263,89 @@
       ? { fx: (first.box.x + first.box.w / 2) / W, fy: (first.box.y + first.box.h / 2) / H }
       : null;
     return { items, focus, horizon, view };
+  }
+
+  /* No redundant composition within a painting: two things that were not
+   * asked to overlap (on, in, behind, in front, above, below) and land over
+   * each other - one hiding most of the other - are moved apart, the later
+   * one sideways toward the room there is, and made smaller if there is no
+   * room. A little overlap is kept: things in a picture touch. */
+  const OVERLAP_TOLERATED = 0.35, OVERLAP_LEFT = 0.15;
+  const MEANT_TO_OVERLAP = new Set(["on", "in", "behind", "front", "above", "below"]);
+  function separateThings(placed, W, H) {
+    const meant = (a, b) => (b.relation && MEANT_TO_OVERLAP.has(b.relation) && b.relTo === a.key) ||
+      (a.relation && MEANT_TO_OVERLAP.has(a.relation) && a.relTo === b.key) || b.within === a.key || a.within === b.key;
+    const overlap = (a, b) => {
+      const ix = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
+      const iy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+      return (ix * iy) / Math.max(1, Math.min(a.w * a.h, b.w * b.h));
+    };
+    for (let round = 0; round < 4; round++) {
+      let moved = false;
+      for (let j = 1; j < placed.length; j++) {
+        for (let i = 0; i < j; i++) {
+          const a = placed[i], b = placed[j];
+          if (a.entry.kind !== "subject" || b.entry.kind !== "subject" || meant(a, b)) continue;
+          if (overlap(a.box, b.box) <= OVERLAP_TOLERATED) continue;
+          const A = a.box, B = b.box;
+          // Toward the side with more room, far enough that only a sliver
+          // of the narrower one's width is shared.
+          const right = (W - (A.x + A.w)) - B.w >= A.x - B.w ? B.x + B.w / 2 >= A.x + A.w / 2 || A.x < B.w : false;
+          const keep = OVERLAP_LEFT * Math.min(A.w, B.w);
+          let x = right ? A.x + A.w - keep : A.x - B.w + keep;
+          x = Math.max(W * 0.02, Math.min(W * 0.98 - B.w, x));
+          b.box = { ...B, x };
+          if (overlap(a.box, b.box) > OVERLAP_TOLERATED) {
+            // No room: smaller, standing where it stood.
+            const k = 0.85, foot = B.y + B.h;
+            b.box = { x: b.box.x + b.box.w * (1 - k) / 2, y: foot - B.h * k, w: B.w * k, h: B.h * k };
+          }
+          moved = true;
+        }
+      }
+      if (!moved) break;
+    }
+    /* Still on top of each other: there is no room beside the biggest (a
+     * phone is narrow, and three things at full size do not fit across it).
+     * The things that stand freely are scaled together until they fit in a
+     * row, and stood side by side, the first as near its place as it can. */
+    const free = placed.filter((it, j) => it.entry.kind === "subject" && it.entry.anchor !== "sky" &&
+      !placed.slice(0, j).some((a) => meant(a, it)));
+    const crowded = free.some((b, j) => free.slice(0, j).some((a) => overlap(a.box, b.box) > OVERLAP_TOLERATED));
+    // Things that were meant to sit with one of these go with it.
+    const followers = (it) => placed.filter((o) => o !== it && meant(it, o) && !free.includes(o));
+    if (!crowded || free.length < 2) {
+      // Nothing crowded: just keep every free thing inside the picture.
+      for (const it of free) {
+        const B = it.box;
+        if (B.w > W * 0.98) continue;
+        const dx = B.x < W * 0.01 ? W * 0.01 - B.x : B.x + B.w > W * 0.99 ? W * 0.99 - B.x - B.w : 0;
+        if (!dx) continue;
+        it.box = { ...B, x: B.x + dx };
+        for (const f of followers(it)) f.box = { ...f.box, x: f.box.x + dx };
+      }
+      return;
+    }
+    const first = free[0], target = first.box.x + first.box.w / 2;
+    const room = W * 0.94, gap = W * 0.015;
+    const total = free.reduce((sum, it) => sum + it.box.w, 0) + gap * (free.length - 1);
+    const k = Math.min(1, room / total);
+    const row = free.slice().sort((a, b) => (a.box.x + a.box.w / 2) - (b.box.x + b.box.w / 2));
+    let x = 0;
+    const at = new Map();
+    for (const it of row) { at.set(it, x); x += it.box.w * k + gap; }
+    const width = x - gap;
+    const firstAt = at.get(first) + first.box.w * k / 2;
+    const offset = Math.max(W * 0.03, Math.min(W * 0.97 - width, target - firstAt));
+    for (const it of row) {
+      const B = it.box, foot = B.y + B.h;
+      const nb = { x: offset + at.get(it), y: foot - B.h * k, w: B.w * k, h: B.h * k };
+      for (const f of followers(it)) {
+        const F = f.box;
+        f.box = { x: nb.x + (F.x - B.x) * k, y: foot - (foot - F.y) * k, w: F.w * k, h: F.h * k };
+      }
+      it.box = nb;
+    }
   }
 
   /* ── Drawing ──────────────────────────────────────────────────────────── */
