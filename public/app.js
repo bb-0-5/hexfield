@@ -33002,6 +33002,15 @@ function rebuildSceneForLettering(scene) {
  * keeping them readable against what surrounds them). Drawn once per plan. */
 function planSceneLayer(scene) {
   if (scene.layer) return scene.layer;
+  const steps = planSceneLayerSteps(scene);
+  while (!steps.next().done) { /* all at once */ }
+  return scene.layer;
+}
+/* The same, a step per task: the whole scene, the subjects alone and the
+ * light map are each most of a phone's frame budget, and drawn in one task
+ * they held a new painting's start for over half a second. */
+function* planSceneLayerSteps(scene) {
+  if (scene.layer) return;
   const { width, height } = scene;
   const canvas = paintBuffer(width, height);
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
@@ -33016,12 +33025,14 @@ function planSceneLayer(scene) {
     return ctx.getImageData(0, 0, width, height).data;
   };
   const all = draw(null);
+  yield;
   const subjects = draw("subject");
   canvas.width = 0; canvas.height = 0;
   const cover = new Uint8Array(width * height);
   for (let i = 0; i < cover.length; i++) cover[i] = subjects[i * 4 + 3];
-  scene.layer = { all, cover, light: sceneLightMap(scene) };
-  return scene.layer;
+  yield;
+  // Whatever finished it first (a synchronous caller) wins.
+  if (!scene.layer) scene.layer = { all, cover, light: sceneLightMap(scene) };
 }
 
 /* ── The light map ──────────────────────────────────────────────────────
@@ -33124,17 +33135,17 @@ function lightAt(plan, x, y, width, height) {
 }
 
 /* Paint the scene into a composed reference, in place. */
-function applyPlanScene(pixels, width, height, plan) {
-  return applyPlanLight(applySceneLayer(pixels, width, height, plan), width, height, plan);
+function applyPlanScene(pixels, width, height, plan, only = null) {
+  return applyPlanLight(applySceneLayer(pixels, width, height, plan, only), width, height, plan, only);
 }
 
 /* The painting under its light: the lights of the picture toward the
  * light's colour, the darks toward the colour of its shade - golden hour
  * warm, moonlight blue - as far as the light grades. In place. */
-function applyPlanLight(pixels, width, height, plan) {
+function applyPlanLight(pixels, width, height, plan, only = null) {
   const L = plan?.light?.settings;
   const grade = Number(L?.grade) || 0;
-  if (L) applyBlobLight(pixels, width, height, plan);
+  if (L) applyBlobLight(pixels, width, height, plan, only);
   if (!grade) return pixels;
   const top = Math.max(...L.colour, 1);
   const lit = L.colour.map((c) => c / top);
@@ -33157,6 +33168,7 @@ function applyPlanLight(pixels, width, height, plan) {
   for (let o = 0, i = 0, x = 0, y = 0; o < pixels.length; o += 4, i++) {
     let e = exposure;
     if (lamp) { e += (1.05 - exposure) * fall[x] * rows[y]; if (++x === width) { x = 0; y++; } }
+    if (only && !only[i]) continue;
     const r = pixels[o] * e, g = pixels[o + 1] * e, b = pixels[o + 2] * e;
     const v = Math.min(255, (54 * r + 183 * g + 19 * b) >> 8);
     const up = upBy[v], down = downBy[v];
@@ -33170,7 +33182,7 @@ function applyPlanLight(pixels, width, height, plan) {
 /* The painting's own shapes lit (blobLightMap), in place: toward the
  * light's colour and lighter where it falls, toward the shade's colour and
  * darker in shade and cast shadow. */
-function applyBlobLight(pixels, width, height, plan) {
+function applyBlobLight(pixels, width, height, plan, only = null) {
   const lm = plan.blobLight, L = plan.light.settings;
   const k = BLOB_LIGHT.reference * BLOB_LIGHT.strength;
   if (!lm || !k || planHasThings(plan)) return pixels;
@@ -33181,7 +33193,7 @@ function applyBlobLight(pixels, width, height, plan) {
     const row = Math.min(lm.sh - 1, Math.floor(y / height * lm.sh)) * lm.sw;
     for (let x = 0; x < width; x++) {
       const v = lm.map[row + col[x]];
-      if (!v) continue;
+      if (!v || (only && !only[y * width + x])) continue;
       const o = (y * width + x) * 4, a = Math.abs(v) * k;
       if (v > 0) {
         pixels[o] += (pixels[o] * lit[0] - pixels[o]) * a; pixels[o + 1] += (pixels[o + 1] * lit[1] - pixels[o + 1]) * a; pixels[o + 2] += (pixels[o + 2] * lit[2] - pixels[o + 2]) * a;
@@ -33194,11 +33206,12 @@ function applyBlobLight(pixels, width, height, plan) {
 }
 
 /* The scene's layer painted into a composed reference, in place. */
-function applySceneLayer(pixels, width, height, plan) {
+function applySceneLayer(pixels, width, height, plan, only = null) {
   const scene = plan?.scene;
   if (!scene || scene.width !== width || scene.height !== height || !globalThis.HexfieldVisual) return pixels;
   const { all, cover } = planSceneLayer(scene);
   for (let o = 0, i = 0; o < pixels.length; o += 4, i++) {
+    if (only && !only[i]) continue;
     const a = (all[o + 3] / 255) * (scene.strength || SCENE_STRENGTH);
     if (!a) continue;
     pixels[o] += (all[o] - pixels[o]) * a;
@@ -33511,15 +33524,26 @@ function applyMannerReference(pixels, width, height, plan, manner, only = null) 
   // out the same: worked out once here (index 360 is grey).
   let unlit = null;
   if (chroma) {
-    let sum = 0, n = 0;
-    for (let o = 0; o < pixels.length; o += 4 * 7) { sum += lo + (0.2126 * pixels[o] + 0.7152 * pixels[o + 1] + 0.0722 * pixels[o + 2]) / 255 * (hi - lo); n++; }
-    chromaMid = n ? sum / n / 255 : 0.5;
-    unlit = new Int32Array(361 * CHROMA_LEVELS);
-    for (let h = 0; h <= 360; h++) {
-      for (let level = 0; level < CHROMA_LEVELS; level++) {
-        const value = (level + 0.5) / CHROMA_LEVELS;
-        unlit[h * CHROMA_LEVELS + level] = (chromaHue(h === 360 ? -1 : h, value, 0, chromaMid, route) * CHROMA_LEVELS + level) * 3;
+    /* The middle is the whole picture's: measured on a full reference and
+     * kept for the painting, so an accepted change (`only`, a few pixels)
+     * turns its hues against the same middle - and neither it nor the
+     * table below is worked out again for every change. */
+    if (!only || !Number.isFinite(plan.chromaMid)) {
+      let sum = 0, n = 0;
+      for (let o = 0; o < pixels.length; o += 4 * 7) { sum += lo + (0.2126 * pixels[o] + 0.7152 * pixels[o + 1] + 0.0722 * pixels[o + 2]) / 255 * (hi - lo); n++; }
+      if (n) plan.chromaMid = sum / n / 255;
+    }
+    chromaMid = Number.isFinite(plan.chromaMid) ? plan.chromaMid : 0.5;
+    if (plan.chromaUnlit?.mid === chromaMid && plan.chromaUnlit.route === route) unlit = plan.chromaUnlit.table;
+    else {
+      unlit = new Int32Array(361 * CHROMA_LEVELS);
+      for (let h = 0; h <= 360; h++) {
+        for (let level = 0; level < CHROMA_LEVELS; level++) {
+          const value = (level + 0.5) / CHROMA_LEVELS;
+          unlit[h * CHROMA_LEVELS + level] = (chromaHue(h === 360 ? -1 : h, value, 0, chromaMid, route) * CHROMA_LEVELS + level) * 3;
+        }
       }
+      plan.chromaUnlit = { mid: chromaMid, route, table: unlit };
     }
   }
   for (let y = 0; y < height; y++) {
@@ -34121,8 +34145,8 @@ function paintContourInk(result, plan) {
  * new and not yet in the manner; the rest already is, and treating it again
  * would darken, saturate or split it twice. Values and colour only - the
  * outline and soft edges come from the painting's own reference. */
-function mannerDeposit(ref, width, height, plan) {
-  const canvas = vctx.getImageData(0, 0, width, height).data;
+function mannerDeposit(ref, width, height, plan, canvasNow = null) {
+  const canvas = canvasNow || vctx.getImageData(0, 0, width, height).data;
   if (canvas.length !== ref.length) return ref;
   const manner = plan.manner;
   // Only the changed pixels are kept, so only they are treated: a deposit is
@@ -34321,6 +34345,10 @@ async function prepareNewPainting(result, raw, width, height, alive) {
     plan.scene.lighting = planLighting(plan);
     plan.scene.layer = null;
     plan.scene.readable = false;
+  }
+  if (plan.scene) {
+    const layerSteps = planSceneLayerSteps(plan.scene);
+    do { if (!await step()) return null; } while (!layerSteps.next().done);
   }
   if (!await step()) return null;
   const composed = applyPlanScene(ground, width, height, plan);
@@ -34934,9 +34962,16 @@ const hasFinish = (finish) => Boolean(finish && (finish.key !== "none" || finish
  * two filters meet softly. Kept until the shapes or the size change. */
 function finishRegionMask(plan, layer, w, h) {
   const blobs = plan?.liveBlobs || plan?.blobs || null;
-  const key = w + "x" + h + ":" + layer.region;
-  if (layer.mask && layer.maskKey === key && layer.maskFor === (layer.region === "things" ? plan.scene?.layer : blobs)) return layer.mask;
-  const mask = paintBuffer(w, h), mctx = mask.getContext("2d");
+  /* Kept while its shapes stay put: the painting's shapes are found again
+   * with every new reference, usually much where they were, and rebuilding
+   * the mask each time nearly doubled a refresh. Keyed on the two biggest,
+   * to a twentieth of the picture. */
+  const shapeKey = layer.region === "things" ? "" : (blobs || []).slice().sort((a, b) => b.area - a.area).slice(0, 2)
+    .map((b) => [b.box.x / (view?.width || 1), b.box.y / (view?.height || 1), b.box.w / (view?.width || 1), b.box.h / (view?.height || 1)]
+      .map((v) => Math.round(v * 20)).join(",")).join("|");
+  const key = w + "x" + h + ":" + layer.region + ":" + shapeKey;
+  if (layer.mask && layer.maskKey === key && (layer.region !== "things" || layer.maskFor === plan.scene?.layer)) return layer.mask;
+  const mask = paintBuffer(w, h), mctx = mask.getContext("2d", { willReadFrequently: true });
   const cover = plan?.scene?.layer?.cover;
   if (layer.region === "things" && cover && plan.scene) {
     const { width: sw, height: sh } = plan.scene;
@@ -34983,7 +35018,10 @@ function renderFinishRecipe(source, W, H, finish, cap = 900, { reuse = false, in
       octx.globalCompositeOperation = layer.blend || "source-over";
       octx.drawImage(piece, 0, 0, out.width, out.height);
     } else {
-      const cut = paintBuffer(out.width, out.height), cctx = cut.getContext("2d");
+      // Every canvas here in the same memory as the finish's own (read back
+      // often): mixing them with accelerated ones made each draw a copy
+      // between the two.
+      const cut = paintBuffer(out.width, out.height), cctx = cut.getContext("2d", { willReadFrequently: true });
       cctx.drawImage(piece, 0, 0, out.width, out.height);
       cctx.globalCompositeOperation = "destination-in";
       cctx.drawImage(finishRegionMask(plan, layer, out.width, out.height), 0, 0);
@@ -35486,8 +35524,11 @@ function hideFinishLayer() {
   if (finishLayer) finishLayer.style.display = "none";
   finishLayerShown = { revision: -1, plan: null };
 }
-function scheduleFinishLayer(delay = isMobileBrowser() ? 3000 : 1200) {
+function scheduleFinishLayer(delay = null) {
   if (finishLayerTimer) return;
+  // Two filters cost nearly twice one: on a phone they follow the paint a
+  // little less often.
+  if (delay === null) delay = isMobileBrowser() ? (strokePainter.plan?.finish?.layers?.length ? 5000 : 3000) : 1200;
   finishLayerTimer = setTimeout(() => { finishLayerTimer = null; refreshFinishLayer(); }, delay);
 }
 function refreshFinishLayer() {
@@ -36065,14 +36106,31 @@ function paintTowardReference(result, ref, width, height,
   // and still hold the painting's subject: a change may reshape the picture
   // around the door, but it does not paint the door away.
   const palette = enhance || prepared ? null : strokePainter.plan?.palette || null;
-  if (!enhance && !prepared && (strokePainter.plan?.scene || strokePainter.plan?.light)) {
-    ref = applyPlanScene(new Uint8ClampedArray(ref), width, height, strokePainter.plan);
+  /* Only where the change differs from the canvas: elsewhere the raw pixels
+   * already match what is painted, and no stroke goes there - so the scene,
+   * the light and the manner are worked on those pixels alone. (Doing the
+   * whole picture for every accepted change was most of its cost.) */
+  const depositing = !enhance && !prepared && strokePainter.plan;
+  const scened = depositing && (strokePainter.plan.scene || strokePainter.plan.light);
+  const mannered = depositing && planManner() && planManner().key !== "painterly";
+  let canvasNow = null, changed = null;
+  if ((scened || mannered) && vctx) {
+    canvasNow = vctx.getImageData(0, 0, width, height).data;
+    if (canvasNow.length === ref.length) {
+      changed = new Uint8Array(width * height);
+      for (let i = 0, o = 0; o < ref.length; o += 4, i++) {
+        changed[i] = Math.abs(ref[o] - canvasNow[o]) + Math.abs(ref[o + 1] - canvasNow[o + 1]) + Math.abs(ref[o + 2] - canvasNow[o + 2]) < 24 ? 0 : 1;
+      }
+    } else canvasNow = null;
+  }
+  if (scened) {
+    ref = applyPlanScene(new Uint8ClampedArray(ref), width, height, strokePainter.plan, changed);
   }
   // ...and in the painting's manner: an accepted deposit arrives as raw field
   // pixels, and a flat-colour or two-tone painting would otherwise scribble
   // them in as they are.
-  if (!enhance && !prepared && planManner() && planManner().key !== "painterly") {
-    ref = mannerDeposit(ref, width, height, strokePainter.plan);
+  if (mannered) {
+    ref = mannerDeposit(ref, width, height, strokePainter.plan, canvasNow);
   }
   const animation = ++activePaintAnimation;
   // The reference's contours are reused while it is the same picture - a
