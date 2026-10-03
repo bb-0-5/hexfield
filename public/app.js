@@ -31719,7 +31719,126 @@ if (typeof window !== "undefined") setTimeout(() => { try { relearnMorphNames();
 /* ?morphs: the population, by species - each body drawn, with its lineage,
  * age and record - and a word for any species. */
 const SHOW_MORPHS = (() => { try { return new URLSearchParams(location.search).has("morphs"); } catch { return false; } })();
-function showMorphsPanel() {
+/* ── The garden ─────────────────────────────────────────────────────────
+ * Breeding by eye: a parent in the middle and eight of its offspring round
+ * it - four small mutations, two big ones, two crosses with another fit
+ * creature (yours or anyone's). Tap the one you like: it is kept (a KEEP,
+ * into your population and the shared one) and becomes the parent of the
+ * next eight. A few minutes is dozens of generations - selection by a
+ * person, who can see what a shape score cannot (a tail, an eye). */
+let garden = null;
+/* Eight offspring, each visibly different from the parent and from each
+ * other: a choice between near-twins is no choice. Mates are drawn first
+ * from other species, so a cross brings something in. */
+const GARDEN = { small: 0.2, big: 0.45, minStep: 0.025, minBig: 0.07, apart: 0.02, tries: 6 };
+function gardenChildren() {
+  const Morph = globalThis.HexfieldMorph, pop = morphPopulation();
+  const rng = Math.random, parent = garden.parent.genome;
+  const own = pop.members.find((m) => m.id === garden.parent.id)?.species;
+  const all = [...pop.members, ...sharedMorphs].filter((m) => m.id !== garden.parent.id);
+  const strangers = all.filter((m) => !own || m.species !== own);
+  const mates = strangers.length >= 3 ? strangers : all;
+  const mate = () => {
+    let best = null;
+    for (let i = 0; i < 3 && mates.length; i++) { const m = mates[Math.floor(rng() * mates.length)]; if (!best || morphFitness(m) > morphFitness(best)) best = m; }
+    return best;
+  };
+  const kids = [];
+  const fresh = (make, step) => {
+    let kid = null;
+    for (let t = 0; t < GARDEN.tries; t++) {
+      kid = make();
+      const fromParent = Morph.distance(parent, kid.genome);
+      const fromSiblings = kids.length ? Math.min(...kids.map((k) => Morph.distance(k.genome, kid.genome))) : 1;
+      if (fromParent >= step && fromSiblings >= GARDEN.apart) break;
+    }
+    kids.push(kid);
+  };
+  for (let i = 0; i < 4; i++) fresh(() => ({ genome: Morph.mutate(parent, rng, GARDEN.small), how: "small step" }), GARDEN.minStep);
+  for (let i = 0; i < 2; i++) fresh(() => ({ genome: Morph.mutate(parent, rng, GARDEN.big), how: "big step" }), GARDEN.minBig);
+  for (let i = 0; i < 2; i++) {
+    fresh(() => {
+      const m = mate();
+      return m ? { genome: Morph.mutate(Morph.crossover(parent, m.genome, rng), rng, 0.08), how: "crossed with " + m.id, mate: m.id }
+        : { genome: Morph.mutate(parent, rng, GARDEN.big), how: "big step" };
+    }, GARDEN.minStep);
+  }
+  // Shuffled, so where a child sits says nothing about how it was made.
+  for (let i = kids.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [kids[i], kids[j]] = [kids[j], kids[i]]; }
+  garden.children = kids;
+}
+function startGarden(member = null) {
+  const pop = morphPopulation(), Morph = globalThis.HexfieldMorph;
+  const best = member || pop.members.slice().sort((a, b) => morphFitness(b) - morphFitness(a))[0];
+  garden = { parent: best ? { id: best.id, genome: best.genome } : { id: null, genome: Morph.randomGenome(Math.random) }, back: [], line: 0 };
+  gardenChildren();
+}
+function gardenPick(index) {
+  const kid = garden.children[index];
+  if (!kid) return;
+  // Kept: born into the population with a KEEP, and shared.
+  const morph = { id: null, genome: kid.genome, parents: [garden.parent.id, kid.mate].filter(Boolean) };
+  morphOutcome(morph, { vote: 1 });
+  garden.back.push(garden.parent);
+  garden.parent = { id: morph.id, genome: kid.genome };
+  garden.line++;
+  gardenChildren();
+}
+function gardenBack() {
+  if (!garden.back.length) return;
+  garden.parent = garden.back.pop();
+  garden.line = Math.max(0, garden.line - 1);
+  gardenChildren();
+}
+function drawMorphInto(canvas, genome, size) {
+  const Visual = globalThis.HexfieldVisual, Morph = globalThis.HexfieldMorph;
+  const cx = canvas.getContext("2d");
+  cx.fillStyle = "#efe9dc"; cx.fillRect(0, 0, size, size);
+  const e = Morph.develop(genome), room = size * 0.86, w = Math.min(room, room * e.aspect), h = w / e.aspect;
+  Visual.paint(cx, size, size, [{ key: "morph", entry: e, box: { x: (size - w) / 2, y: (size - h) / 2, w, h }, alpha: 1 }], mulberry32(3));
+}
+function renderGarden(panel, small) {
+  const pop = morphPopulation(), Morph = globalThis.HexfieldMorph;
+  if (!garden) startGarden();
+  const wrap = document.createElement("div");
+  wrap.style.cssText = "max-width:540px;margin:0 auto";
+  const tip = document.createElement("div");
+  tip.style.cssText = "margin:4px 0 8px";
+  tip.textContent = "Tap the one you like best. It's kept, and becomes the parent of the next eight. The middle one is the parent.";
+  wrap.appendChild(tip);
+  const grid = document.createElement("div");
+  grid.style.cssText = "display:grid;grid-template-columns:repeat(3,1fr);gap:6px";
+  const size = Math.max(90, Math.floor((Math.min(panel.clientWidth || 360, 540) - 24 - 12) / 3));
+  const cells = garden.children.slice(0, 4).concat([null], garden.children.slice(4, 8));
+  cells.forEach((kid, i) => {
+    const c = document.createElement("canvas");
+    c.width = size; c.height = size;
+    c.style.cssText = `width:100%;height:auto;aspect-ratio:1;border-radius:8px;background:#efe9dc;cursor:pointer;border:${kid ? "1px solid #cfc6b4" : "3px solid #2f3540"}`;
+    drawMorphInto(c, kid ? kid.genome : garden.parent.genome, size);
+    if (kid) c.onclick = () => { gardenPick(garden.children.indexOf(kid)); showMorphsPanel("garden"); };
+    c.setAttribute("aria-label", kid ? "offspring: " + kid.how : "the parent");
+    grid.appendChild(c);
+  });
+  wrap.appendChild(grid);
+  const pr = Morph.primesOf(garden.parent.genome);
+  const member = pop.members.find((m) => m.id === garden.parent.id);
+  const sp = member ? pop.species[member.species] : null;
+  const info = document.createElement("div");
+  info.style.cssText = "margin:8px 0";
+  info.textContent = `${garden.line} picks down this line · parent ${garden.parent.id || "a new founder"}` +
+    (member ? ` · species ${member.species}${sp?.name ? " (" + sp.name + ")" : ""}` : "") + ` · ${pr.forms.join(" + ")}` + (pr.relations.length ? ` (${pr.relations.join(", ")})` : "");
+  wrap.appendChild(info);
+  const row = document.createElement("div");
+  const button = (label, fn) => { const b = document.createElement("button"); b.textContent = label; b.style.cssText = small + ";margin:0 8px 6px 0"; b.onclick = fn; row.appendChild(b); };
+  button("back", () => { gardenBack(); showMorphsPanel("garden"); });
+  button("new founder", () => { garden = { parent: { id: null, genome: Morph.randomGenome(Math.random) }, back: [], line: 0 }; gardenChildren(); showMorphsPanel("garden"); });
+  button("start from the fittest", () => { startGarden(); showMorphsPanel("garden"); });
+  if (member) button(sp?.name ? "rename its species" : "give its species a word", () => { const w = prompt("A word for this creature's species"); if (w && nameMorphSpecies(member.species, w)) showMorphsPanel("garden"); });
+  wrap.appendChild(row);
+  panel.appendChild(wrap);
+}
+
+function showMorphsPanel(view = "garden") {
   const pop = morphPopulation(), Visual = globalThis.HexfieldVisual, Morph = globalThis.HexfieldMorph;
   if (!pop || !Visual || !Morph || typeof document === "undefined") return;
   let panel = document.getElementById("morphsPanel");
@@ -31731,13 +31850,22 @@ function showMorphsPanel() {
   }
   panel.textContent = "";
   const head = document.createElement("div");
-  head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:8px";
+  head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px";
   head.innerHTML = `<b>Grown things · generation ${pop.gen} · ${pop.members.length} living · ${Object.keys(pop.species).length} species</b>`;
-  const close = document.createElement("button");
+  const tabs = document.createElement("div");
   const small = "width:auto;min-width:0;display:inline-block;padding:3px 10px;font-size:12px;margin:0 0 0 8px;flex:none";
+  for (const [key, label] of [["garden", "garden"], ["living", "all living"]]) {
+    const t = document.createElement("button");
+    t.textContent = label; t.style.cssText = small + (key === view ? ";outline:2px solid #2f3540" : "");
+    t.onclick = () => showMorphsPanel(key);
+    tabs.appendChild(t);
+  }
+  const close = document.createElement("button");
   close.textContent = "close"; close.style.cssText = small; close.onclick = () => panel.remove();
-  head.appendChild(close);
+  tabs.appendChild(close);
+  head.appendChild(tabs);
   panel.appendChild(head);
+  if (view === "garden") { renderGarden(panel, small); return; }
   const bySpecies = {};
   for (const m of pop.members) (bySpecies[m.species] ||= []).push(m);
   for (const [sid, members] of Object.entries(bySpecies)) {
@@ -31763,6 +31891,9 @@ function showMorphsPanel() {
       const cx = c.getContext("2d"); cx.fillStyle = "#efe9dc"; cx.fillRect(0, 0, 120, 110);
       const e = Morph.develop(m.genome), h = 90, w = Math.min(110, h * e.aspect), hh = w / e.aspect;
       Visual.paint(cx, 120, 110, [{ key: "morph", entry: e, box: { x: (120 - w) / 2, y: (110 - hh) / 2, w, h: hh }, alpha: 1 }], mulberry32(3));
+      c.style.cursor = "pointer";
+      c.title = "breed from this one";
+      c.onclick = () => { startGarden(m); showMorphsPanel("garden"); };
       cell.appendChild(c);
       const t = document.createElement("div");
       t.textContent = `${m.id} · gen ${m.born} · ${m.parents.length ? "of " + m.parents.join("×") : "founder"} · fit ${morphFitness(m).toFixed(2)} (${m.n})`;
