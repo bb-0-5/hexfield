@@ -15051,7 +15051,7 @@ async function connectTaste() {
       pullGlobalTaste(), pullTasteAgreement(), pullStyleCatalogue(), pullCausalExperiments(),
       pullHarvestMaterials(), pullSharedVisualSymbols(),
       pullVisualSourceCorpus(), fetchKnownCreationHashes(), refreshMuseumStatus(),
-      pullVisualLexicon(), pullFormMemory(), pullSharedKeeps(), pullStyleOutcomes(),
+      pullVisualLexicon(), pullFormMemory(), pullSharedKeeps(), pullStyleOutcomes(), pullSharedMorphs(),
     ]);
     queueTasteSync();
     scheduleSharedTasteFlush(0);
@@ -31571,8 +31571,10 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
  * more than rejected. Close relatives are one species; a species that has
  * been kept can be given a word (`?morphs`). Kept in this browser. */
 const MORPH_KEY = "hexfield.morphs.v1";
-const MORPH = { cap: 24, founders: 12, offspring: 3, speciesDistance: 0.12, crossRate: 0.4, share: 0.5, novelty: 0.6 };
+const MORPH = { cap: 24, founders: 12, offspring: 3, speciesDistance: 0.12, crossRate: 0.4, share: 0.5, novelty: 0.6, immigration: 0.3 };
 let morphPop = null;
+// The fittest and the named of everyone's creatures (pullSharedMorphs).
+let sharedMorphs = [];
 function morphPopulation() {
   if (morphPop) return morphPop;
   try { morphPop = JSON.parse(localStorage.getItem(MORPH_KEY) || "null"); } catch { morphPop = null; }
@@ -31646,10 +31648,13 @@ function chooseMorph(plan, ref, width, height, params) {
   if (featured[0].key !== "grown") return null;
   const pop = morphPopulation();
   if (!pop?.members?.length) return null;
-  // Parents by tournament: the fitter of three, now and then anyone.
+  // Parents by tournament: the fitter of three - now and then from the
+  // shared population (everyone's paintings judged those), an immigrant.
   const parent = () => {
+    const shared = sharedMorphs.length && rng() < MORPH.immigration;
+    const pool = shared ? sharedMorphs : pop.members;
     let best = null;
-    for (let i = 0; i < 3; i++) { const m = pop.members[Math.floor(rng() * pop.members.length)]; if (!best || morphFitness(m) > morphFitness(best)) best = m; }
+    for (let i = 0; i < 3; i++) { const m = pool[Math.floor(rng() * pool.length)]; if (!best || morphFitness(m) > morphFitness(best)) best = m; }
     return best;
   };
   const candidates = [];
@@ -31700,6 +31705,8 @@ function nameMorphSpecies(sid, word) {
   if (!Visual.learn(word, Morph.develop(sp.rep))) return false;
   sp.name = word;
   saveMorphs();
+  // Shared: its members carry the name, so it paints for everyone.
+  for (const m of pop.members) if (m.species === sid) { m.name = word; queueMorphPush(m); }
   return true;
 }
 function relearnMorphNames() {
@@ -31792,6 +31799,81 @@ function morphOutcome(morph, { taste = null, vote = 0 }) {
   }
   cullMorphs(member);
   saveMorphs();
+  queueMorphPush(member);
+}
+
+/* ── The shared population ──────────────────────────────────────────────
+ * Every visitor's judged creatures go to one table (hexfield_morphs) with
+ * their record, and each visitor pulls back the fittest of everyone's and
+ * every named one. Pulled creatures are not added to the local population
+ * - they breed into it: a share of parents (MORPH.immigration) come from
+ * them, so a body that does well anywhere spreads, and one that does badly
+ * everywhere is not chosen. A species someone has named becomes a word that
+ * paints it for everyone (never over a dictionary word, nor one of your own
+ * names). Founders nobody has judged stay home. */
+let morphPushQueue = new Map(), morphPushTimer = null;
+function queueMorphPush(member) {
+  if (!member || !(member.n > 0 || member.name)) return;
+  morphPushQueue.set(member.id, member);
+  if (!morphPushTimer) morphPushTimer = setTimeout(pushMorphs, 3000);
+}
+async function pushMorphs() {
+  morphPushTimer = null;
+  const batch = [...morphPushQueue.values()].slice(0, 20);
+  if (!batch.length) return;
+  for (const m of batch) morphPushQueue.delete(m.id);
+  try {
+    const session = await ensureTasteSession();
+    const pop = morphPopulation();
+    const response = await fetch(SUPABASE_URL + "/rest/v1/hexfield_morphs?on_conflict=visitor_id,client_id", {
+      method: "POST",
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token,
+        "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify(batch.map((m) => ({
+        client_id: m.id, genome: m.genome, parents: (m.parents || []).slice(0, 2).map(String), species: String(m.species),
+        name: pop.species[m.species]?.name || null, fitness: +Math.max(-2, Math.min(2, morphFitness(m))).toFixed(4),
+        n: m.n, kept: m.kept, rejected: m.rejected, updated_at: new Date().toISOString(),
+      }))),
+    });
+    if (!response.ok) throw new Error("morph push HTTP " + response.status);
+  } catch {
+    // Back in the queue for later; a failed push loses nothing kept here.
+    for (const m of batch) if (!morphPushQueue.has(m.id)) morphPushQueue.set(m.id, m);
+  }
+}
+async function pullSharedMorphs() {
+  try {
+    const session = await ensureTasteSession();
+    const me = session.user?.id;
+    const get = (query) => fetch(SUPABASE_URL + "/rest/v1/hexfield_morphs?select=id,visitor_id,client_id,genome,fitness,n,kept,rejected,name&" + query, {
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token },
+    }).then((r) => (r.ok ? r.json() : []));
+    const [fit, named] = await Promise.all([get("n=gte.1&order=fitness.desc&limit=60"), get("name=not.is.null&order=fitness.desc&limit=100")]);
+    const Morph = globalThis.HexfieldMorph;
+    const valid = (row) => row && row.visitor_id !== me && row.genome && typeof row.genome === "object";
+    sharedMorphs = fit.filter(valid).map((row) => ({
+      id: "x" + row.id, genome: Morph ? Morph.normalise(row.genome) : row.genome,
+      // Its record, in the local form morphFitness reads.
+      n: Number(row.n) || 0, sum: (Number(row.fitness) || 0) * ((Number(row.n) || 0) + 1), kept: Number(row.kept) || 0, rejected: Number(row.rejected) || 0,
+    }));
+    learnSharedMorphNames(named.filter(valid));
+    return sharedMorphs.length;
+  } catch { return 0; }
+}
+function learnSharedMorphNames(rows) {
+  const Visual = globalThis.HexfieldVisual, Morph = globalThis.HexfieldMorph;
+  if (!Visual?.learn || !Morph) return;
+  const own = new Set(Object.values(morphPopulation()?.species || {}).map((sp) => sp.name).filter(Boolean));
+  const done = new Set();
+  for (const row of rows) {
+    const word = String(row.name || "");
+    if (!/^[a-z]{1,24}$/.test(word) || done.has(word) || own.has(word)) continue;
+    if (Visual.ENTRIES?.[word] || Visual.FAMILIES?.[word]) continue;
+    const existing = Visual.LEARNED?.[word];
+    if (existing && !existing.grown) continue;
+    done.add(word);
+    Visual.learn(word, Morph.develop(Morph.normalise(row.genome)));
+  }
 }
 
 /* ── Composition ────────────────────────────────────────────────────────
