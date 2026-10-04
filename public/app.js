@@ -11940,12 +11940,33 @@ function letterWarpField(seed) {
   ];
 }
 
-function transformSkeleton(strokes, program, rng) {
+/* Each letter its own: bounced off the baseline, tilted, a little bigger or
+ * smaller than its neighbours - the same for a given letter of a given font
+ * (seeded by letterJigSeed and the letter's place), so the word still reads
+ * as one hand. Zero for every font made before these genes. */
+function letterJig(program, index) {
+  const bounce = Math.max(0, Math.min(0.22, Number(program.letterBounce) || 0));
+  const tilt = Math.max(0, Math.min(0.4, Number(program.letterTilt) || 0));
+  const size = Math.max(0, Math.min(0.26, Number(program.letterSizeVar) || 0));
+  if (!bounce && !tilt && !size) return null;
+  const r = mulberry32(((Number(program.letterJigSeed) || 1) + index * 0x9e3779b1) >>> 0);
+  // Alternating as well as random, the way a hand bounces a word.
+  const side = index % 2 ? 1 : -1;
+  return {
+    dy: bounce * (0.55 * side + 0.9 * (r() - 0.5)),
+    turn: tilt * (r() - 0.5) * 2,
+    k: 1 + size * (r() - 0.5) * 2,
+  };
+}
+
+function transformSkeleton(strokes, program, rng, index = 0) {
   const shear = Number(program.skeletonShear) || 0;
   const extend = Number(program.skeletonExtend) || 0;
   const curveRule = program.curveRule || "field";
   const warp = Math.max(0, Math.min(0.18, Number(program.letterWarp) || 0));
   const field = warp ? letterWarpField(program.letterWarpSeed) : null;
+  const jig = letterJig(program, index);
+  const cos = jig ? Math.cos(jig.turn) : 1, sin = jig ? Math.sin(jig.turn) : 0;
   const out = [];
   for (const raw of strokes) {
     const stroke = applyCurveRule(raw, curveRule);
@@ -11959,6 +11980,12 @@ function transformSkeleton(strokes, program, rng) {
           const [dx, dy] = field(x, y);
           c[i] += dx * warp;
           c[i + 1] += dy * warp;
+        }
+        if (jig) {
+          // Turned and sized about its foot, so it still stands on the line.
+          const ox = c[i] - 0.5, oy = c[i + 1] - 0.9;
+          c[i] = 0.5 + (ox * cos - oy * sin) * jig.k;
+          c[i + 1] = 0.9 + (ox * sin + oy * cos) * jig.k + jig.dy;
         }
       }
       return c;
@@ -12208,7 +12235,7 @@ function paintLetterWord(ctx, W, H, text, program, rng = Math.random, strokeProv
     const learned = strokeProvider?.(spot.ch, index);
     const strokes = Array.isArray(learned) && learned.length
       ? learned
-      : transformSkeleton(LETTER_SKELETONS[spot.ch] || LETTER_SKELETONS.O, program, rng);
+      : transformSkeleton(LETTER_SKELETONS[spot.ch] || LETTER_SKELETONS.O, program, rng, index);
     return {
       at: fit.place(spot.x, spot.y),
       path: skeletonPath(strokes, glyphSize, program),
@@ -12507,7 +12534,7 @@ function letterMask(W, H, text, program, strokeProvider = null, strokeIdentity =
     const learned = strokeProvider?.(spot.ch, index);
     const strokes = Array.isArray(learned) && learned.length
       ? learned
-      : transformSkeleton(LETTER_SKELETONS[spot.ch] || LETTER_SKELETONS.O, program, null);
+      : transformSkeleton(LETTER_SKELETONS[spot.ch] || LETTER_SKELETONS.O, program, null, index);
     const path = skeletonPath(
       strokes, glyphSize, program);
     g.save();
@@ -31143,6 +31170,23 @@ const STROKES_PER_FRAME = isMobileBrowser() ? 18 : 40;
 // Below this Sobel magnitude (0..255 luminance units) the reference has no
 // contour worth following.
 const STROKE_GRADIENT_MIN = 24;
+/* Careful passes. A stroke used to take its colour from the one pixel it
+ * started on - the worst pixel of its cell, often a stray one on an edge -
+ * so a big brush carried a speck's colour across a patch, and every pass
+ * sprinkled more. Now a stroke mixes its colour from what it will cover (the
+ * middle of the colours under its footprint, so a stray pixel does not count),
+ * is laid only if it brings what it covers nearer the reference by `gain` of
+ * the tolerance (the next place in line taking a refused stroke's turn, up to
+ * `spare` times the batch), and the fine brushes vary their colour less. */
+const STROKE_CARE = { on: true, gain: 0.04, spare: 1.5, side: 0.45, jitter: [1, 0.75, 0.5, 0.35] };
+const median3 = (list) => {
+  const out = [0, 0, 0], n = list.length;
+  for (let c = 0; c < 3; c++) {
+    const v = list.map((s) => s[c]).sort((a, b) => a - b);
+    out[c] = n % 2 ? v[(n - 1) / 2] : (v[n / 2 - 1] + v[n / 2]) / 2;
+  }
+  return out;
+};
 let strokePainter = { reference: null, layer: 0, layerBatches: 0, gradient: null, width: 0, height: 0, strokes: 0 };
 
 /* What brush sizes are measured against: the short side, but never more than
@@ -32103,18 +32147,23 @@ function fontChildren() {
   const rng = Math.random, { family, program } = fontGarden.parent, kids = [];
   // The letterforms bred as the painting's lettering rounds breed them
   // (mutateLetterforms: lean, extension, width, x-height, pen, curve habit,
-  // spacing, baseline, hand); three near variations and three further ones.
-  const grow = (fam, prog, how, times = 1) => {
+  // spacing, baseline, hand, each letter's bounce, tilt and size): two near
+  // variations, two further ones, and two leaps (leapLetterforms).
+  const grow = (fam, prog, how, times = 1, leap = 0) => {
     const lettering = { mode: fam === "wildstyle" ? "wildstyle" : "throwup", family: fam };
+    const spec = fontFamilySpec(fam);
     let child = prog;
-    for (let t = 0; t < times; t++) child = mutateLetterforms(child, rng, lettering, fontFamilySpec(fam));
+    for (let t = 0; t < times; t++) child = mutateLetterforms(child, rng, lettering, spec);
+    if (leap) child = leapLetterforms(child, rng, lettering, spec, leap);
     kids.push({ family: fam, program: child, how });
   };
-  for (let i = 0; i < 6; i++) grow(family, program, i < 3 ? "a variation" : "a further variation", i < 3 ? 1 : 3);
+  grow(family, program, "a variation"); grow(family, program, "a variation");
+  grow(family, program, "a further variation", 3); grow(family, program, "a further variation", 3);
+  grow(family, program, "a leap", 1, 3); grow(family, program, "a leap", 1, 5);
   const others = fontFamilyKeys().filter((f) => f !== family);
   for (let i = 0; i < 2; i++) {
     const fam = others[Math.floor(rng() * others.length)];
-    grow(fam, fontBaseProgram(fam), "another family: " + fam);
+    grow(fam, fontBaseProgram(fam), "another family: " + fam, 1, 2);
   }
   for (let i = kids.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [kids[i], kids[j]] = [kids[j], kids[i]]; }
   fontGarden.children = kids;
@@ -33362,9 +33411,38 @@ function mutateLetterforms(base, rng, lettering, spec) {
   child.letterSpace = nudge(child.letterSpace, 0.16, 0.86 + 0.2 * child.widthAxis, 1.14, 0.96);
   child.letterWarp = nudge(child.letterWarp, 0.08, 0, 0.16, 0);
   if (!child.letterWarpSeed || rng() < 0.3) child.letterWarpSeed = Math.floor(rng() * 1e9);
+  // Each letter its own (letterJig): bounce, tilt and size against its neighbours.
+  child.letterBounce = nudge(child.letterBounce, 0.12, 0, 0.22, 0);
+  child.letterTilt = nudge(child.letterTilt, 0.2, 0, 0.4, 0);
+  child.letterSizeVar = nudge(child.letterSizeVar, 0.14, 0, 0.26, 0);
+  if (!child.letterJigSeed || rng() < 0.3) child.letterJigSeed = Math.floor(rng() * 1e9);
   if (rng() < 0.3) child.penShape = pick(rng, ["round", "square", "chisel"]);
   if (rng() < 0.3) child.curveRule = pick(rng, ["curved", "circle", "straight", "field"]);
   if (rng() < 0.25) child.baselineRule = pick(rng, ["flat", "rising", "curved"]);
+  return finishBrushProgram(child);
+}
+
+/* A leap: a few of the genes that shape a letter thrown anywhere in their
+ * range at once, so a font can jump to a different look instead of only
+ * creeping from where it is. The ranges are mutateLetterforms' own. */
+const LETTER_LEAP_GENES = {
+  skeletonShear: [-0.16, 0.26], skeletonExtend: [0, 0.36], widthAxis: [0, 0.62], xHeight: [0, 1],
+  penWeight: [0.3, 0.95], letterWarp: [0, 0.16], letterBounce: [0, 0.22], letterTilt: [0, 0.4], letterSizeVar: [0, 0.26],
+};
+const LETTER_LEAP_CHOICES = {
+  curveRule: ["curved", "circle", "straight", "field"], penShape: ["round", "square", "chisel"], baselineRule: ["flat", "rising", "curved"],
+};
+function leapLetterforms(base, rng, lettering, spec, genes = 3) {
+  const child = mutateLetterforms(base, rng, lettering, spec);
+  const names = Object.keys(LETTER_LEAP_GENES).concat(Object.keys(LETTER_LEAP_CHOICES));
+  for (let i = 0; i < genes; i++) {
+    const name = names.splice(Math.floor(rng() * names.length), 1)[0];
+    if (LETTER_LEAP_GENES[name]) { const [lo, hi] = LETTER_LEAP_GENES[name]; child[name] = lo + (hi - lo) * rng(); }
+    else child[name] = pick(rng, LETTER_LEAP_CHOICES[name]);
+  }
+  // Width and spacing held together, as in mutateLetterforms.
+  child.letterSpace = Math.max(0.86 + 0.2 * child.widthAxis, Math.min(1.14, Number(child.letterSpace) || 0.96));
+  child.letterJigSeed = Math.floor(rng() * 1e9);
   return finishBrushProgram(child);
 }
 
@@ -33405,7 +33483,8 @@ async function runLetteringRound(scene) {
       await pause();
       if (strokePainter.plan?.scene !== scene) return;
       const candidate = paintedLetterProgram({
-        ...mutateLetterforms(lettering.base, rng, lettering, spec),
+        // The last candidate of a round leaps (leapLetterforms).
+        ...(i === LETTER_ROUND_CANDIDATES - 1 ? leapLetterforms(lettering.base, rng, lettering, spec) : mutateLetterforms(lettering.base, rng, lettering, spec)),
         // What the painting decided stays: colour, solid face, the box.
         ...detailOnly(lettering.program),
       });
@@ -33443,9 +33522,9 @@ function letterSkeletonPolylines(lettering, program) {
   const xh = 0.82 + (Number(program.xHeight) || 0.5) * 0.36;
   const wx = 0.74 + clamp01(Number(program.widthAxis) || 0.5) * 0.62;
   const lines = [];
-  for (const spot of spots) {
+  for (const [index, spot] of spots.entries()) {
     const at = fit.place(spot.x, spot.y);
-    const strokes = transformSkeleton(LETTER_SKELETONS[spot.ch] || LETTER_SKELETONS.O, program, rng);
+    const strokes = transformSkeleton(LETTER_SKELETONS[spot.ch] || LETTER_SKELETONS.O, program, rng, index);
     const map = (gx, gy) => {
       const x = at.x - glyphSize / 2 + (gx * wx + (1 - wx) * 0.5) * glyphSize;
       const y = at.y - glyphSize / 2 + (gy * xh + (1 - xh) * 0.5) * glyphSize;
@@ -33608,13 +33687,16 @@ function letterBrushStrokes(lettering, program, ref, W, H, previous = null, { fi
       }
     }
     const outline = hslToRgb((Number(program.outlineHue) || 0) / 360, 0.85, 0.55);
+    // An outline wider than the letter shows every wobble of the hand twice
+    // over, and ragged backing read as sloppy: it is drawn with a steadier one.
+    const steady = hand && { ...hand, wobble: hand.wobble * 0.5, drift: hand.drift * 0.5, gaps: hand.gaps * 0.3, overshoot: hand.overshoot * 0.5 };
     if (program.outlineMode === "offset" && outlineWidth > 0) {
       const offset = Math.max(1, skeleton.glyphSize * outlineWidth) * 0.9;
-      strokes.push(...tinted(marks(skeleton.width, offset, offset * skeleton.stretch, 1.15, skeleton.lines, hand), outline, 0.5));
+      strokes.push(...tinted(marks(skeleton.width, offset, offset * skeleton.stretch, 1.15, skeleton.lines, steady), outline, 0.5));
     } else if (program.outlineMode === "rim" && outlineWidth > 0) {
-      strokes.push(...tinted(marks(skeleton.width, 0, 0, 1 + outlineWidth * 5, skeleton.lines, hand), outline, 0.85));
+      strokes.push(...tinted(marks(skeleton.width, 0, 0, 1 + outlineWidth * 5, skeleton.lines, steady), outline, 0.85));
     } else if (program.outlineMode === "halo" && outlineWidth > 0) {
-      strokes.push(...tinted(marks(skeleton.width, 0, 0, 1 + outlineWidth * 9, skeleton.lines, hand && { ...hand, gaps: hand.gaps * 0.4 }), outline, 0.55));
+      strokes.push(...tinted(marks(skeleton.width, 0, 0, 1 + outlineWidth * 9, skeleton.lines, steady), outline, 0.55));
     }
   }
   // Each touch-up is a finer brush down the middle of the letter.
@@ -33637,7 +33719,7 @@ function paintLetteringStrokes(result, scene) {
   const lettering = scene.lettering;
   const program = letteringStageProgram(lettering);
   const formKey = (p) => ["skeletonShear", "skeletonExtend", "widthAxis", "xHeight", "penWeight", "penShape", "curveRule",
-    "baselineRule", "letterSpace", "letterWarp", "letterWarpSeed"].map((k) => String(p[k])).join("|");
+    "baselineRule", "letterSpace", "letterWarp", "letterWarpSeed", "letterBounce", "letterTilt", "letterSizeVar", "letterJigSeed"].map((k) => String(p[k])).join("|");
   const previous = lettering.paintedProgram && formKey(lettering.paintedProgram) !== formKey(program) ? lettering.paintedProgram : null;
   const strokes = letterBrushStrokes(lettering, program, ref, W, H, previous);
   lettering.paintedProgram = program;
@@ -34837,14 +34919,30 @@ function laidDistance(L, plan) {
  * taken: that place is painted again. A copy is returned. */
 function adoptLaid(L, ref, canvas, gradient = null) {
   const { c, gw, gh, width, height } = L;
+  /* What is laid, without its bristle marks: each place copied softened (the
+   * mean of each pixel's 3x3) when it is painted, and an eighth of the older
+   * ones refreshed each time, so a place the letter or thing brushes have
+   * since painted over does not stay stale. A copy taken pixel for pixel
+   * carried the big brushes' bristle streaks into the reference - striped,
+   * so the fine brushes painted stripes. */
+  L.turn = ((L.turn || 0) + 1) % 8;
+  const row = width * 4;
   for (let k = 0; k < gw * gh; k++) {
-    if (!L.fresh[k]) continue;
+    if (!L.fresh[k] && !(L.weight[k] && k % 8 === L.turn)) continue;
     L.fresh[k] = 0;
     L.weight[k] = 1;
     const gx = k % gw, gy = (k / gw) | 0;
+    const x1 = Math.min(width, (gx + 1) * c);
     for (let y = gy * c; y < Math.min(height, (gy + 1) * c); y++) {
-      const o0 = (y * width + gx * c) * 4, o1 = (y * width + Math.min(width, (gx + 1) * c)) * 4;
-      for (let o = o0; o < o1; o++) L.paint[o] = canvas[o];
+      const up = y > 0 ? -row : 0, down = y < height - 1 ? row : 0;
+      for (let x = gx * c, o = (y * width + x) * 4; x < x1; x++, o += 4) {
+        const l = x > 0 ? -4 : 0, r = x < width - 1 ? 4 : 0;
+        for (let ch = 0; ch < 3; ch++) {
+          const q = o + ch;
+          L.paint[q] = (canvas[q + up + l] + canvas[q + up] + canvas[q + up + r] + canvas[q + l] + canvas[q] + canvas[q + r] +
+            canvas[q + down + l] + canvas[q + down] + canvas[q + down + r]) / 9;
+        }
+      }
     }
   }
   if (!L.any) return ref;
@@ -36775,7 +36873,7 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
     for (let i = starts.length - 1; i >= 0; i--) if (starts[i].again) starts.splice(i, 1);
     starts.sort((a, b) => b.priority - a.priority);
   } else starts.sort((a, b) => b.error - a.error);
-  const chosen = starts.slice(0, limit);
+  const chosen = starts.slice(0, STROKE_CARE.on ? Math.ceil(limit * STROKE_CARE.spare) : limit);
   if (laid && chosen.length) {
     // Out from the paint already down: the first stroke where the paint
     // ends (the farthest off, among those), each next one beside the one
@@ -36831,8 +36929,24 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
   const hardAt = edgeMap ? (px, py) => edgeMap[Math.min(gradient.gh - 1, (py | 0) >> 1) * gradient.gw + Math.min(gradient.gw - 1, (px | 0) >> 1)] : null;
   const strokes = [];
   const finest = layer >= STROKE_LAYER_FRACTIONS.length - 1;
+  const care = STROKE_CARE.on;
+  // The painting's palette and light, over a colour mixed from the reference.
+  const asPainted = (colour, lit) => {
+    if (palette?.length) {
+      const p = nearestPaletteColour(palette, colour[0], colour[1], colour[2]);
+      colour = colour.map((c, i) => c + (p[i] - c) * planSnapAmount(strokePainter.plan));
+    }
+    return lit ? litStrokeColour(colour, lit, strokePainter.plan) : colour;
+  };
+  let dropped = 0;
   for (const start of chosen) {
-    let colour = colourAt(ref, start.x, start.y);
+    if (strokes.length >= limit) break;
+    // Mixed from round the start, not the one (worst) pixel it is on.
+    const r0 = radius * 0.5;
+    let colour = care
+      ? median3([[0, 0], [r0, 0], [-r0, 0], [0, r0], [0, -r0], [r0, r0], [-r0, r0], [r0, -r0], [-r0, -r0]]
+        .map(([ox, oy]) => colourAt(ref, start.x + ox, start.y + oy)))
+      : colourAt(ref, start.x, start.y);
     // A flat manner's brush starts only where its colour is at least as wide
     // as the brush; a thinner line waits for a finer brush (or the ink).
     if (edgeStop && !finest) {
@@ -36843,13 +36957,9 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       }
       if (fits < 3) continue;
     }
-    if (palette?.length) {
-      const p = nearestPaletteColour(palette, colour[0], colour[1], colour[2]);
-      colour = colour.map((c, i) => c + (p[i] - c) * planSnapAmount(strokePainter.plan));
-    }
     // The light, put back after the palette has flattened it.
     const lit = lightAt(strokePainter.plan, start.x, start.y, width, height);
-    if (lit) colour = litStrokeColour(colour, lit, strokePainter.plan);
+    colour = asPainted(colour, lit);
     const points = [[start.x, start.y]];
     let crossed = 0;
     let x = start.x, y = start.y, lastDx = 0, lastDy = 0;
@@ -36925,7 +37035,28 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
     // A flat manner's stroke that cannot take a single step is a round dab,
     // and rows of dabs are what ringed its shapes with beads.
     if (edgeStop && !finest && points.length < 2) continue;
-    const jitter = Number(brush?.jitter) >= 0 ? Number(brush.jitter) : 6 + 10 * Math.max(0, ene);
+    if (care) {
+      // What it will cover: down its middle and either side of the brush.
+      const under = [], side = width2 * STROKE_CARE.side;
+      for (let i = 0; i < points.length; i++) {
+        const [px, py] = points[i], [qx, qy] = points[Math.min(points.length - 1, i + 1)], [ax, ay] = points[Math.max(0, i - 1)];
+        let tx = qx - ax, ty = qy - ay;
+        const l = Math.hypot(tx, ty);
+        if (l) { tx /= l; ty /= l; } else { tx = 1; ty = 0; }
+        for (const k of [0, 1, -1]) under.push([px - ty * side * k, py + tx * side * k]);
+      }
+      const mixed = median3(under.map(([ux, uy]) => colourAt(ref, ux, uy)));
+      // Laid only if it brings what it covers nearer the reference.
+      let gain = 0;
+      for (const [ux, uy] of under) {
+        const want = colourAt(ref, ux, uy);
+        gain += diff(colourAt(current, ux, uy), want) - diff(mixed, want);
+      }
+      if (gain / under.length < tolerance * STROKE_CARE.gain) { dropped++; continue; }
+      colour = asPainted(mixed, lit);
+    }
+    const jitter = (Number(brush?.jitter) >= 0 ? Number(brush.jitter) : 6 + 10 * Math.max(0, ene)) *
+      (care ? STROKE_CARE.jitter[Math.min(layer, STROKE_CARE.jitter.length - 1)] : 1);
     const stroke = {
       points,
       // Paint is loaded where the light falls and thin in the shade.
@@ -36956,7 +37087,7 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
     }
     strokes.push(stroke);
   }
-  return { strokes, candidates: starts.length, cells };
+  return { strokes, candidates: starts.length, cells, dropped };
 }
 
 /* ── Brush tips ─────────────────────────────────────────────────────────
