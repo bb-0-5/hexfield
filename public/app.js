@@ -31411,8 +31411,13 @@ function regionBlob(members, sw, sh, width, height, rgb) {
     pts.push([Math.max(0, Math.min(1, (mx + dx * far - x0 + 0.5) / bw)), Math.max(0, Math.min(1, (my + dy * far - y0 + 0.5) / bh))]);
   }
   const hsl = rgbToHsl(rgb[0], rgb[1], rgb[2]);
+  // Which small-copy pixels are it, for lifting it out and painting it
+  // again elsewhere (Shapes in depth). `box` is in parts of the picture.
+  const bits = new Uint8Array(bw * bh);
+  for (const i of members) bits[(((i / sw) | 0) - y0) * bw + (i % sw) - x0] = 1;
   return {
     key: "blob", blob: true, box, area: m,
+    mask: { bits, bw, bh, x0, y0, sw, sh, box: [x0 / sw, y0 / sh, bw / sw, bh / sh] },
     form: { lean: Math.max(-0.8, Math.min(0.8, Math.tan(leaning) * box.h / box.w)) },
     entry: { kind: "subject", anchor: "ground", size: box.h / height, aspect: box.w / box.h, depth: 0.6,
       colours: { c0: [Math.round(hsl.h), Math.round(hsl.s * 100), Math.round(hsl.l * 100)] },
@@ -33511,6 +33516,688 @@ function applyBlobLight(pixels, width, height, plan, only = null) {
   return pixels;
 }
 
+/* ── Shapes in depth ────────────────────────────────────────────────────
+ * The painting's own shapes (findPaintingBlobs) bred the way the grown
+ * things are (Morphology): each one a few rules, nudged, and a nudge kept
+ * only when the picture tastes better for it.
+ *
+ * How far off a shape is, is read the way a painter reads it:
+ *   where it stands - the nearer its foot to the horizon, the farther;
+ *   its colour - the duller, the farther (the air between takes the chroma);
+ *   its edges - the softer, the farther;
+ *   and a little, its size.
+ * Where the clues agree a shape sits well in the picture's space. Where
+ * they disagree - low and near but grey and soft - is where a nudge makes
+ * sense, and the logical next step is to settle it: move the shape to where
+ * its look says it is, or give it the look of where it stands. Shapes at
+ * the same depth side by side read as one flat plane, so one steps back.
+ *
+ * Which way the marks in the picture run (the way strokes will follow it)
+ * says which parts belong together: one colour region whose marks run two
+ * ways is two parts, each placed in depth on its own.
+ *
+ * Each part is a body, too: how its shading runs across it says how round
+ * it is, and so how thick, and from that how it looks turned a little each
+ * way (three views: left, front, right). Turning is one of the nudges,
+ * drawn from the body, not by squashing the outline.
+ *
+ * Every nudge keeps to perspective: a shape moved back shrinks toward the
+ * vanishing point by as much as its distance grows, dulls toward the haze
+ * and softens; brought forward it grows, sharpens and takes its colour
+ * back. A shape is never sent behind one it is drawn over, nor off the
+ * picture. Painted into the reference the brush works toward. */
+const SHAPE_DEPTH = {
+  cues: { place: 0.4, chroma: 0.25, soft: 0.25, size: 0.1 },
+  shrink: 0.6, dull: 0.55, haze: 0.35, blur: 0.012,
+  rounds: 3, tries: 6, gain: 0.003, turn: 0.4, views: [-0.45, 0, 0.45], parts: 6, taste: 96,
+  // A part is a thing when the step across its outline is at least `edge`
+  // (summed RGB, over five small pixels) and it fills `solid` of its span;
+  // colour comes back at most `vivid` times as strong.
+  edge: 40, solid: 0.72, vivid: 1.25, feather: 1.5,
+};
+const clampUnit = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
+
+// A shape's mask at a point of the picture (each way 0..1): 0..1, bilinear.
+function shapeMaskAt(mask, nx, ny) {
+  const u = (nx - mask.box[0]) / mask.box[2] * mask.bw - 0.5, v = (ny - mask.box[1]) / mask.box[3] * mask.bh - 0.5;
+  const x0 = Math.floor(u), y0 = Math.floor(v), tx = u - x0, ty = v - y0;
+  const at = (x, y) => (x < 0 || y < 0 || x >= mask.bw || y >= mask.bh ? 0 : mask.bits[y * mask.bw + x]);
+  return (at(x0, y0) * (1 - tx) + at(x0 + 1, y0) * tx) * (1 - ty) + (at(x0, y0 + 1) * (1 - tx) + at(x0 + 1, y0 + 1) * tx) * ty;
+}
+
+/* Which way the marks run at each pixel of a small copy: the structure
+ * tensor's doubled angle (ox, oy), as long as the direction is clear
+ * (coherence), and how much is going on there (energy). */
+function markDirections(pixels, sw, sh) {
+  const n = sw * sh, L = new Float32Array(n);
+  for (let i = 0; i < n; i++) L[i] = 0.299 * pixels[i * 4] + 0.587 * pixels[i * 4 + 1] + 0.114 * pixels[i * 4 + 2];
+  const jxx = new Float32Array(n), jyy = new Float32Array(n), jxy = new Float32Array(n);
+  for (let y = 1; y < sh - 1; y++) {
+    for (let x = 1; x < sw - 1; x++) {
+      const i = y * sw + x;
+      const gx = L[i - sw + 1] + 2 * L[i + 1] + L[i + sw + 1] - L[i - sw - 1] - 2 * L[i - 1] - L[i + sw - 1];
+      const gy = L[i + sw - 1] + 2 * L[i + sw] + L[i + sw + 1] - L[i - sw - 1] - 2 * L[i - sw] - L[i - sw + 1];
+      jxx[i] = gx * gx; jyy[i] = gy * gy; jxy[i] = gx * gy;
+    }
+  }
+  const ox = new Float32Array(n), oy = new Float32Array(n), energy = new Float32Array(n);
+  for (let y = 1; y < sh - 1; y++) {
+    for (let x = 1; x < sw - 1; x++) {
+      let a = 0, b = 0, c = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const j = (y + dy) * sw + x + dx; a += jxx[j]; b += jyy[j]; c += jxy[j]; }
+      const e = a + b, i = y * sw + x;
+      if (e < 1) continue;
+      const coherence = Math.sqrt((a - b) ** 2 + 4 * c * c) / e, twice = Math.atan2(2 * c, a - b);
+      ox[i] = Math.cos(twice) * coherence; oy[i] = Math.sin(twice) * coherence; energy[i] = e;
+    }
+  }
+  return { ox, oy, energy };
+}
+
+/* A shape's parts by the way its marks run: one part, or two when they run
+ * two clearly different ways in two places of their own. */
+function shapeParts(blob, dirs) {
+  const m = blob.mask, whole = [{ blob, mask: m, split: false }];
+  const at = (lx, ly) => (m.y0 + ly) * m.sw + m.x0 + lx;
+  const members = [];
+  for (let ly = 0; ly < m.bh; ly++) for (let lx = 0; lx < m.bw; lx++) if (m.bits[ly * m.bw + lx]) members.push(ly * m.bw + lx);
+  const energies = members.map((l) => dirs.energy[at(l % m.bw, (l / m.bw) | 0)]).sort((a, b) => a - b);
+  const floor = energies[Math.floor(energies.length * 0.5)] || 1;
+  const pts = [];
+  for (const l of members) {
+    const i = at(l % m.bw, (l / m.bw) | 0), len = Math.hypot(dirs.ox[i], dirs.oy[i]);
+    if (dirs.energy[i] >= floor && len > 0.3) pts.push([l, dirs.ox[i] / len, dirs.oy[i] / len]);
+  }
+  if (pts.length < 24) return whole;
+  let sx = 0, sy = 0;
+  for (const [, x, y] of pts) { sx += x; sy += y; }
+  if (Math.hypot(sx, sy) / pts.length > 0.55) return whole;
+  // Two directions: 2-means on the doubled angle, from the two most unalike.
+  let c1 = [pts[0][1], pts[0][2]], c2 = c1, low = Infinity;
+  for (const [, x, y] of pts) { const d = x * c1[0] + y * c1[1]; if (d < low) { low = d; c2 = [x, y]; } }
+  const side = new Int8Array(pts.length);
+  for (let round = 0; round < 6; round++) {
+    const s1 = [0, 0], s2 = [0, 0];
+    pts.forEach(([, x, y], k) => {
+      side[k] = x * c1[0] + y * c1[1] >= x * c2[0] + y * c2[1] ? 0 : 1;
+      const s = side[k] ? s2 : s1; s[0] += x; s[1] += y;
+    });
+    const l1 = Math.hypot(...s1) || 1, l2 = Math.hypot(...s2) || 1;
+    c1 = [s1[0] / l1, s1[1] / l1]; c2 = [s2[0] / l2, s2[1] / l2];
+  }
+  // At least 40 degrees apart (80 in the doubled angle).
+  if (c1[0] * c2[0] + c1[1] * c2[1] > 0.17) return whole;
+  // Every member takes the direction of the nearest member that has one.
+  const label = new Int8Array(m.bw * m.bh).fill(-1), queue = new Int32Array(m.bw * m.bh);
+  let head = 0, tail = 0;
+  pts.forEach(([l], k) => { label[l] = side[k]; queue[tail++] = l; });
+  while (head < tail) {
+    const l = queue[head++], lx = l % m.bw, ly = (l / m.bw) | 0;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const x = lx + dx, y = ly + dy, j = y * m.bw + x;
+      if (x < 0 || y < 0 || x >= m.bw || y >= m.bh || !m.bits[j] || label[j] >= 0) continue;
+      label[j] = label[l]; queue[tail++] = j;
+    }
+  }
+  // Each direction's largest connected piece is a part, if it is most of
+  // that direction and a fair share of the shape.
+  const parts = [];
+  for (const which of [0, 1]) {
+    const seen = new Uint8Array(m.bw * m.bh);
+    let best = null, total = 0;
+    for (const start of members) {
+      if (label[start] !== which) continue;
+      total++;
+      if (seen[start]) continue;
+      const piece = [];
+      head = 0; tail = 0; queue[tail++] = start; seen[start] = 1;
+      while (head < tail) {
+        const l = queue[head++]; piece.push(l);
+        const lx = l % m.bw, ly = (l / m.bw) | 0;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const x = lx + dx, y = ly + dy, j = y * m.bw + x;
+          if (x < 0 || y < 0 || x >= m.bw || y >= m.bh || seen[j] || label[j] !== which) continue;
+          seen[j] = 1; queue[tail++] = j;
+        }
+      }
+      if (!best || piece.length > best.length) best = piece;
+    }
+    if (!best || best.length < members.length * 0.25 || best.length < total * 0.6) return whole;
+    let x0 = m.bw, y0 = m.bh, x1 = 0, y1 = 0;
+    for (const l of best) { const x = l % m.bw, y = (l / m.bw) | 0; x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1, bits = new Uint8Array(bw * bh);
+    for (const l of best) bits[(((l / m.bw) | 0) - y0) * bw + (l % m.bw) - x0] = 1;
+    const gx = m.x0 + x0, gy = m.y0 + y0;
+    const c = which ? c2 : c1;
+    parts.push({ blob, split: true, mask: { bits, bw, bh, x0: gx, y0: gy, sw: m.sw, sh: m.sh, box: [gx / m.sw, gy / m.sh, bw / m.sw, bh / m.sh] },
+      // The way the marks run: across the gradient, half its doubled angle.
+      marks: Math.atan2(c[1], c[0]) / 2 + Math.PI / 2 });
+  }
+  return parts;
+}
+
+/* Where each part stands in depth, by its clues, and its body. */
+function shapeDepthClues(part, pixels, sw, sh, scene) {
+  const m = part.mask, D = SHAPE_DEPTH;
+  const px = (x, y) => { x = Math.max(0, Math.min(sw - 1, x)); y = Math.max(0, Math.min(sh - 1, y)); return (y * sw + x) * 4; };
+  const inPart = (x, y) => { const lx = x - m.x0, ly = y - m.y0; return lx >= 0 && ly >= 0 && lx < m.bw && ly < m.bh && m.bits[ly * m.bw + lx] === 1; };
+  const bm = part.blob.mask;
+  const inBlob = (x, y) => { const lx = x - bm.x0, ly = y - bm.y0; return lx >= 0 && ly >= 0 && lx < bm.bw && ly < bm.bh && bm.bits[ly * bm.bw + lx] === 1; };
+  const dist = (a, b) => Math.abs(pixels[a] - pixels[b]) + Math.abs(pixels[a + 1] - pixels[b + 1]) + Math.abs(pixels[a + 2] - pixels[b + 2]);
+  let area = 0, chroma = 0, foot = 0, top = sh, cy = 0, r = 0, g = 0, b = 0, soft = 0, edges = 0, contrast = 0, rim = 0;
+  for (let ly = 0; ly < m.bh; ly++) {
+    for (let lx = 0; lx < m.bw; lx++) {
+      if (!m.bits[ly * m.bw + lx]) continue;
+      const x = m.x0 + lx, y = m.y0 + ly, o = px(x, y);
+      area++; cy += y; foot = Math.max(foot, y); top = Math.min(top, y);
+      r += pixels[o]; g += pixels[o + 1]; b += pixels[o + 2];
+      chroma += Math.max(pixels[o], pixels[o + 1], pixels[o + 2]) - Math.min(pixels[o], pixels[o + 1], pixels[o + 2]);
+      // Its edge (against what is not this shape at all): sharp when the step
+      // between it and what is next to it is the whole of the change nearby.
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        if (inPart(x + dx, y + dy) || inBlob(x + dx, y + dy)) continue;
+        const wide = dist(px(x - 2 * dx, y - 2 * dy), px(x + 3 * dx, y + 3 * dy));
+        contrast += wide; rim++;
+        if (wide < 18) continue;
+        soft += clampUnit((1 - dist(o, px(x + dx, y + dy)) / wide) / 0.75); edges++;
+      }
+    }
+  }
+  if (!area) return null;
+  cy /= area;
+  const footN = (foot + 1) / sh, centreN = (cy + 0.5) / sh;
+  const sky = footN <= scene.hy + 0.02;
+  const place = sky ? 0.6 + 0.4 * clampUnit(1 - (scene.hy - centreN) / Math.max(0.05, scene.hy))
+    : clampUnit(1 - (footN - scene.hy) / Math.max(0.05, 1 - scene.hy));
+  const clues = {
+    place, chroma: clampUnit(1 - chroma / area / scene.chroma), soft: edges ? soft / edges : 0.3,
+    size: clampUnit(1 - Math.sqrt(area / (sw * sh * 0.3))),
+  };
+  part.clues = clues;
+  part.area = area; part.sky = sky;
+  // A thing, or only a band of a smooth gradient that the colours were cut
+  // at: a thing has an edge - a real step in colour across its outline.
+  part.edge = rim ? contrast / rim : 0;
+  part.rgb = [r / area, g / area, b / area];
+  shapeDepthSummary(part);
+  // Its body: across each row, how the light changes - flat colour is a flat
+  // body, a turn from light to dark across it a round one.
+  let shade = 0, rows = 0;
+  const body = [];
+  for (let ly = 0; ly < m.bh; ly++) {
+    let xl = -1, xr = -1;
+    for (let lx = 0; lx < m.bw; lx++) if (m.bits[ly * m.bw + lx]) { if (xl < 0) xl = lx; xr = lx; }
+    if (xl < 0) continue;
+    body.push({ y: (m.y0 + ly + 0.5) / sh, c: (m.x0 + (xl + xr + 1) / 2) / sw, hw: (xr - xl + 1) / 2 / sw });
+    if (xr - xl < 5) continue;
+    const third = (k) => {
+      let s = 0, n = 0;
+      for (let lx = xl + Math.floor((xr - xl + 1) * k / 3); lx < xl + Math.floor((xr - xl + 1) * (k + 1) / 3); lx++) {
+        const o = px(m.x0 + lx, m.y0 + ly); s += 0.299 * pixels[o] + 0.587 * pixels[o + 1] + 0.114 * pixels[o + 2]; n++;
+      }
+      return n ? s / n : 0;
+    };
+    const a = third(0), mid = third(1), c = third(2);
+    shade += Math.abs(a - c) + Math.abs(mid - (a + c) / 2); rows++;
+  }
+  part.round = clampUnit(0.2 + (rows ? shade / rows : 0) / 45, 0.2, 1);
+  part.body = body;
+  // Solid, or a ring round something else: how much of its rows' span it fills.
+  const span = body.reduce((sum, row) => sum + row.hw * 2 * sw, 0);
+  part.solid = span ? area / span : 0;
+  part.cx = body.reduce((s, row) => s + row.c, 0) / Math.max(1, body.length);
+  // The three views: each row's centre and half-width turned by each angle.
+  part.views = D.views.map((turn) => ({ turn, rows: body.map((row) => {
+    const t = part.round * row.hw, c = part.cx + (row.c - part.cx) * Math.cos(turn);
+    const hw = Math.hypot(row.hw * Math.cos(turn), t * Math.sin(turn));
+    return [row.y, c - hw, c + hw];
+  }) }));
+  return part;
+}
+
+// Where it stands (and how big it is) against how it looks (colour,
+// edges), and the two together.
+function shapeDepthSummary(part) {
+  const w = SHAPE_DEPTH.cues, c = part.clues;
+  part.place = (c.place * w.place + c.size * w.size) / (w.place + w.size);
+  part.look = (c.chroma * w.chroma + c.soft * w.soft) / (w.chroma + w.soft);
+  part.depth = (c.place * w.place + c.chroma * w.chroma + c.soft * w.soft + c.size * w.size) / (w.place + w.chroma + w.soft + w.size);
+}
+
+/* Every part of the composed picture, placed in depth. */
+function* shapesInDepthSteps(plan, pixels, width, height) {
+  const { pixels: small, sw, sh } = smallCopy(pixels, width, height, 128);
+  const view = plan.scene?.view;
+  const hy = clampUnit(view && !view.iso ? view.horizon / height : 0.45, 0.05, 0.95);
+  const vx = clampUnit(view?.vanish && !view.iso ? view.vanish[0] / width : 0.5);
+  // How saturated the picture's most colourful things are, and the colour
+  // of the air at the horizon, which far things go toward.
+  const chromas = [];
+  for (let o = 0; o < small.length; o += 4) chromas.push(Math.max(small[o], small[o + 1], small[o + 2]) - Math.min(small[o], small[o + 1], small[o + 2]));
+  chromas.sort((a, b) => a - b);
+  const haze = [0, 0, 0];
+  const bandTop = Math.floor(Math.max(0, hy - 0.08) * sh), bandFoot = Math.max(bandTop + 1, Math.floor(hy * sh));
+  let hn = 0;
+  for (let y = bandTop; y < bandFoot; y++) for (let x = 0; x < sw; x++) { const o = (y * sw + x) * 4; haze[0] += small[o]; haze[1] += small[o + 1]; haze[2] += small[o + 2]; hn++; }
+  const scene = { hy, vx, chroma: Math.max(20, chromas[Math.floor(chromas.length * 0.9)] || 20), haze: haze.map((c) => c / Math.max(1, hn)) };
+  yield;
+  const dirs = markDirections(small, sw, sh);
+  const parts = [];
+  for (const blob of plan.liveBlobs || []) {
+    if (!blob.mask || blob.mask.sw !== sw || blob.mask.sh !== sh) continue;
+    yield;
+    for (const part of shapeParts(blob, dirs)) if (shapeDepthClues(part, small, sw, sh, scene)) parts.push(part);
+  }
+  parts.sort((a, b) => b.area - a.area);
+  // Only things are placed in depth: an edge to them, and not a ring.
+  const kept = parts.filter((p) => p.edge >= SHAPE_DEPTH.edge && p.solid >= SHAPE_DEPTH.solid).slice(0, SHAPE_DEPTH.parts);
+  if (!kept.length) return { parts: kept, scene };
+  // Edges are read against each other: the picture's ground is soft away
+  // from its focus everywhere, so softer than the rest is what says far.
+  // Too little spread between them, and edges say nothing either way.
+  const softs = kept.map((p) => p.clues.soft), lo = Math.min(...softs), hi = Math.max(...softs);
+  for (const part of kept) {
+    part.clues.soft = hi - lo >= 0.1 ? (part.clues.soft - lo) / (hi - lo) : 0.5;
+    shapeDepthSummary(part);
+  }
+  return { parts: kept, scene };
+}
+
+/* The nudges worth trying, most needed first: settle a part whose clues
+ * disagree; set apart two at one depth side by side; turn a round one. */
+function shapeDepthMoves(parts, rng) {
+  const D = SHAPE_DEPTH, moves = [];
+  const move = (part, kind, why, { zp1 = part.place, zl1 = part.look, turn = 0 } = {}) => ({
+    part: parts.indexOf(part), kind, why, zp0: part.place, zp1: clampUnit(zp1, 0, 0.95), zl0: part.look, zl1: clampUnit(zl1, 0, 0.95), turn, dx: 0,
+  });
+  for (const part of parts) {
+    const gap = part.look - part.place;
+    if (Math.abs(gap) > 0.1) {
+      moves.push(move(part, gap > 0 ? "moved back to where it looks" : "brought forward to where it looks", Math.abs(gap), { zp1: part.place + gap * 0.8 }));
+      moves.push(move(part, gap > 0 ? "given the clear look of where it stands" : "given the far look of where it stands", Math.abs(gap) * 0.95, { zl1: part.look - gap * 0.8 }));
+    }
+    if (part.round > 0.45 && part.solid > 0.85) {
+      const turn = (rng() < 0.5 ? -1 : 1) * D.turn;
+      moves.push(move(part, turn < 0 ? "turned to the left" : "turned to the right", 0.05 + (part.round - 0.45) * 0.1, { turn }));
+    }
+  }
+  for (let i = 0; i < parts.length; i++) {
+    for (let j = i + 1; j < parts.length; j++) {
+      const a = parts[i], b = parts[j];
+      if (Math.abs(a.depth - b.depth) > 0.08) continue;
+      const [ax, ay, aw, ah] = a.mask.box, [bx, by, bw, bh] = b.mask.box;
+      const apart = Math.max(bx - (ax + aw), ax - (bx + bw), by - (ay + ah), ay - (by + bh));
+      if (apart > 0.05) continue;
+      const back = a.area < b.area ? a : b;
+      moves.push(move(back, "stepped back from its neighbour", 0.08, { zp1: back.place + 0.2, zl1: back.look + 0.2 }));
+    }
+  }
+  // A picture whose clues all agree is still asked: its biggest part a step
+  // nearer or farther.
+  if (parts[0]) {
+    const step = rng() < 0.5 ? -0.15 : 0.15;
+    moves.push(move(parts[0], step > 0 ? "set farther back" : "brought nearer", 0.02, { zp1: parts[0].place + step, zl1: parts[0].look + step }));
+  }
+  moves.sort((a, b) => b.why - a.why);
+  return moves;
+}
+
+/* Perspective: where a move puts a part (its box, in parts of the
+ * picture), scaled toward or away from the vanishing point. */
+function shapeMoveScale(mv) {
+  const D = SHAPE_DEPTH;
+  return (1 - D.shrink * mv.zp1) / (1 - D.shrink * mv.zp0);
+}
+function shapeMoveBox(part, mv, scene) {
+  const s = shapeMoveScale(mv), [x, y, w, h] = part.mask.box;
+  const nx = scene.vx + (x - scene.vx) * s + mv.dx, ny = scene.hy + (y - scene.hy) * s;
+  // Turned, a round body is a little wider.
+  const grow = mv.turn ? Math.hypot(Math.cos(mv.turn), part.round * Math.sin(mv.turn)) : 1;
+  return [nx - w * s * (grow - 1) / 2, ny, w * s * grow, h * s];
+}
+// The rules a move keeps: on the picture, and never drawn over a part
+// nearer than where it is going.
+function shapeMoveAllowed(parts, mv, scene) {
+  const part = parts[mv.part], [x, y, w, h] = shapeMoveBox(part, mv, scene);
+  if (x < -0.02 || y < -0.02 || x + w > 1.02 || y + h > 1.02 || w < 0.02 || h < 0.02) return false;
+  for (const other of parts) {
+    if (other === part || other.blob === part.blob) continue;
+    const [ox, oy, ow, oh] = other.mask.box;
+    const overlap = x < ox + ow && ox < x + w && y < oy + oh && oy < y + h;
+    if (overlap && mv.zp1 > other.place + 0.05) return false;
+  }
+  return true;
+}
+
+/* A box blur of radius r, rows then columns, by running sums (cost not
+ * growing with r). `weight` (optional) says how much each pixel counts;
+ * a pixel that counts 0 takes its value from those round it. In place. */
+function boxBlurChannels(chans, w, h, r, weight = null) {
+  if (r < 1) return;
+  const line = new Float32Array(Math.max(w, h)), wl = new Float32Array(Math.max(w, h));
+  const pass = (len, count, idx) => {
+    for (let a = 0; a < count; a++) {
+      for (const ch of chans) {
+        let sum = 0, sw = 0;
+        for (let i = 0; i < len; i++) { const k = idx(i, a), wt = weight ? weight[k] : 1; line[i] = ch[k] * wt; wl[i] = wt; }
+        for (let i = 0; i < Math.min(len, r); i++) { sum += line[i]; sw += wl[i]; }
+        for (let i = 0; i < len; i++) {
+          if (i + r < len) { sum += line[i + r]; sw += wl[i + r]; }
+          if (i - r - 1 >= 0) { sum -= line[i - r - 1]; sw -= wl[i - r - 1]; }
+          if (sw > 1e-6) ch[idx(i, a)] = sum / sw;
+        }
+      }
+    }
+  };
+  pass(w, h, (i, a) => a * w + i);
+  pass(h, w, (i, a) => i * w + a);
+}
+
+/* Fill where a part was from what is round it: across each row and down
+ * each column from the colours either side, the two averaged, softened. A
+ * wash, so worked out on a coarse grid (`cell` pixels a square) and spread
+ * back over the hole smoothly. */
+function* fillShapeHoleSteps(pixels, width, height, x0, y0, x1, y1, hole) {
+  const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+  const cell = Math.max(1, Math.round(Math.min(width, height) / 160));
+  const gw = Math.ceil(bw / cell), gh = Math.ceil(bh / cell), n = gw * gh;
+  // The grid: each square's colour from its pixels outside the hole; a
+  // square mostly hole is to be filled.
+  const known = new Float32Array(n * 3), seen = new Float32Array(n), all = new Float32Array(n);
+  for (let ly = 0; ly < bh; ly++) {
+    if (ly % 64 === 63) yield;
+    const gy = ((ly / cell) | 0) * gw;
+    let o = ((y0 + ly) * width + x0) * 4;
+    for (let lx = 0; lx < bw; lx++, o += 4) {
+      const g = gy + ((lx / cell) | 0);
+      all[g]++;
+      if (hole[ly * bw + lx]) continue;
+      known[g * 3] += pixels[o]; known[g * 3 + 1] += pixels[o + 1]; known[g * 3 + 2] += pixels[o + 2]; seen[g]++;
+    }
+  }
+  const gap = new Uint8Array(n);
+  for (let g = 0; g < n; g++) {
+    if (seen[g] >= all[g] * 0.25) { known[g * 3] /= seen[g]; known[g * 3 + 1] /= seen[g]; known[g * 3 + 2] /= seen[g]; }
+    else gap[g] = 1;
+  }
+  // Across the rows and down the columns, between the squares either side.
+  const acc = new Float32Array(n * 3), count = new Uint8Array(n);
+  for (let gy = 0; gy < gh; gy++) {
+    let i = 0;
+    while (i < gw) {
+      if (!gap[gy * gw + i]) { i++; continue; }
+      const start = i;
+      while (i < gw && gap[gy * gw + i]) i++;
+      const p = start > 0 ? gy * gw + start - 1 : -1, q = i < gw ? gy * gw + i : -1;
+      if (p < 0 && q < 0) continue;
+      const a = p >= 0 ? p : q, b = q >= 0 ? q : p;
+      for (let k = start; k < i; k++) {
+        const t = (k - start + 1) / (i - start + 1), g = gy * gw + k;
+        for (let c = 0; c < 3; c++) acc[g * 3 + c] += known[a * 3 + c] + (known[b * 3 + c] - known[a * 3 + c]) * t;
+        count[g]++;
+      }
+    }
+  }
+  for (let gx = 0; gx < gw; gx++) {
+    let i = 0;
+    while (i < gh) {
+      if (!gap[i * gw + gx]) { i++; continue; }
+      const start = i;
+      while (i < gh && gap[i * gw + gx]) i++;
+      const p = start > 0 ? (start - 1) * gw + gx : -1, q = i < gh ? i * gw + gx : -1;
+      if (p < 0 && q < 0) continue;
+      const a = p >= 0 ? p : q, b = q >= 0 ? q : p;
+      for (let k = start; k < i; k++) {
+        const t = (k - start + 1) / (i - start + 1), g = k * gw + gx;
+        for (let c = 0; c < 3; c++) acc[g * 3 + c] += known[a * 3 + c] + (known[b * 3 + c] - known[a * 3 + c]) * t;
+        count[g]++;
+      }
+    }
+  }
+  const chans = [0, 1, 2].map(() => new Float32Array(n)), weight = new Float32Array(n);
+  for (let g = 0; g < n; g++) {
+    const filled = gap[g] && count[g];
+    weight[g] = !gap[g] || filled ? 1 : 0;
+    for (let c = 0; c < 3; c++) chans[c][g] = gap[g] ? (count[g] ? acc[g * 3 + c] / count[g] : 0) : known[g * 3 + c];
+  }
+  // Softened, so the rows and columns do not show.
+  const r = Math.max(1, Math.round(Math.min(gw, gh) / 10));
+  for (let pass = 0; pass < 2; pass++) boxBlurChannels(chans, gw, gh, r, weight);
+  // Spread back over the hole's pixels, smoothly between the squares.
+  const [cr, cg, cb] = chans;
+  yield;
+  for (let ly = 0; ly < bh; ly++) {
+    if (ly % 64 === 63) yield;
+    const fy = Math.max(0, Math.min(gh - 1.001, (ly + 0.5) / cell - 0.5)), gy0 = fy | 0, ty = fy - gy0, gy1 = Math.min(gh - 1, gy0 + 1);
+    let o = ((y0 + ly) * width + x0) * 4;
+    for (let lx = 0; lx < bw; lx++, o += 4) {
+      if (!hole[ly * bw + lx]) continue;
+      const fx = Math.max(0, Math.min(gw - 1.001, (lx + 0.5) / cell - 0.5)), gx0 = fx | 0, tx = fx - gx0, gx1 = Math.min(gw - 1, gx0 + 1);
+      const a = gy0 * gw + gx0, b = gy0 * gw + gx1, c = gy1 * gw + gx0, d = gy1 * gw + gx1;
+      const w00 = (1 - tx) * (1 - ty), w01 = tx * (1 - ty), w10 = (1 - tx) * ty, w11 = tx * ty;
+      pixels[o] = cr[a] * w00 + cr[b] * w01 + cr[c] * w10 + cr[d] * w11;
+      pixels[o + 1] = cg[a] * w00 + cg[b] * w01 + cg[c] * w10 + cg[d] * w11;
+      pixels[o + 2] = cb[a] * w00 + cb[b] * w01 + cb[c] * w10 + cb[d] * w11;
+    }
+  }
+}
+
+/* A move painted into `pixels` (width x height, any size: everything about
+ * a part is in parts of the picture). In place. */
+function renderShapeMove(pixels, width, height, part, mv, scene) {
+  const steps = renderShapeMoveSteps(pixels, width, height, part, mv, scene);
+  while (!steps.next().done);
+  return pixels;
+}
+// The same a few rows at a time (yields between), for full-size pictures.
+function* renderShapeMoveSteps(pixels, width, height, part, mv, scene) {
+  const D = SHAPE_DEPTH, m = part.mask, s = shapeMoveScale(mv);
+  const orig = pixels.slice();
+  const pad = 1.5 / m.sw;
+  const ix = (v) => Math.max(0, Math.min(width - 1, Math.floor(v * width))), iy = (v) => Math.max(0, Math.min(height - 1, Math.floor(v * height)));
+  // 1. Lifted out: where it was is filled from round it.
+  const sx0 = ix(m.box[0] - pad), sy0 = iy(m.box[1] - pad), sx1 = ix(m.box[0] + m.box[2] + pad), sy1 = iy(m.box[1] + m.box[3] + pad);
+  const sbw = sx1 - sx0 + 1, sbh = sy1 - sy0 + 1;
+  const hole = new Uint8Array(sbw * sbh);
+  for (let y = sy0; y <= sy1; y++) {
+    if ((y - sy0) % 64 === 63) yield;
+    for (let x = sx0; x <= sx1; x++) hole[(y - sy0) * sbw + x - sx0] = shapeMaskAt(m, (x + 0.5) / width, (y + 0.5) / height) > 0.01 ? 1 : 0;
+  }
+  yield* fillShapeHoleSteps(pixels, width, height, sx0, sy0, sx1, sy1, hole);
+  yield;
+  // 2. Turned: each source row's body, and the inverse of its turned view
+  // (where on the row each point of the turned row comes from).
+  const rows = new Map();
+  const rowOf = (sy) => {
+    if (rows.has(sy)) return rows.get(sy);
+    let xl = -1, xr = -1;
+    for (let x = sx0; x <= sx1; x++) if (shapeMaskAt(m, (x + 0.5) / width, (sy + 0.5) / height) >= 0.5) { if (xl < 0) xl = x; xr = x; }
+    let row = null;
+    if (xl >= 0) {
+      const c = (xl + xr + 1) / 2, hw = (xr - xl + 1) / 2, t = part.round * hw, cx = part.cx * width, cos = Math.cos(mv.turn), sin = Math.sin(mv.turn);
+      const xs = [], us = [];
+      for (let k = 0; k <= 48; k++) {
+        const u = -1 + 2 * k / 48, X = cx + (c - cx) * cos + hw * u * cos + t * Math.sqrt(Math.max(0, 1 - u * u)) * sin;
+        if (!xs.length || X > xs[xs.length - 1]) { xs.push(X); us.push(u); }
+      }
+      row = { c, hw, xs, us };
+    }
+    rows.set(sy, row);
+    return row;
+  };
+  // 3. Put back where perspective puts it, with the look of its new depth.
+  const fwdX = (nx) => scene.vx + (nx - scene.vx) * s + mv.dx, fwdY = (ny) => scene.hy + (ny - scene.hy) * s;
+  // Farther is softer; and every edge is feathered a little, so a change of
+  // look fades in rather than stopping at a line.
+  const blurPx = Math.max(D.feather * width / m.sw, D.blur * Math.min(width, height) * (mv.zl1 - mv.zl0));
+  const margin = Math.ceil(blurPx) + 2;
+  const box = shapeMoveBox(part, mv, scene);
+  const tx0 = Math.max(0, ix(Math.min(box[0], fwdX(m.box[0]))) - margin), tx1 = Math.min(width - 1, ix(Math.max(box[0] + box[2], fwdX(m.box[0] + m.box[2]))) + margin);
+  const ty0 = Math.max(0, iy(fwdY(m.box[1])) - margin), ty1 = Math.min(height - 1, iy(fwdY(m.box[1] + m.box[3])) + margin);
+  const tw = tx1 - tx0 + 1, th = ty1 - ty0 + 1;
+  if (tw <= 0 || th <= 0) return;
+  const alpha = new Float32Array(tw * th), colour = new Float32Array(tw * th * 3);
+  const h0 = D.haze * mv.zl0 * mv.zl0, h1 = D.haze * mv.zl1 * mv.zl1;
+  const cf = Math.min(D.vivid, (1 - D.dull * mv.zl1) / (1 - D.dull * mv.zl0));
+  const edge = 0.12 + 0.3 * mv.zl1, haze = scene.haze;
+  const sample = (x, y, c) => {
+    x = Math.max(0, Math.min(width - 1.001, x)); y = Math.max(0, Math.min(height - 1.001, y));
+    const xi = x | 0, yi = y | 0, fx = x - xi, fy = y - yi, o = (yi * width + xi) * 4, ow = width * 4;
+    return (orig[o + c] * (1 - fx) + orig[o + 4 + c] * fx) * (1 - fy) + (orig[o + ow + c] * (1 - fx) + orig[o + ow + 4 + c] * fx) * fy;
+  };
+  for (let y = ty0; y <= ty1; y++) {
+    if ((y - ty0) % 48 === 47) yield;
+    const ny = scene.hy + ((y + 0.5) / height - scene.hy) / s, sy = ny * height - 0.5;
+    for (let x = tx0; x <= tx1; x++) {
+      let sx = (scene.vx + ((x + 0.5) / width - mv.dx - scene.vx) / s) * width - 0.5;
+      if (mv.turn) {
+        const row = rowOf(Math.max(sy0, Math.min(sy1, Math.round(sy))));
+        if (!row || sx < row.xs[0] || sx > row.xs[row.xs.length - 1]) continue;
+        let k = 1;
+        while (k < row.xs.length - 1 && row.xs[k] < sx) k++;
+        const t = (sx - row.xs[k - 1]) / Math.max(1e-6, row.xs[k] - row.xs[k - 1]);
+        sx = row.c + row.hw * (row.us[k - 1] + (row.us[k] - row.us[k - 1]) * t) - 0.5;
+      }
+      const a0 = shapeMaskAt(m, (sx + 0.5) / width, (sy + 0.5) / height);
+      if (a0 <= 0) continue;
+      const k = (y - ty0) * tw + x - tx0;
+      const e = clampUnit((a0 - (0.5 - edge)) / (2 * edge));
+      alpha[k] = e * e * (3 - 2 * e);
+      // The air: what it was through its old haze, through its new one, and
+      // its colour as strong as its new distance lets it be.
+      let r = sample(sx, sy, 0), g = sample(sx, sy, 1), b = sample(sx, sy, 2);
+      r = (r - haze[0] * h0) / (1 - h0) * (1 - h1) + haze[0] * h1;
+      g = (g - haze[1] * h0) / (1 - h0) * (1 - h1) + haze[1] * h1;
+      b = (b - haze[2] * h0) / (1 - h0) * (1 - h1) + haze[2] * h1;
+      const l = 0.299 * r + 0.587 * g + 0.114 * b;
+      colour[k * 3] = l + (r - l) * cf; colour[k * 3 + 1] = l + (g - l) * cf; colour[k * 3 + 2] = l + (b - l) * cf;
+    }
+  }
+  // Farther: a softer edge - colour and cover blurred together
+  // (premultiplied), so the edge spreads in the shape's own colour.
+  for (let k = 0; k < tw * th; k++) for (let c = 0; c < 3; c++) colour[k * 3 + c] *= alpha[k];
+  const radius = Math.round(blurPx);
+  if (radius >= 1) {
+    const chans = [alpha, ...[0, 1, 2].map((c) => { const a = new Float32Array(tw * th); for (let k = 0; k < tw * th; k++) a[k] = colour[k * 3 + c]; return a; })];
+    for (let pass = 0; pass < 2; pass++) boxBlurChannels(chans, tw, th, radius);
+    for (let k = 0; k < tw * th; k++) for (let c = 0; c < 3; c++) colour[k * 3 + c] = chans[c + 1][k];
+  }
+  yield;
+  for (let y = 0; y < th; y++) {
+    for (let x = 0; x < tw; x++) {
+      const k = y * tw + x, a = alpha[k];
+      if (a <= 0.002) continue;
+      const o = ((ty0 + y) * width + tx0 + x) * 4;
+      // Over: premultiplied colour plus what is under it.
+      pixels[o] = colour[k * 3] + pixels[o] * (1 - a);
+      pixels[o + 1] = colour[k * 3 + 1] + pixels[o + 1] * (1 - a);
+      pixels[o + 2] = colour[k * 3 + 2] + pixels[o + 2] * (1 - a);
+    }
+  }
+}
+
+/* Breed the composed picture's shapes in depth: each round, the nudges
+ * most needed are tried on a small copy, taste scores each, and the best is
+ * kept - painted into the picture full size - only if it beats the picture
+ * as it is. A step at a time (yields between tastes). Returns the record. */
+function* evolveShapesInDepthSteps(plan, ground, width, height) {
+  const D = SHAPE_DEPTH;
+  plan.depth = null;
+  if (!plan.liveBlobs?.length || typeof document === "undefined") return null;
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0xde9e7) >>> 0);
+  const record = plan.depth = { parts: [], kept: [], tried: 0, base: 0, last: 0 };
+  let { pixels: small, sw: tw, sh: th } = smallCopy(ground, width, height, D.taste);
+  const canvas = paintBuffer(tw, th), ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const tasteOf = (px) => {
+    ctx.putImageData(new ImageData(new Uint8ClampedArray(px), tw, th), 0, 0);
+    return tastePrediction(tasteFeatures(ctx, tw, th, signature(ctx, tw, th)));
+  };
+  let base = record.base = record.last = tasteOf(small);
+  let analysis = null;
+  try {
+    for (let round = 0; round < D.rounds; round++) {
+      analysis = yield* shapesInDepthSteps(plan, ground, width, height);
+      plan.depthParts = analysis;
+      if (round === 0) record.parts = analysis.parts.map((p) => ({ depth: +p.depth.toFixed(2), place: +p.place.toFixed(2), look: +p.look.toFixed(2),
+        round: +p.round.toFixed(2), split: p.split, clues: Object.fromEntries(Object.entries(p.clues).map(([k, v]) => [k, +v.toFixed(2)])) }));
+      if (!analysis.parts.length) break;
+      yield;
+      const moves = shapeDepthMoves(analysis.parts, rng).filter((mv) => shapeMoveAllowed(analysis.parts, mv, analysis.scene)).slice(0, D.tries);
+      let best = null, bestScore = base + D.gain;
+      for (const mv of moves) {
+        const trial = new Uint8ClampedArray(small);
+        renderShapeMove(trial, tw, th, analysis.parts[mv.part], mv, analysis.scene);
+        const score = tasteOf(trial);
+        record.tried++;
+        if (score > bestScore) { best = mv; bestScore = score; }
+        yield;
+      }
+      if (!best) break;
+      yield* renderShapeMoveSteps(ground, width, height, analysis.parts[best.part], best, analysis.scene);
+      ({ pixels: small } = smallCopy(ground, width, height, D.taste));
+      base = record.last = tasteOf(small);
+      record.kept.push({ kind: best.kind, part: best.part, depth: [+best.zp0.toFixed(2), +best.zp1.toFixed(2)], gain: +(bestScore - record.base).toFixed(4) });
+      // Its shapes found again, and their light, in the picture as it is now.
+      refreshPlanShapes(plan, ground, width, height);
+      yield;
+    }
+    if (record.kept.length && SHOW_DEPTH) plan.depthParts = yield* shapesInDepthSteps(plan, ground, width, height);
+  } finally {
+    canvas.width = 0; canvas.height = 0;
+  }
+  return record;
+}
+function evolveShapesInDepth(plan, ground, width, height) {
+  const steps = evolveShapesInDepthSteps(plan, ground, width, height);
+  let step;
+  do step = steps.next(); while (!step.done);
+  return step.value;
+}
+
+/* ?depth: each part of the painting outlined in its three views (left in
+ * orange, front in white, right in blue), with its depth and its clues. */
+const SHOW_DEPTH = (() => { try { return new URLSearchParams(location.search).has("depth"); } catch { return false; } })();
+let depthLayer = null, depthShownFor = null;
+function refreshDepthLayer() {
+  if (!SHOW_DEPTH || !view?.width) return;
+  if (!depthLayer) {
+    depthLayer = document.createElement("canvas");
+    depthLayer.id = "depthView";
+    depthLayer.style.cssText = "position:absolute;pointer-events:none;border-radius:5px;background:transparent;z-index:2";
+    view.insertAdjacentElement("afterend", depthLayer);
+  }
+  Object.assign(depthLayer.style, { left: view.offsetLeft + "px", top: view.offsetTop + "px", width: view.offsetWidth + "px", height: view.offsetHeight + "px" });
+  const shown = strokePainter.plan?.depthParts;
+  if (depthShownFor === shown && depthLayer.width === view.width) return;
+  depthShownFor = shown;
+  depthLayer.width = view.width; depthLayer.height = view.height;
+  const ctx = depthLayer.getContext("2d"), W = view.width, H = view.height;
+  ctx.clearRect(0, 0, W, H);
+  if (!shown) return;
+  ctx.setLineDash([]);
+  ctx.strokeStyle = "rgba(255,255,255,0.5)"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, shown.scene.hy * H); ctx.lineTo(W, shown.scene.hy * H); ctx.stroke();
+  const colours = ["#ff9a3c", "#ffffff", "#5fb4ff"];
+  for (const part of shown.parts) {
+    part.views.forEach((v, k) => {
+      ctx.strokeStyle = colours[k]; ctx.lineWidth = k === 1 ? 2 : 1.2; ctx.setLineDash(k === 1 ? [] : [4, 3]);
+      ctx.beginPath();
+      v.rows.forEach(([y, l], i) => (i ? ctx.lineTo(l * W, y * H) : ctx.moveTo(l * W, y * H)));
+      for (let i = v.rows.length - 1; i >= 0; i--) ctx.lineTo(v.rows[i][2] * W, v.rows[i][0] * H);
+      ctx.closePath(); ctx.stroke();
+    });
+    const [bx, by] = part.mask.box, c = part.clues;
+    ctx.setLineDash([]);
+    ctx.font = "bold 12px sans-serif"; ctx.fillStyle = "#fff"; ctx.strokeStyle = "#000"; ctx.lineWidth = 3;
+    const label = `depth ${part.depth.toFixed(2)}${part.split ? " (part)" : ""}`;
+    const detail = `stands ${c.place.toFixed(2)} · colour ${c.chroma.toFixed(2)} · edge ${c.soft.toFixed(2)} · round ${part.round.toFixed(2)}`;
+    ctx.strokeText(label, bx * W + 2, by * H + 13); ctx.fillText(label, bx * W + 2, by * H + 13);
+    ctx.font = "10px sans-serif";
+    ctx.strokeText(detail, bx * W + 2, by * H + 26); ctx.fillText(detail, bx * W + 2, by * H + 26);
+  }
+}
+if (SHOW_DEPTH && typeof window !== "undefined") setInterval(refreshDepthLayer, 1000);
+
 /* The scene's layer painted into a composed reference, in place. */
 function applySceneLayer(pixels, width, height, plan, only = null) {
   const scene = plan?.scene;
@@ -34643,6 +35330,9 @@ async function prepareNewPainting(result, raw, width, height, alive) {
   const source = bestRun?.params ? bestRun : current;
   if (!await step()) return null;
   refreshPlanShapes(plan, ground, width, height);
+  // Its shapes bred in depth (Shapes in depth), a taste at a time.
+  const depthSteps = evolveShapesInDepthSteps(plan, ground, width, height);
+  do { if (!await step()) return null; } while (!depthSteps.next().done);
   if (!await step()) return null;
   plan.dims = choosePlanDims(plan, ground, width, height, source?.params);
   if (plan.scene) {
@@ -34680,7 +35370,10 @@ function prepareStrokeReference(ref, width, height, enhanced = enhanceStrokeRefe
   }
   const plan = strokePainter.plan;
   const ground = composeStrokeReference(enhanced, width, height, plan);
-  if (fresh) refreshPlanShapes(plan, ground, width, height);
+  if (fresh) {
+    refreshPlanShapes(plan, ground, width, height);
+    evolveShapesInDepth(plan, ground, width, height);
+  }
   const choosing = fresh || !plan.manner;
   const source = bestRun?.params ? bestRun : current;
   // Solidity first (it changes how the scene is painted into the picture),
@@ -34724,8 +35417,12 @@ function scheduleStrokeReference(ref, width, height, refKey) {
     // Its own shapes, and the light on them: the strokes wrap round the
     // picture being painted now, not the one the painting began from.
     refreshPlanShapes(plan, ground, width, height);
-    await pause();
-    if (!stillWanted()) return;
+    // ...bred in depth again, in the new picture.
+    const depthSteps = evolveShapesInDepthSteps(plan, ground, width, height);
+    do {
+      await pause();
+      if (!stillWanted()) return;
+    } while (!depthSteps.next().done);
     const composed = applyPlanScene(ground, width, height, plan);
     await pause();
     if (!stillWanted()) return;
