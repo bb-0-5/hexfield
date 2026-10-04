@@ -13706,7 +13706,7 @@ function trimTasteSamples(samples) {
     .filter((sample) => sample && Number.isFinite(Number(sample.label)) && sample.features)
     .sort((a, b) => (Number(a.at) || 0) - (Number(b.at) || 0));
   const isHuman = (sample) => sample.source === "human" || sample.source === "dwell-time" ||
-    sample.source === "rule";
+    sample.source === "rule" || sample.source === "reference";
   const chosen = [], seen = new Set();
   const takeRecent = (list, cap) => {
     for (const sample of list.slice(-cap)) {
@@ -15165,6 +15165,7 @@ async function connectTaste() {
       pullHarvestMaterials(), pullSharedVisualSymbols(),
       pullVisualSourceCorpus(), fetchKnownCreationHashes(), refreshMuseumStatus(),
       pullVisualLexicon(), pullFormMemory(), pullSharedKeeps(), pullStyleOutcomes(), pullSharedMorphs(),
+      pullFontReferences(),
     ]);
     queueTasteSync();
     scheduleSharedTasteFlush(0);
@@ -32211,6 +32212,234 @@ function renderGarden(panel, small) {
   panel.appendChild(wrap);
 }
 
+/* The look of a logo or a piece of lettering, measured: how heavy its strokes
+ * are against its letters' height, how they lean, how round or straight they
+ * run, how wide its letters are and how far apart. Read from a picture of it
+ * (any background); what it says, and its exact shapes, are not kept. */
+function logoTraits(source) {
+  const scale = Math.min(1, 360 / Math.max(source.width, source.height));
+  const w = Math.max(8, Math.round(source.width * scale)), h = Math.max(8, Math.round(source.height * scale));
+  const c = paintBuffer(w, h), ctx = c.getContext("2d", { willReadFrequently: true });
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(source, 0, 0, w, h);
+  const px = ctx.getImageData(0, 0, w, h).data;
+  c.width = 0;
+  // The ground: the colour round the border; ink is what differs from it.
+  const border = [];
+  for (let x = 0; x < w; x++) { border.push(x * 4, ((h - 1) * w + x) * 4); }
+  for (let y = 0; y < h; y++) { border.push(y * w * 4, (y * w + w - 1) * 4); }
+  const med = [0, 1, 2].map((k) => { const v = border.map((o) => px[o + k]).sort((a, b) => a - b); return v[v.length >> 1]; });
+  const ink = new Uint8Array(w * h);
+  let area = 0;
+  for (let i = 0, o = 0; i < w * h; i++, o += 4) {
+    if (Math.abs(px[o] - med[0]) + Math.abs(px[o + 1] - med[1]) + Math.abs(px[o + 2] - med[2]) > 90) { ink[i] = 1; area++; }
+  }
+  if (area < 40 || area > w * h * 0.85) return null;
+  // Its letters: the pieces of ink, small specks left out.
+  const seen = new Int32Array(w * h).fill(-1), parts = [];
+  const stack = [];
+  for (let i = 0; i < w * h; i++) {
+    if (!ink[i] || seen[i] >= 0) continue;
+    let n = 0, x0 = w, y0 = h, x1 = 0, y1 = 0;
+    stack.push(i); seen[i] = parts.length;
+    while (stack.length) {
+      const j = stack.pop(), x = j % w, y = (j / w) | 0;
+      n++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      for (const k of [j - 1, j + 1, j - w, j + w]) {
+        if (k < 0 || k >= w * h || seen[k] >= 0 || !ink[k] || (k === j - 1 && x === 0) || (k === j + 1 && x === w - 1)) continue;
+        seen[k] = parts.length; stack.push(k);
+      }
+    }
+    parts.push({ n, x0, y0, x1, y1, w: x1 - x0 + 1, h: y1 - y0 + 1 });
+  }
+  const tallest = Math.max(...parts.map((p) => p.h));
+  const letters = parts.filter((p) => p.n > area * 0.004 && p.h > tallest * 0.45).sort((a, b) => a.x0 - b.x0);
+  if (!letters.length) return null;
+  const median = (arr) => { const v = arr.slice().sort((a, b) => a - b); return v[v.length >> 1]; };
+  const letterH = median(letters.map((p) => p.h));
+  // Weight: ink's thickness (twice its area over its edge) against the height.
+  let perim = 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x;
+    if (ink[i] && (x === 0 || y === 0 || x === w - 1 || y === h - 1 || !ink[i - 1] || !ink[i + 1] || !ink[i - w] || !ink[i + w])) perim++;
+  }
+  const weight = (2 * area / Math.max(1, perim)) / letterH;
+  // Lean: the shear that stands the uprights straightest (the column
+  // profile sharpest).
+  const cy = letters.reduce((s, p) => s + (p.y0 + p.y1) / 2, 0) / letters.length;
+  let best = 0, bestScore = -1;
+  for (let k = -20; k <= 20; k++) {
+    const s = k / 40;
+    const hist = new Float32Array(w + 2 * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (ink[y * w + x]) hist[Math.round(x + s * (y - cy)) + h]++;
+    let sc = 0;
+    for (const v of hist) sc += v * v;
+    if (sc > bestScore) { bestScore = sc; best = s; }
+  }
+  // Straight or round: how much of its edge runs at 0/45/90/135 degrees.
+  let straight = 0, edges = 0;
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const i = y * w + x;
+    const gx = ink[i + 1 - w] + 2 * ink[i + 1] + ink[i + 1 + w] - ink[i - 1 - w] - 2 * ink[i - 1] - ink[i - 1 + w];
+    const gy = ink[i - 1 + w] + 2 * ink[i + w] + ink[i + 1 + w] - ink[i - 1 - w] - 2 * ink[i - w] - ink[i + 1 - w];
+    if (!gx && !gy) continue;
+    edges++;
+    const a = ((Math.atan2(gy, gx) * 180 / Math.PI) % 45 + 45) % 45;
+    if (a < 6 || a > 39) straight++;
+  }
+  const gaps = [];
+  for (let k = 1; k < letters.length; k++) gaps.push(Math.max(0, letters[k].x0 - letters[k - 1].x1));
+  return {
+    weight: +weight.toFixed(4), lean: +best.toFixed(3), straight: +(straight / Math.max(1, edges)).toFixed(3),
+    width: +(median(letters.map((p) => p.w)) / letterH).toFixed(3),
+    spacing: +(gaps.length ? median(gaps) / letterH : 0.1).toFixed(3), letters: letters.length,
+  };
+}
+
+/* ── References: pictures and logos people give it ─────────────────────
+ * A picture someone likes, given to the studio, is a KEEP of a picture it
+ * did not paint: measured as a painting is (the taste features), it joins
+ * the taste as a strong like - and, as every KEEP does, the shared crowd
+ * taste (marked traits.reference), so it moves what everyone's paintings
+ * prefer. Only the measurements leave the device, never the picture.
+ * A logo or a piece of lettering is measured for how its letters are made
+ * (logoTraits: weight, lean, straight or round, width, spacing); those go
+ * to a shared table (hexfield_font_references), and the fonts - the
+ * garden's and each painting's lettering - lean toward the average of
+ * everyone's, as genes, not shapes: a logo's look, never its letters. */
+const REFERENCE_WEIGHT = 4;
+const REFERENCES_KEY = "hexfield.references.v1";
+const FONT_REF_CAP = 200;
+let fontReferenceShared = [];
+function referenceList() {
+  try { return JSON.parse(localStorage.getItem(REFERENCES_KEY) || "[]"); } catch { return []; }
+}
+function saveReferenceList(list) {
+  try { localStorage.setItem(REFERENCES_KEY, JSON.stringify(list.slice(-24))); } catch { /* memory only */ }
+}
+async function referenceBitmap(file) {
+  if (typeof createImageBitmap === "function") return createImageBitmap(file);
+  const url = URL.createObjectURL(file);
+  try {
+    return await new Promise((resolve, reject) => { const img = new Image(); img.onload = () => resolve(img); img.onerror = reject; img.src = url; });
+  } finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
+}
+async function referenceHash(prefix, bitmap) {
+  const c = paintBuffer(24, 24), x = c.getContext("2d", { willReadFrequently: true });
+  x.drawImage(bitmap, 0, 0, 24, 24);
+  const d = x.getImageData(0, 0, 24, 24).data;
+  c.width = 0;
+  return prefix + await sha256Hex("hexfield-reference-v1|" + Array.from(d).join(","));
+}
+function referenceThumb(bitmap) {
+  const k = 56 / Math.max(bitmap.width, bitmap.height), c = paintBuffer(Math.max(1, Math.round(bitmap.width * k)), Math.max(1, Math.round(bitmap.height * k)));
+  c.getContext("2d").drawImage(bitmap, 0, 0, c.width, c.height);
+  try { return c.toDataURL("image/jpeg", 0.7); } finally { c.width = 0; }
+}
+// The picture measured as the taste measures a painting: drawn into the probe,
+// covering it, then its features, grammar and aesthetic scores.
+function referenceFeatures(bitmap) {
+  const W = probe.width, H = probe.height, k = Math.max(W / bitmap.width, H / bitmap.height);
+  pctx.save();
+  pctx.fillStyle = "#808080"; pctx.fillRect(0, 0, W, H);
+  pctx.drawImage(bitmap, (W - bitmap.width * k) / 2, (H - bitmap.height * k) / 2, bitmap.width * k, bitmap.height * k);
+  pctx.restore();
+  const raw = tasteFeatures(pctx, W, H, signature(pctx, W, H));
+  const grammar = canvasGrammar(pctx, W, H);
+  return { ...raw, ...canvasAestheticScores(grammar, raw, 0.5) };
+}
+async function addTasteReference(file, kind = "picture") {
+  const bitmap = await referenceBitmap(file);
+  const features = referenceFeatures(bitmap);
+  const hash = await referenceHash("hf_", bitmap);
+  taste.samples.push({ label: 1, weight: REFERENCE_WEIGHT, features, field: "reference", textMode: textMode(), source: "reference",
+    at: Date.now(), traits: { reference: kind } });
+  taste.samples = trimTasteSamples(taste.samples);
+  visibleTasteEpoch++;
+  queueTasteSample();
+  performTasteFit();
+  if (!HEXFIELD_LOCAL_ONLY) {
+    // As a KEEP is: the measurements, by the person who chose it.
+    enqueueSharedTasteObservation({ render_hash: hash, liked: true, source: "human",
+      features: Object.fromEntries(TASTE_FEATURES.map((key) => [key, featureValue(features, key)])), traits: { reference: kind } });
+    scheduleSharedTasteFlush(0);
+  }
+  const list = referenceList().filter((r) => r.hash !== hash);
+  list.push({ hash, kind, thumb: referenceThumb(bitmap), at: Date.now() });
+  saveReferenceList(list);
+  return { hash, bitmap };
+}
+async function addLogoReference(file) {
+  const { hash, bitmap } = await addTasteReference(file, "logo");
+  const traits = logoTraits(bitmap);
+  if (!traits) return { traits: null };
+  const fontHash = "fr_" + hash.slice(3);
+  const list = referenceList();
+  const own = list.find((r) => r.hash === hash);
+  if (own) { own.traits = traits; saveReferenceList(list); }
+  fontReferenceShared = fontReferenceShared.filter((t) => t.hash !== fontHash).concat([{ hash: fontHash, ...traits }]);
+  if (!HEXFIELD_LOCAL_ONLY) {
+    try {
+      const session = await ensureTasteSession();
+      await fetch(SUPABASE_URL + "/rest/v1/hexfield_font_references?on_conflict=user_id,ref_hash", {
+        method: "POST",
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token, "Content-Type": "application/json",
+          Prefer: "resolution=ignore-duplicates,return=minimal" },
+        body: JSON.stringify([{ ref_hash: fontHash, traits }]),
+      });
+    } catch { /* kept here; shared next time */ }
+  }
+  return { traits };
+}
+async function pullFontReferences() {
+  const local = referenceList().filter((r) => r.traits).map((r) => ({ hash: "fr_" + r.hash.slice(3), ...r.traits }));
+  let shared = [];
+  if (!HEXFIELD_LOCAL_ONLY) {
+    try {
+      const session = await ensureTasteSession();
+      const res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_font_references?select=ref_hash,traits&order=created_at.desc&limit=" + FONT_REF_CAP, {
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token },
+      });
+      if (res.ok) shared = (await res.json()).map((row) => ({ hash: row.ref_hash, ...(row.traits || {}) }));
+    } catch { /* the local ones still count */ }
+  }
+  const byHash = new Map();
+  for (const t of shared.concat(local)) if (t && t.hash) byHash.set(t.hash, t);
+  fontReferenceShared = [...byHash.values()];
+  return fontReferenceShared.length;
+}
+/* Where everyone's logos point, as letterform genes (the measurements mapped
+ * onto the genes they move; calibrated on regular, bold, italic, serif,
+ * monospaced and spaced-out type). Null with none given yet. */
+function fontReferenceDirection() {
+  const refs = fontReferenceShared.filter((t) => Number.isFinite(Number(t.weight)));
+  if (!refs.length) return null;
+  const mean = (key) => refs.reduce((sum, t) => sum + (Number(t[key]) || 0), 0) / refs.length;
+  const clampTo = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const widthAxis = clampTo((mean("width") - 0.45) * 0.9, 0, 0.62);
+  const straight = mean("straight");
+  return {
+    n: refs.length,
+    penWeight: clampTo(0.35 + (mean("weight") - 0.1) / 0.16 * 0.6, 0.3, 0.95),
+    skeletonShear: clampTo(mean("lean"), -0.16, 0.26),
+    widthAxis,
+    letterSpace: clampTo(0.88 + mean("spacing") * 0.45, 0.86 + 0.2 * widthAxis, 1.14),
+    curveRule: straight >= 0.83 ? "straight" : straight < 0.65 ? "circle" : "curved",
+  };
+}
+// A letterform program moved `k` of the way toward the logos.
+function towardFontReferences(program, k, rng = Math.random) {
+  const dir = fontReferenceDirection();
+  if (!dir || !program) return program;
+  const out = { ...program };
+  for (const key of ["penWeight", "skeletonShear", "widthAxis", "letterSpace"]) {
+    const from = Number.isFinite(Number(out[key])) ? Number(out[key]) : dir[key];
+    out[key] = from + (dir[key] - from) * k;
+  }
+  if (rng() < k) out.curveRule = dir.curveRule;
+  return finishBrushProgram(out);
+}
+
 /* ── Fonts in the garden ───────────────────────────────────────────────
  * The lettering's font bred by eye, like the creatures and plants: the
  * font in the middle, eight of its offspring round it - six variations of it
@@ -32245,7 +32474,12 @@ function fontChildren() {
     if (leap) child = leapLetterforms(child, rng, lettering, spec, leap);
     kids.push({ family: fam, program: child, how });
   };
-  grow(family, program, "a variation"); grow(family, program, "a variation");
+  grow(family, program, "a variation");
+  // ...and, once logos have been given, one bred toward where they point.
+  if (fontReferenceDirection()) {
+    const lettering = { mode: family === "wildstyle" ? "wildstyle" : "throwup", family };
+    kids.push({ family, program: towardFontReferences(mutateLetterforms(program, rng, lettering, fontFamilySpec(family)), 0.6, rng), how: "toward the logos" });
+  } else grow(family, program, "a variation");
   grow(family, program, "a further variation", 3); grow(family, program, "a further variation", 3);
   grow(family, program, "a leap", 1, 3); grow(family, program, "a leap", 1, 5);
   const others = fontFamilyKeys().filter((f) => f !== family);
@@ -32317,6 +32551,63 @@ function renderFontGarden(panel, small) {
   panel.appendChild(wrap);
 }
 
+let referenceNote = "";
+function renderReferences(panel, small) {
+  const wrap = document.createElement("div");
+  wrap.style.cssText = "max-width:540px;margin:0 auto";
+  const tip = document.createElement("div");
+  tip.style.cssText = "margin:4px 0 8px";
+  tip.textContent = "Give it pictures you like and it learns from them as if you had kept a painting like them - your taste and everyone's. " +
+    "Give it logos and lettering and the fonts lean toward how they are made: weight, lean, roundness, width, spacing. " +
+    "Only the measurements are shared, never the pictures.";
+  wrap.appendChild(tip);
+  const status = document.createElement("div");
+  status.id = "referenceStatus";
+  status.style.cssText = "margin:6px 0;font-size:12px";
+  const dir = fontReferenceDirection();
+  status.textContent = (referenceNote ? referenceNote + " · " : "") + (dir ? dir.n + " logos shared so far · fonts lean " + (dir.skeletonShear > 0.05 ? "italic, " : "") +
+    (dir.penWeight > 0.65 ? "heavy, " : dir.penWeight < 0.45 ? "light, " : "") + dir.curveRule : "no logos shared yet");
+  const row = document.createElement("div");
+  const picker = (label, kind) => {
+    const input = document.createElement("input");
+    input.type = "file"; input.accept = "image/*"; input.multiple = true; input.style.display = "none";
+    input.setAttribute("aria-label", label);
+    input.onchange = async () => {
+      const files = [...(input.files || [])].slice(0, 12);
+      let done = 0;
+      for (const file of files) {
+        status.textContent = "measuring " + (done + 1) + " of " + files.length + "...";
+        try {
+          if (kind === "logo") await addLogoReference(file); else await addTasteReference(file, "picture");
+          done++;
+        } catch (error) { console.warn("reference skipped", error); }
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      referenceNote = done + (kind === "logo" ? " logo" : " picture") + (done === 1 ? "" : "s") + " learnt from";
+      showMorphsPanel("references");
+    };
+    const b = document.createElement("button");
+    b.textContent = label; b.style.cssText = small + ";margin:0 8px 6px 0";
+    b.onclick = () => input.click();
+    row.appendChild(input); row.appendChild(b);
+  };
+  picker("add pictures you like", "picture");
+  picker("add logos & lettering", "logo");
+  wrap.appendChild(row);
+  wrap.appendChild(status);
+  const grid = document.createElement("div");
+  grid.id = "referenceGrid";
+  grid.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px";
+  for (const ref of referenceList().slice().reverse()) {
+    const img = document.createElement("img");
+    img.src = ref.thumb; img.alt = ref.kind; img.title = ref.kind;
+    img.style.cssText = "height:56px;border-radius:6px;border:2px solid " + (ref.kind === "logo" ? "#c58b2a" : "#2f3540");
+    grid.appendChild(img);
+  }
+  wrap.appendChild(grid);
+  panel.appendChild(wrap);
+}
+
 function showMorphsPanel(view = "garden") {
   const Visual = globalThis.HexfieldVisual, lib = GROWN[gardenKind].lib();
   const pop = lib && morphPopulation(gardenKind);
@@ -32348,6 +32639,7 @@ function showMorphsPanel(view = "garden") {
   }
   tab("garden", view === "garden", () => showMorphsPanel("garden"));
   tab("fonts", view === "fonts", () => showMorphsPanel("fonts"));
+  tab("references", view === "references", () => showMorphsPanel("references"));
   tab("all living", view === "living", () => showMorphsPanel("living"));
   const close = document.createElement("button");
   close.textContent = "close"; close.style.cssText = small; close.onclick = () => panel.remove();
@@ -32356,6 +32648,7 @@ function showMorphsPanel(view = "garden") {
   panel.appendChild(head);
   if (view === "garden") { renderGarden(panel, small); return; }
   if (view === "fonts") { renderFontGarden(panel, small); return; }
+  if (view === "references") { renderReferences(panel, small); return; }
   // Every living one, by clade (deepest last) and species.
   const byClade = new Map();
   for (const m of pop.members) {
@@ -33039,7 +33332,8 @@ function planLettering(scene, letters, params, read, laid, rng) {
   const hue = (((named ? named[0] : Number(params?.palette?.hue) || 200) + v.hue) % 360 + 360) % 360;
   // Provisional; makePaintingPlan sets it from the painting's value scheme.
   const light = (Number(params?.palette?.light) || 50) < 55 ? 0.84 : 0.2;
-  const base = favourite?.program || letterProgramForRender({ ...params, __hexfieldBrushProgram: undefined, __hexfieldBrush: undefined }, family);
+  // (Leaning a little toward the logos people have given, when it chose its own.)
+  const base = favourite?.program || towardFontReferences(letterProgramForRender({ ...params, __hexfieldBrushProgram: undefined, __hexfieldBrush: undefined }, family), 0.35, rng);
   const program = paintedLetterProgram({
     ...base,
     primaryHue: hue, lightness: Math.max(0.08, Math.min(0.94, light + v.light / 100)),
@@ -33614,7 +33908,10 @@ async function runLetteringRound(scene) {
       if (strokePainter.plan?.scene !== scene) return;
       const candidate = paintedLetterProgram({
         // The last candidate of a round leaps (leapLetterforms).
-        ...(i === LETTER_ROUND_CANDIDATES - 1 ? leapLetterforms(lettering.base, rng, lettering, spec) : mutateLetterforms(lettering.base, rng, lettering, spec)),
+        ...(i === LETTER_ROUND_CANDIDATES - 1 ? leapLetterforms(lettering.base, rng, lettering, spec)
+          // ...and one toward the logos people have given.
+          : i === LETTER_ROUND_CANDIDATES - 2 && fontReferenceDirection() ? towardFontReferences(mutateLetterforms(lettering.base, rng, lettering, spec), 0.5, rng)
+          : mutateLetterforms(lettering.base, rng, lettering, spec)),
         // What the painting decided stays: colour, solid face, the box.
         ...detailOnly(lettering.program),
       });
