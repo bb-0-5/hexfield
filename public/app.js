@@ -31558,6 +31558,8 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
   // How tightly the brush keeps to a grown thing's body (Brushwork that
   // follows anatomy).
   plan.anatomy = choosePlanAnatomy(plan, params);
+  // How far its figures stand apart from their ground (Figure and ground).
+  plan.figure = choosePlanFigure(plan, params);
   plan.light = choosePlanLight(plan, params);
   plan.tips = choosePlanTips(plan, params);
   plan.finish = choosePlanFinish(plan, params);
@@ -32661,6 +32663,7 @@ function recordVisualVote(liked) {
   if (plan?.light) variations[lightVoteWord(plan.light.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.depthStyle) variations[depthVoteWord(plan.depthStyle.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.anatomy) variations[anatomyVoteWord(plan.anatomy.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  if (plan?.figure) variations[figureVoteWord(plan.figure.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (scene?.perspective) variations[perspVoteWord(scene.perspective.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (scene?.forms) variations[formVoteWord(scene.forms.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   // A kept painting's things are remembered as forms worth starting from.
@@ -34637,6 +34640,258 @@ function anatomyBoneStrokes(item, ref, W, H, rng, finish) {
   return out;
 }
 
+/* ── Figure and ground ──────────────────────────────────────────────────
+ * A thing reads when it stands apart from what is round it. Each figure -
+ * a named or grown thing, or, in a painting with none, its biggest shapes -
+ * is measured against a ring of the ground just outside it: lightness,
+ * hue and colour strength. Short of the painting's target (FIGURE_STYLES,
+ * chosen and learned: none, subtle, clear, bold), it is separated the way
+ * a painter would: its value pushed away from the ground's (or the ground's
+ * from it, when it has no room to go), a soft halo of ground round it
+ * quieted, and its colour strengthened where its hue is too near the
+ * ground's. Near figures get a tight, crisp halo; far ones a wider, softer
+ * one and a little less push - air between.
+ *
+ * Colour, too. Most things have an intended colour - an apple's red, a
+ * creature's own - and the painting's harmony (its light, air, palette and
+ * manner) draws everything toward one tonally quiet whole. The figure at the
+ * focal centre is given its intended hue and strength back, its own light
+ * and shade kept, fading with distance from the focus, so colour leads the
+ * eye in while the rest stays in the harmony. Where a figure's hue is too
+ * near its ground's for it to read, it turns instead toward the ground's
+ * true complement - the opposite in a perceptual space (OKLab), not the
+ * colour wheel's 180 degrees; and where the ground is a gradient of two
+ * colours, the complement of the pair, kept clear of both. Done last on the reference, after
+ * the palette, so the brush paints the separation rather than losing it,
+ * and the colours it makes join the palette. */
+const FIGURE_STYLES = {
+  none: { key: "none", name: "no separation", target: 0, local: 0 },
+  subtle: { key: "subtle", name: "subtle figure", target: 0.12, local: 0.35 },
+  clear: { key: "clear", name: "clear figure", target: 0.2, local: 0.6 },
+  bold: { key: "bold", name: "bold figure", target: 0.3, local: 0.85 },
+};
+// OKLab (Ottosson): lightness L, and a, b - a perceptual colour plane, in
+// which opposite really is opposite. From and to 0..255 sRGB.
+// (The sRGB curve both ways by table: a figure is many thousand pixels.)
+const SRGB_LINEAR = Float32Array.from({ length: 256 }, (_, c) => (c / 255 <= 0.04045 ? c / 255 / 12.92 : ((c / 255 + 0.055) / 1.055) ** 2.4));
+const LINEAR_STEPS = 4096;
+const LINEAR_SRGB = Float32Array.from({ length: LINEAR_STEPS + 1 }, (_, i) => { const c = i / LINEAR_STEPS; return 255 * (c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055); });
+const srgbToLinear = (c) => SRGB_LINEAR[Math.max(0, Math.min(255, Math.round(c)))];
+const linearToSrgb = (c) => LINEAR_SRGB[Math.max(0, Math.min(LINEAR_STEPS, Math.round(c * LINEAR_STEPS)))];
+function rgbToOklab(r, g, b) {
+  r = srgbToLinear(r); g = srgbToLinear(g); b = srgbToLinear(b);
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s];
+}
+function oklabToRgb(L, a, b) {
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3, m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3, s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  const out = [4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s, -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s, -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s];
+  return out.map((c) => Math.max(0, Math.min(255, linearToSrgb(Math.max(0, c)))));
+}
+const angleGap = (a, b) => { const d = Math.abs(a - b) % (2 * Math.PI); return Math.min(d, 2 * Math.PI - d); };
+const FIGURE = { ring: 0.05, value: 0.75, halo: 0.45, quiet: 0.25, max: 3, valueFloor: 0.6 };
+const figureVoteWord = (key) => "figure" + String(key).replace(/[^a-z]/g, "");
+
+function choosePlanFigure(plan, params) {
+  const things = (plan.scene?.items || []).some((item) => item.entry.kind === "subject" && !item.lettering);
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0xf16e) >>> 0);
+  const scores = chooseByTaste(Object.keys(FIGURE_STYLES), {
+    rng, tasted: 0, axis: "figure", given: planStyleChain(plan),
+    // A painting of things leans to its things reading; one of shapes alone
+    // is freer to let them melt.
+    lean: (key) => (things ? { clear: 0.25, bold: 0.1, none: -0.2 }[key] || 0 : { subtle: 0.1 }[key] || 0),
+    learned: (key) => visualLearnedChoice(figureVoteWord(key)), taste: () => null,
+  });
+  plan.figureScores = summariseChoice(scores);
+  return FIGURE_STYLES[scores[0].key];
+}
+
+/* The figures: for each, a box (with room for its ring) and how much of
+ * each pixel in it is the figure (0..1). */
+function paintingFigures(plan, width, height) {
+  const figures = [];
+  const scene = plan.scene;
+  const short = Math.min(width, height), ring = Math.max(6, Math.round(short * FIGURE.ring));
+  const boxOf = (x, y, w, h) => ({ x0: Math.max(0, Math.floor(x - ring)), y0: Math.max(0, Math.floor(y - ring)),
+    x1: Math.min(width - 1, Math.ceil(x + w + ring)), y1: Math.min(height - 1, Math.ceil(y + h + ring)) });
+  const cover = scene?.layer?.cover;
+  if (cover && scene.width === width && scene.height === height) {
+    scene.items.forEach((item) => {
+      if (item.entry.kind !== "subject" || item.lettering || !item.box) return;
+      figures.push({ ...boxOf(item.box.x, item.box.y, item.box.w, item.box.h), at: (i) => cover[i] / 255, item,
+        cx: item.box.x + item.box.w / 2, cy: item.box.y + item.box.h / 2 });
+    });
+  }
+  // Without things, the painting's biggest shapes are its figures.
+  if (!figures.length) {
+    for (const blob of (plan.liveBlobs || []).slice(0, FIGURE.max)) {
+      if (!blob.mask) continue;
+      const m = blob.mask, [bx, by, bw, bh] = m.box;
+      figures.push({ ...boxOf(bx * width, by * height, bw * width, bh * height),
+        at: (i) => shapeMaskAt(m, ((i % width) + 0.5) / width, (((i / width) | 0) + 0.5) / height),
+        cx: (bx + bw / 2) * width, cy: (by + bh / 2) * height });
+    }
+  }
+  return { figures: figures.slice(0, FIGURE.max * 2), ring };
+}
+
+/* Separate each figure from its ground, in place, a figure (and a few
+ * rows) at a time; returns what was done. */
+function* applyFigureGroundSteps(pixels, width, height, plan) {
+  const target = plan?.figure?.target || 0;
+  if (!target) return [];
+  const { figures, ring } = paintingFigures(plan, width, height);
+  const done = [];
+  for (const f of figures) {
+    const bw = f.x1 - f.x0 + 1, bh = f.y1 - f.y0 + 1;
+    if (bw < 4 || bh < 4) continue;
+    yield;
+    // How much of each pixel is the figure, and how near the figure the
+    // rest is (its cover blurred by the ring's width).
+    const fig = new Float32Array(bw * bh);
+    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) fig[y * bw + x] = f.at((f.y0 + y) * width + f.x0 + x);
+    const near = fig.slice();
+    const depth = depthAt(plan, f.cx, f.cy, width, height);
+    const reach = Math.max(2, Math.round(ring * (0.6 + 0.8 * depth) / 2));
+    boxBlurChannels([near], bw, bh, reach);
+    boxBlurChannels([near], bw, bh, reach);
+    yield;
+    // The figure and its ring, measured.
+    const stat = () => ({ l: 0, c: 0, hx: 0, hy: 0, n: 0 });
+    const F = stat(), R = stat();
+    for (let y = 0; y < bh; y++) {
+      for (let x = 0; x < bw; x++) {
+        const k = y * bw + x, o = ((f.y0 + y) * width + f.x0 + x) * 4;
+        const s = fig[k] > 0.6 ? F : fig[k] < 0.05 && near[k] > 0.08 ? R : null;
+        if (!s) continue;
+        const r = pixels[o], g = pixels[o + 1], b = pixels[o + 2];
+        const max = Math.max(r, g, b), min = Math.min(r, g, b), h = hueOf(r, g, b);
+        s.l += 0.299 * r + 0.587 * g + 0.114 * b; s.c += max - min; s.n++;
+        if (h >= 0) { s.hx += Math.cos(h * Math.PI / 180) * (max - min); s.hy += Math.sin(h * Math.PI / 180) * (max - min); }
+      }
+    }
+    if (F.n < 12 || R.n < 12) continue;
+    const Lf = F.l / F.n, Lr = R.l / R.n, Cf = F.c / F.n, Cr = R.c / R.n;
+    const hueApart = F.hx * R.hx + F.hy * R.hy === 0 ? 0
+      : (1 - (F.hx * R.hx + F.hy * R.hy) / (Math.hypot(F.hx, F.hy) * Math.hypot(R.hx, R.hy))) / 2;
+    const sep = Math.abs(Lf - Lr) / 255 + 0.5 * hueApart * Math.min(Cf, Cr) / 128 + 0.4 * Math.abs(Cf - Cr) / 255;
+    const want = target * (1 - 0.3 * depth);
+    // Value carries a figure: whatever hue and colour do, its lightness must
+    // differ by most of the target on its own (FIGURE.valueFloor).
+    const valueShort = FIGURE.valueFloor * want - Math.abs(Lf - Lr) / 255;
+    const need = Math.max(0, want - sep, valueShort);
+    // Which way: the way it already leans. What the figure has no room to
+    // take (near white going lighter, near black going darker), the ground
+    // takes instead - it is never turned back toward its ground.
+    const up = Lf >= Lr, room = Math.max(0, (up ? 250 - Lf : Lf - 8));
+    const wantPush = need * 255 * FIGURE.value, figPush = Math.min(wantPush, room);
+    const push = figPush * (up ? 1 : -1);
+    const halo = -(need * 255 * FIGURE.halo + (wantPush - figPush)) * (up ? 1 : -1);
+    /* Colour. The ground's hues, perceptually (OKLab): one, or the two
+     * ends of a gradient (2-means on the hue circle, weighted by chroma). */
+    const hues = [];
+    let fa = 0, fb = 0, fn = 0;
+    for (let y = 0; y < bh; y += 2) {
+      for (let x = 0; x < bw; x += 2) {
+        const k = y * bw + x, o = ((f.y0 + y) * width + f.x0 + x) * 4;
+        const inFig = fig[k] > 0.6, inRing = fig[k] < 0.05 && near[k] > 0.08;
+        if (!inFig && !inRing) continue;
+        const [, A, B] = rgbToOklab(pixels[o], pixels[o + 1], pixels[o + 2]);
+        if (inFig) { fa += A; fb += B; fn++; continue; }
+        const c = Math.hypot(A, B);
+        if (c > 0.03) hues.push([Math.atan2(B, A), c]);
+      }
+    }
+    yield;
+    const figHue = Math.atan2(fb, fa), figChroma = fn ? Math.hypot(fa, fb) / fn : 0;
+    let ground = [];
+    if (hues.length >= 8) {
+      let c1 = hues[0][0], c2 = hues.reduce((far, h) => (angleGap(h[0], c1) > angleGap(far, c1) ? h[0] : far), c1);
+      const sides = [[], []];
+      for (let round = 0; round < 5; round++) {
+        sides[0] = []; sides[1] = [];
+        for (const h of hues) sides[angleGap(h[0], c1) <= angleGap(h[0], c2) ? 0 : 1].push(h);
+        const mean = (list, fall) => { let x = 0, y = 0; for (const [a, w] of list) { x += Math.cos(a) * w; y += Math.sin(a) * w; } return list.length ? Math.atan2(y, x) : fall; };
+        c1 = mean(sides[0], c1); c2 = mean(sides[1], c2);
+      }
+      const share = sides[1].length / hues.length;
+      ground = share > 0.25 && share < 0.75 && angleGap(c1, c2) > 0.9 ? [c1, c2] : [sides[0].length >= sides[1].length ? c1 : c2];
+    }
+    // The true complement: of the ground's hue, or of a two-colour
+    // gradient's middle - kept clear of both its ends.
+    let complement = null;
+    if (ground.length === 1) complement = ground[0] + Math.PI;
+    else if (ground.length === 2) {
+      const mid = Math.atan2(Math.sin(ground[0]) + Math.sin(ground[1]), Math.cos(ground[0]) + Math.cos(ground[1]));
+      complement = [mid + Math.PI, mid].sort((p, q) => Math.min(angleGap(q, ground[0]), angleGap(q, ground[1])) - Math.min(angleGap(p, ground[0]), angleGap(p, ground[1])))[0];
+    }
+    // Its intended colour, if it has one (a named or grown thing's own).
+    let intended = null;
+    if (f.item && globalThis.HexfieldVisual?.subjectColours) {
+      const rgb = globalThis.HexfieldVisual.subjectColours([f.item])[0];
+      if (rgb) { const [, A, B] = rgbToOklab(rgb[0], rgb[1], rgb[2]); intended = { h: Math.atan2(B, A), c: Math.hypot(A, B) }; }
+    }
+    const aspect = width / height;
+    const focus = Math.exp(-(((f.cx / width - plan.fx) * aspect) ** 2 + (f.cy / height - plan.fy) ** 2) / (2 * 0.25 * 0.25));
+    /* A thing with an intended colour keeps it: given back at the focus,
+     * and where its hue is the ground's, the ground behind it turns to the
+     * true complement of it instead (red set against green). A shape with
+     * no intended colour turns itself toward the ground's complement. */
+    let tint = null, tw = 0, colourWhy = null, groundTint = null, gw = 0;
+    const alike = (h) => ground.some((g) => angleGap(h, g) < 0.6);
+    if (intended && intended.c > 0.03) {
+      if ((plan.figure.local || 0) > 0) { tint = intended; tw = plan.figure.local * focus; colourWhy = "intended"; }
+      if (need > 0 && alike(intended.h)) { groundTint = { h: intended.h + Math.PI }; gw = Math.min(0.7, need * 3); colourWhy = (colourWhy ? colourWhy + "+" : "") + "complementary ground"; }
+    } else if (need > 0 && complement !== null && (alike(figHue) || figChroma < 0.03)) {
+      tint = { h: complement, c: Math.max(figChroma, 0.09) }; tw = Math.min(0.8, need * 3); colourWhy = "complement";
+    }
+    // The halo quiets the ground's colour where the figure has the more of it.
+    const quiet = need > 0 && Cf >= Cr ? FIGURE.quiet : 0;
+    // Apart enough already, and no colour to give back: left as it is.
+    if (!need && !(tint && tw > 0.01)) { done.push({ sep: +sep.toFixed(3), kept: true }); continue; }
+    // A colour turned at its own lightness: hue and strength from OKLab, and
+    // the value (as the push reckons it) put back as it was.
+    const turn = (r, g, b, h0, c0, w, keepChroma) => {
+      const before = 0.299 * r + 0.587 * g + 0.114 * b;
+      const [Lk, A, B] = rgbToOklab(r, g, b), c = Math.hypot(A, B);
+      let h = c > 0.01 ? Math.atan2(B, A) : h0, dh = h0 - h;
+      dh = Math.atan2(Math.sin(dh), Math.cos(dh)); h += dh * w;
+      const c2 = keepChroma ? c : c + (c0 - c) * w * 0.8;
+      let [r2, g2, b2] = oklabToRgb(Lk, Math.cos(h) * c2, Math.sin(h) * c2);
+      const d = before - (0.299 * r2 + 0.587 * g2 + 0.114 * b2);
+      return [r2 + d, g2 + d, b2 + d];
+    };
+    let sr = 0, sg = 0, sb = 0, sn = 0;
+    yield;
+    for (let y = 0; y < bh; y++) {
+      if (y % 24 === 23) yield;
+      for (let x = 0; x < bw; x++) {
+        const k = y * bw + x, a = fig[k], o = ((f.y0 + y) * width + f.x0 + x) * 4;
+        let r = pixels[o], g = pixels[o + 1], b = pixels[o + 2];
+        if (a > 0.02) {
+          // Toward its colour (intended or complementary), its value kept.
+          if (tint && tw > 0.01) [r, g, b] = turn(r, g, b, tint.h, tint.c, tw * a, false);
+          r += push * a; g += push * a; b += push * a;
+        }
+        // The halo: the ground just round it, eased the other way and quieted.
+        const h = (1 - a) * Math.min(1, near[k] * 2);
+        if (h > 0.01) {
+          if (groundTint && gw > 0.01) [r, g, b] = turn(r, g, b, groundTint.h, 0, gw * h, true);
+          r += halo * h; g += halo * h; b += halo * h;
+          if (quiet) { const l = 0.299 * r + 0.587 * g + 0.114 * b, kk = 1 - quiet * h; r = l + (r - l) * kk; g = l + (g - l) * kk; b = l + (b - l) * kk; }
+        }
+        pixels[o] = r; pixels[o + 1] = g; pixels[o + 2] = b;
+        if (a > 0.6) { sr += pixels[o]; sg += pixels[o + 1]; sb += pixels[o + 2]; sn++; }
+      }
+    }
+    done.push({ sep: +sep.toFixed(3), want: +want.toFixed(3), push: Math.round(push), halo: Math.round(halo), colour_: colourWhy, tint: +tw.toFixed(2), ground: ground.length,
+      colour: sn ? [sr / sn, sg / sn, sb / sn].map(Math.round) : null });
+  }
+  return done;
+}
+
 /* The scene's layer painted into a composed reference, in place. */
 function applySceneLayer(pixels, width, height, plan, only = null) {
   const scene = plan?.scene;
@@ -35667,7 +35922,19 @@ function* finishPlanReferenceSteps(composed, width, height, plan) {
     plan.palette.push(plan.contourInk.slice());
   }
   // Where the painter preferred its own painting, the painting is the plan.
-  return applyAdoptions(pixels, width, height, plan);
+  pixels = applyAdoptions(pixels, width, height, plan);
+  /* Its figures set apart from their ground (Figure and ground) - last, after
+   * the palette and after any painted thing adopted as the plan, so the
+   * separation is what the brush paints and an adopted thing keeps its
+   * painted forms but stands apart; the colours it makes join the palette. */
+  yield;
+  plan.figureDone = yield* applyFigureGroundSteps(pixels, width, height, plan);
+  for (const f of plan.figureDone) {
+    if (!f.colour || !plan.palette) continue;
+    const near = nearestPaletteColour(plan.palette, f.colour[0], f.colour[1], f.colour[2]);
+    if (Math.hypot(near[0] - f.colour[0], near[1] - f.colour[1], near[2] - f.colour[2]) > 30 && plan.palette.length < planPaletteSize(plan) + 8) plan.palette.push(f.colour);
+  }
+  return pixels;
 }
 
 /* A small copy by block averages - cheap, and taste reads it the same. */
@@ -35888,7 +36155,16 @@ function scheduleStrokeReference(ref, width, height, refKey) {
     applyDepthAir(composed, width, height, plan);
     await pause();
     if (!stillWanted()) return;
-    strokePainter.enhanced = finishPlanReference(composed, width, height, plan);
+    // Values, palette, outline, adoptions and figure and ground: a step each.
+    const finishing = finishPlanReferenceSteps(composed, width, height, plan);
+    let done;
+    for (;;) {
+      done = finishing.next();
+      if (done.done) break;
+      await pause();
+      if (!stillWanted()) return;
+    }
+    strokePainter.enhanced = done.value;
     strokePainter.enhancedKey = refKey;
     strokePainter.enhancedPlan = plan;
     // A new picture under the same master key needs its own contours.
@@ -37165,6 +37441,7 @@ function planStyleChain(plan) {
     look2: plan?.finish?.layers?.[0]?.look || null,
     depth: plan?.depthStyle?.key || null,
     anatomy: plan?.anatomy?.key || null,
+    figure: plan?.figure?.key || null,
     // The tuned value of the first filter's look, and of a stack's strength.
     tune: plan?.finish ? compactTune(plan.finish) : null,
   };
@@ -37282,7 +37559,7 @@ function computeStyleOutcomeStats() {
 /* A chain's choices as small numbers (axis and option), worked out once per
  * row: counting every pair of hundreds of chains by name cost a phone tens
  * of milliseconds. */
-const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form", "look", "light", "combo", "finish2", "look2", "comp", "morph", "depth", "anatomy"];
+const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form", "look", "light", "combo", "finish2", "look2", "comp", "morph", "depth", "anatomy", "figure"];
 function compactTune(finish) {
   const v = tuneValue(finish.key, finish.settings || {});
   const layer = finish.layers?.[0];
