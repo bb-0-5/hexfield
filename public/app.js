@@ -31178,6 +31178,8 @@ const STROKE_GRADIENT_MIN = 24;
  * is laid only if it brings what it covers nearer the reference by `gain` of
  * the tolerance (the next place in line taking a refused stroke's turn, up to
  * `spare` times the batch), and the fine brushes vary their colour less. */
+// Depth bands a batch is painted in, farthest first (Far to near).
+const FAR_TO_NEAR = { bands: 5 };
 const STROKE_CARE = { on: true, gain: 0.04, spare: 1.5, side: 0.45, jitter: [1, 0.75, 0.5, 0.35] };
 const median3 = (list) => {
   const out = [0, 0, 0], n = list.length;
@@ -34671,7 +34673,7 @@ const DEPTH_STYLES = {
   air: { key: "air", name: "aerial depth", k: 0.5 },
   deep: { key: "deep", name: "deep space", k: 1 },
 };
-const DEPTH_BRUSH = { cells: 64, chroma: 0.3, haze: 0.22, width: 0.3, length: 0.3, soft: 0.8, texture: 0.35, alpha: 0.2, detail: 0.5, order: 0.25 };
+const DEPTH_BRUSH = { cells: 64, chroma: 0.3, haze: 0.22, width: 0.3, length: 0.3, soft: 0.8, texture: 0.35, alpha: 0.2, detail: 0.5 };
 const depthVoteWord = (key) => "depth" + String(key).replace(/[^a-z]/g, "");
 
 /* The map: 0 near, 1 far, on a coarse grid; and the haze far things go to. */
@@ -34696,6 +34698,8 @@ function buildDepthMap(plan, ground, width, height) {
       }
     }
   }
+  // The landscape alone, before the things (painted first, far to near).
+  const land = map.slice();
   // Named things over them, by where each stands.
   const W = plan.scene?.width || width, H = plan.scene?.height || height;
   for (const item of plan.scene?.items || []) {
@@ -34706,7 +34710,7 @@ function buildDepthMap(plan, ground, width, height) {
       map.fill(d, gy * gw + Math.max(0, Math.floor(item.box.x / W * gw)), gy * gw + Math.min(gw, Math.ceil((item.box.x + item.box.w) / W * gw)));
     }
   }
-  boxBlurChannels([map], gw, gh, 1);
+  boxBlurChannels([map, land], gw, gh, 1);
   // The haze: the colour of the band just above the horizon.
   const { pixels: small, sw, sh } = smallCopy(ground, width, height, 64);
   const haze = [0, 0, 0];
@@ -34714,16 +34718,18 @@ function buildDepthMap(plan, ground, width, height) {
   for (let y = Math.floor(Math.max(0, hy - 0.08) * sh); y < Math.max(1, Math.floor(hy * sh)); y++) {
     for (let x = 0; x < sw; x++) { const o = (y * sw + x) * 4; haze[0] += small[o]; haze[1] += small[o + 1]; haze[2] += small[o + 2]; n++; }
   }
-  return { gw, gh, map, haze: haze.map((c) => c / Math.max(1, n)), real };
+  return { gw, gh, map, land, haze: haze.map((c) => c / Math.max(1, n)), real };
 }
 
-/* How far off (x, y) is, 0..1 (0.5 without a map). */
-function depthAt(plan, x, y, width, height) {
+/* How far off (x, y) is, 0..1 (0.5 without a map); `landscape`: of the
+ * land behind the things. */
+function depthAt(plan, x, y, width, height, landscape = false) {
   const dm = plan?.depthMap;
   if (!dm) return 0.5;
+  const map = landscape && dm.land ? dm.land : dm.map;
   const fx = Math.max(0, Math.min(dm.gw - 1.001, x / width * dm.gw - 0.5)), fy = Math.max(0, Math.min(dm.gh - 1.001, y / height * dm.gh - 0.5));
   const x0 = fx | 0, y0 = fy | 0, tx = fx - x0, ty = fy - y0, i = y0 * dm.gw + x0;
-  return (dm.map[i] * (1 - tx) + dm.map[i + 1] * tx) * (1 - ty) + (dm.map[i + dm.gw] * (1 - tx) + dm.map[i + dm.gw + 1] * tx) * ty;
+  return (map[i] * (1 - tx) + map[i + 1] * tx) * (1 - ty) + (map[i + dm.gw] * (1 - tx) + map[i + dm.gw + 1] * tx) * ty;
 }
 
 /* The air, painted into a composed reference: far places duller and toward
@@ -35925,7 +35931,7 @@ function thingMask(scene, index, W, H) {
   return (item.brushMask = { x0, y0, w, h, alpha, area });
 }
 
-function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0) {
+function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0, to = Infinity) {
   const strokes = [];
   const anatomy = strokePainter.plan?.anatomy || null, anatomyK = anatomy?.k || 0;
   const rankOf = new Map();
@@ -35944,7 +35950,7 @@ function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0) {
     return stroke;
   };
   scene.items.forEach((item, index) => {
-    if (index < from || next < scene.items.length) return;
+    if (index < from || index > to || next < scene.items.length) return;
     if (strokes.length >= THING_BATCH) { next = index; return; }
     if (item.entry.kind !== "subject" || item.lettering) return;
     // A thing the studio preferred as painted is left as it is.
@@ -36055,11 +36061,10 @@ function paintThingStrokes(result, scene, pass) {
   const current = vctx.getImageData(0, 0, W, H).data;
   const rng = mulberry32(((Number(strokePainter.plan?.drawSeed) || 0) ^ (pass * 0x2545f491) ^ paintRevision) >>> 0);
   const things = scene.thing;
+  // One thing at a time (Far to near): this pass of the current thing.
   const planned = ref && ref.length === W * H * 4
-    ? thingBrushStrokes(scene, ref, current, W, H, pass, rng, things.item || 0) : { strokes: [], next: scene.items.length };
+    ? thingBrushStrokes(scene, ref, current, W, H, pass, rng, things.item || 0, things.item || 0) : { strokes: [], next: scene.items.length };
   const strokes = planned.strokes;
-  // Where this pass carries on next turn (past the end: the pass is done).
-  things.item = planned.next;
   result.paintStrokeLayer = strokePainter.layer;
   result.paintStrokeCount = strokes.length;
   result.paintBrush = {
@@ -36798,7 +36803,7 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
   const guardedAt = (x, y) => x >= 0 && y >= 0 && x < width && y < height &&
     guard.cover[(y | 0) * guard.width + (x | 0)] > 110;
   // The big brushes (the first two layers) also keep off painted things.
-  const things = layer < 2 ? gradient.protectThings : null;
+  const things = layer < 2 || gradient.protectThings?.all ? gradient.protectThings : null;
   const onThing = (x, y) => x >= 0 && y >= 0 && x < width && y < height && things.cover[(y | 0) * things.width + (x | 0)] > 200;
   const guarded = (x, y) => {
     if (things) {
@@ -36874,36 +36879,50 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
     starts.sort((a, b) => b.priority - a.priority);
   } else starts.sort((a, b) => b.error - a.error);
   const chosen = starts.slice(0, STROKE_CARE.on ? Math.ceil(limit * STROKE_CARE.spare) : limit);
+  /* Far to near, the painter's order: the batch in bands of depth, the
+   * farthest band first, so nearer paint overlaps farther edges and never
+   * the other way round. (While the landscape is painted alone, by the
+   * land's own depth.) */
+  const plan0 = strokePainter.plan;
+  const band = (st) => plan0?.depthMap
+    ? Math.min(FAR_TO_NEAR.bands - 1, Math.floor((1 - depthAt(plan0, st.x, st.y, width, height, strokePainter.landscapePhase)) * FAR_TO_NEAR.bands)) : 0;
+  for (const start of chosen) start.band = band(start);
   if (laid && chosen.length) {
-    // Out from the paint already down: the first stroke where the paint
-    // ends (the farthest off, among those), each next one beside the one
-    // before - a chain across the patch, not a scatter.
+    // Within a band, out from the paint already down: the first stroke where
+    // the paint ends (the farthest off, among those), each next one beside
+    // the one before - a chain across the patch, not a scatter.
     for (const start of chosen) start.air = airAt ? airAt(start.x, start.y) : 0;
     const key = (st) => (Number.isFinite(st.dist) ? st.dist : 0) - st.air * 1.5 + rng() * PLANES.order;
-    let at = chosen.reduce((best, st) => (key(st) < key(best) ? st : best), chosen[0]);
-    const left = new Set(chosen), chain = [];
-    while (at) {
-      chain.push(at); left.delete(at);
-      let next = null, near = Infinity;
+    const chain = [];
+    for (let b = 0; b < FAR_TO_NEAR.bands; b++) {
+      const left = new Set(chosen.filter((st) => st.band === b));
+      if (!left.size) continue;
+      const last = chain[chain.length - 1];
+      let at = null, near = Infinity;
       for (const st of left) {
-        const d = Math.hypot(st.x - at.x, st.y - at.y) * (1 + 0.3 * Math.max(0, -st.air));
-        if (d < near) { near = d; next = st; }
+        const d = last ? Math.hypot(st.x - last.x, st.y - last.y) : key(st);
+        if (d < near) { near = d; at = st; }
       }
-      at = next;
+      while (at) {
+        chain.push(at); left.delete(at);
+        let next = null;
+        near = Infinity;
+        for (const st of left) {
+          const d = Math.hypot(st.x - at.x, st.y - at.y) * (1 + 0.3 * Math.max(0, -st.air));
+          if (d < near) { near = d; next = st; }
+        }
+        at = next;
+      }
     }
     chosen.splice(0, chosen.length, ...chain);
   } else {
-    // Shuffled within the batch so strokes do not march in rows.
+    // Shuffled within each band so strokes do not march in rows.
     for (let i = chosen.length - 1; i > 0; i--) {
       const j = Math.floor(rng() * (i + 1));
       [chosen[i], chosen[j]] = [chosen[j], chosen[i]];
     }
-    // Far to near, loosely, so near strokes lie over far ones.
-    if (airAt) {
-      for (const start of chosen) start.air = airAt(start.x, start.y);
-      for (const start of chosen) start.order = start.air + (rng() - 0.5) * DEPTH_BRUSH.order;
-      chosen.sort((a, b) => b.order - a.order);
-    }
+    if (airAt) for (const start of chosen) start.air = airAt(start.x, start.y);
+    chosen.sort((a, b) => a.band - b.band);
   }
   /* Looseness is the words' energy together with taste (planStyle); without
    * a plan, the words alone, as before. */
@@ -38457,6 +38476,59 @@ function drawPaintStroke(ctx, stroke) {
  * Resolves true when strokes landed, false when there was nothing to paint at
  * this layer (or a newer pass cancelled it). Advances the layer when the
  * current brush has run out of places it can improve. */
+/* ── Far to near ────────────────────────────────────────────────────────
+ * A painter blocks in the land first - sky, far hills, the ground running
+ * to the feet - and then paints the things standing in it, the farthest
+ * first, so each nearer one overlaps the edges of what is behind it and no
+ * edge has to be fitted round another. So until the thing brush starts, the
+ * big brushes paint toward the landscape alone: the reference with each
+ * thing's solid shape taken out and filled from the land round it (its cast
+ * shadow stays - that is the ground's). Then the things, back to front (the
+ * scene's own order), each through all its passes before the next nearer
+ * one starts; and within any batch of strokes, the farther first. */
+function landscapeReference(ref, width, height) {
+  const plan = strokePainter.plan, scene = plan?.scene;
+  const things = (scene?.items || []).filter((item) => item.entry.kind === "subject" && !item.lettering && item.box);
+  if (!things.length || scene.thing?.started || scene.width !== width || scene.height !== height) return null;
+  // Until the things' exact shapes are drawn (in the background), the first
+  // strokes take out an ellipse in each thing's box instead.
+  const cover = scene.layer?.cover || null;
+  const cache = strokePainter.landscape;
+  if (cache?.source === ref && cache.plan === plan && cache.exact === Boolean(cover)) return cache;
+  const pixels = new Uint8ClampedArray(ref);
+  const lb = scene.lettering?.screenBox || scene.lettering?.box || null;
+  for (const item of things) {
+    const b = item.box, m = Math.max(6, Math.max(b.w, b.h) * 0.12);
+    const x0 = Math.max(0, Math.floor(b.x - m)), y0 = Math.max(0, Math.floor(b.y - m));
+    const x1 = Math.min(width - 1, Math.ceil(b.x + b.w + m)), y1 = Math.min(height - 1, Math.ceil(b.y + b.h + m));
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+    if (bw < 4 || bh < 4) continue;
+    // The solid body, grown two pixels to take its soft edge with it.
+    const hole = new Uint8Array(bw * bh);
+    let any = 0;
+    for (let y = 0; y < bh; y++) {
+      for (let x = 0; x < bw; x++) {
+        const X = x0 + x, Y = y0 + y;
+        if (lb && X >= lb.x && X <= lb.x + lb.w && Y >= lb.y && Y <= lb.y + lb.h) continue;
+        let solid = false;
+        if (!cover) {
+          const ex = (X - b.x - b.w / 2) / (b.w / 2 + 2), ey = (Y - b.y - b.h / 2) / (b.h / 2 + 2);
+          solid = ex * ex + ey * ey <= 1;
+        }
+        for (let dy = -2; cover && dy <= 2 && !solid; dy += 2) for (let dx = -2; dx <= 2 && !solid; dx += 2) {
+          const xx = Math.max(0, Math.min(width - 1, X + dx)), yy = Math.max(0, Math.min(height - 1, Y + dy));
+          if (cover[yy * width + xx] > 200) solid = true;
+        }
+        if (solid) { hole[y * bw + x] = 1; any++; }
+      }
+    }
+    if (!any || any > bw * bh * 0.92) continue;
+    const steps = fillShapeHoleSteps(pixels, width, height, x0, y0, x1, y1, hole);
+    while (!steps.next().done) { /* small: a box at a time */ }
+  }
+  return (strokePainter.landscape = { source: ref, plan, pixels, exact: Boolean(cover), key: { landscape: true } });
+}
+
 function paintTowardReference(result, ref, width, height,
                               { layer = null, limit = STROKE_BATCH, refKey = null, enhance = false,
                                 prepared = false } = {}) {
@@ -38478,6 +38550,12 @@ function paintTowardReference(result, ref, width, height,
       strokePainter.enhancedKey = refKey;
       strokePainter.enhancedPlan = strokePainter.plan;
     }
+  }
+  // The landscape first (Far to near).
+  strokePainter.landscapePhase = false;
+  if (enhance) {
+    const land = landscapeReference(ref, width, height);
+    if (land) { ref = land.pixels; refKey = land.key; strokePainter.landscapePhase = true; }
   }
   // Accepted changes that arrive as raw pixels are still mixed from the palette,
   // and still hold the painting's subject: a change may reshape the picture
@@ -38539,8 +38617,9 @@ function paintTowardReference(result, ref, width, height,
     scene.width === width && scene.height === height
     ? { cover, box: scene.lettering.box, width } : null;
   // Things painted by their own brush are left to it by the big brushes.
-  strokePainter.gradient.protectThings = scene?.thing?.pass >= 1 && scene.layer?.cover &&
-    scene.width === width && scene.height === height ? { cover: scene.layer.cover, width } : null;
+  // (All brushes, while the things are still being painted one by one.)
+  strokePainter.gradient.protectThings = scene?.thing?.started && scene.layer?.cover &&
+    scene.width === width && scene.height === height ? { cover: scene.layer.cover, width, all: !scene.thing.done } : null;
   let current = vctx.getImageData(0, 0, width, height).data;
   strokeLogBegin(current, width, height);
   // What has been laid is taken into the plan (Planes, and painting from
@@ -38899,12 +38978,21 @@ function continueMasterDetail(result) {
   let thingTurn = false;
   if (!letterTurn && scene?.items?.some((item) => item.entry.kind === "subject" && !item.lettering) && refReady) {
     const things = scene.thing || (scene.thing = { key: null, pass: 0, painting: false });
+    // The things back to front (the scene's order), each through all its passes.
+    const firstThing = (from) => {
+      for (let i = from; i < scene.items.length; i++) if (scene.items[i].entry.kind === "subject" && !scene.items[i].lettering) return i;
+      return -1;
+    };
     if (things.key !== strokePainter.enhancedKey) {
-      if (things.key !== null) { things.pass = Math.min(things.pass, 1); things.item = 0; }
+      // A new master: each thing again from its middle pass, back to front.
+      if (things.key !== null && things.started) { things.item = firstThing(0); things.pass = 1; things.done = false; }
       things.key = strokePainter.enhancedKey;
     }
     if (!things.masksReady) buildThingMasks(scene, width, height);
-    thingTurn = things.masksReady && !things.painting && things.pass <= THING_SILHOUETTE && strokePainter.layer >= 1;
+    if (!things.started && things.item === undefined) things.item = firstThing(0);
+    // The landscape gets the two big brushes to itself first.
+    thingTurn = things.masksReady && !things.painting && !things.done && things.item >= 0 && strokePainter.layer >= 2;
+    if (thingTurn) things.started = true;
   }
   const completion = letterTurn
     ? paintLetteringStrokes(detailResult, strokePainter.plan.scene)
@@ -38916,19 +39004,25 @@ function continueMasterDetail(result) {
     things.painting = true;
     completion.then((landed) => {
       things.painting = false;
-      // A pass is done when it has reached the last thing and landed (or
-      // there was nothing left to paint); otherwise it carries on.
-      if ((landed || !detailResult.paintStrokeCount) && (things.item || 0) >= scene.items.length) {
+      // A pass of this thing is done when it landed (or there was nothing
+      // left to paint); after its silhouette, the next nearer thing.
+      if (landed || !detailResult.paintStrokeCount) {
         things.pass++;
-        things.item = 0;
-        // Every thing painted: does the studio prefer its painting to its plan?
-        if (things.pass > THING_SILHOUETTE && !things.judging) {
-          things.judging = true;
-          judgeThings(scene, plan).catch((error) => console.warn("judging things failed", error))
-            .finally(() => { things.judging = false; });
+        if (things.pass > THING_SILHOUETTE) {
+          let next = -1;
+          for (let i = things.item + 1; i < scene.items.length; i++) if (scene.items[i].entry.kind === "subject" && !scene.items[i].lettering) { next = i; break; }
+          things.item = next;
+          things.pass = 0;
+          if (next < 0) {
+            things.done = true;
+            // Every thing painted: does the studio prefer its painting to its plan?
+            if (!things.judging) {
+              things.judging = true;
+              judgeThings(scene, plan).catch((error) => console.warn("judging things failed", error))
+                .finally(() => { things.judging = false; });
+            }
+          }
         }
-      } else if (!landed) {
-        things.item = 0;
       }
     });
   }
