@@ -218,6 +218,8 @@
         petal: [F.h, F.s, F.l], centre: [(F.h + 60) % 360, 70, F.centre],
       },
       parts, grown: true, plant: true,
+      // Its stems, for a brush that follows them (in the box's units).
+      anatomy: out.lines.flatMap((l) => l.pts.slice(1).map((q, i) => ({ k: "stem", a: U(l.pts[i]), b: U(q), r: +(l.width / 2 / bw).toFixed(4) }))),
     };
   }
 

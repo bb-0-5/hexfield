@@ -31555,6 +31555,9 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
   if (scene?.focus) { plan.fx = scene.focus.fx; plan.fy = scene.focus.fy; }
   plan.scene = scene;
   setBlobPitch(plan.blobs, plan, height);
+  // How tightly the brush keeps to a grown thing's body (Brushwork that
+  // follows anatomy).
+  plan.anatomy = choosePlanAnatomy(plan, params);
   plan.light = choosePlanLight(plan, params);
   plan.tips = choosePlanTips(plan, params);
   plan.finish = choosePlanFinish(plan, params);
@@ -32657,6 +32660,7 @@ function recordVisualVote(liked) {
   if (plan?.finish?.look) variations[lookVoteWord(plan.finish.look)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.light) variations[lightVoteWord(plan.light.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.depthStyle) variations[depthVoteWord(plan.depthStyle.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  if (plan?.anatomy) variations[anatomyVoteWord(plan.anatomy.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (scene?.perspective) variations[perspVoteWord(scene.perspective.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (scene?.forms) variations[formVoteWord(scene.forms.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   // A kept painting's things are remembered as forms worth starting from.
@@ -34535,6 +34539,104 @@ function adoptLaid(L, ref, canvas, gradient = null) {
   return out;
 }
 
+/* ── Brushwork that follows anatomy ─────────────────────────────────────
+ * A grown thing knows what it is made of (its entry's `anatomy`: a
+ * skeleton's trunk, neck, head, tail, legs and eye; a plant's stems), and
+ * a painter paints a body by its parts: strokes run down a leg, along the
+ * spine, along the curl of a tail, round the head; the trunk goes in first,
+ * then the far legs, the tail, neck and head, the near legs, the eye last;
+ * and a thin leg or tail is laid as one sure stroke of its own width, so the
+ * brushwork does not lose it. How tightly the brush keeps to the body -
+ * loose, guided or tight - is chosen and learned like the manner. */
+const ANATOMY_STYLES = {
+  loose: { key: "loose", name: "loose anatomy", k: 0.35, bones: false },
+  guided: { key: "guided", name: "guided anatomy", k: 0.65, bones: true },
+  tight: { key: "tight", name: "tight anatomy", k: 0.9, bones: true },
+};
+// Which part is painted after which (and wins where two overlap).
+const ANATOMY_RANK = { stem: 0, trunk: 0, far: 1, tail: 2, neck: 3, head: 4, leg: 5, wing: 5.5, eye: 6 };
+const anatomyVoteWord = (key) => "anatomy" + String(key).replace(/[^a-z]/g, "");
+
+/* The part of a grown thing at (x, y) of the picture, and the way a stroke
+ * on it runs: along a bone, round the head; null off its body. */
+function anatomyAt(item, x, y) {
+  const A = item?.entry?.anatomy, b = item?.box;
+  if (!A?.length || !b || x < b.x - 2 || y < b.y - 2 || x > b.x + b.w + 2 || y > b.y + b.h + 2) return null;
+  const px = x - b.x, py = y - b.y;
+  let best = null, bestScore = Infinity;
+  for (const s of A) {
+    const ax = s.a[0] * b.w, ay = s.a[1] * b.h, dx = s.b[0] * b.w - ax, dy = s.b[1] * b.h - ay, L2 = dx * dx + dy * dy;
+    const t = L2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / L2)) : 0;
+    const d = Math.hypot(px - (ax + dx * t), py - (ay + dy * t)), r = Math.max(1, s.r * b.w);
+    if (d > r * 1.15) continue;
+    const score = d / r - (ANATOMY_RANK[s.k] || 0) * 0.5;
+    if (score < bestScore) { bestScore = score; best = { s, ax, ay, dx, dy }; }
+  }
+  if (!best) return null;
+  let ux, uy;
+  if (best.s.k === "head" || best.s.k === "eye") {
+    // Round the head: across the line from its middle.
+    const rx = px - best.ax, ry = py - best.ay, l = Math.hypot(rx, ry) || 1;
+    ux = -ry / l; uy = rx / l;
+  } else {
+    const l = Math.hypot(best.dx, best.dy) || 1;
+    ux = best.dx / l; uy = best.dy / l;
+  }
+  return { dx: ux, dy: uy, kind: best.s.k, rank: ANATOMY_RANK[best.s.k] || 0 };
+}
+// The same, for whichever grown thing of the painting is at (x, y).
+function paintingAnatomyAt(plan, x, y) {
+  for (const item of plan?.anatomyItems || []) {
+    const part = anatomyAt(item, x, y);
+    if (part) return part;
+  }
+  return null;
+}
+/* (dx, dy) turned toward the part's own way, as firmly as `k`. */
+function followAnatomy(part, dx, dy, k, lastDx = 0, lastDy = 0) {
+  if (!part || !k) return [dx, dy];
+  let ax = part.dx, ay = part.dy;
+  const fx = lastDx || dx, fy = lastDy || dy;
+  if (ax * fx + ay * fy < 0) { ax = -ax; ay = -ay; }
+  const x = dx * (1 - k) + ax * k, y = dy * (1 - k) + ay * k, l = Math.hypot(x, y) || 1;
+  return [x / l, y / l];
+}
+
+/* How tightly this painting's brush keeps to its grown things' bodies. */
+function choosePlanAnatomy(plan, params) {
+  const items = (plan.scene?.items || []).filter((item) => item.entry?.anatomy?.length && item.box);
+  plan.anatomyItems = items;
+  if (!items.length) return null;
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0xa7a7) >>> 0);
+  const scores = chooseByTaste(Object.keys(ANATOMY_STYLES), {
+    rng, tasted: 0, axis: "anatomy", given: planStyleChain(plan), lean: () => 0,
+    learned: (key) => visualLearnedChoice(anatomyVoteWord(key)), taste: () => null,
+  });
+  plan.anatomyScores = summariseChoice(scores);
+  return ANATOMY_STYLES[scores[0].key];
+}
+
+/* A grown thing's thin parts, each as one stroke of its own width along
+ * its bone, in the order a body is painted. */
+function anatomyBoneStrokes(item, ref, W, H, rng, finish) {
+  const b = item.box, out = [];
+  const at = (x, y) => {
+    const o = (Math.max(0, Math.min(H - 1, Math.round(y))) * W + Math.max(0, Math.min(W - 1, Math.round(x)))) * 4;
+    return [ref[o], ref[o + 1], ref[o + 2]];
+  };
+  const bones = item.entry.anatomy.filter((s) => ["far", "tail", "neck", "leg", "stem"].includes(s.k))
+    .sort((p, q) => (ANATOMY_RANK[p.k] || 0) - (ANATOMY_RANK[q.k] || 0));
+  for (const s of bones) {
+    const ax = b.x + s.a[0] * b.w, ay = b.y + s.a[1] * b.h, bx = b.x + s.b[0] * b.w, by = b.y + s.b[1] * b.h;
+    const width = s.r * b.w * 2 * 0.9;
+    if (width < 1.2 || Math.hypot(bx - ax, by - ay) < width * 0.8) continue;
+    const points = [0, 0.33, 0.67, 1].map((t) => [ax + (bx - ax) * t, ay + (by - ay) * t]);
+    const mid = at((ax + bx) / 2, (ay + by) / 2);
+    out.push(finish({ points, width, colour: mid.map((c) => Math.max(0, Math.min(255, Math.round(c + (rng() - 0.5) * 6)))), bristle: rng() }));
+  }
+  return out;
+}
+
 /* The scene's layer painted into a composed reference, in place. */
 function applySceneLayer(pixels, width, height, plan, only = null) {
   const scene = plan?.scene;
@@ -35078,6 +35180,8 @@ function thingMask(scene, index, W, H) {
 
 function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0) {
   const strokes = [];
+  const anatomy = strokePainter.plan?.anatomy || null, anatomyK = anatomy?.k || 0;
+  const rankOf = new Map();
   let next = scene.items.length;
   const brush = planManner()?.brush || null;
   const gradient = strokePainter.gradient;
@@ -35106,6 +35210,9 @@ function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0) {
     };
     const short = Math.max(4, Math.min(item.box.w, item.box.h));
     if (pass === THING_SILHOUETTE) {
+      // A grown thing's thin parts first: each leg, tail and neck bone one
+      // stroke of its own width (Brushwork that follows anatomy).
+      if (anatomy?.bones && item.entry.anatomy?.length) strokes.push(...anatomyBoneStrokes(item, ref, W, H, rng, finish));
       // Round its edge in its own colour, so the silhouette stays crisp.
       if (planManner()?.reference?.contour) return; // the ink pass outlines it
       const edge = new Uint8Array(mask.w * mask.h);
@@ -35132,6 +35239,7 @@ function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0) {
     const maxLength = Math.max(3, Math.round([7, 6, 4][pass] * (Number(brush?.length) || 1)));
     const side = radius * 0.7;
     const jitter = Number(brush?.jitter) >= 0 ? Number(brush.jitter) : 8;
+    const first = strokes.length;
     for (let cy = mask.y0; cy < mask.y0 + mask.h; cy += cell) {
       for (let cx = mask.x0; cx < mask.x0 + mask.w; cx += cell) {
         const sx = cx + rng() * cell, sy = cy + rng() * cell;
@@ -35156,8 +35264,9 @@ function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0) {
             dx = -gY / mag; dy = gX / mag;
             if (lastDx * dx + lastDy * dy < 0) { dx = -dx; dy = -dy; }
           }
-          // A thing's own brush wraps round it.
+          // A thing's own brush wraps round it - and runs the way its body does.
           [dx, dy] = wrapDirection(x, y, dx, dy, mag < STROKE_GRADIENT_MIN ? 0.8 : 0.5);
+          if (anatomyK) [dx, dy] = followAnatomy(anatomyAt(item, x, y), dx, dy, anatomyK, step > 1 ? lastDx : 0, step > 1 ? lastDy : 0);
           if (step > 1) {
             dx = 0.45 * dx + 0.55 * lastDx; dy = 0.45 * dy + 0.55 * lastDy;
             const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
@@ -35171,12 +35280,21 @@ function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0) {
           lastDx = dx; lastDy = dy;
         }
         if (brush?.round && pass < 2 && points.length < 2) continue;
-        strokes.push(finish({
+        const stroke = finish({
           points, width: radius * 2 * (0.85 + rng() * 0.3),
           colour: colour.map((c) => Math.max(0, Math.min(255, Math.round(c + (rng() - 0.5) * jitter)))),
           bristle: rng(),
-        }));
+        });
+        if (anatomyK) rankOf.set(stroke, anatomyAt(item, sx, sy)?.rank ?? 0);
+        strokes.push(stroke);
       }
+    }
+    // A body in the order it is painted: trunk, far legs, tail, neck, head,
+    // near legs, the eye last.
+    if (anatomyK && strokes.length > first) {
+      const own = strokes.splice(first).map((stroke, i) => [stroke, i]);
+      own.sort((a, b) => (rankOf.get(a[0]) - rankOf.get(b[0])) || a[1] - b[1]);
+      strokes.push(...own.map(([stroke]) => stroke));
     }
   });
   return { strokes, next };
@@ -36036,6 +36154,8 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
   // One direction to a plane: how firmly this brush holds to it (a print's
   // hatching has its own).
   const planeLock = !hatch && strokePainter.plan?.planeMap ? PLANES.lock[Math.min(layer, PLANES.lock.length - 1)] : 0;
+  // ...and on a grown thing, the way its body runs (Brushwork that follows anatomy).
+  const anatomyK = strokePainter.plan?.anatomy?.k || 0;
   const strokes = [];
   const finest = layer >= STROKE_LAYER_FRACTIONS.length - 1;
   for (const start of chosen) {
@@ -36090,6 +36210,7 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
           const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
         }
       }
+      if (anatomyK) [dx, dy] = followAnatomy(paintingAnatomyAt(strokePainter.plan, x, y), dx, dy, anatomyK, step > 1 ? lastDx : 0, step > 1 ? lastDy : 0);
       if (hatch && layer < 3) {
         const sign = dx * hx + dy * hy < 0 ? -1 : 1;
         dx = dx * (1 - hatch) + sign * hx * hatch; dy = dy * (1 - hatch) + sign * hy * hatch;
@@ -37043,6 +37164,7 @@ function planStyleChain(plan) {
     combo: plan?.finish ? plan.finish.combo || "single" : null, finish2: plan?.finish?.layers?.[0]?.key || null,
     look2: plan?.finish?.layers?.[0]?.look || null,
     depth: plan?.depthStyle?.key || null,
+    anatomy: plan?.anatomy?.key || null,
     // The tuned value of the first filter's look, and of a stack's strength.
     tune: plan?.finish ? compactTune(plan.finish) : null,
   };
@@ -37160,7 +37282,7 @@ function computeStyleOutcomeStats() {
 /* A chain's choices as small numbers (axis and option), worked out once per
  * row: counting every pair of hundreds of chains by name cost a phone tens
  * of milliseconds. */
-const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form", "look", "light", "combo", "finish2", "look2", "comp", "morph", "depth"];
+const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form", "look", "light", "combo", "finish2", "look2", "comp", "morph", "depth", "anatomy"];
 function compactTune(finish) {
   const v = tuneValue(finish.key, finish.settings || {});
   const layer = finish.layers?.[0];

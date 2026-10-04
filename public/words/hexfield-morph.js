@@ -348,6 +348,11 @@
   function developSkeleton(g, pose = "stand") {
     const S = { ...SPINE_DEFAULT, ...g.spine };
     const items = [];
+    // What each part of the body is, for a brush that follows it: bones
+    // (a to b, r thick) of the trunk, neck, tail and legs, the head round
+    // its middle, the eye.
+    const anatomy = [];
+    const bonePart = (k, a, b, r) => anatomy.push({ k, a, b, r });
     const swim = Boolean(S.swim), sit = pose === "sit" && !swim, walk = pose === "walk" && !swim;
     const up = clamp((S.posture - 0.5) / 0.9, 0, 1);
     // The trunk: hip at the origin, the head end to the right; an upright
@@ -400,6 +405,8 @@
       items.push({ line: [p[0], p[1]], width: w, colour });
       items.push({ line: [p[1], p[2]], width: w * 0.75, colour });
       items.push({ line: [p[2], p[3]], width: w * 0.55, colour });
+      const k = colour === "far" ? "far" : "leg";
+      bonePart(k, p[0], p[1], w / 2); bonePart(k, p[1], p[2], w * 0.375); bonePart(k, p[2], p[3], w * 0.275);
       // Toes, splayed a little.
       for (let d = 0; d < Math.round(S.digits); d++) {
         const spread = (d / Math.max(1, Math.round(S.digits) - 1) - 0.5) * 0.7;
@@ -414,6 +421,7 @@
       for (let k = 0; k <= 6; k++) pts.push(add(base, dir(back + 0.05 - k * 0.07), len * (1 - k * 0.06)));
       pts.push(add(base, dir(back - 0.55), len * 0.35));
       items.push({ poly: pts, colour, tone, smooth: false });
+      bonePart("wing", base, add(base, dir(back - 0.2), len * 0.9), len * 0.18);
     };
     // The far side first: far legs (or wing), far ear.
     const swingOf = (leg, far) => (walk ? (leg.which === "front" ? 0.35 : -0.35) * (far ? -1 : 1) : 0);
@@ -430,6 +438,7 @@
         ta -= S.tailCurl / tn;
         const q = add(p, dir(ta), tl);
         items.push({ line: [p, q], width: Math.max(0.015, S.hips * 0.7 * (1 - k / tn)), colour: "body" });
+        bonePart("tail", p, q, Math.max(0.015, S.hips * 0.7 * (1 - k / tn)) / 2);
         p = q;
       }
       // A fish's tail ends in a fin.
@@ -443,6 +452,7 @@
     for (let i = n; i >= 0; i--) outline.push(add(spine[i], backAt(i), -girth[i] * 1.05));
     for (let k = 1; k <= 4; k++) outline.push(add(hip, dir(trunkA + Math.PI / 2 + k * Math.PI / 5), girth[0]));
     items.push({ poly: outline, colour: "body", texture: g.surface?.texture || null, smooth: true });
+    for (let i = 0; i < n; i++) bonePart("trunk", spine[i], spine[i + 1], (girth[i] + girth[i + 1]) / 2);
     // Fins: a fish's on its back and under it where limbs will be.
     if (swim) {
       const mid = Math.floor(n / 2), back = backAt(mid);
@@ -454,6 +464,8 @@
     }
     // Neck, head.
     items.push({ line: [shoulder, add(shoulder, dir(neckA), S.neck * 0.5), neckEnd], width: Math.max(girth[n] * 1.2, cr * 1.4), colour: "body" });
+    bonePart("neck", shoulder, neckEnd, Math.max(girth[n] * 1.2, cr * 1.4) / 2);
+    bonePart("head", cranium, tip, cr);
     const ears = Math.round(S.ears);
     const ear = (k, colour) => {
       const ba = skullA - Math.PI / 2 - 0.35 + k * 0.55, base = add(cranium, dir(ba), cr * 0.75), side = dir(ba + Math.PI / 2);
@@ -472,16 +484,18 @@
     const eye = add(add(cranium, dir(skullA), cr * 0.35), upS, cr * 0.25);
     items.push({ ellipse: [eye[0], eye[1], cr * 0.2, cr * 0.2], colour: "accent", tone: 0.3 });
     items.push({ ellipse: [eye[0] + cr * 0.03, eye[1], cr * 0.1, cr * 0.12], colour: "eye", tone: 0 });
+    bonePart("eye", eye, eye, cr * 0.2);
     // Stood on the ground: tilted so the lowest front and rear feet are level.
     if (legs.length === 2 && !legs.some((l) => l.wing) && !sit) {
       const feet = legs.map((l) => legPoints(l, 0)[3]);
       const tilt = Math.atan2(feet[0][1] - feet[1][1], feet[0][0] - feet[1][0]);
-      if (Math.abs(tilt) < 0.6 && Math.abs(tilt) > 0.01) rotateItems(items, -tilt);
+      if (Math.abs(tilt) < 0.6 && Math.abs(tilt) > 0.01) rotateItems(items, -tilt, anatomy);
     }
-    return fitItems(g, items, swim);
+    return fitItems(g, items, swim, anatomy);
   }
-  function rotateItems(items, angle) {
+  function rotateItems(items, angle, anatomy = []) {
     const c = Math.cos(angle), s = Math.sin(angle), r = ([x, y]) => [x * c - y * s, x * s + y * c];
+    for (const part of anatomy) { part.a = r(part.a); part.b = r(part.b); }
     for (const it of items) {
       if (it.line) it.line = it.line.map(r);
       if (it.poly) it.poly = it.poly.map(r);
@@ -489,7 +503,7 @@
     }
   }
   /* Fitted into a box, in the order drawn. */
-  function fitItems(g, items, swim) {
+  function fitItems(g, items, swim, anatomy = []) {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     const take = (x, y, pad = 0) => { x0 = Math.min(x0, x - pad); y0 = Math.min(y0, y - pad); x1 = Math.max(x1, x + pad); y1 = Math.max(y1, y + pad); };
     for (const it of items) {
@@ -514,6 +528,8 @@
         accent: [(c.h + c.accent) % 360, clamp(c.s + 20, 0, 100), clamp(c.l + 30, 20, 92)], eye: [0, 0, 8],
       },
       parts, grown: true, skeleton: true,
+      // In the box's units (r in parts of its width).
+      anatomy: anatomy.map((p) => ({ k: p.k, a: U(p.a), b: U(p.b), r: +(p.r / bw).toFixed(4) })),
     };
   }
 
