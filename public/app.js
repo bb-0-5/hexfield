@@ -32935,20 +32935,48 @@ function letterPlaceCandidates(W, H, k, main, laid) {
     out.push({ key: "sky", box: { x: (W - bw) / 2, y: Math.max(H * 0.04, hz * H * 0.45 - h / 2), w: bw, h } });
   }
   const view = laid.view;
-  if (hz !== null && hz < 0.78 && view && !view.iso && Array.isArray(view.vanish) && H * 0.96 - Math.max(hz * H + (1 - hz) * H * 0.45, main?.box ? main.box.y + main.box.h + H * 0.02 : 0) > H * 0.12) {
-    // Lying on the ground: laid out in a box whose letters are then
-    // foreshortened into the band of ground they lie in (lettering.warp).
-    // In the foreground, in front of the main thing's feet, as road paint is.
+  if (hz !== null && hz < 0.78 && view && !view.iso && Array.isArray(view.vanish)) {
+    /* Lying on the ground: laid out in a box whose letters are then
+     * foreshortened into the band of ground they lie in (lettering.warp).
+     * In the foreground, in front of the main thing's feet, as road paint
+     * is - or, when the main thing stands too near the foot of the picture
+     * for that (it mostly does), on the ground beside it, on its free side,
+     * along the line it stands on. */
+    const lying = (x0, x1, top, foot) => {
+      const visible = foot - top, near = (top + foot) / 2;
+      const sy = Math.max(0.3, Math.min(0.75, 0.25 + 0.5 * (near - hz * H) / Math.max(1, (1 - hz) * H)));
+      const w = x1 - x0, h = visible / sy, cx = (x0 + x1) / 2;
+      const shx = Math.max(-1.2, Math.min(1.2, (view.vanish[0] - cx) / Math.max(1, near - view.vanish[1])));
+      // Narrowed by its own lean, so the leaning letters stay on the canvas.
+      const lean = Math.abs(shx) * visible, ww = Math.max(w * 0.4, w - 2 * lean);
+      return { key: "ground", box: { x: cx - ww / 2, y: foot - h, w: ww, h }, warp: { sy, shx, ay: foot },
+        screen: { x: cx - ww / 2 - lean, y: top, w: ww + 2 * lean, h: visible } };
+    };
+    const ground0 = hz * H + (1 - hz) * H * 0.45;
     const clear = main?.box ? main.box.y + main.box.h + H * 0.02 : 0;
-    const top = Math.max(hz * H + (1 - hz) * H * 0.45, clear), foot = H * 0.96, visible = foot - top;
-    const near = (top + foot) / 2, sy = Math.max(0.3, Math.min(0.75, 0.25 + 0.5 * (near - hz * H) / Math.max(1, (1 - hz) * H)));
-    const w = W * Math.min(0.92, 0.84 * k), h = visible / sy, cx = W / 2;
-    const shx = (view.vanish[0] - cx) / Math.max(1, near - view.vanish[1]);
-    out.push({ key: "ground", box: { x: cx - w / 2, y: foot - h, w, h }, warp: { sy, shx: Math.max(-1.2, Math.min(1.2, shx)), ay: foot },
-      screen: { x: cx - w / 2 - Math.abs(shx) * visible, y: top, w: w + 2 * Math.abs(shx) * visible, h: visible } });
+    if (H * 0.96 - Math.max(ground0, clear) > H * 0.12) {
+      const w = W * Math.min(0.92, 0.84 * k);
+      out.push(lying(W / 2 - w / 2, W / 2 + w / 2, Math.max(ground0, clear), H * 0.96));
+    } else if (main?.box) {
+      const m = main.box, gap = W * 0.03;
+      const left = m.x - gap, right = W - (m.x + m.w + gap);
+      const [x0, x1] = right >= left ? [m.x + m.w + gap, W * 0.97] : [W * 0.03, m.x - gap];
+      const foot = Math.min(H * 0.97, m.y + m.h), top = Math.max(hz * H + (1 - hz) * H * 0.2, foot - Math.min(H * 0.22, m.h * 0.6));
+      if (x1 - x0 > W * 0.3 && foot - top > H * 0.08) out.push(lying(x0, x1, top, foot));
+      else {
+        // ...or, with no room beside it either, farther off: on the ground
+        // between the horizon and the main thing, as a word painted on the
+        // road ahead.
+        const far = hz * H + (1 - hz) * H * 0.06, near = m.y - H * 0.015;
+        if (near - far > H * 0.08) out.push(lying(W * 0.06, W * 0.94, far, near));
+      }
+    }
   }
   return out;
 }
+// Words that name a surface something can be painted on.
+const GROUND_WORDS = new Set(["road", "street", "path", "lane", "track", "runway", "pavement", "sidewalk", "floor", "court",
+  "field", "meadow", "beach", "sand", "desert", "ground", "plaza", "square", "parking", "highway", "avenue", "playground"]);
 // How well a place sits in this painting, before votes and variety.
 function letterPlaceLean(place, W, H, main, laid) {
   const b = place.screen || place.box;
@@ -32958,7 +32986,7 @@ function letterPlaceLean(place, W, H, main, laid) {
     lean -= 3 * (ox * oy) / Math.max(1, m.w * m.h);
   }
   if (place.key === "beside") lean += 0.3;
-  if (place.key === "ground") lean += 0.25;
+  if (place.key === "ground") lean += 0.25 + (place.surfaceWord ? 0.6 : 0);
   if (place.key === "sky") lean += 0.1;
   if (place.key === "centre") lean += main ? -1 : 0.2;
   return lean;
@@ -32995,6 +33023,8 @@ function planLettering(scene, letters, params, read, laid, rng) {
     return ox * oy > 0.25 * m.w * m.h;
   };
   const offered = letterPlaceCandidates(W, H, k, where, laid);
+  const surfaceWord = (params?.__hexfieldWords?.text || "").toLowerCase().match(/[a-z]+/g)?.some((w) => GROUND_WORDS.has(w)) || false;
+  for (const place of offered) if (place.key === "ground") place.surfaceWord = surfaceWord;
   const places = offered.some((place) => !hides(place)) ? offered.filter((place) => !hides(place)) : offered;
   const scores = chooseByTaste(places.map((p) => p.key), {
     rng, tasted: 0, axis: "letterPlace", given: null,
