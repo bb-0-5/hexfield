@@ -33290,19 +33290,19 @@ function drawLetteringCushion(ctx, lettering, program) {
   cushion.width = 0; cushion.height = 0;
 }
 
-function drawSceneLettering(ctx, lettering, program = letteringStageProgram(lettering)) {
+function drawSceneLettering(ctx, lettering, program = letteringStageProgram(lettering), { shadow = true, cushion = true } = {}) {
   // Lying on the ground: everything drawn through its foreshortening.
   if (lettering.warp && !lettering.warping) {
     ctx.save();
     ctx.transform(...letteringWarpMatrix(lettering.warp));
     lettering.warping = true;
-    try { drawSceneLettering(ctx, lettering, program); } finally { lettering.warping = false; ctx.restore(); }
+    try { drawSceneLettering(ctx, lettering, program, { shadow, cushion }); } finally { lettering.warping = false; ctx.restore(); }
     return;
   }
   const { text, box } = lettering;
   try {
     // Standing letters throw a shadow away from the painting's light.
-    if (!lettering.warp && strokePainter.plan && Number.isFinite(strokePainter.plan.lightAngle)) {
+    if (shadow && !lettering.warp && strokePainter.plan && Number.isFinite(strokePainter.plan.lightAngle)) {
       const away = strokePainter.plan.lightAngle + Math.PI, reach = box.h * 0.12;
       const shadow = paintBuffer(Math.ceil(box.w), Math.ceil(box.h));
       letterInBox(shadow.getContext("2d"), { x: 0, y: 0, w: box.w, h: box.h }, text, {
@@ -33315,7 +33315,7 @@ function drawSceneLettering(ctx, lettering, program = letteringStageProgram(lett
       ctx.restore();
       shadow.width = 0; shadow.height = 0;
     }
-    drawLetteringCushion(ctx, lettering, program);
+    if (cushion) drawLetteringCushion(ctx, lettering, program);
     if (lettering.stage === "block") {
       // Soft masses: drawn apart, then blurred onto the layer.
       const soft = paintBuffer(Math.ceil(box.w), Math.ceil(box.h));
@@ -37527,6 +37527,47 @@ function finishRegionMask(plan, layer, w, h) {
  * filter split in by its region or stacked at its strength. */
 /* `reuse`: true keeps a flat filter's colours while they are fresh enough;
  * "always" keeps them as they are (EXPORT, so the file shows the screen). */
+/* The words through the finish. A halftone, chalk grain or a few flat
+ * colours over the whole picture broke lettering up until it no longer
+ * read, so inside the letters most of the paint as it was is put back over
+ * the finish (FINISH_LETTER_KEEP), the edge softened: the words keep the
+ * finish's texture and stay words. */
+const FINISH_LETTER_KEEP = 0.7;
+function letteringFinishMask(plan, w, h) {
+  const scene = plan?.scene, lettering = scene?.lettering;
+  if (!lettering || lettering.painted === undefined || !scene.width || typeof document === "undefined") return null;
+  const key = lettering.painted + "|" + (lettering.version || 0) + "|" + w + "x" + h;
+  if (lettering.finishMask?.key === key) return lettering.finishMask.canvas;
+  const canvas = paintBuffer(w, h), ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.save();
+  ctx.scale(w / scene.width, h / scene.height);
+  drawSceneLettering(ctx, lettering, letteringStageProgram(lettering), { shadow: false, cushion: false });
+  ctx.restore();
+  // Softened a little, so the kept paint fades into the finish.
+  const soft = paintBuffer(w, h), sctx = soft.getContext("2d", { willReadFrequently: true });
+  sctx.filter = "blur(" + Math.max(1, Math.round(Math.min(w, h) / 400)) + "px)";
+  sctx.drawImage(canvas, 0, 0);
+  canvas.width = 0;
+  if (lettering.finishMask) lettering.finishMask.canvas.width = 0;
+  lettering.finishMask = { key, canvas: soft };
+  return soft;
+}
+function keepLettersThroughFinish(out, source, W, H, plan) {
+  const mask = letteringFinishMask(plan, out.width, out.height);
+  if (!mask) return;
+  const cut = paintBuffer(out.width, out.height), cctx = cut.getContext("2d", { willReadFrequently: true });
+  cctx.imageSmoothingEnabled = true;
+  cctx.drawImage(source, 0, 0, W, H, 0, 0, out.width, out.height);
+  cctx.globalCompositeOperation = "destination-in";
+  cctx.drawImage(mask, 0, 0);
+  const octx = out.getContext("2d");
+  octx.save();
+  octx.globalAlpha = FINISH_LETTER_KEEP;
+  octx.drawImage(cut, 0, 0);
+  octx.restore();
+  cut.width = 0;
+}
+
 function renderFinishRecipe(source, W, H, finish, cap = 900, { reuse = false, into = null, plan = strokePainter.plan } = {}) {
   const keep = (f) => reuse === "always" || (reuse && !flatNeedsFresh(f));
   const out = renderFinish(source, W, H, finish, cap, { reuse: keep(finish), into });
@@ -37552,6 +37593,7 @@ function renderFinishRecipe(source, W, H, finish, cap = 900, { reuse = false, in
     octx.restore();
     piece.width = 0;
   }
+  keepLettersThroughFinish(out, source, W, H, plan);
   return out;
 }
 /* A flat filter keeps its colours while the painting paints, and finds them
