@@ -33612,7 +33612,8 @@ function shapeParts(blob, dirs) {
   if (pts.length < 24) return whole;
   let sx = 0, sy = 0;
   for (const [, x, y] of pts) { sx += x; sy += y; }
-  if (Math.hypot(sx, sy) / pts.length > 0.55) return whole;
+  // Its marks running one way: one part, and that is its plane's direction.
+  if (Math.hypot(sx, sy) / pts.length > 0.55) { whole[0].marks = Math.atan2(sy, sx) / 2 + Math.PI / 2; return whole; }
   // Two directions: 2-means on the doubled angle, from the two most unalike.
   let c1 = [pts[0][1], pts[0][2]], c2 = c1, low = Infinity;
   for (const [, x, y] of pts) { const d = x * c1[0] + y * c1[1]; if (d < low) { low = d; c2 = [x, y]; } }
@@ -34164,9 +34165,10 @@ function refreshDepthLayer() {
     view.insertAdjacentElement("afterend", depthLayer);
   }
   Object.assign(depthLayer.style, { left: view.offsetLeft + "px", top: view.offsetTop + "px", width: view.offsetWidth + "px", height: view.offsetHeight + "px" });
-  const shown = strokePainter.plan?.depthParts;
-  if (depthShownFor === shown && depthLayer.width === view.width) return;
-  depthShownFor = shown;
+  const shown = strokePainter.plan?.depthParts || (strokePainter.plan?.planeMap ? { parts: [], scene: { hy: strokePainter.plan.depthMap?.real ? (strokePainter.plan.scene.view.horizon / view.height) : 0.45 } } : null);
+  const key = strokePainter.plan?.planeMap || shown;
+  if (depthShownFor === key && depthLayer.width === view.width) return;
+  depthShownFor = key;
   depthLayer.width = view.width; depthLayer.height = view.height;
   const ctx = depthLayer.getContext("2d"), W = view.width, H = view.height;
   ctx.clearRect(0, 0, W, H);
@@ -34174,6 +34176,18 @@ function refreshDepthLayer() {
   ctx.setLineDash([]);
   ctx.strokeStyle = "rgba(255,255,255,0.5)"; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(0, shown.scene.hy * H); ctx.lineTo(W, shown.scene.hy * H); ctx.stroke();
+  // The planes: which way the strokes run in each place (a dot where they
+  // wrap round a named thing instead).
+  const pm = strokePainter.plan?.planeMap;
+  if (pm) {
+    ctx.strokeStyle = "rgba(255,255,120,0.55)"; ctx.fillStyle = "rgba(255,255,120,0.55)"; ctx.lineWidth = 1.5;
+    const step = Math.max(1, Math.round(pm.gw / 16));
+    for (let gy = Math.floor(step / 2); gy < pm.gh; gy += step) for (let gx = Math.floor(step / 2); gx < pm.gw; gx += step) {
+      const a = pm.angle[gy * pm.gw + gx], cx = (gx + 0.5) / pm.gw * W, cy = (gy + 0.5) / pm.gh * H, r = W / pm.gw * step * 0.35;
+      if (!Number.isFinite(a)) { ctx.fillRect(cx - 1.5, cy - 1.5, 3, 3); continue; }
+      ctx.beginPath(); ctx.moveTo(cx - Math.cos(a) * r, cy - Math.sin(a) * r); ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r); ctx.stroke();
+    }
+  }
   const colours = ["#ff9a3c", "#ffffff", "#5fb4ff"];
   for (const part of shown.parts) {
     part.views.forEach((v, k) => {
@@ -34326,12 +34340,184 @@ function choosePlanDepth(plan, ground, width, height, params) {
 function* planDepthSteps(plan, ground, width, height, params) {
   yield* evolveShapesInDepthSteps(plan, ground, width, height);
   plan.depthMap = buildDepthMap(plan, ground, width, height);
+  // ...and its planes (Planes, and painting from what is laid).
+  plan.planeMap = buildPlaneMap(plan, width, height);
   yield;
   if (!plan.depthStyle) plan.depthStyle = choosePlanDepth(plan, ground, width, height, params);
 }
 function planDepth(plan, ground, width, height, params) {
   const steps = planDepthSteps(plan, ground, width, height, params);
   while (!steps.next().done);
+}
+
+/* ── Planes, and painting from what is laid ─────────────────────────────
+ * A painter blocks a plane in with strokes running one way - the ground
+ * and the sky level, a wall up and down, each mass the way its own marks
+ * run - and the sameness of direction is what says "this is one surface".
+ * The plane map: for each place, the one direction its strokes run (the
+ * shapes' parts by the way their marks run, Shapes in depth; ground and sky
+ * level under a real horizon; elsewhere the painting's one settled angle),
+ * or none where a named thing is (its strokes wrap round its form). The
+ * big brushes hold to it hardest; the fine ones are freer to follow edges.
+ *
+ * And a painter works from what is already on the canvas. Each batch of
+ * strokes starts at the edge of the paint already laid (at the focus, for
+ * the first) and spreads out from it in one connected patch, not scattered
+ * over the canvas; a place already painted with this brush is left alone
+ * unless it is badly off. What has been laid then becomes part of the plan:
+ * the reference the brush paints toward is pulled toward the paint where
+ * the paint is a fair reading of it (PLANES.band), a forced perturbation by
+ * its own marks - so it builds on them instead of scrubbing them back
+ * toward the plan.
+ *
+ * A round part is not one plane but two faces, left and right, like a box
+ * seen at an angle: the body its turned views are drawn from (Shapes in
+ * depth) says how round it is, and the rounder, the more its two faces'
+ * strokes turn apart (PLANES.facet). */
+const PLANES = { cells: 48, lock: [0.85, 0.75, 0.45, 0.25], laidCell: 8, reach: 0.15, worse: 2.2, band: 40, take: 0.6, order: 1.5, facet: 0.6, round: 0.45 };
+
+/* The plane map: a direction (radians) per cell of a coarse grid, NaN where
+ * strokes keep their own way (a named thing). */
+function buildPlaneMap(plan, width, height) {
+  const P = PLANES, gw = P.cells, gh = Math.max(8, Math.round(gw * height / width));
+  const angle = new Float32Array(gw * gh);
+  const view = plan.scene?.view;
+  const real = Boolean(view && !view.iso && Number.isFinite(view.horizon));
+  // The painting's one angle, where nothing else says.
+  const settle = Number.isFinite(plan.settleAngle) ? plan.settleAngle : -0.7 + mulberry32(((Number(plan.drawSeed) || 1) ^ 0x51a7e) >>> 0)() * 0.9;
+  plan.settleAngle = settle;
+  angle.fill(real ? 0 : settle);
+  for (const part of plan.depthParts?.parts || []) {
+    const round = part.round >= P.round && part.body?.length;
+    if (!Number.isFinite(part.marks) && !round) continue;
+    const base = Number.isFinite(part.marks) ? part.marks : real ? 0 : settle;
+    const tilt = round ? P.facet * part.round : 0;
+    const [bx, by, bw, bh] = part.mask.box;
+    for (let gy = Math.max(0, Math.floor(by * gh)); gy < Math.min(gh, Math.ceil((by + bh) * gh)); gy++) {
+      const ny = (gy + 0.5) / gh;
+      // The row of its body here: which side of its middle is which face.
+      const row = round ? part.body.reduce((best, r) => (Math.abs(r.y - ny) < Math.abs(best.y - ny) ? r : best), part.body[0]) : null;
+      for (let gx = Math.max(0, Math.floor(bx * gw)); gx < Math.min(gw, Math.ceil((bx + bw) * gw)); gx++) {
+        const nx = (gx + 0.5) / gw;
+        if (shapeMaskAt(part.mask, nx, ny) <= 0.5) continue;
+        angle[gy * gw + gx] = base + (row ? (nx < row.c ? -tilt : tilt) : 0);
+      }
+    }
+  }
+  const W = plan.scene?.width || width, H = plan.scene?.height || height;
+  for (const item of plan.scene?.items || []) {
+    if (item.entry?.kind !== "subject" || item.lettering || !item.box) continue;
+    for (let gy = Math.max(0, Math.floor(item.box.y / H * gh)); gy < Math.min(gh, Math.ceil((item.box.y + item.box.h) / H * gh)); gy++) {
+      angle.fill(NaN, gy * gw + Math.max(0, Math.floor(item.box.x / W * gw)), gy * gw + Math.min(gw, Math.ceil((item.box.x + item.box.w) / W * gw)));
+    }
+  }
+  return { gw, gh, angle };
+}
+function planeAt(plan, x, y, width, height) {
+  const pm = plan?.planeMap;
+  if (!pm) return NaN;
+  const gx = Math.max(0, Math.min(pm.gw - 1, Math.floor(x / width * pm.gw))), gy = Math.max(0, Math.min(pm.gh - 1, Math.floor(y / height * pm.gh)));
+  return pm.angle[gy * pm.gw + gx];
+}
+
+/* What has been laid: a coarse grid of the canvas, each cell marked with the
+ * finest brush that has painted it (layer + 1), and the paint there as it
+ * was when it landed. Started afresh with each painting. */
+function laidState(plan, width, height) {
+  let L = strokePainter.laid;
+  if (!L || L.plan !== plan || L.width !== width || L.height !== height) {
+    const c = PLANES.laidCell, gw = Math.ceil(width / c), gh = Math.ceil(height / c);
+    L = strokePainter.laid = { plan, width, height, c, gw, gh, layer: new Uint8Array(gw * gh), weight: new Float32Array(gw * gh),
+      fresh: new Uint8Array(gw * gh), paint: new Uint8ClampedArray(width * height * 4), any: false };
+  }
+  return L;
+}
+// Strokes planned: the cells under them laid with this brush.
+function markLaid(L, strokes, layer) {
+  for (const stroke of strokes) {
+    const r = stroke.width / 2;
+    for (const [x, y] of stroke.points) {
+      const gx0 = Math.max(0, Math.floor((x - r) / L.c)), gx1 = Math.min(L.gw - 1, Math.floor((x + r) / L.c));
+      const gy0 = Math.max(0, Math.floor((y - r) / L.c)), gy1 = Math.min(L.gh - 1, Math.floor((y + r) / L.c));
+      for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
+        const k = gy * L.gw + gx;
+        if (L.layer[k] < layer + 1) L.layer[k] = layer + 1;
+        L.fresh[k] = 1;
+      }
+    }
+  }
+  if (strokes.length) L.any = true;
+}
+/* How far (in cells) each cell is from paint already laid - or from the
+ * focus, before any is. */
+function laidDistance(L, plan) {
+  const n = L.gw * L.gh, dist = new Float32Array(n).fill(Infinity), queue = new Int32Array(n);
+  let head = 0, tail = 0;
+  for (let k = 0; k < n; k++) if (L.layer[k]) { dist[k] = 0; queue[tail++] = k; }
+  if (!tail) {
+    const k = Math.min(L.gh - 1, Math.floor((plan?.fy ?? 0.5) * L.gh)) * L.gw + Math.min(L.gw - 1, Math.floor((plan?.fx ?? 0.5) * L.gw));
+    dist[k] = 0; queue[tail++] = k;
+  }
+  while (head < tail) {
+    const k = queue[head++], x = k % L.gw, y = (k / L.gw) | 0, d = dist[k] + 1;
+    if (x > 0 && dist[k - 1] > d) { dist[k - 1] = d; queue[tail++] = k - 1; }
+    if (x < L.gw - 1 && dist[k + 1] > d) { dist[k + 1] = d; queue[tail++] = k + 1; }
+    if (y > 0 && dist[k - L.gw] > d) { dist[k - L.gw] = d; queue[tail++] = k - L.gw; }
+    if (y < L.gh - 1 && dist[k + L.gw] > d) { dist[k + L.gw] = d; queue[tail++] = k + L.gw; }
+  }
+  return dist;
+}
+/* The paint just landed taken into the plan: its colours remembered where
+ * it lies, and wherever it is a fair reading of the reference - near it in
+ * colour - the reference is pulled most of the way to it there (PLANES.take,
+ * never all of it), less as they differ more (PLANES.band) - across the
+ * flat of a plane; where the reference has an edge or detail the fine
+ * brushes still go for the reference itself. Where a rewritten reference has moved on
+ * (a new shape, a new plane), the old paint is far from it and is not
+ * taken: that place is painted again. A copy is returned. */
+function adoptLaid(L, ref, canvas, gradient = null) {
+  const { c, gw, gh, width, height } = L;
+  for (let k = 0; k < gw * gh; k++) {
+    if (!L.fresh[k]) continue;
+    L.fresh[k] = 0;
+    L.weight[k] = 1;
+    const gx = k % gw, gy = (k / gw) | 0;
+    for (let y = gy * c; y < Math.min(height, (gy + 1) * c); y++) {
+      const o0 = (y * width + gx * c) * 4, o1 = (y * width + Math.min(width, (gx + 1) * c)) * 4;
+      for (let o = o0; o < o1; o++) L.paint[o] = canvas[o];
+    }
+  }
+  if (!L.any) return ref;
+  const out = new Uint8ClampedArray(ref), band = PLANES.band, take = PLANES.take;
+  // How flat the reference is at each point of its contour grid, worked out
+  // once per reference: 1 flat, 0 at a strong edge.
+  let flat = null;
+  if (gradient) {
+    flat = gradient.flatness;
+    if (!flat) {
+      flat = gradient.flatness = new Float32Array(gradient.gw * gradient.gh);
+      for (let i = 0; i < flat.length; i++) flat[i] = 1 - Math.max(0, Math.min(1, (Math.hypot(gradient.gx[i], gradient.gy[i]) - STROKE_GRADIENT_MIN) / 96));
+    }
+  }
+  for (let gy = 0; gy < gh; gy++) {
+    for (let gx = 0; gx < gw; gx++) {
+      if (!L.weight[gy * gw + gx]) continue;
+      const x1 = Math.min(width, (gx + 1) * c);
+      for (let y = gy * c; y < Math.min(height, (gy + 1) * c); y++) {
+        const frow = flat ? Math.min(gradient.gh - 1, y >> 1) * gradient.gw : 0;
+        for (let x = gx * c, o = (y * width + x) * 4; x < x1; x++, o += 4) {
+          const d = (Math.abs(L.paint[o] - out[o]) + Math.abs(L.paint[o + 1] - out[o + 1]) + Math.abs(L.paint[o + 2] - out[o + 2])) / 3;
+          if (d >= band) continue;
+          // Flat planes keep their paint; where the reference has structure
+          // (an edge, detail), the fine brushes still go for the reference.
+          const w = take * (1 - d / band) * (flat ? flat[frow + Math.min(gradient.gw - 1, x >> 1)] : 1);
+          if (w <= 0) continue;
+          out[o] += (L.paint[o] - out[o]) * w; out[o + 1] += (L.paint[o + 1] - out[o + 1]) * w; out[o + 2] += (L.paint[o + 2] - out[o + 2]) * w;
+        }
+      }
+    }
+  }
+  return out;
 }
 
 /* The scene's layer painted into a composed reference, in place. */
@@ -35770,18 +35956,53 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       if (rng() > Math.max(floor, w) * far) starts.splice(i, 1);
     }
   }
-  // Worst first, then shuffled within the batch so strokes do not march in rows.
-  starts.sort((a, b) => b.error - a.error);
+  /* From what is laid (Planes, and painting from what is laid): nearest the
+   * paint already down first, and a place this brush has painted left alone
+   * unless it is badly off. Without that record, worst first. */
+  const laid = strokePainter.laid?.plan === strokePainter.plan && strokePainter.plan ? strokePainter.laid : null;
+  if (laid) {
+    const dist = laidDistance(laid, strokePainter.plan);
+    for (const start of starts) {
+      const k = Math.min(laid.gh - 1, (start.y / laid.c) | 0) * laid.gw + Math.min(laid.gw - 1, (start.x / laid.c) | 0);
+      start.dist = dist[k];
+      // Painted with this brush already, and not badly off: left as it is.
+      start.again = laid.layer[k] >= layer + 1 && start.error < tolerance * PLANES.worse;
+      start.priority = start.error / (1 + PLANES.reach * start.dist);
+    }
+    for (let i = starts.length - 1; i >= 0; i--) if (starts[i].again) starts.splice(i, 1);
+    starts.sort((a, b) => b.priority - a.priority);
+  } else starts.sort((a, b) => b.error - a.error);
   const chosen = starts.slice(0, limit);
-  for (let i = chosen.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [chosen[i], chosen[j]] = [chosen[j], chosen[i]];
-  }
-  // Far to near, loosely, so near strokes lie over far ones.
-  if (airAt) {
-    for (const start of chosen) start.air = airAt(start.x, start.y);
-    for (const start of chosen) start.order = start.air + (rng() - 0.5) * DEPTH_BRUSH.order;
-    chosen.sort((a, b) => b.order - a.order);
+  if (laid && chosen.length) {
+    // Out from the paint already down: the first stroke where the paint
+    // ends (the farthest off, among those), each next one beside the one
+    // before - a chain across the patch, not a scatter.
+    for (const start of chosen) start.air = airAt ? airAt(start.x, start.y) : 0;
+    const key = (st) => (Number.isFinite(st.dist) ? st.dist : 0) - st.air * 1.5 + rng() * PLANES.order;
+    let at = chosen.reduce((best, st) => (key(st) < key(best) ? st : best), chosen[0]);
+    const left = new Set(chosen), chain = [];
+    while (at) {
+      chain.push(at); left.delete(at);
+      let next = null, near = Infinity;
+      for (const st of left) {
+        const d = Math.hypot(st.x - at.x, st.y - at.y) * (1 + 0.3 * Math.max(0, -st.air));
+        if (d < near) { near = d; next = st; }
+      }
+      at = next;
+    }
+    chosen.splice(0, chosen.length, ...chain);
+  } else {
+    // Shuffled within the batch so strokes do not march in rows.
+    for (let i = chosen.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [chosen[i], chosen[j]] = [chosen[j], chosen[i]];
+    }
+    // Far to near, loosely, so near strokes lie over far ones.
+    if (airAt) {
+      for (const start of chosen) start.air = airAt(start.x, start.y);
+      for (const start of chosen) start.order = start.air + (rng() - 0.5) * DEPTH_BRUSH.order;
+      chosen.sort((a, b) => b.order - a.order);
+    }
   }
   /* Looseness is the words' energy together with taste (planStyle); without
    * a plan, the words alone, as before. */
@@ -35797,6 +36018,9 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
   const edgeStop = Number(brush?.edgeStop) || 0;
   const hatchAngle = (Number(strokePainter.plan?.lightAngle) || -2.4) + Math.PI / 2;
   const hx = Math.cos(hatchAngle), hy = Math.sin(hatchAngle);
+  // One direction to a plane: how firmly this brush holds to it (a print's
+  // hatching has its own).
+  const planeLock = !hatch && strokePainter.plan?.planeMap ? PLANES.lock[Math.min(layer, PLANES.lock.length - 1)] : 0;
   const strokes = [];
   const finest = layer >= STROKE_LAYER_FRACTIONS.length - 1;
   for (const start of chosen) {
@@ -35841,6 +36065,16 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       // Round the form the stroke is on - most where the picture has no
       // direction of its own.
       [dx, dy] = wrapDirection(x, y, dx, dy, mag < STROKE_GRADIENT_MIN ? 0.75 : 0.4);
+      if (planeLock) {
+        const a = planeAt(strokePainter.plan, x, y, width, height);
+        if (Number.isFinite(a)) {
+          let px = Math.cos(a), py = Math.sin(a);
+          const fx = step > 1 ? lastDx : dx, fy = step > 1 ? lastDy : dy;
+          if (px * fx + py * fy < 0) { px = -px; py = -py; }
+          dx = dx * (1 - planeLock) + px * planeLock; dy = dy * (1 - planeLock) + py * planeLock;
+          const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+        }
+      }
       if (hatch && layer < 3) {
         const sign = dx * hx + dy * hy < 0 ? -1 : 1;
         dx = dx * (1 - hatch) + sign * hx * hatch; dy = dy * (1 - hatch) + sign * hy * hatch;
@@ -37343,6 +37577,10 @@ function paintTowardReference(result, ref, width, height,
     scene.width === width && scene.height === height ? { cover: scene.layer.cover, width } : null;
   let current = vctx.getImageData(0, 0, width, height).data;
   strokeLogBegin(current, width, height);
+  // What has been laid is taken into the plan (Planes, and painting from
+  // what is laid): the reference the brush paints toward now.
+  const laid = strokePainter.plan && current.length === ref.length ? laidState(strokePainter.plan, width, height) : null;
+  if (laid) strokePainter.laidReference = ref = adoptLaid(laid, ref, current, strokePainter.gradient);
   // A detailed hand keeps working on smaller differences.
   const tolerance = STROKE_ERROR_TOLERANCE * (1 - 0.3 * (Number(planStyle()?.detail) || 0));
   const toleranceFor = (l) => l === 0 ? tolerance * 0.35 : tolerance;
@@ -37371,6 +37609,7 @@ function paintTowardReference(result, ref, width, height,
   }
   current = null;
   const strokes = plan.strokes;
+  if (laid) markLaid(laid, strokes, useLayer);
   result.paintStrokeLayer = useLayer;
   result.paintStrokeCount = strokes.length;
   result.paintBrush = {
