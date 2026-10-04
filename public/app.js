@@ -36027,7 +36027,33 @@ let contourVersion = 0;
  * its forms, in the painting's manner - then its silhouette is drawn round
  * in its own edge colour. Afterwards the big brushes leave it alone. */
 const THING_PASSES = [1 / 5, 1 / 10, 1 / 20];
-const THING_SILHOUETTE = THING_PASSES.length;
+/* Foliage: a leafy thing's canopy (its parts with the "leafy" texture, or a
+ * grown plant's leaves) painted again as leaves - short dabs of the
+ * reference's own colour, each turned out from the middle of its clump the
+ * way leaves hang, the ones on the rim allowed onto its soft edge so the
+ * outline is broken and lacy instead of one smooth blob. A canopy in the
+ * plan is mostly one flat colour, so copying it made a blob: the leaves are
+ * lighter on the side the light comes from and darker away from it, each a
+ * little different. Between the last pass and the silhouette. */
+const THING_FOLIAGE = THING_PASSES.length;
+const THING_SILHOUETTE = THING_PASSES.length + 1;
+const FOLIAGE = { leaf: 1 / 26, minLeaf: 1.6, spread: 0.7, light: 0.2, vary: 0.12, rim: 0.35 };
+function foliageBoxes(item) {
+  const b = item.box, entry = item.entry;
+  if (entry?.plant) return [{ x: b.x, y: b.y, w: b.w, h: b.h * 0.8 }];
+  const boxes = [];
+  for (const part of entry?.parts || []) {
+    if (part.texture !== "leafy") continue;
+    let bx, by, bw, bh;
+    if (Array.isArray(part.box)) [bx, by, bw, bh] = part.box;
+    else if (Array.isArray(part.pts)) {
+      const xs = part.pts.map((q) => q[0]), ys = part.pts.map((q) => q[1]);
+      bx = Math.min(...xs); by = Math.min(...ys); bw = Math.max(...xs) - bx; bh = Math.max(...ys) - by;
+    } else continue;
+    boxes.push({ x: b.x + bx * b.w, y: b.y + by * b.h, w: bw * b.w, h: bh * b.h });
+  }
+  return boxes;
+}
 // Strokes planned per turn; the rest of the pass continues on the next one.
 const THING_BATCH = isMobileBrowser() ? 500 : 1200;
 
@@ -36127,11 +36153,50 @@ function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0, to = 
       }
       return;
     }
+    if (pass === THING_FOLIAGE) {
+      const boxes = foliageBoxes(item);
+      if (!boxes.length) return;
+      const leaf = Math.max(FOLIAGE.minLeaf, short * FOLIAGE.leaf);
+      const loose = (x, y) => {
+        const mx = Math.round(x) - mask.x0, my = Math.round(y) - mask.y0;
+        return mx >= 0 && my >= 0 && mx < mask.w && my < mask.h && mask.alpha[my * mask.w + mx] > 40;
+      };
+      const la = Number(strokePainter.plan?.lightAngle);
+      const lx = Number.isFinite(la) ? Math.cos(la) : -0.6, ly = Number.isFinite(la) ? Math.sin(la) : -0.8;
+      for (const fb of boxes) {
+        const cx = fb.x + fb.w / 2, cy = fb.y + fb.h / 2, rx = fb.w / 2 || 1, ry = fb.h / 2 || 1;
+        for (let gy = fb.y; gy < fb.y + fb.h; gy += leaf * 0.9) {
+          for (let gx = fb.x; gx < fb.x + fb.w; gx += leaf * 0.9) {
+            let sx = gx + (rng() - 0.5) * leaf, sy = gy + (rng() - 0.5) * leaf;
+            // On the leaves, or on their soft rim (the lacy edge).
+            if (!loose(sx, sy)) continue;
+            const ox = (sx - cx) / rx, oy = (sy - cy) / ry, out = Math.hypot(ox, oy) || 1;
+            const solid = inside(sx, sy);
+            // A rim leaf hangs a little out over the edge.
+            if (!solid || !inside(sx + ox / out * leaf, sy + oy / out * leaf)) { sx += ox / out * leaf * FOLIAGE.rim; sy += oy / out * leaf * FOLIAGE.rim; }
+            const base = at(ref, gx, gy);
+            // Lit side lighter, the far side darker; each leaf its own.
+            const k = FOLIAGE.light * Math.max(-1, Math.min(1, (ox * lx + oy * ly))) + (rng() - 0.5) * FOLIAGE.vary;
+            const colour = base.map((c) => Math.max(0, Math.min(255, Math.round(k > 0 ? c + (255 - c) * k : c * (1 + k)))));
+            // Turned out from the middle of the clump, give or take.
+            const a = Math.atan2(sy - cy, sx - cx) + (rng() - 0.5) * 2 * FOLIAGE.spread;
+            const len = leaf * (0.5 + rng() * 0.5);
+            strokes.push(finish({
+              points: [[sx - Math.cos(a) * len * 0.5, sy - Math.sin(a) * len * 0.5], [sx + Math.cos(a) * len * 0.5, sy + Math.sin(a) * len * 0.5]],
+              width: leaf * (0.75 + rng() * 0.4), colour, bristle: rng(), round: true,
+            }));
+          }
+        }
+      }
+      return;
+    }
     const radius = Math.max(1.5, short * THING_PASSES[pass]);
     const cell = Math.max(2, Math.round(radius));
     const tolerance = pass === 0 ? 8 : 14;
     const maxLength = Math.max(3, Math.round([7, 6, 4][pass] * (Number(brush?.length) || 1)));
-    const side = radius * 0.7;
+    // The brush's whole width kept inside the shape (its sides at 0.7 of a
+    // radius let the big passes spill blocks over the silhouette).
+    const side = radius * (pass < 2 ? 1 : 0.7);
     const jitter = Number(brush?.jitter) >= 0 ? Number(brush.jitter) : 8;
     const first = strokes.length;
     for (let cy = mask.y0; cy < mask.y0 + mask.h; cy += cell) {
@@ -36144,7 +36209,7 @@ function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0, to = 
         if (pass < 2) {
           let fits = 0;
           for (const [ox, oy] of [[side, 0], [-side, 0], [0, side], [0, -side]]) if (inside(sx + ox, sy + oy)) fits++;
-          if (fits < 3) continue;
+          if (fits < 4) continue;
         }
         const points = [[sx, sy]];
         let x = sx, y = sy, lastDx = 0, lastDy = 0;
@@ -36166,9 +36231,10 @@ function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0, to = 
             const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
           }
           x += dx * radius; y += dy * radius;
-          // Inside its own shape - centre and both sides of the brush - and
-          // inside its own colour.
-          if (!inside(x, y) || (pass < 2 && (!inside(x - dy * side, y + dx * side) || !inside(x + dy * side, y - dx * side)))) break;
+          // Inside its own shape - centre, both sides of the brush and, for
+          // the big passes, the tip it ends in - and inside its own colour.
+          if (!inside(x, y) || (pass < 2 && (!inside(x - dy * side, y + dx * side) || !inside(x + dy * side, y - dx * side) ||
+            !inside(x + dx * radius, y + dy * radius)))) break;
           if (diff(at(ref, x, y), colour) > 34) break;
           points.push([x, y]);
           lastDx = dx; lastDy = dy;
@@ -36214,7 +36280,7 @@ function paintThingStrokes(result, scene, pass) {
     minSize: strokes.length ? Math.min(...strokes.map((x) => x.width)) : 0,
     maxSize: strokes.length ? Math.max(...strokes.map((x) => x.width)) : 0,
     nonRedundancy: 0.5, count: (Number(result.paintBrush?.count) || 0) + strokes.length,
-    wordHand: (planStyle()?.label || "") + " · things " + (pass === THING_SILHOUETTE ? "silhouette" : "pass " + (pass + 1)),
+    wordHand: (planStyle()?.label || "") + " · things " + (pass === THING_SILHOUETTE ? "silhouette" : pass === THING_FOLIAGE ? "foliage" : "pass " + (pass + 1)),
   };
   if (!strokes.length) {
     if (activePaintAnimation === animation) activePaintAnimation = 0;
@@ -38828,9 +38894,11 @@ function paintTowardReference(result, ref, width, height,
     scene.width === width && scene.height === height
     ? { cover, box: scene.lettering.box, width } : null;
   // Things painted by their own brush are left to it by the big brushes.
-  // (All brushes, while the things are still being painted one by one.)
+  // (All brushes, once the thing brush has started: the things are its to
+  // paint - the fine general brushes painted a tree's leaves back to the
+  // flat canopy of the plan.)
   strokePainter.gradient.protectThings = scene?.thing?.started && scene.layer?.cover &&
-    scene.width === width && scene.height === height ? { cover: scene.layer.cover, width, all: !scene.thing.done } : null;
+    scene.width === width && scene.height === height ? { cover: scene.layer.cover, width, all: true } : null;
   let current = vctx.getImageData(0, 0, width, height).data;
   strokeLogBegin(current, width, height);
   // What has been laid is taken into the plan (Planes, and painting from
@@ -39199,8 +39267,10 @@ function continueMasterDetail(result) {
       return -1;
     };
     if (things.key !== strokePainter.enhancedKey) {
-      // A new master: each thing again from its middle pass, back to front.
-      if (things.key !== null && things.started) { things.item = firstThing(0); things.pass = 1; things.done = false; }
+      // A new master: each thing again from its finest pass, back to front
+      // (from the middle one, the big strokes painted a tree's leaves - which
+      // differ from the plan on purpose - back into one flat blob).
+      if (things.key !== null && things.started) { things.item = firstThing(0); things.pass = THING_PASSES.length - 1; things.done = false; }
       things.key = strokePainter.enhancedKey;
     }
     if (!things.masksReady) buildThingMasks(scene, width, height);
