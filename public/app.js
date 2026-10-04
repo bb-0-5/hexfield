@@ -11959,6 +11959,48 @@ function letterJig(program, index) {
   };
 }
 
+/* How a letter is built, off the same skeleton (letterBuild):
+ *   plain    the skeleton, stroked
+ *   serif    a short bar across each upright's free end, at the top and foot
+ *   stencil  a gap cut through the longest straight run of each stroke
+ *   inline   a thin line of the opposite value down the middle of each stroke
+ * Bred and leapt between like the other letterform genes. */
+const LETTER_BUILDS = ["plain", "serif", "stencil", "inline"];
+const letterBuildOf = (program) => (LETTER_BUILDS.includes(program?.letterBuild) ? program.letterBuild : "plain");
+const letterPenRatio = (program) => 0.16 + (Number(program.penWeight) || 0.5) * 0.24;
+function addSerifs(out, program) {
+  const s = 0.07 + letterPenRatio(program) * 0.25;
+  const bars = [];
+  for (const stroke of out) {
+    if (stroke.length < 2) continue;
+    const ends = [[stroke[0], stroke[1]], [stroke[stroke.length - 1], stroke[stroke.length - 2]]];
+    for (const [end, near] of ends) {
+      const x = end[end.length - 2], y = end[end.length - 1], nx = near[near.length - 2], ny = near[near.length - 1];
+      // An upright's end at the top or the foot of the letter.
+      if (Math.abs(y - ny) > Math.abs(x - nx) * 1.5 && (y < 0.22 || y > 0.78)) bars.push([["M", x - s, y], ["L", x + s, y]]);
+    }
+  }
+  return out.concat(bars);
+}
+function markStencilCuts(out, program) {
+  const gap = letterPenRatio(program) * 0.5;
+  const cuts = [];
+  out.forEach((stroke, si) => {
+    let best = null;
+    for (let ci = 1; ci < stroke.length; ci++) {
+      const cmd = stroke[ci], prev = stroke[ci - 1];
+      if (cmd[0] !== "L") continue;
+      const ax = prev[prev.length - 2], ay = prev[prev.length - 1], bx = cmd[1], by = cmd[2], L = Math.hypot(bx - ax, by - ay);
+      if (L >= Math.max(0.45, gap * 2.5) && (!best || L > best.L)) best = { si, ci, ax, ay, bx, by, L };
+    }
+    // Staggered (not all at mid-height, where they lined up into one stripe).
+    const mid = si % 2 ? 0.62 : 0.4;
+    if (best) cuts.push({ ...best, mid, t0: mid - gap / (2 * best.L), t1: mid + gap / (2 * best.L) });
+  });
+  out.cuts = cuts;
+  return out;
+}
+
 function transformSkeleton(strokes, program, rng, index = 0) {
   const shear = Number(program.skeletonShear) || 0;
   const extend = Number(program.skeletonExtend) || 0;
@@ -12003,7 +12045,8 @@ function transformSkeleton(strokes, program, rng, index = 0) {
     }
     out.push(moved);
   }
-  return out;
+  const build = letterBuildOf(program);
+  return build === "serif" ? addSerifs(out, program) : build === "stencil" ? markStencilCuts(out, program) : out;
 }
 
 /* The pen is what makes one font differ from another.
@@ -12205,6 +12248,38 @@ function paintNeuralLetterWord(ctx, W, H, text, program, params, rng = Math.rand
 }
 
 function paintLetterWord(ctx, W, H, text, program, rng = Math.random, strokeProvider = null) {
+  // A stencil is lettered on its own sheet and its gaps cut out of that, so
+  // the cut does not go through the picture under it.
+  if (letterBuildOf(program) === "stencil" && !program.__stencilSheet && program.depthProjection !== "isometric" &&
+      typeof document !== "undefined") {
+    const sheet = paintBuffer(Math.max(1, Math.ceil(W)), Math.max(1, Math.ceil(H)));
+    const sg = sheet.getContext("2d");
+    const drawn = paintLetterWord(sg, W, H, text, { ...program, __stencilSheet: true }, rng, strokeProvider);
+    const layout = layoutWord(W, H, text, program);
+    if (drawn && layout) {
+      const { spots, fit, size, pen } = layout, glyphSize = size * fit.scale, lineWidth = Math.max(2.25, pen * fit.scale);
+      const xh = 0.82 + (Number(program.xHeight) || 0.5) * 0.36, wx = 0.74 + clamp01(Number(program.widthAxis) || 0.5) * 0.62;
+      const half = letterPenRatio(program) * 0.62;
+      sg.save();
+      sg.globalCompositeOperation = "destination-out";
+      sg.lineCap = "butt";
+      sg.lineWidth = Math.max(2, lineWidth * 0.42);
+      spots.forEach((spot, index) => {
+        const at = fit.place(spot.x, spot.y);
+        const cuts = transformSkeleton(LETTER_SKELETONS[spot.ch] || LETTER_SKELETONS.O, program, rng, index).cuts || [];
+        const to = (gx, gy) => [at.x - glyphSize / 2 + (gx * wx + (1 - wx) * 0.5) * glyphSize, at.y - glyphSize / 2 + (gy * xh + (1 - xh) * 0.5) * glyphSize];
+        for (const c of cuts) {
+          const mx = c.ax + (c.bx - c.ax) * c.mid, my = c.ay + (c.by - c.ay) * c.mid, nx = -(c.by - c.ay) / c.L, ny = (c.bx - c.ax) / c.L;
+          const [x0, y0] = to(mx - nx * half, my - ny * half), [x1, y1] = to(mx + nx * half, my + ny * half);
+          sg.beginPath(); sg.moveTo(x0, y0); sg.lineTo(x1, y1); sg.stroke();
+        }
+      });
+      sg.restore();
+    }
+    ctx.drawImage(sheet, 0, 0);
+    sheet.width = 0; sheet.height = 0;
+    return drawn;
+  }
   // Fields are allowed to use alpha internally. Letter faces are not: the
   // word is a material intervention in the composition, not a translucent
   // caption inheriting whatever blend the field last selected.
@@ -12394,6 +12469,12 @@ function paintLetterWord(ctx, W, H, text, program, rng = Math.random, strokeProv
 
   ctx.strokeStyle = "hsl(" + hue + " 78% " + Math.round(light * 100) + "%)";
   strokeAll(ctx);
+  if (letterBuildOf(program) === "inline") {
+    // A thin line of the opposite value down the middle of each stroke.
+    ctx.strokeStyle = "hsl(" + hue + " 40% " + (light > 0.5 ? 14 : 92) + "%)";
+    ctx.lineWidth = Math.max(1, lineWidth * 0.24);
+    strokeAll(ctx);
+  }
   ctx.restore();
 
   if (program.fillStyle === "dots" || program.fillStyle === "hatch" || program.fillStyle === "texture") {
@@ -32206,7 +32287,8 @@ function renderFontGarden(panel, small) {
       showMorphsPanel("fonts");
     };
     cell.appendChild(c);
-    const t = document.createElement("div"); t.textContent = (kid || fontGarden.parent).family; cell.appendChild(t);
+    const shown = kid || fontGarden.parent, build = letterBuildOf(shown.program);
+    const t = document.createElement("div"); t.textContent = shown.family + (build !== "plain" ? " · " + build : ""); cell.appendChild(t);
     grid.appendChild(cell);
   });
   wrap.appendChild(grid);
@@ -32868,7 +32950,7 @@ function letterPlaceLean(place, W, H, main, laid) {
   let lean = 0;
   if (main?.box) {
     const m = main.box, ox = Math.max(0, Math.min(b.x + b.w, m.x + m.w) - Math.max(b.x, m.x)), oy = Math.max(0, Math.min(b.y + b.h, m.y + m.h) - Math.max(b.y, m.y));
-    lean -= 1.4 * (ox * oy) / Math.max(1, m.w * m.h);
+    lean -= 3 * (ox * oy) / Math.max(1, m.w * m.h);
   }
   if (place.key === "beside") lean += 0.3;
   if (place.key === "ground") lean += 0.25;
@@ -32899,7 +32981,16 @@ function planLettering(scene, letters, params, read, laid, rng) {
   const mainItem = main ? laid.items.find((item) => item.main) || laid.items.find((item) => item.entry?.kind === "subject" && !item.lettering) : null;
   const where = main && mainItem ? { ...main, box: mainItem.box } : main;
   // Where it goes: chosen, learned and varied (axis "letterPlace").
-  const places = letterPlaceCandidates(W, H, k, where, laid);
+  // A place that hides more than a quarter of the main thing is not offered
+  // (not even to the chooser's now-and-then exploring), while others remain.
+  const hides = (place) => {
+    const b = place.screen || place.box, m = where?.box;
+    if (!m) return false;
+    const ox = Math.max(0, Math.min(b.x + b.w, m.x + m.w) - Math.max(b.x, m.x)), oy = Math.max(0, Math.min(b.y + b.h, m.y + m.h) - Math.max(b.y, m.y));
+    return ox * oy > 0.25 * m.w * m.h;
+  };
+  const offered = letterPlaceCandidates(W, H, k, where, laid);
+  const places = offered.some((place) => !hides(place)) ? offered.filter((place) => !hides(place)) : offered;
   const scores = chooseByTaste(places.map((p) => p.key), {
     rng, tasted: 0, axis: "letterPlace", given: null,
     lean: (key) => letterPlaceLean(places.find((p) => p.key === key), W, H, where, laid),
@@ -33421,6 +33512,7 @@ function mutateLetterforms(base, rng, lettering, spec) {
   if (rng() < 0.3) child.penShape = pick(rng, ["round", "square", "chisel"]);
   if (rng() < 0.3) child.curveRule = pick(rng, ["curved", "circle", "straight", "field"]);
   if (rng() < 0.25) child.baselineRule = pick(rng, ["flat", "rising", "curved"]);
+  if (rng() < 0.15) child.letterBuild = pick(rng, LETTER_BUILDS);
   return finishBrushProgram(child);
 }
 
@@ -33433,6 +33525,7 @@ const LETTER_LEAP_GENES = {
 };
 const LETTER_LEAP_CHOICES = {
   curveRule: ["curved", "circle", "straight", "field"], penShape: ["round", "square", "chisel"], baselineRule: ["flat", "rising", "curved"],
+  letterBuild: LETTER_BUILDS,
 };
 function leapLetterforms(base, rng, lettering, spec, genes = 3) {
   const child = mutateLetterforms(base, rng, lettering, spec);
@@ -33533,10 +33626,19 @@ function letterSkeletonPolylines(lettering, program) {
       const pt = [box.x + x, box.y + box.h / 2 + (y - box.h / 2) * stretch];
       return lettering.warp ? warpLetterPoint(lettering.warp, pt) : pt;
     };
-    for (const stroke of strokes) {
+    const cuts = strokes.cuts || [];
+    strokes.forEach((stroke, si) => {
       let line = null, cur = null;
-      for (const cmd of stroke) {
+      stroke.forEach((cmd, ci) => {
+        const cut = cuts.find((c) => c.si === si && c.ci === ci);
         if (cmd[0] === "M") { if (line && line.length > 1) lines.push(line); cur = [cmd[1], cmd[2]]; line = [map(cur[0], cur[1])]; }
+        else if (cmd[0] === "L" && line && cut) {
+          // A stencil's gap: the line ends before it and starts again after.
+          line.push(map(cut.ax + (cut.bx - cut.ax) * cut.t0, cut.ay + (cut.by - cut.ay) * cut.t0));
+          if (line.length > 1) lines.push(line);
+          line = [map(cut.ax + (cut.bx - cut.ax) * cut.t1, cut.ay + (cut.by - cut.ay) * cut.t1)];
+          cur = [cmd[1], cmd[2]]; line.push(map(cur[0], cur[1]));
+        }
         else if (cmd[0] === "L" && line) { cur = [cmd[1], cmd[2]]; line.push(map(cur[0], cur[1])); }
         else if (cmd[0] === "Q" && line && cur) {
           for (let t = 0.2; t <= 1.0001; t += 0.2) {
@@ -33547,9 +33649,9 @@ function letterSkeletonPolylines(lettering, program) {
           }
           cur = [cmd[3], cmd[4]];
         }
-      }
+      });
       if (line && line.length > 1) lines.push(line);
-    }
+    });
   }
   return { lines, width: lineWidth * (1 + stretch) / 2, glyphSize, stretch };
 }
@@ -33703,6 +33805,10 @@ function letterBrushStrokes(lettering, program, ref, W, H, previous = null, { fi
   }
   // Each touch-up is a finer brush down the middle of the letter.
   strokes.push(...marks(skeleton.width, 0, 0, [1, 0.78, 0.6][Math.min(2, touchups)]));
+  // An inline letter: a thin line of the opposite value down its middle.
+  if (letterBuildOf(program) === "inline") {
+    strokes.push(...tinted(marks(skeleton.width, 0, 0, 0.26), hslToRgb(hue, 0.4, light > 0.5 ? 0.14 : 0.92), 0.9));
+  }
   return strokes;
 }
 
@@ -33721,7 +33827,7 @@ function paintLetteringStrokes(result, scene) {
   const lettering = scene.lettering;
   const program = letteringStageProgram(lettering);
   const formKey = (p) => ["skeletonShear", "skeletonExtend", "widthAxis", "xHeight", "penWeight", "penShape", "curveRule",
-    "baselineRule", "letterSpace", "letterWarp", "letterWarpSeed", "letterBounce", "letterTilt", "letterSizeVar", "letterJigSeed"].map((k) => String(p[k])).join("|");
+    "baselineRule", "letterSpace", "letterWarp", "letterWarpSeed", "letterBounce", "letterTilt", "letterSizeVar", "letterJigSeed", "letterBuild"].map((k) => String(p[k])).join("|");
   const previous = lettering.paintedProgram && formKey(lettering.paintedProgram) !== formKey(program) ? lettering.paintedProgram : null;
   const strokes = letterBrushStrokes(lettering, program, ref, W, H, previous);
   lettering.paintedProgram = program;
