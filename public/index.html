@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- autodeploy-check: workers-builds-verify-8f2c1a -->
-<!-- hexfield build 244 (2026-10-04) -->
+<!-- hexfield build 245 (2026-10-04) -->
 <html lang="en">
 <head>
 <script>
@@ -520,7 +520,7 @@
   #localModeBadge[hidden] { display: block !important; visibility: hidden; }
   #localTasteControls {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr 1fr 1fr;
     gap: 5px;
     height: 34px;
     min-height: 34px;
@@ -534,6 +534,7 @@
   }
   #voteUp { border-color: #4d7d68; }
   #voteDown { border-color: #7d4d56; }
+  #openReferences { border-color: #8a6a2e; }
   #localLearningStatus { margin-top: 4px; color: #aeb6cf; font-size: 8px; line-height: 1.3;
                          height: 22px; min-height: 22px; max-height: 22px; overflow: hidden; }
   /* Live diagnostics may change words, not geometry. */
@@ -746,6 +747,7 @@
     <div id="localTasteControls" aria-label="teach the local taste model">
       <button id="voteUp" type="button" disabled>KEEP</button>
       <button id="voteDown" type="button" disabled>REJECT</button>
+      <button id="openReferences" type="button" title="give it pictures and logos to learn from">REFERENCES</button>
     </div>
     <div id="localLearningStatus" aria-live="polite">teach it directly, or let the resident painter keep learning in the background</div>
     <!-- Inside #autonomousControls on purpose. The autonomous presentation
@@ -766,7 +768,7 @@
     <div id="colourChoice">colour: choosing…</div>
     <div id="robBossMood" aria-live="polite">rob boss: waking up · show me 4–8 clear choices</div>
     <div id="painterStatus">seed held · preparing the first paint pass</div>
-    <div id="buildBadge">build 244</div>
+    <div id="buildBadge">build 245</div>
     <div id="bootErrors" style="display:none;color:#ff6b6b;font-size:10px;white-space:pre-wrap;margin-top:4px;"></div>
   </div>
   <div id="shopEssentials" aria-label="print controls"></div>

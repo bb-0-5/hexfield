@@ -12462,11 +12462,13 @@ function paintLetterWord(ctx, W, H, text, program, rng = Math.random, strokeProv
     const radius = Math.max(1, glyphSize * outlineWidth * (outlineMode === "halo" ? 1.8 : 1.0));
     ctx.save();
     ctx.globalAlpha = outlineAlpha;
-    ctx.shadowColor = "hsla(" + outlineHue + " 90% 60% / " + outlineAlpha.toFixed(2) + ")";
+    // (A logo's own ground colour, exactly, when lettered in its pairing.)
+    const oc = Array.isArray(program.outlineColour) ? program.outlineColour.map((c) => Math.max(0, Math.min(255, Math.round(Number(c) || 0)))) : null;
+    ctx.shadowColor = oc ? "rgba(" + oc.join(",") + "," + outlineAlpha.toFixed(2) + ")" : "hsla(" + outlineHue + " 90% 60% / " + outlineAlpha.toFixed(2) + ")";
     ctx.shadowBlur = outlineMode === "rim" ? radius * 0.3 : radius;
     ctx.shadowOffsetX = outlineMode === "offset" ? radius * 0.9 : 0;
     ctx.shadowOffsetY = outlineMode === "offset" ? radius * 0.9 : 0;
-    ctx.strokeStyle = "hsl(" + outlineHue + " 85% 55%)";
+    ctx.strokeStyle = oc ? "rgb(" + oc.join(",") + ")" : "hsl(" + outlineHue + " 85% 55%)";
     ctx.lineWidth = lineWidth * 1.18;
     strokeAll(ctx);
     ctx.restore();
@@ -32252,11 +32254,25 @@ function logoTraits(source) {
     }
     parts.push({ n, x0, y0, x1, y1, w: x1 - x0 + 1, h: y1 - y0 + 1 });
   }
-  const tallest = Math.max(...parts.map((p) => p.h));
-  const letters = parts.filter((p) => p.n > area * 0.004 && p.h > tallest * 0.45).sort((a, b) => a.x0 - b.x0);
-  if (!letters.length) return null;
   const median = (arr) => { const v = arr.slice().sort((a, b) => a - b); return v[v.length >> 1]; };
+  /* The lettering: the largest run of pieces of about one height on about
+   * one line - so an icon beside the name (one piece, a different size) is
+   * left out of the measuring. */
+  const pieces = parts.map((p, label) => ({ ...p, label })).filter((p) => p.n > area * 0.004);
+  let letters = [];
+  for (const seed of pieces) {
+    const run = pieces.filter((p) => Math.abs(p.h - seed.h) < seed.h * 0.35 && Math.abs(p.y1 - seed.y1) < seed.h * 0.3);
+    if (run.length > letters.length || (run.length === letters.length && run.reduce((s, p) => s + p.w, 0) > letters.reduce((s, p) => s + p.w, 0))) letters = run;
+  }
+  letters.sort((a, b) => a.x0 - b.x0);
+  if (!letters.length) return null;
+  const keep = new Set(letters.map((p) => p.label));
+  for (let i = 0; i < w * h; i++) if (ink[i] && !keep.has(seen[i])) { ink[i] = 0; area--; }
   const letterH = median(letters.map((p) => p.h));
+  // Its colours: the letters' own and the ground's (a brand's pairing).
+  const inkRgb = [0, 0, 0];
+  let inkN = 0;
+  for (let i = 0, o = 0; i < w * h; i++, o += 4) if (ink[i] && (i % 3 === 0)) { inkRgb[0] += px[o]; inkRgb[1] += px[o + 1]; inkRgb[2] += px[o + 2]; inkN++; }
   // Weight: ink's thickness (twice its area over its edge) against the height.
   let perim = 0;
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
@@ -32293,6 +32309,7 @@ function logoTraits(source) {
     weight: +weight.toFixed(4), lean: +best.toFixed(3), straight: +(straight / Math.max(1, edges)).toFixed(3),
     width: +(median(letters.map((p) => p.w)) / letterH).toFixed(3),
     spacing: +(gaps.length ? median(gaps) / letterH : 0.1).toFixed(3), letters: letters.length,
+    ink: inkRgb.map((c) => Math.round(c / Math.max(1, inkN))), ground: med.map(Math.round),
   };
 }
 
@@ -33535,8 +33552,8 @@ function letteringStageProgram(lettering) {
 
 // The finishing genes of the painting's lettering, laid over the evolved forms.
 function detailOnly(program) {
-  const { primaryHue, lightness, outlineMode, outlineWidth, outlineAlpha, outlineHue, depth3d, lightAngle, letterHand } = program;
-  return { primaryHue, lightness, outlineMode, outlineWidth, outlineAlpha, outlineHue, depth3d, lightAngle, letterHand };
+  const { primaryHue, lightness, outlineMode, outlineWidth, outlineAlpha, outlineHue, outlineColour, depth3d, lightAngle, letterHand } = program;
+  return { primaryHue, lightness, outlineMode, outlineWidth, outlineAlpha, outlineHue, outlineColour, depth3d, lightAngle, letterHand };
 }
 
 /* Letters sized by the box's width come out short in a tall box (a short
@@ -33582,15 +33599,52 @@ function chooseLetteringValue(ctx, scene) {
   }
   // Its colour: the true complement of the ground behind it, unless the
   // words named one (Lettering in the painting).
+  // ...or, once logos have been given, a brand's own pairing: the letters in
+  // a logo's ink and their rim in its ground - the logo whose ink sits
+  // nearest the complement, so the contrast survives. Which of the two is
+  // chosen and learned (axis "letterColour"); the value rule below keeps
+  // either readable.
+  const pairs = fontReferenceShared.filter((t) => Array.isArray(t.ink) && Array.isArray(t.ground));
+  let colourWay = "complement";
+  if (!lettering.namedColour && pairs.length) {
+    const rng = mulberry32(hashText("letter-colour|" + lettering.text + "|" + (Number(strokePainter.plan?.drawSeed) || 0)) >>> 0);
+    const scores = chooseByTaste(["complement", "logo"], {
+      rng, tasted: 0, axis: "letterColour", given: null, lean: (key) => (key === "logo" ? 0.15 : 0),
+      learned: (key) => visualLearnedChoice("lettercolour" + key), taste: () => null,
+    });
+    colourWay = scores[0].key;
+    lettering.colourScores = summariseChoice(scores);
+    scene.variations["lettercolour" + colourWay] = { size: 0, hue: 0, light: 0, literal: 0 };
+  }
   if (!lettering.namedColour && covered && Math.hypot(ga, gb) / covered > 0.02) {
     const [r, g, b] = oklabToRgb(gl / covered, -ga / covered * 1.4, -gb / covered * 1.4);
-    const hue = Math.round(rgbToHsl(r, g, b).h) % 360;
-    lettering.program = { ...lettering.program, primaryHue: hue, outlineHue: hue };
-    lettering.base = { ...lettering.base, primaryHue: hue, outlineHue: hue };
+    let hue = Math.round(rgbToHsl(r, g, b).h) % 360, outline = hue;
+    let outlineColour;
+    if (colourWay === "logo") {
+      const hsl = (c) => rgbToHsl(c[0], c[1], c[2]);
+      const coloured = pairs.filter((t) => hsl(t.ink).s > 0.15);
+      const pair = (coloured.length ? coloured : pairs).reduce((best, t) =>
+        (hueDelta(hsl(t.ink).h, hue) < hueDelta(hsl(best.ink).h, hue) ? t : best));
+      // As a brand reverses its logo: on a light picture the darker of its two
+      // colours is the letters, on a dark one the lighter; the other, the rim.
+      const pictureLight = covered > n * 0.5 ? sum / covered > 128 : Boolean(strokePainter.plan?.lightOnDark);
+      const [dark, bright] = hsl(pair.ink).l <= hsl(pair.ground).l ? [pair.ink, pair.ground] : [pair.ground, pair.ink];
+      const face = pictureLight ? dark : bright, rim = pictureLight ? bright : dark;
+      outline = Math.round(hsl(rim).h) % 360;
+      // A white, black or grey face has no hue of its own: the brand's (the
+      // rim's) for its cushion and sides, not red.
+      hue = hsl(face).s < 0.12 ? outline : Math.round(hsl(face).h) % 360;
+      outlineColour = rim.slice(0, 3);
+      lettering.logoPair = { ink: pair.ink, ground: pair.ground, face: face.slice(0, 3), lightness: hsl(face).l };
+    }
+    lettering.program = { ...lettering.program, primaryHue: hue, outlineHue: outline, outlineColour };
+    lettering.base = { ...lettering.base, primaryHue: hue, outlineHue: outline, outlineColour };
   }
   const groundLight = covered > n * 0.5 ? sum / covered > 128 : Boolean(strokePainter.plan?.lightOnDark);
   const shift = (Number(scene.variations.lettering?.light) || 0) / 100;
-  const lightness = Math.max(0.06, Math.min(0.95, (groundLight ? 0.14 : 0.88) + shift));
+  // (A logo's own colour keeps its own value; it was chosen to contrast.)
+  const lightness = lettering.logoPair ? Math.max(0.04, Math.min(0.97, lettering.logoPair.lightness))
+    : Math.max(0.06, Math.min(0.95, (groundLight ? 0.14 : 0.88) + shift));
   lettering.program = { ...lettering.program, lightness };
   lettering.base = { ...lettering.base, lightness };
   lettering.valueChosen = true;
@@ -33756,9 +33810,11 @@ async function runLetteringFinish(scene) {
   const probe = paintBuffer(sw, sh);
   const pctx = probe.getContext("2d", { willReadFrequently: true });
   const rng = mulberry32(hashText("letter-finish|" + lettering.text + "|" + scene.width));
-  // The outline's colour: the complement, or a deep shade of the face's hue.
+  // The outline's colour: the complement, or a deep shade of the face's hue
+  // - or, lettered in a logo's colours, the logo's own ground.
   const hue = Number(lettering.program.primaryHue) || 0;
-  const outlineHue = rng() < 0.5 ? (hue + 180) % 360 : hue;
+  const pairHue = Number(lettering.program.outlineHue);
+  const outlineHue = lettering.logoPair && Number.isFinite(pairHue) ? pairHue : rng() < 0.5 ? (hue + 180) % 360 : hue;
   const lightAngle = -0.7 + (rng() - 0.5) * 1.2;
   const results = [];
   // Scored as the letter brush will paint it - hand and all - over the
@@ -34122,7 +34178,8 @@ function letterBrushStrokes(lettering, program, ref, W, H, previous = null, { fi
           skeleton.lines, hand && { ...hand, gaps: 0, overshoot: hand.overshoot * 0.3, seed: (hand.seed || 1) + i }), side, 0.85));
       }
     }
-    const outline = hslToRgb((Number(program.outlineHue) || 0) / 360, 0.85, 0.55);
+    const outline = Array.isArray(program.outlineColour) ? program.outlineColour.map((c) => Number(c) || 0)
+      : hslToRgb((Number(program.outlineHue) || 0) / 360, 0.85, 0.55);
     // An outline wider than the letter shows every wobble of the hand twice
     // over, and ragged backing read as sloppy: it is drawn with a steadier one.
     const steady = hand && { ...hand, wobble: hand.wobble * 0.5, drift: hand.drift * 0.5, gaps: hand.gaps * 0.3, overshoot: hand.overshoot * 0.5 };
@@ -44473,6 +44530,7 @@ function startHumanTasteRefinement(liked) {
 }
 
 $("voteUp").addEventListener("click", () => castHumanTasteDecision(true));
+document.getElementById("openReferences")?.addEventListener("click", () => showMorphsPanel("references"));
 $("voteDown").addEventListener("click", () => castHumanTasteDecision(false));
 $("perturb").addEventListener("click", perturb);
 // Wrapped, not passed directly: a listener is handed the MouseEvent as its
