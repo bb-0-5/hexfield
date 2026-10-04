@@ -35781,6 +35781,14 @@ function blurPixels(pixels, width, height, radius) {
  * a side light, two-tone, saturation and warmth, then soft edges. In place,
  * except the blur, which returns a new array. Lettering keeps its edges. */
 function applyMannerReference(pixels, width, height, plan, manner, only = null) {
+  const steps = applyMannerReferenceSteps(pixels, width, height, plan, manner, only);
+  let step;
+  do step = steps.next(); while (!step.done);
+  return step.value;
+}
+// The same, yielding every few rows (the whole picture at once was one of a
+// phone's longest tasks when a new painting was prepared).
+function* applyMannerReferenceSteps(pixels, width, height, plan, manner, only = null) {
   const m = manner?.reference;
   if (!m || manner.key === "painterly") return pixels;
   const sigma = planFocusSigma(width, height, plan.style);
@@ -35873,6 +35881,7 @@ function applyMannerReference(pixels, width, height, plan, manner, only = null) 
     }
   }
   for (let y = 0; y < height; y++) {
+    if (y % 120 === 119) yield;
     const dy = y - cy;
     for (let x = 0; x < width; x++) {
       // `only`: the pixels the caller will keep (a deposit's changed ones).
@@ -35919,8 +35928,10 @@ function applyMannerReference(pixels, width, height, plan, manner, only = null) 
     }
   }
   if (!m.blur) return pixels;
+  yield;
   const short = Math.min(width, height);
   const soft = blurPixels(pixels, width, height, m.blur * 0.02 * short);
+  yield;
   const lettering = plan.scene?.lettering?.box;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -36595,7 +36606,7 @@ function finishPlanReference(composed, width, height, plan) {
  * adoptions), for a new painting prepared with the page free in between. */
 function* finishPlanReferenceSteps(composed, width, height, plan) {
   const manner = plan.manner || plainManner();
-  let pixels = applyMannerReference(composed, width, height, plan, manner);
+  let pixels = yield* applyMannerReferenceSteps(composed, width, height, plan, manner);
   yield;
   if (!plan.palette) {
     plan.palette = paletteFromPixels(pixels, planPaletteSize(plan),
@@ -38808,7 +38819,7 @@ function* landscapeSteps(ref, width, height, things, cover, scene) {
 
 function paintTowardReference(result, ref, width, height,
                               { layer = null, limit = STROKE_BATCH, refKey = null, enhance = false,
-                                prepared = false } = {}) {
+                                prepared = false, split = false } = {}) {
   markPaintTimingStarted(result);
   if (enhance) {
     // The same master prepares to the same picture; only a new one is redone.
@@ -38864,6 +38875,22 @@ function paintTowardReference(result, ref, width, height,
   if (mannered) {
     ref = mannerDeposit(ref, width, height, strokePainter.plan, canvasNow);
   }
+  /* `split`: the target made in this task, the strokes planned in the next.
+   * An accepted change made both in one task - a new target's contours,
+   * found edges and the plan of the strokes over it - and was the longest
+   * task left on a phone. (Only where the caller does not read the stroke
+   * count straight away.) */
+  if (split) {
+    const planAt = strokePainter.plan;
+    return new Promise((resolve) => setTimeout(resolve, 0)).then(() => {
+      if (strokePainter.plan !== planAt) { markPaintTimingCompleted(result); result.paintStrokeCount = 0; return false; }
+      return strokesTowardReference(result, ref, width, height, { layer, limit, refKey, enhance, prepared, palette });
+    });
+  }
+  return strokesTowardReference(result, ref, width, height, { layer, limit, refKey, enhance, prepared, palette });
+}
+
+function strokesTowardReference(result, ref, width, height, { layer, limit, refKey, enhance, prepared, palette }) {
   const animation = ++activePaintAnimation;
   // The reference's contours are reused while it is the same picture - a
   // detail pass re-reads the held master every time, but it has not changed.
@@ -39430,9 +39457,11 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
      * paint. If the change is too slight for any stroke to find, the deposit
      * lands as before so an accepted move is never silently dropped. */
     const strokeLayer = Math.max(1, strokePainter.layer - 1);
-    const painted = paintTowardReference(result, delta.pixels, width, height, { layer: strokeLayer });
-    visiblePaintCompletion = result.paintStrokeCount ? painted
-      : animatePaintCommit(result, before.data, delta.pixels, width, height, true);
+    // (Split: the strokes are planned in the next task, so whether any were
+    // found is known only then.)
+    visiblePaintCompletion = paintTowardReference(result, delta.pixels, width, height, { layer: strokeLayer, split: true })
+      .then((landed) => (result.paintStrokeCount ? landed
+        : animatePaintCommit(result, before.data, delta.pixels, width, height, true)));
   } else {
     /* Refinement is constitutionally incremental. paintCommitDecision currently
      * returns only hold/stroke for it, but keep the invariant at the destructive
