@@ -31559,71 +31559,115 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
 }
 
 /* ── Morphology: things grown before they have a name ──────────────────
- * A population of genomes (words/hexfield-morph.js) that breeds. When the
- * words name no thing, a painting may feature one of them: a few offspring
- * of the fitter members - a mutant of one, or a child of two - are drawn
- * small over the picture and taste picks one, with a bonus for being unlike
- * the rest (no redundant bodies). The painting it is in scores it: how the
- * finished painting tastes against the population's usual, and KEEP or
- * REJECT, which count most. A child is born into the population when its
- * painting is judged; past the cap the weakest goes, counted down further
- * for being a near-copy of another, never the newest and never one kept
- * more than rejected. Close relatives are one species; a species that has
- * been kept can be given a word (`?morphs`). Kept in this browser. */
+ * Two populations of genomes that breed: creatures (words/hexfield-morph.js)
+ * and plants (words/hexfield-flora.js). When the words name no thing, a
+ * painting may feature one of them: a few offspring of the fitter members -
+ * a mutant of one, or a child of two - are drawn small over the picture and
+ * taste picks one, with a bonus for being unlike the rest (no redundant
+ * bodies). The painting it is in scores it: how the finished painting tastes
+ * against the population's usual, and KEEP or REJECT, which count most. A
+ * child is born into the population when its painting is judged; past the
+ * cap the weakest goes, counted down further for being a near-copy of
+ * another, never the newest and never one kept more than rejected.
+ *
+ * Every body has a place on the tree of life (words/hexfield-phylo.js),
+ * found from what it has - a tail on a single cell, a backbone, four legs
+ * and fur, a flower with five toothed petals - so it is named without
+ * anyone naming it: "collared cell", "fern", "cat family". The tree is also
+ * the order things may happen in: a child is born only a few steps on it
+ * from its parent, so populations start as single cells and climb the tree
+ * the way life did. A clade's word (sponge, fern, daisy...) paints the
+ * fittest kept body in it, unless the word already names a drawn thing.
+ * Close relatives within a clade are one species; a species can still be
+ * given a word of your own (`?morphs`). Kept in this browser. */
 const MORPH_KEY = "hexfield.morphs.v1";
-const MORPH = { cap: 24, founders: 12, offspring: 3, speciesDistance: 0.12, crossRate: 0.4, share: 0.5, novelty: 0.6, immigration: 0.3 };
-let morphPop = null;
-// The fittest and the named of everyone's creatures (pullSharedMorphs).
-let sharedMorphs = [];
-function morphPopulation() {
-  if (morphPop) return morphPop;
-  try { morphPop = JSON.parse(localStorage.getItem(MORPH_KEY) || "null"); } catch { morphPop = null; }
-  const Morph = globalThis.HexfieldMorph;
-  if (!morphPop?.members?.length && Morph) {
-    morphPop = { gen: 0, next: 1, nextSpecies: 1, mean: 0.5, members: [], species: {} };
-    for (let i = 0; i < MORPH.founders; i++) addMorphMember({ genome: Morph.randomGenome(Math.random), parents: [] });
-    saveMorphs();
+const MORPH = { cap: 24, founders: 12, offspring: 3, speciesDistance: 0.12, crossRate: 0.4, share: 0.5, novelty: 0.6, immigration: 0.3, tries: 8 };
+const GROWN = {
+  creature: { key: MORPH_KEY, prefix: "m", lib: () => globalThis.HexfieldMorph },
+  plant: { key: "hexfield.flora.v1", prefix: "p", lib: () => globalThis.HexfieldFlora },
+};
+const grownKind = (genome) => (genome?.kind === "plant" ? "plant" : "creature");
+const grownLib = (genome) => GROWN[grownKind(genome)].lib();
+const morphPops = {};
+// The fittest and the named of everyone's grown things (pullSharedMorphs), by kind.
+let sharedMorphs = { creature: [], plant: [] };
+function morphPopulation(kind = "creature") {
+  if (morphPops[kind]) return morphPops[kind];
+  let pop;
+  try { pop = JSON.parse(localStorage.getItem(GROWN[kind].key) || "null"); } catch { pop = null; }
+  const lib = GROWN[kind].lib();
+  if (!pop?.members?.length) {
+    if (!lib) return null;
+    // A new population: single cells, nothing else yet.
+    pop = { kind, gen: 0, next: 1, nextSpecies: 1, mean: 0.5, members: [], species: {} };
+    morphPops[kind] = pop;
+    for (let i = 0; i < MORPH.founders; i++) addMorphMember(pop, { genome: lib.cellGenome(Math.random), parents: [] });
+    saveMorphs(pop);
   }
-  return morphPop;
+  pop.kind = kind;
+  morphPops[kind] = pop;
+  return pop;
 }
-function saveMorphs() {
-  try { localStorage.setItem(MORPH_KEY, JSON.stringify(morphPop)); } catch { /* full storage: memory only */ }
+function saveMorphs(pop) {
+  try { localStorage.setItem(GROWN[pop.kind].key, JSON.stringify(pop)); } catch { /* full storage: memory only */ }
 }
 const morphFitness = (m) => (m.sum || 0) / ((m.n || 0) + 1);
-function nearestMorph(genome, except = null) {
-  const Morph = globalThis.HexfieldMorph;
+/* Where a genome stands on the tree of life: { id, name, latin, word, path }. */
+function morphClade(genome) {
+  const Phylo = globalThis.HexfieldPhylo;
+  return Phylo ? Phylo.label(genome) : null;
+}
+// May a child be born this far from its parent on the tree?
+const phyloAllowed = (parent, child) => !globalThis.HexfieldPhylo || globalThis.HexfieldPhylo.allowed(parent, child);
+/* A child of `parent` the tree allows: `make` tried a few times; failing
+ * that, the parent with only its smallest rules nudged. */
+function allowedChild(parent, make, lib, rng, tries = MORPH.tries) {
+  for (let t = 0; t < tries; t++) {
+    const child = make();
+    if (phyloAllowed(parent, child)) return child;
+  }
+  for (let t = 0; t < tries; t++) {
+    const child = lib.mutate(parent, rng, 0.05);
+    if (phyloAllowed(parent, child)) return child;
+  }
+  return JSON.parse(JSON.stringify(parent));
+}
+function nearestMorph(pop, genome, except = null) {
+  const lib = GROWN[pop.kind].lib();
   let best = null, d = Infinity;
-  for (const m of morphPop.members) {
+  for (const m of pop.members) {
     if (m === except) continue;
-    const dm = Morph.distance(genome, m.genome);
+    const dm = lib.distance(genome, m.genome);
     if (dm < d) { d = dm; best = m; }
   }
   return { member: best, d };
 }
-function addMorphMember({ genome, parents, id = null }) {
-  const Morph = globalThis.HexfieldMorph, pop = morphPop;
-  // Its species: the nearest one's, if near enough; else a new one.
+function addMorphMember(pop, { genome, parents, id = null }) {
+  const lib = GROWN[pop.kind].lib();
+  // Its species: the nearest one's in its own clade, if near enough; else a new one.
+  const clade = morphClade(genome)?.id || null;
   let species = null, sd = Infinity;
   for (const [sid, sp] of Object.entries(pop.species)) {
-    const d = Morph.distance(genome, sp.rep);
+    if (sp.clade === undefined) sp.clade = morphClade(sp.rep)?.id || null;
+    if (sp.clade !== clade) continue;
+    const d = lib.distance(genome, sp.rep);
     if (d < sd) { sd = d; species = sid; }
   }
   if (!species || sd > MORPH.speciesDistance) {
     species = String(pop.nextSpecies++);
-    pop.species[species] = { rep: genome, born: pop.gen, name: null };
+    pop.species[species] = { rep: genome, born: pop.gen, name: null, clade };
   }
-  const member = { id: id || "m" + pop.next++, genome, parents, born: pop.gen, species, n: 0, sum: 0, kept: 0, rejected: 0 };
+  const member = { id: id || GROWN[pop.kind].prefix + pop.next++, genome, parents, born: pop.gen, species, clade, n: 0, sum: 0, kept: 0, rejected: 0 };
   pop.members.push(member);
   return member;
 }
 /* The weakest goes: low fitness, lower still for a near-copy of another. */
-function cullMorphs(keep) {
-  const pop = morphPop;
+function cullMorphs(pop, keep) {
   while (pop.members.length > MORPH.cap) {
     let worst = null, low = Infinity;
     for (const m of pop.members) {
       if (m === keep || m.kept > m.rejected) continue;
-      const { d } = nearestMorph(m.genome, m);
+      const { d } = nearestMorph(pop, m.genome, m);
       const copyish = Math.max(0, 1 - d / 0.15);
       const value = morphFitness(m) - 0.6 * copyish + (m.n ? 0 : 0.05);
       if (value < low) { low = value; worst = m; }
@@ -31636,23 +31680,25 @@ function cullMorphs(keep) {
   for (const sid of Object.keys(pop.species)) if (!living.has(sid) && !pop.species[sid].name) delete pop.species[sid];
 }
 function chooseMorph(plan, ref, width, height, params) {
-  const Morph = globalThis.HexfieldMorph, Visual = globalThis.HexfieldVisual;
-  if (!Morph || !Visual || !ref) return null;
+  const Visual = globalThis.HexfieldVisual;
+  if (!Visual || !ref) return null;
   // Only when the words name no thing: grown things come before words.
   if (Visual.read(params?.__hexfieldWords?.text || "").subjects.length) return null;
   const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x30e9) >>> 0);
-  const featured = chooseByTaste(["grown", "none"], {
-    rng, tasted: 0, axis: "morph", given: null, lean: (k) => (k === "grown" ? MORPH.share - 0.5 : 0), learned: () => 0, taste: () => null,
+  const featured = chooseByTaste(["grown", "plant", "none"], {
+    rng, tasted: 0, axis: "morph", given: null, lean: (k) => (k === "none" ? 0.5 - MORPH.share : 0), learned: () => 0, taste: () => null,
   });
   plan.morphChoice = summariseChoice(featured);
-  if (featured[0].key !== "grown") return null;
-  const pop = morphPopulation();
+  if (featured[0].key === "none") return null;
+  const kind = featured[0].key === "plant" ? "plant" : "creature";
+  const lib = GROWN[kind].lib();
+  const pop = lib && morphPopulation(kind);
   if (!pop?.members?.length) return null;
+  const shared = sharedMorphs[kind] || [];
   // Parents by tournament: the fitter of three - now and then from the
   // shared population (everyone's paintings judged those), an immigrant.
   const parent = () => {
-    const shared = sharedMorphs.length && rng() < MORPH.immigration;
-    const pool = shared ? sharedMorphs : pop.members;
+    const pool = shared.length && rng() < MORPH.immigration ? shared : pop.members;
     let best = null;
     for (let i = 0; i < 3; i++) { const m = pool[Math.floor(rng() * pool.length)]; if (!best || morphFitness(m) > morphFitness(best)) best = m; }
     return best;
@@ -31662,9 +31708,10 @@ function chooseMorph(plan, ref, width, height, params) {
     const a = parent();
     if (pop.members.length > 1 && rng() < MORPH.crossRate) {
       let b = parent(); if (b === a) b = pop.members[Math.floor(rng() * pop.members.length)];
-      candidates.push({ genome: Morph.mutate(Morph.crossover(a.genome, b.genome, rng), rng, 0.12), parents: [a.id, b.id], born: true });
+      const genome = allowedChild(a.genome, () => lib.mutate(lib.crossover(a.genome, b.genome, rng), rng, 0.12), lib, rng);
+      candidates.push({ genome, parents: [a.id, b.id], born: true });
     } else {
-      candidates.push({ genome: Morph.mutate(a.genome, rng, 0.25), parents: [a.id], born: true });
+      candidates.push({ genome: allowedChild(a.genome, () => lib.mutate(a.genome, rng, 0.25), lib, rng), parents: [a.id], born: true });
     }
   }
   // ...and the fittest as it is, once it has proved itself, so a good body
@@ -31677,65 +31724,115 @@ function chooseMorph(plan, ref, width, height, params) {
   const small = paintBuffer(sw, sh), sctx = small.getContext("2d", { willReadFrequently: true });
   let best = null, bestScore = -Infinity;
   for (const c of candidates) {
-    c.entry = Morph.develop(c.genome);
+    c.entry = lib.develop(c.genome);
     const read = { subjects: [{ key: "morph", entry: c.entry, count: 1, colour: null, morph: true }], settings: [] };
     const laid = Visual.layout(read, sw, sh, mulberry32(7), plan.fx, { placeY: plan.fy });
     sctx.putImageData(new ImageData(new Uint8ClampedArray(base), sw, sh), 0, 0);
     Visual.paint(sctx, sw, sh, laid.items, mulberry32(0x7e57a));
     const taste = tastePrediction(tasteFeatures(sctx, sw, sh, signature(sctx, sw, sh)));
     // A newcomer earns its unlikeness to everything living; a member has none.
-    const near = c.born ? nearestMorph(c.genome).d : 0;
+    const near = c.born ? nearestMorph(pop, c.genome).d : 0;
     c.score = taste + MORPH.novelty * 0.1 * Math.min(1, near / 0.2) + (rng() - 0.5) * 0.01;
     if (c.score > bestScore) { bestScore = c.score; best = c; }
   }
   small.width = 0;
-  return { id: best.id || null, genome: best.genome, parents: best.parents, entry: best.entry, born: best.born,
-    primes: Morph.primesOf(best.genome), species: best.id ? pop.members.find((m) => m.id === best.id)?.species : null };
+  return { kind, id: best.id || null, genome: best.genome, parents: best.parents, entry: best.entry, born: best.born,
+    primes: lib.primesOf ? lib.primesOf(best.genome) : null, clade: morphClade(best.genome),
+    species: best.id ? pop.members.find((m) => m.id === best.id)?.species : null };
+}
+/* A word names a grown body for painting: never over a dictionary word or
+ * a word somebody taught by keeping paintings. */
+function growableWord(word) {
+  const Visual = globalThis.HexfieldVisual;
+  if (!Visual?.learn || !/^[a-z]{1,24}$/.test(word || "")) return false;
+  if (Visual.ENTRIES?.[word] || Visual.FAMILIES?.[word]) return false;
+  const existing = Visual.LEARNED?.[word];
+  return !existing || !!existing.grown;
 }
 /* A species given a word: the word now names its representative body,
  * grown again from its genome (Visual.learn), so typing it paints it. */
-function nameMorphSpecies(sid, word) {
-  const pop = morphPopulation(), sp = pop?.species?.[sid];
-  const Visual = globalThis.HexfieldVisual, Morph = globalThis.HexfieldMorph;
+function nameMorphSpecies(kind, sid, word) {
+  const pop = morphPopulation(kind), sp = pop?.species?.[sid];
+  const Visual = globalThis.HexfieldVisual, lib = GROWN[kind].lib();
   word = String(word || "").toLowerCase().replace(/[^a-z]/g, "").slice(0, 24);
-  if (!sp || !word || !Visual?.learn || !Morph) return false;
+  if (!sp || !word || !Visual?.learn || !lib) return false;
   // The fittest living member stands for it, if any; else its first.
   const best = pop.members.filter((m) => m.species === sid).sort((a, b) => morphFitness(b) - morphFitness(a))[0];
   if (best) sp.rep = best.genome;
-  if (!Visual.learn(word, Morph.develop(sp.rep))) return false;
+  if (!Visual.learn(word, lib.develop(sp.rep))) return false;
   sp.name = word;
-  saveMorphs();
+  saveMorphs(pop);
   // Shared: its members carry the name, so it paints for everyone.
   for (const m of pop.members) if (m.species === sid) { m.name = word; queueMorphPush(m); }
   return true;
 }
+/* Each clade's word paints the fittest body kept in it: the tree names
+ * what grows, nobody has to. A clade nobody has kept a body of has no
+ * picture yet. */
+function cladeWordMember(pop, word) {
+  let best = null;
+  for (const m of pop.members) {
+    if (morphClade(m.genome)?.word !== word || !(m.kept > m.rejected)) continue;
+    if (!best || morphFitness(m) > morphFitness(best)) best = m;
+  }
+  return best;
+}
+function learnCladeWords(pop) {
+  const Visual = globalThis.HexfieldVisual, lib = GROWN[pop.kind].lib();
+  if (!Visual?.learn || !lib) return;
+  const own = new Set(Object.values(pop.species).map((sp) => sp.name).filter(Boolean));
+  const words = new Set(pop.members.map((m) => morphClade(m.genome)?.word).filter(Boolean));
+  pop.cladeWords = {};
+  for (const word of words) {
+    if (own.has(word) || !growableWord(word)) continue;
+    const m = cladeWordMember(pop, word);
+    if (!m) continue;
+    Visual.learn(word, lib.develop(m.genome));
+    pop.cladeWords[word] = m.id;
+  }
+}
 function relearnMorphNames() {
-  const pop = morphPopulation(), Visual = globalThis.HexfieldVisual, Morph = globalThis.HexfieldMorph;
-  if (!pop || !Visual?.learn || !Morph) return;
-  for (const sp of Object.values(pop.species)) if (sp.name) Visual.learn(sp.name, Morph.develop(sp.rep));
+  const Visual = globalThis.HexfieldVisual;
+  if (!Visual?.learn) return;
+  for (const kind of Object.keys(GROWN)) {
+    const lib = GROWN[kind].lib();
+    if (!lib) continue;
+    // Only populations this browser already has: none is started here.
+    let saved = null;
+    try { saved = localStorage.getItem(GROWN[kind].key); } catch { /* none */ }
+    if (!saved) continue;
+    const pop = morphPopulation(kind);
+    if (!pop) continue;
+    for (const sp of Object.values(pop.species)) if (sp.name) Visual.learn(sp.name, lib.develop(sp.rep));
+    learnCladeWords(pop);
+  }
 }
 if (typeof window !== "undefined") setTimeout(() => { try { relearnMorphNames(); } catch { /* none yet */ } }, 0);
 
-/* ?morphs: the population, by species - each body drawn, with its lineage,
- * age and record - and a word for any species. */
+/* ?morphs: the garden, and every living thing by clade and species - each
+ * body drawn, with its lineage, age and record. */
 const SHOW_MORPHS = (() => { try { return new URLSearchParams(location.search).has("morphs"); } catch { return false; } })();
 /* ── The garden ─────────────────────────────────────────────────────────
  * Breeding by eye: a parent in the middle and eight of its offspring round
- * it - four small mutations, two big ones, two crosses with another fit
- * creature (yours or anyone's). Tap the one you like: it is kept (a KEEP,
- * into your population and the shared one) and becomes the parent of the
- * next eight. A few minutes is dozens of generations - selection by a
- * person, who can see what a shape score cannot (a tail, an eye). */
+ * it - small mutations, a big one, two crosses with another fit one (yours
+ * or anyone's), and two that the tree says are a new body plan (the next
+ * clade along, where one is in reach). Tap the one you like: it is kept (a
+ * KEEP, into your population and the shared one) and becomes the parent of
+ * the next eight. A few minutes is dozens of generations - selection by a
+ * person, who can see what a shape score cannot (a tail, an eye) - and a
+ * single cell can be walked up the tree to a cat or a rose. */
 let garden = null;
+let gardenKind = "creature";
 /* Eight offspring, each visibly different from the parent and from each
  * other: a choice between near-twins is no choice. Mates are drawn first
- * from other species, so a cross brings something in. */
-const GARDEN = { small: 0.2, big: 0.45, minStep: 0.025, minBig: 0.07, apart: 0.02, tries: 6 };
+ * from other species, so a cross brings something in. Every one is a
+ * child the tree allows. */
+const GARDEN = { small: 0.2, big: 0.45, minStep: 0.025, minBig: 0.07, apart: 0.02, tries: 6, planTries: 60 };
 function gardenChildren() {
-  const Morph = globalThis.HexfieldMorph, pop = morphPopulation();
+  const kind = garden.kind, lib = GROWN[kind].lib(), pop = morphPopulation(kind), Phylo = globalThis.HexfieldPhylo;
   const rng = Math.random, parent = garden.parent.genome;
   const own = pop.members.find((m) => m.id === garden.parent.id)?.species;
-  const all = [...pop.members, ...sharedMorphs].filter((m) => m.id !== garden.parent.id);
+  const all = [...pop.members, ...(sharedMorphs[kind] || [])].filter((m) => m.id !== garden.parent.id);
   const strangers = all.filter((m) => !own || m.species !== own);
   const mates = strangers.length >= 3 ? strangers : all;
   const mate = () => {
@@ -31746,31 +31843,51 @@ function gardenChildren() {
   const kids = [];
   const fresh = (make, step) => {
     let kid = null;
-    for (let t = 0; t < GARDEN.tries; t++) {
-      kid = make();
-      const fromParent = Morph.distance(parent, kid.genome);
-      const fromSiblings = kids.length ? Math.min(...kids.map((k) => Morph.distance(k.genome, kid.genome))) : 1;
+    for (let t = 0; t < GARDEN.tries * 2; t++) {
+      const k = make();
+      if (!phyloAllowed(parent, k.genome)) continue;
+      kid = k;
+      const fromParent = lib.distance(parent, kid.genome);
+      const fromSiblings = kids.length ? Math.min(...kids.map((o) => lib.distance(o.genome, kid.genome))) : 1;
       if (fromParent >= step && fromSiblings >= GARDEN.apart) break;
     }
-    kids.push(kid);
+    kids.push(kid || { genome: allowedChild(parent, () => lib.mutate(parent, rng, GARDEN.small), lib, rng), how: "small step" });
   };
-  for (let i = 0; i < 4; i++) fresh(() => ({ genome: Morph.mutate(parent, rng, GARDEN.small), how: "small step" }), GARDEN.minStep);
-  for (let i = 0; i < 2; i++) fresh(() => ({ genome: Morph.mutate(parent, rng, GARDEN.big), how: "big step" }), GARDEN.minBig);
+  for (let i = 0; i < 3; i++) fresh(() => ({ genome: lib.mutate(parent, rng, GARDEN.small), how: "small step" }), GARDEN.minStep);
+  fresh(() => ({ genome: lib.mutate(parent, rng, GARDEN.big), how: "big step" }), GARDEN.minBig);
   for (let i = 0; i < 2; i++) {
     fresh(() => {
       const m = mate();
-      return m ? { genome: Morph.mutate(Morph.crossover(parent, m.genome, rng), rng, 0.08), how: "crossed with " + m.id, mate: m.id }
-        : { genome: Morph.mutate(parent, rng, GARDEN.big), how: "big step" };
+      return m ? { genome: lib.mutate(lib.crossover(parent, m.genome, rng), rng, 0.08), how: "crossed with " + m.id, mate: m.id }
+        : { genome: lib.mutate(parent, rng, GARDEN.big), how: "big step" };
     }, GARDEN.minStep);
+  }
+  // Two new body plans: children in another clade than the parent's (and
+  // each other's), across or up the tree, the deepest found - the next
+  // steps along it. (Small and big steps can still go back down.)
+  const from = Phylo ? Phylo.classify(parent).node : null;
+  const seen = new Set([from?.id]);
+  for (let i = 0; i < 2; i++) {
+    let found = null, deepest = (from?.depth ?? 0) - 1;
+    for (let t = 0; Phylo && t < GARDEN.planTries; t++) {
+      const genome = lib.mutate(parent, rng, GARDEN.big);
+      if (!Phylo.allowed(parent, genome)) continue;
+      const node = Phylo.classify(genome).node;
+      if (seen.has(node.id) || node.depth <= deepest) continue;
+      found = { genome, how: "new body plan: " + node.alone }; deepest = node.depth;
+    }
+    if (found) { seen.add(Phylo.classify(found.genome).node.id); kids.push(found); }
+    else fresh(() => ({ genome: lib.mutate(parent, rng, GARDEN.big), how: "big step" }), GARDEN.minBig);
   }
   // Shuffled, so where a child sits says nothing about how it was made.
   for (let i = kids.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [kids[i], kids[j]] = [kids[j], kids[i]]; }
   garden.children = kids;
 }
-function startGarden(member = null) {
-  const pop = morphPopulation(), Morph = globalThis.HexfieldMorph;
+function startGarden(member = null, kind = member ? grownKind(member.genome) : gardenKind) {
+  gardenKind = kind;
+  const pop = morphPopulation(kind), lib = GROWN[kind].lib();
   const best = member || pop.members.slice().sort((a, b) => morphFitness(b) - morphFitness(a))[0];
-  garden = { parent: best ? { id: best.id, genome: best.genome } : { id: null, genome: Morph.randomGenome(Math.random) }, back: [], line: 0 };
+  garden = { kind, parent: best ? { id: best.id, genome: best.genome } : { id: null, genome: lib.cellGenome(Math.random) }, back: [], line: 0 };
   gardenChildren();
 }
 function gardenPick(index) {
@@ -31790,57 +31907,82 @@ function gardenBack() {
   garden.line = Math.max(0, garden.line - 1);
   gardenChildren();
 }
-function drawMorphInto(canvas, genome, size) {
-  const Visual = globalThis.HexfieldVisual, Morph = globalThis.HexfieldMorph;
+function drawMorphInto(canvas, genome, width, height = width) {
+  const Visual = globalThis.HexfieldVisual, lib = grownLib(genome);
   const cx = canvas.getContext("2d");
-  cx.fillStyle = "#efe9dc"; cx.fillRect(0, 0, size, size);
-  const e = Morph.develop(genome), room = size * 0.86, w = Math.min(room, room * e.aspect), h = w / e.aspect;
-  Visual.paint(cx, size, size, [{ key: "morph", entry: e, box: { x: (size - w) / 2, y: (size - h) / 2, w, h }, alpha: 1 }], mulberry32(3));
+  cx.fillStyle = "#efe9dc"; cx.fillRect(0, 0, width, height);
+  const e = lib.develop(genome), rw = width * 0.86, rh = height * 0.86;
+  const w = Math.min(rw, rh * e.aspect), h = w / e.aspect;
+  Visual.paint(cx, width, height, [{ key: "morph", entry: e, box: { x: (width - w) / 2, y: (height - h) / 2, w, h }, alpha: 1 }], mulberry32(3));
 }
 function renderGarden(panel, small) {
-  const pop = morphPopulation(), Morph = globalThis.HexfieldMorph;
-  if (!garden) startGarden();
+  if (!garden || garden.kind !== gardenKind) startGarden(null, gardenKind);
+  const kind = garden.kind, pop = morphPopulation(kind), lib = GROWN[kind].lib();
   const wrap = document.createElement("div");
   wrap.style.cssText = "max-width:540px;margin:0 auto";
   const tip = document.createElement("div");
   tip.style.cssText = "margin:4px 0 8px";
-  tip.textContent = "Tap the one you like best. It's kept, and becomes the parent of the next eight. The middle one is the parent.";
+  tip.textContent = "Tap the one you like best. It's kept, and becomes the parent of the next eight. The middle one is the parent. Each is named by where it sits on the tree of life.";
   wrap.appendChild(tip);
   const grid = document.createElement("div");
   grid.style.cssText = "display:grid;grid-template-columns:repeat(3,1fr);gap:6px";
   const size = Math.max(90, Math.floor((Math.min(panel.clientWidth || 360, 540) - 24 - 12) / 3));
   const cells = garden.children.slice(0, 4).concat([null], garden.children.slice(4, 8));
-  cells.forEach((kid, i) => {
+  cells.forEach((kid) => {
+    const cell = document.createElement("div");
+    cell.style.cssText = "text-align:center;font-size:11px;line-height:1.2";
     const c = document.createElement("canvas");
     c.width = size; c.height = size;
     c.style.cssText = `width:100%;height:auto;aspect-ratio:1;border-radius:8px;background:#efe9dc;cursor:pointer;border:${kid ? "1px solid #cfc6b4" : "3px solid #2f3540"}`;
-    drawMorphInto(c, kid ? kid.genome : garden.parent.genome, size);
+    const genome = kid ? kid.genome : garden.parent.genome;
+    drawMorphInto(c, genome, size);
+    const clade = morphClade(genome);
     if (kid) c.onclick = () => { gardenPick(garden.children.indexOf(kid)); showMorphsPanel("garden"); };
-    c.setAttribute("aria-label", kid ? "offspring: " + kid.how : "the parent");
-    grid.appendChild(c);
+    c.setAttribute("aria-label", (kid ? "offspring: " + kid.how : "the parent") + (clade ? " · " + clade.name : ""));
+    cell.appendChild(c);
+    const name = document.createElement("div");
+    name.className = "cladeName";
+    name.textContent = clade ? clade.name : "";
+    if (kid?.how?.startsWith("new body plan")) name.style.fontWeight = "bold";
+    cell.appendChild(name);
+    grid.appendChild(cell);
   });
   wrap.appendChild(grid);
-  const pr = Morph.primesOf(garden.parent.genome);
   const member = pop.members.find((m) => m.id === garden.parent.id);
   const sp = member ? pop.species[member.species] : null;
+  const clade = morphClade(garden.parent.genome);
+  const where = document.createElement("div");
+  where.id = "gardenClade";
+  where.style.cssText = "margin:10px 0 4px";
+  if (clade) {
+    where.innerHTML = "<b></b> <i></i><div style='font-size:11px;margin-top:3px;color:#555'></div>";
+    where.querySelector("b").textContent = clade.name;
+    where.querySelector("i").textContent = "(" + clade.latin + ")";
+    where.querySelector("div").textContent = clade.path.join(" › ");
+  }
+  wrap.appendChild(where);
+  const pr = lib.primesOf ? lib.primesOf(garden.parent.genome) : null;
   const info = document.createElement("div");
-  info.style.cssText = "margin:8px 0";
-  info.textContent = `${garden.line} picks down this line · parent ${garden.parent.id || "a new founder"}` +
-    (member ? ` · species ${member.species}${sp?.name ? " (" + sp.name + ")" : ""}` : "") + ` · ${pr.forms.join(" + ")}` + (pr.relations.length ? ` (${pr.relations.join(", ")})` : "");
+  info.style.cssText = "margin:4px 0 8px;font-size:12px";
+  const word = clade?.word && pop.cladeWords?.[clade.word] ? ` · typing "${clade.word}" paints the fittest kept one` : "";
+  info.textContent = `${garden.line} picks down this line · parent ${garden.parent.id || "a new single cell"}` +
+    (member ? ` · species ${member.species}${sp?.name ? " (" + sp.name + ")" : ""}` : "") +
+    (pr ? ` · ${pr.forms.join(" + ")}` + (pr.relations.length ? ` (${pr.relations.join(", ")})` : "") : "") + word;
   wrap.appendChild(info);
   const row = document.createElement("div");
   const button = (label, fn) => { const b = document.createElement("button"); b.textContent = label; b.style.cssText = small + ";margin:0 8px 6px 0"; b.onclick = fn; row.appendChild(b); };
   button("back", () => { gardenBack(); showMorphsPanel("garden"); });
-  button("new founder", () => { garden = { parent: { id: null, genome: Morph.randomGenome(Math.random) }, back: [], line: 0 }; gardenChildren(); showMorphsPanel("garden"); });
-  button("start from the fittest", () => { startGarden(); showMorphsPanel("garden"); });
-  if (member) button(sp?.name ? "rename its species" : "give its species a word", () => { const w = prompt("A word for this creature's species"); if (w && nameMorphSpecies(member.species, w)) showMorphsPanel("garden"); });
+  button("a new single cell", () => { garden = { kind, parent: { id: null, genome: lib.cellGenome(Math.random) }, back: [], line: 0 }; gardenChildren(); showMorphsPanel("garden"); });
+  button("start from the fittest", () => { startGarden(null, kind); showMorphsPanel("garden"); });
+  if (member) button(sp?.name ? "rename its species" : "a word of your own", () => { const w = prompt("A word for this species"); if (w && nameMorphSpecies(kind, member.species, w)) showMorphsPanel("garden"); });
   wrap.appendChild(row);
   panel.appendChild(wrap);
 }
 
 function showMorphsPanel(view = "garden") {
-  const pop = morphPopulation(), Visual = globalThis.HexfieldVisual, Morph = globalThis.HexfieldMorph;
-  if (!pop || !Visual || !Morph || typeof document === "undefined") return;
+  const Visual = globalThis.HexfieldVisual, lib = GROWN[gardenKind].lib();
+  const pop = lib && morphPopulation(gardenKind);
+  if (!pop || !Visual || typeof document === "undefined") return;
   let panel = document.getElementById("morphsPanel");
   if (!panel) {
     panel = document.createElement("div");
@@ -31851,53 +31993,64 @@ function showMorphsPanel(view = "garden") {
   panel.textContent = "";
   const head = document.createElement("div");
   head.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px";
-  head.innerHTML = `<b>Grown things · generation ${pop.gen} · ${pop.members.length} living · ${Object.keys(pop.species).length} species</b>`;
+  const title = document.createElement("b");
+  const clades = new Set(pop.members.map((m) => morphClade(m.genome)?.id));
+  title.textContent = `Grown ${gardenKind === "plant" ? "plants" : "creatures"} · generation ${pop.gen} · ${pop.members.length} living · ${clades.size} clades`;
+  head.appendChild(title);
   const tabs = document.createElement("div");
   const small = "width:auto;min-width:0;display:inline-block;padding:3px 10px;font-size:12px;margin:0 0 0 8px;flex:none";
-  for (const [key, label] of [["garden", "garden"], ["living", "all living"]]) {
+  const tab = (label, on, fn) => {
     const t = document.createElement("button");
-    t.textContent = label; t.style.cssText = small + (key === view ? ";outline:2px solid #2f3540" : "");
-    t.onclick = () => showMorphsPanel(key);
+    t.textContent = label; t.style.cssText = small + (on ? ";outline:2px solid #2f3540" : "");
+    t.onclick = fn;
     tabs.appendChild(t);
+  };
+  for (const [kind, label] of [["creature", "creatures"], ["plant", "plants"]]) {
+    tab(label, kind === gardenKind, () => { gardenKind = kind; showMorphsPanel(view); });
   }
+  tab("garden", view === "garden", () => showMorphsPanel("garden"));
+  tab("all living", view === "living", () => showMorphsPanel("living"));
   const close = document.createElement("button");
   close.textContent = "close"; close.style.cssText = small; close.onclick = () => panel.remove();
   tabs.appendChild(close);
   head.appendChild(tabs);
   panel.appendChild(head);
   if (view === "garden") { renderGarden(panel, small); return; }
-  const bySpecies = {};
-  for (const m of pop.members) (bySpecies[m.species] ||= []).push(m);
-  for (const [sid, members] of Object.entries(bySpecies)) {
-    const sp = pop.species[sid] || {};
+  // Every living one, by clade (deepest last) and species.
+  const byClade = new Map();
+  for (const m of pop.members) {
+    const c = morphClade(m.genome);
+    const key = c?.id || "?";
+    if (!byClade.has(key)) byClade.set(key, { clade: c, members: [] });
+    byClade.get(key).members.push(m);
+  }
+  const groups = [...byClade.values()].sort((a, b) => (a.clade?.depth || 0) - (b.clade?.depth || 0));
+  for (const { clade, members } of groups) {
     const row = document.createElement("div");
     row.style.cssText = "margin:10px 0;padding:8px;background:#f7f3ea;border-radius:8px";
     const kept = members.reduce((a, m) => a + m.kept, 0), rejected = members.reduce((a, m) => a + m.rejected, 0);
-    const title = document.createElement("div");
-    title.innerHTML = `<b>species ${sid}</b>${sp.name ? ` · named <b>${sp.name}</b>` : ""} · ${members.length} living · kept ${kept} · rejected ${rejected} · primes: ${Morph.primesOf(members[0].genome).forms.join(" + ")} (${Morph.primesOf(members[0].genome).relations.join(", ")})`;
-    row.appendChild(title);
-    const name = document.createElement("button");
-    name.textContent = sp.name ? "rename" : "give it a word";
-    name.style.cssText = small;
-    name.onclick = () => { const w = prompt("A word for species " + sid); if (w && nameMorphSpecies(sid, w)) showMorphsPanel(); };
-    title.appendChild(name);
+    const t = document.createElement("div");
+    t.innerHTML = "<b></b> <i></i> <span></span><div style='font-size:11px;color:#555'></div>";
+    t.querySelector("b").textContent = clade?.name || "unplaced";
+    t.querySelector("i").textContent = clade ? "(" + clade.latin + ")" : "";
+    t.querySelector("span").textContent = `· ${members.length} living · kept ${kept} · rejected ${rejected}`;
+    t.querySelector("div").textContent = clade ? clade.path.join(" › ") : "";
+    row.appendChild(t);
     const strip = document.createElement("div");
     strip.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px";
     for (const m of members) {
       const cell = document.createElement("div");
       cell.style.cssText = "width:120px;text-align:center;font-size:11px";
       const c = document.createElement("canvas"); c.width = 120; c.height = 110;
-      c.style.cssText = "background:#efe9dc;border-radius:6px;width:120px;height:110px";
-      const cx = c.getContext("2d"); cx.fillStyle = "#efe9dc"; cx.fillRect(0, 0, 120, 110);
-      const e = Morph.develop(m.genome), h = 90, w = Math.min(110, h * e.aspect), hh = w / e.aspect;
-      Visual.paint(cx, 120, 110, [{ key: "morph", entry: e, box: { x: (120 - w) / 2, y: (110 - hh) / 2, w, h: hh }, alpha: 1 }], mulberry32(3));
-      c.style.cursor = "pointer";
+      c.style.cssText = "background:#efe9dc;border-radius:6px;width:120px;height:110px;cursor:pointer";
+      drawMorphInto(c, m.genome, 120, 110);
       c.title = "breed from this one";
       c.onclick = () => { startGarden(m); showMorphsPanel("garden"); };
       cell.appendChild(c);
-      const t = document.createElement("div");
-      t.textContent = `${m.id} · gen ${m.born} · ${m.parents.length ? "of " + m.parents.join("×") : "founder"} · fit ${morphFitness(m).toFixed(2)} (${m.n})`;
-      cell.appendChild(t);
+      const sp = pop.species[m.species];
+      const line = document.createElement("div");
+      line.textContent = `${m.id} · species ${m.species}${sp?.name ? " (" + sp.name + ")" : ""} · gen ${m.born} · ${m.parents.length ? "of " + m.parents.join("×") : "founder"} · fit ${morphFitness(m).toFixed(2)} (${m.n})`;
+      cell.appendChild(line);
       strip.appendChild(cell);
     }
     row.appendChild(strip);
@@ -31908,13 +32061,14 @@ if (SHOW_MORPHS && typeof window !== "undefined") window.addEventListener("load"
 
 /* What a painting says about the body in it. */
 function morphOutcome(morph, { taste = null, vote = 0 }) {
-  const pop = morphPopulation();
+  const kind = morph.kind || grownKind(morph.genome);
+  const pop = morphPopulation(kind);
   if (!pop) return;
   let member = morph.id ? pop.members.find((m) => m.id === morph.id) : null;
   if (!member) {
     // Born now: judged for the first time.
     pop.gen++;
-    member = addMorphMember({ genome: morph.genome, parents: morph.parents });
+    member = addMorphMember(pop, { genome: morph.genome, parents: morph.parents });
     morph.id = member.id;
     morph.species = member.species;
   }
@@ -31928,25 +32082,37 @@ function morphOutcome(morph, { taste = null, vote = 0 }) {
     member.sum += vote;
     if (vote > 0) member.kept++; else member.rejected++;
   }
-  cullMorphs(member);
-  saveMorphs();
+  cullMorphs(pop, member);
+  // A clade's word follows the fittest body kept in it.
+  if (vote) try { learnCladeWords(pop); } catch { /* the words wait for the next load */ }
+  saveMorphs(pop);
   queueMorphPush(member);
 }
 
 /* ── The shared population ──────────────────────────────────────────────
- * Every visitor's judged creatures go to one table (hexfield_morphs) with
- * their record, and each visitor pulls back the fittest of everyone's and
- * every named one. Pulled creatures are not added to the local population
- * - they breed into it: a share of parents (MORPH.immigration) come from
- * them, so a body that does well anywhere spreads, and one that does badly
- * everywhere is not chosen. A species someone has named becomes a word that
- * paints it for everyone (never over a dictionary word, nor one of your own
- * names). Founders nobody has judged stay home. */
+ * Every visitor's judged creatures and plants go to one table
+ * (hexfield_morphs) with their record, and each visitor pulls back the
+ * fittest of everyone's and every named one. Pulled ones are not added to
+ * the local population - they breed into it: a share of parents
+ * (MORPH.immigration) come from them, so a body that does well anywhere
+ * spreads, and one that does badly everywhere is not chosen. A name - a
+ * word someone gave a species, or the word of a clade a body was kept in -
+ * paints that body for everyone (never over a dictionary word, nor one of
+ * your own). Founders nobody has judged stay home. */
 let morphPushQueue = new Map(), morphPushTimer = null;
 function queueMorphPush(member) {
   if (!member || !(member.n > 0 || member.name)) return;
   morphPushQueue.set(member.id, member);
   if (!morphPushTimer) morphPushTimer = setTimeout(pushMorphs, 3000);
+}
+// The name a pushed body carries: its species' word, else its clade's word
+// if it was kept and the word is free to paint it.
+function sharedMorphName(member) {
+  const pop = morphPopulation(grownKind(member.genome));
+  const own = pop?.species?.[member.species]?.name;
+  if (own) return own;
+  const word = morphClade(member.genome)?.word;
+  return word && member.kept > member.rejected && growableWord(word) ? word : null;
 }
 async function pushMorphs() {
   morphPushTimer = null;
@@ -31955,14 +32121,13 @@ async function pushMorphs() {
   for (const m of batch) morphPushQueue.delete(m.id);
   try {
     const session = await ensureTasteSession();
-    const pop = morphPopulation();
     const response = await fetch(SUPABASE_URL + "/rest/v1/hexfield_morphs?on_conflict=visitor_id,client_id", {
       method: "POST",
       headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token,
         "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" },
       body: JSON.stringify(batch.map((m) => ({
         client_id: m.id, genome: m.genome, parents: (m.parents || []).slice(0, 2).map(String), species: String(m.species),
-        name: pop.species[m.species]?.name || null, fitness: +Math.max(-2, Math.min(2, morphFitness(m))).toFixed(4),
+        name: sharedMorphName(m), fitness: +Math.max(-2, Math.min(2, morphFitness(m))).toFixed(4),
         n: m.n, kept: m.kept, rejected: m.rejected, updated_at: new Date().toISOString(),
       }))),
     });
@@ -31979,31 +32144,41 @@ async function pullSharedMorphs() {
     const get = (query) => fetch(SUPABASE_URL + "/rest/v1/hexfield_morphs?select=id,visitor_id,client_id,genome,fitness,n,kept,rejected,name&" + query, {
       headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token },
     }).then((r) => (r.ok ? r.json() : []));
-    const [fit, named] = await Promise.all([get("n=gte.1&order=fitness.desc&limit=60"), get("name=not.is.null&order=fitness.desc&limit=100")]);
-    const Morph = globalThis.HexfieldMorph;
-    const valid = (row) => row && row.visitor_id !== me && row.genome && typeof row.genome === "object";
-    sharedMorphs = fit.filter(valid).map((row) => ({
-      id: "x" + row.id, genome: Morph ? Morph.normalise(row.genome) : row.genome,
-      // Its record, in the local form morphFitness reads.
-      n: Number(row.n) || 0, sum: (Number(row.fitness) || 0) * ((Number(row.n) || 0) + 1), kept: Number(row.kept) || 0, rejected: Number(row.rejected) || 0,
-    }));
+    const [fit, named] = await Promise.all([get("n=gte.1&order=fitness.desc&limit=80"), get("name=not.is.null&order=fitness.desc&limit=120")]);
+    const valid = (row) => row && row.visitor_id !== me && row.genome && typeof row.genome === "object" && grownLib(row.genome);
+    const next = { creature: [], plant: [] };
+    for (const row of fit.filter(valid)) {
+      const lib = grownLib(row.genome);
+      next[grownKind(row.genome)].push({
+        id: "x" + row.id, genome: lib.normalise(row.genome),
+        // Its record, in the local form morphFitness reads.
+        n: Number(row.n) || 0, sum: (Number(row.fitness) || 0) * ((Number(row.n) || 0) + 1), kept: Number(row.kept) || 0, rejected: Number(row.rejected) || 0,
+      });
+    }
+    sharedMorphs = next;
     learnSharedMorphNames(named.filter(valid));
-    return sharedMorphs.length;
+    return next.creature.length + next.plant.length;
   } catch { return 0; }
 }
 function learnSharedMorphNames(rows) {
-  const Visual = globalThis.HexfieldVisual, Morph = globalThis.HexfieldMorph;
-  if (!Visual?.learn || !Morph) return;
-  const own = new Set(Object.values(morphPopulation()?.species || {}).map((sp) => sp.name).filter(Boolean));
+  const Visual = globalThis.HexfieldVisual;
+  if (!Visual?.learn) return;
+  // Your own words stay yours: your species' names and your clades' bodies.
+  const own = new Set();
+  for (const kind of Object.keys(GROWN)) {
+    const pop = morphPops[kind];
+    if (!pop) continue;
+    for (const sp of Object.values(pop.species)) if (sp.name) own.add(sp.name);
+    for (const word of Object.keys(pop.cladeWords || {})) own.add(word);
+  }
   const done = new Set();
   for (const row of rows) {
     const word = String(row.name || "");
-    if (!/^[a-z]{1,24}$/.test(word) || done.has(word) || own.has(word)) continue;
-    if (Visual.ENTRIES?.[word] || Visual.FAMILIES?.[word]) continue;
-    const existing = Visual.LEARNED?.[word];
-    if (existing && !existing.grown) continue;
+    if (done.has(word) || own.has(word) || !growableWord(word)) continue;
+    const lib = grownLib(row.genome);
+    if (!lib) continue;
     done.add(word);
-    Visual.learn(word, Morph.develop(Morph.normalise(row.genome)));
+    Visual.learn(word, lib.develop(lib.normalise(row.genome)));
   }
 }
 
@@ -35750,7 +35925,7 @@ function planStyleChain(plan) {
     manner: plan?.manner?.key || null, tips: plan?.tips?.key || null, finish: plan?.finish?.key || null,
     dims: plan?.dims?.key || null, perspective: plan?.scene?.perspective?.key || null, form: plan?.scene?.forms?.key || null,
     look: plan?.finish?.look || null, light: plan?.light?.key || null,
-    comp: plan?.comp?.key || null, morph: plan ? (plan.morph ? "grown" : "none") : null,
+    comp: plan?.comp?.key || null, morph: plan ? (plan.morph ? (plan.morph.kind === "plant" ? "plant" : "grown") : "none") : null,
     combo: plan?.finish ? plan.finish.combo || "single" : null, finish2: plan?.finish?.layers?.[0]?.key || null,
     look2: plan?.finish?.layers?.[0]?.look || null,
     // The tuned value of the first filter's look, and of a stack's strength.

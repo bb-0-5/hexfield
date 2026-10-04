@@ -77,6 +77,27 @@
     };
   }
 
+  /* The first cell: a body and nothing else - no limbs, head, tail,
+   * spikes, segments or symmetry. New populations start from these and
+   * climb the tree of life (hexfield-phylo.js) one body plan at a time. */
+  function cellGenome(rng) {
+    const g = randomGenome(rng);
+    g.body.prime = "mass";
+    g.body.waves = [rng() * 0.12, rng() * 0.08, rng() * 0.05, rng() * 0.03];
+    g.body.aspect = 0.8 + rng() * 0.4;
+    g.symmetry = "none";
+    g.segments.n = 1;
+    g.nest.depth = 0;
+    g.limbs.n = 0;
+    g.head.on = false;
+    g.head.points.n = 0;
+    g.points.n = 0;
+    g.tail.on = false;
+    g.anchor = "centre";
+    g.size = 0.25 + rng() * 0.1;
+    return g;
+  }
+
   /* A genome from before a rule existed gets that rule switched off, so an
    * old population keeps breeding (the point prime and the tail came later). */
   const DEFAULTS = {
@@ -358,5 +379,5 @@
     return { forms: [...forms], relations: relations.filter(Boolean) };
   }
 
-  global.HexfieldMorph = { PRIME_FORMS, PRIME_RELATIONS, randomGenome, develop, mutate, crossover, distance, primesOf, normalise };
+  global.HexfieldMorph = { PRIME_FORMS, PRIME_RELATIONS, randomGenome, cellGenome, develop, mutate, crossover, distance, primesOf, normalise };
 })(typeof window !== "undefined" ? window : globalThis);
