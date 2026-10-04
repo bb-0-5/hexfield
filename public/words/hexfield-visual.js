@@ -2245,8 +2245,13 @@
     // Things added onto things, on their frames, in the same view.
     const added = placeAttachments(scene, items, view, rng, W);
     // Containers first, so what is in them is painted over them; and further
-    // back before nearer, so nearer things overlap them.
+    // back before nearer, so nearer things overlap them. Further back is
+    // judged as a painter judges it: things in the sky first, then by where
+    // each meets the ground - the higher its foot, the farther off (a tree up
+    // the hill behind the house) - and only then by the layout's depth.
+    const farness = (item) => item.entry.anchor === "sky" ? 2 : item.box ? 1 - (item.box.y + item.box.h) / H : 0;
     items.sort((a, b) => (a.entry.kind === "setting" ? -2 : a.z || 0) - (b.entry.kind === "setting" ? -2 : b.z || 0) ||
+      (Math.abs(farness(b) - farness(a)) > 0.01 ? farness(b) - farness(a) : 0) ||
       (b.depth || 0) - (a.depth || 0));
     orderAttachments(items, added);
     /* Each thing's pitch: how far above or below the eye it is (+ looking
@@ -2259,6 +2264,9 @@
       item.pitch = iso ? 0.55 : Math.max(-1, Math.min(1, (item.box.y + item.box.h / 2 - eyeY) / H * 2.4));
     }
     const first = placed[0];
+    // Marked, since the items are in painting order (far to near), not
+    // importance order.
+    if (first) first.main = true;
     const focus = first
       ? { fx: (first.box.x + first.box.w / 2) / W, fy: (first.box.y + first.box.h / 2) / H }
       : null;

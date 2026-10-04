@@ -32896,7 +32896,7 @@ function planLettering(scene, letters, params, read, laid, rng) {
   scene.variations[fontVoteWord(family)] = { size: 0, hue: 0, light: 0, literal: 0 };
   const k = Math.exp(0.3 * v.size);
   const main = read.subjects.length ? laid.focus : null;
-  const mainItem = main ? laid.items.find((item) => item.entry?.kind === "subject" && !item.lettering) : null;
+  const mainItem = main ? laid.items.find((item) => item.main) || laid.items.find((item) => item.entry?.kind === "subject" && !item.lettering) : null;
   const where = main && mainItem ? { ...main, box: mainItem.box } : main;
   // Where it goes: chosen, learned and varied (axis "letterPlace").
   const places = letterPlaceCandidates(W, H, k, where, laid);
@@ -37160,7 +37160,8 @@ function choosePlanLight(plan, params) {
     const side = Math.cos(plan.lightAngle) < 0 ? -1 : 1;
     // Beside the main thing, standing on the ground it stands on, a little
     // taller than it; without one, above and beside the focus.
-    const main = plan.scene?.items?.find((item) => item.entry.kind === "subject" && !item.lettering && item.entry.anchor !== "sky");
+    const main = plan.scene?.items?.find((item) => item.main && item.entry.anchor !== "sky") ||
+      plan.scene?.items?.find((item) => item.entry.kind === "subject" && !item.lettering && item.entry.anchor !== "sky");
     const W = plan.scene?.width, H = plan.scene?.height;
     if (main && W && H) {
       const b = main.box, lift = Math.min(0.4, Math.max(0.1, (b.h / H) * (0.8 + rng() * 0.4)));
@@ -39303,10 +39304,13 @@ function drawImmediate(result, { refinement = false } = {}) {
 
 
 let analysisChain = Promise.resolve();
-const yieldToPainter = async () => {
+// A declaration, so it is ready before the script reaches it: the colour
+// treatment ballot's first look runs while the page is still loading, and
+// with a const it failed there ("before initialization") and was skipped.
+async function yieldToPainter() {
   await new Promise((resolve) => setTimeout(resolve, 0));
   await waitForQuietInput();
-};
+}
 
 /* Measured in steps, not one block. Each pass below is a full read of the
  * visible canvas, and together they held a phone's page frozen for 1.5-2s on a
