@@ -31560,6 +31560,8 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
   plan.anatomy = choosePlanAnatomy(plan, params);
   // How far its figures stand apart from their ground (Figure and ground).
   plan.figure = choosePlanFigure(plan, params);
+  // Where its edges are found and where lost (Lost and found edges).
+  plan.edgeStyle = choosePlanEdges(plan, params);
   plan.light = choosePlanLight(plan, params);
   plan.tips = choosePlanTips(plan, params);
   plan.finish = choosePlanFinish(plan, params);
@@ -32664,6 +32666,7 @@ function recordVisualVote(liked) {
   if (plan?.depthStyle) variations[depthVoteWord(plan.depthStyle.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.anatomy) variations[anatomyVoteWord(plan.anatomy.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.figure) variations[figureVoteWord(plan.figure.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  if (plan?.edgeStyle) variations[edgesVoteWord(plan.edgeStyle.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (scene?.perspective) variations[perspVoteWord(scene.perspective.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (scene?.forms) variations[formVoteWord(scene.forms.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   // A kept painting's things are remembered as forms worth starting from.
@@ -34892,6 +34895,62 @@ function* applyFigureGroundSteps(pixels, width, height, plan) {
   return done;
 }
 
+/* ── Lost and found edges ───────────────────────────────────────────────
+ * A painter steers the eye with edges as much as with colour: hard, found
+ * edges where the eye should go - near the focal centre, near in depth,
+ * where value contrast is strong, along the side of a form the light falls
+ * on - and soft, lost edges elsewhere, where a form melts into its
+ * neighbour (its shadow side against a dark ground). Every edge of the
+ * reference is graded found or lost (an edge map on the contour grid), and
+ * the brush obeys it: at a found edge a stroke stops crisply and runs a
+ * little narrower, with no soft tip; at a lost edge it may drag a step or
+ * two across the boundary, blending it, soft-tipped and thinner in paint.
+ * How strongly - even, gentle or strong - is chosen and learned. */
+const EDGE_STYLES = {
+  even: { key: "even", name: "even edges", k: 0 },
+  gentle: { key: "gentle", name: "gentle lost and found", k: 0.6 },
+  strong: { key: "strong", name: "strong lost and found", k: 1 },
+};
+const EDGES = { focus: 0.28, found: 0.66, lost: 0.34, drag: 2, crisp: 30, narrow: 0.85, thin: 0.88 };
+const edgesVoteWord = (key) => "edges" + String(key).replace(/[^a-z]/g, "");
+
+function choosePlanEdges(plan, params) {
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0xed6e) >>> 0);
+  const scores = chooseByTaste(Object.keys(EDGE_STYLES), {
+    rng, tasted: 0, axis: "edges", given: planStyleChain(plan), lean: (key) => (key === "gentle" ? 0.15 : 0),
+    learned: (key) => visualLearnedChoice(edgesVoteWord(key)), taste: () => null,
+  });
+  plan.edgeScores = summariseChoice(scores);
+  return EDGE_STYLES[scores[0].key];
+}
+
+/* How found (1) or lost (0) each edge of the reference is, on its contour
+ * grid (strokeReferenceGradient); 0.5 where there is no edge. */
+function buildEdgeMap(plan, gradient, width, height) {
+  const k = plan?.edgeStyle?.k || 0;
+  if (!k || !gradient) return null;
+  const { gw, gh, gx, gy } = gradient, map = new Float32Array(gw * gh).fill(0.5);
+  const lx = Math.cos(Number(plan.lightAngle) || -Math.PI / 2), ly = Math.sin(Number(plan.lightAngle) || -Math.PI / 2);
+  const aspect = width / height, s2 = 2 * EDGES.focus * EDGES.focus;
+  for (let y = 0; y < gh; y++) {
+    const ny = (y * 2 + 1) / height;
+    for (let x = 0; x < gw; x++) {
+      const i = y * gw + x, mag = Math.hypot(gx[i], gy[i]);
+      if (mag < STROKE_GRADIENT_MIN) continue;
+      const nx = (x * 2 + 1) / width;
+      const focus = Math.exp(-(((nx - plan.fx) * aspect) ** 2 + (ny - plan.fy) ** 2) / s2);
+      const near = 1 - depthAt(plan, x * 2 + 1, y * 2 + 1, width, height);
+      const contrast = Math.min(1, (mag - STROKE_GRADIENT_MIN) / 150);
+      // The luminance gradient points to the lighter side: an edge whose
+      // lighter side faces the light is a lit contour.
+      const lit = (gx[i] * lx + gy[i] * ly) / mag;
+      const raw = Math.max(0, Math.min(1, -0.05 + 0.45 * focus + 0.2 * near + 0.35 * contrast + 0.12 * lit));
+      map[i] = 0.5 + (raw - 0.5) * k * 1.6;
+    }
+  }
+  return map;
+}
+
 /* The scene's layer painted into a composed reference, in place. */
 function applySceneLayer(pixels, width, height, plan, only = null) {
   const scene = plan?.scene;
@@ -36432,6 +36491,9 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
   const planeLock = !hatch && strokePainter.plan?.planeMap ? PLANES.lock[Math.min(layer, PLANES.lock.length - 1)] : 0;
   // ...and on a grown thing, the way its body runs (Brushwork that follows anatomy).
   const anatomyK = strokePainter.plan?.anatomy?.k || 0;
+  // ...and how found each edge is (Lost and found edges).
+  const edgeMap = gradient.edges || null;
+  const hardAt = edgeMap ? (px, py) => edgeMap[Math.min(gradient.gh - 1, (py | 0) >> 1) * gradient.gw + Math.min(gradient.gw - 1, (px | 0) >> 1)] : null;
   const strokes = [];
   const finest = layer >= STROKE_LAYER_FRACTIONS.length - 1;
   for (const start of chosen) {
@@ -36454,6 +36516,7 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
     const lit = lightAt(strokePainter.plan, start.x, start.y, width, height);
     if (lit) colour = litStrokeColour(colour, lit, strokePainter.plan);
     const points = [[start.x, start.y]];
+    let crossed = 0;
     let x = start.x, y = start.y, lastDx = 0, lastDy = 0;
     // Where the reference has no direction of its own, a stroke sweeps straight
     // at one angle for the whole painting, the way a hand settles into a rhythm.
@@ -36504,7 +36567,13 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       // Stop where carrying on would paint a colour the reference does not have.
       // From the second step on: waiting until the third let a big brush run
       // most of a stroke length past the edge of a shape.
-      if (step > 1 && diff(colourAt(ref, x, y), colour) > diff(colourAt(current, x, y), colour)) break;
+      if (step > 1 && diff(colourAt(ref, x, y), colour) > diff(colourAt(current, x, y), colour)) {
+        // ...unless the edge here is lost: then the stroke drags a step or
+        // two across it, blending the two sides.
+        if (!(hardAt && hardAt(x, y) < EDGES.lost && crossed++ < EDGES.drag)) break;
+      }
+      // At a found edge it stops before the colour turns at all.
+      if (hardAt && step > 1 && hardAt(x, y) > EDGES.found && diff(colourAt(ref, x, y), colour) > EDGES.crisp) break;
       // Flat manners keep a stroke inside its own shape: it stops where its
       // centre or either side of the brush reaches another colour, however
       // the canvas looks there. (The centre alone let a wide brush spill half
@@ -36533,6 +36602,14 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
     if (Number(brush?.alpha) > 0) stroke.alpha = Number(brush.alpha);
     if (brush && brush.bristle === false) stroke.plain = true;
     if (brush?.round) stroke.round = true;
+    // Found edge: a narrower, crisper stroke; lost: softer and thinner paint.
+    // The tip reads `edge` (chooseStrokeTip).
+    const hard = hardAt ? hardAt(start.x, start.y) : 0.5;
+    if (hard > EDGES.found || hard < EDGES.lost) {
+      stroke.edge = +hard.toFixed(2);
+      if (hard > EDGES.found) stroke.width *= EDGES.narrow;
+      else stroke.alpha = (Number(stroke.alpha) || (0.82 + stroke.bristle * 0.14) / 0.97) * EDGES.thin;
+    }
     if (air) {
       // Far: thinner paint and a smooth, soft touch; the tip reads `air`.
       stroke.air = +air.toFixed(2);
@@ -37442,6 +37519,7 @@ function planStyleChain(plan) {
     depth: plan?.depthStyle?.key || null,
     anatomy: plan?.anatomy?.key || null,
     figure: plan?.figure?.key || null,
+    edges: plan?.edgeStyle?.key || null,
     // The tuned value of the first filter's look, and of a stack's strength.
     tune: plan?.finish ? compactTune(plan.finish) : null,
   };
@@ -37559,7 +37637,7 @@ function computeStyleOutcomeStats() {
 /* A chain's choices as small numbers (axis and option), worked out once per
  * row: counting every pair of hundreds of chains by name cost a phone tens
  * of milliseconds. */
-const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form", "look", "light", "combo", "finish2", "look2", "comp", "morph", "depth", "anatomy", "figure"];
+const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form", "look", "light", "combo", "finish2", "look2", "comp", "morph", "depth", "anatomy", "figure", "edges"];
 function compactTune(finish) {
   const v = tuneValue(finish.key, finish.settings || {});
   const layer = finish.layers?.[0];
@@ -37713,6 +37791,12 @@ function chooseStrokeTip(stroke) {
   if (air && (!own || own.soft > 0)) {
     if (air > 0) weights.soft = (weights.soft || 0) + air * DEPTH_BRUSH.soft;
     else { weights.soft = (weights.soft || 0) * Math.max(0, 1 + air * DEPTH_BRUSH.soft); weights.dry = (weights.dry || 0) - air * DEPTH_BRUSH.texture; }
+  }
+  // A found edge takes no soft tip; a lost one leans soft (Lost and found edges).
+  const edge = Number(stroke.edge);
+  if (Number.isFinite(edge) && (!own || own.soft > 0)) {
+    if (edge > EDGES.found) weights.soft = 0;
+    else if (edge < EDGES.lost) weights.soft = (weights.soft || 0) + 0.6;
   }
   if (stroke.round) { weights.filbert = (weights.filbert || 0) + (weights.flat || 0); weights.flat = 0; }
   // A touch shorter than the brush is wide is an oval, not a little square.
@@ -37965,6 +38049,8 @@ function paintTowardReference(result, ref, width, height,
   const sameReference = refKey ? strokePainter.refKey === refKey : strokePainter.reference === ref;
   if (!sameReference || strokePainter.width !== width || strokePainter.height !== height) {
     strokePainter.gradient = strokeReferenceGradient(ref, width, height);
+    // Which of its edges are found and which lost (Lost and found edges).
+    if (strokePainter.plan) strokePainter.gradient.edges = buildEdgeMap(strokePainter.plan, strokePainter.gradient, width, height);
     // The fine brushes gather where the plan put the focus - and stay on the
     // lettering wherever it is.
     if (strokePainter.plan) strokePainter.gradient.focus = { fx: strokePainter.plan.fx, fy: strokePainter.plan.fy };
