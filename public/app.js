@@ -32641,6 +32641,7 @@ function recordVisualVote(liked) {
   if (plan?.finish) variations[finishVoteWord(plan.finish.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.finish?.look) variations[lookVoteWord(plan.finish.look)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.light) variations[lightVoteWord(plan.light.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  if (plan?.depthStyle) variations[depthVoteWord(plan.depthStyle.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (scene?.perspective) variations[perspVoteWord(scene.perspective.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (scene?.forms) variations[formVoteWord(scene.forms.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   // A kept painting's things are remembered as forms worth starting from.
@@ -33447,7 +33448,7 @@ function lightAt(plan, x, y, width, height) {
 
 /* Paint the scene into a composed reference, in place. */
 function applyPlanScene(pixels, width, height, plan, only = null) {
-  return applyPlanLight(applySceneLayer(pixels, width, height, plan, only), width, height, plan, only);
+  return applyDepthAir(applyPlanLight(applySceneLayer(pixels, width, height, plan, only), width, height, plan, only), width, height, plan, only);
 }
 
 /* The painting under its light: the lights of the picture toward the
@@ -34103,6 +34104,7 @@ function* renderShapeMoveSteps(pixels, width, height, part, mv, scene) {
 function* evolveShapesInDepthSteps(plan, ground, width, height) {
   const D = SHAPE_DEPTH;
   plan.depth = null;
+  plan.depthParts = null;
   if (!plan.liveBlobs?.length || typeof document === "undefined") return null;
   const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0xde9e7) >>> 0);
   const record = plan.depth = { parts: [], kept: [], tried: 0, base: 0, last: 0 };
@@ -34141,17 +34143,12 @@ function* evolveShapesInDepthSteps(plan, ground, width, height) {
       refreshPlanShapes(plan, ground, width, height);
       yield;
     }
-    if (record.kept.length && SHOW_DEPTH) plan.depthParts = yield* shapesInDepthSteps(plan, ground, width, height);
+    // Where its parts are now, for the brushwork's depth (and ?depth).
+    if (record.kept.length) plan.depthParts = yield* shapesInDepthSteps(plan, ground, width, height);
   } finally {
     canvas.width = 0; canvas.height = 0;
   }
   return record;
-}
-function evolveShapesInDepth(plan, ground, width, height) {
-  const steps = evolveShapesInDepthSteps(plan, ground, width, height);
-  let step;
-  do step = steps.next(); while (!step.done);
-  return step.value;
 }
 
 /* ?depth: each part of the painting outlined in its three views (left in
@@ -34197,6 +34194,145 @@ function refreshDepthLayer() {
   }
 }
 if (SHOW_DEPTH && typeof window !== "undefined") setInterval(refreshDepthLayer, 1000);
+
+/* ── Brushwork in depth ─────────────────────────────────────────────────
+ * A painting's depth (Shapes in depth) carried into its brushwork. A map
+ * of how far off each place is - the ground plane, nearer at the foot of
+ * the picture and farthest at the horizon (only a hint when the painting
+ * has no ground of its own), each shape's parts where they stand, and the
+ * named things by where theirs is - and then, as far as the painting's
+ * depth style says (flat, air, deep; chosen and learned like the manner):
+ *   the air: far places duller and toward the colour of the horizon's haze
+ *     (painted into the reference, so the brush paints toward it rather
+ *     than fighting it);
+ *   near strokes: bigger, longer, crisper and more textured;
+ *   far strokes: smaller, shorter, softer-tipped, thinner paint, and less
+ *     fine detail;
+ *   and each batch painted from far to near, so near strokes lie over far
+ *     ones, the way a painter works back to front. */
+const DEPTH_STYLES = {
+  flat: { key: "flat", name: "flat depth", k: 0 },
+  air: { key: "air", name: "aerial depth", k: 0.5 },
+  deep: { key: "deep", name: "deep space", k: 1 },
+};
+const DEPTH_BRUSH = { cells: 64, chroma: 0.3, haze: 0.22, width: 0.3, length: 0.3, soft: 0.8, texture: 0.35, alpha: 0.2, detail: 0.5, order: 0.25 };
+const depthVoteWord = (key) => "depth" + String(key).replace(/[^a-z]/g, "");
+
+/* The map: 0 near, 1 far, on a coarse grid; and the haze far things go to. */
+function buildDepthMap(plan, ground, width, height) {
+  const D = DEPTH_BRUSH, gw = D.cells, gh = Math.max(8, Math.round(gw * height / width));
+  const map = new Float32Array(gw * gh);
+  const view = plan.scene?.view;
+  const real = Boolean(view && !view.iso && Number.isFinite(view.horizon));
+  const hy = clampUnit(real ? view.horizon / height : plan.depthParts?.scene?.hy ?? 0.45, 0.05, 0.95);
+  for (let gy = 0; gy < gh; gy++) {
+    const y = (gy + 0.5) / gh;
+    let d = y <= hy ? 1 : clampUnit(1 - (y - hy) / (1 - hy));
+    if (!real) d = 0.5 + (d - 0.5) * 0.5;
+    map.fill(d, gy * gw, (gy + 1) * gw);
+  }
+  // The shapes' parts, each at its own depth.
+  for (const part of plan.depthParts?.parts || []) {
+    const [bx, by, bw, bh] = part.mask.box;
+    for (let gy = Math.max(0, Math.floor(by * gh)); gy < Math.min(gh, Math.ceil((by + bh) * gh)); gy++) {
+      for (let gx = Math.max(0, Math.floor(bx * gw)); gx < Math.min(gw, Math.ceil((bx + bw) * gw)); gx++) {
+        if (shapeMaskAt(part.mask, (gx + 0.5) / gw, (gy + 0.5) / gh) > 0.5) map[gy * gw + gx] = part.depth;
+      }
+    }
+  }
+  // Named things over them, by where each stands.
+  const W = plan.scene?.width || width, H = plan.scene?.height || height;
+  for (const item of plan.scene?.items || []) {
+    if (item.entry?.kind !== "subject" || item.lettering || !item.box) continue;
+    const foot = (item.box.y + item.box.h) / H;
+    const d = item.entry.anchor === "sky" || foot <= hy ? 0.85 : clampUnit(1 - (foot - hy) / (1 - hy));
+    for (let gy = Math.max(0, Math.floor(item.box.y / H * gh)); gy < Math.min(gh, Math.ceil((item.box.y + item.box.h) / H * gh)); gy++) {
+      map.fill(d, gy * gw + Math.max(0, Math.floor(item.box.x / W * gw)), gy * gw + Math.min(gw, Math.ceil((item.box.x + item.box.w) / W * gw)));
+    }
+  }
+  boxBlurChannels([map], gw, gh, 1);
+  // The haze: the colour of the band just above the horizon.
+  const { pixels: small, sw, sh } = smallCopy(ground, width, height, 64);
+  const haze = [0, 0, 0];
+  let n = 0;
+  for (let y = Math.floor(Math.max(0, hy - 0.08) * sh); y < Math.max(1, Math.floor(hy * sh)); y++) {
+    for (let x = 0; x < sw; x++) { const o = (y * sw + x) * 4; haze[0] += small[o]; haze[1] += small[o + 1]; haze[2] += small[o + 2]; n++; }
+  }
+  return { gw, gh, map, haze: haze.map((c) => c / Math.max(1, n)), real };
+}
+
+/* How far off (x, y) is, 0..1 (0.5 without a map). */
+function depthAt(plan, x, y, width, height) {
+  const dm = plan?.depthMap;
+  if (!dm) return 0.5;
+  const fx = Math.max(0, Math.min(dm.gw - 1.001, x / width * dm.gw - 0.5)), fy = Math.max(0, Math.min(dm.gh - 1.001, y / height * dm.gh - 0.5));
+  const x0 = fx | 0, y0 = fy | 0, tx = fx - x0, ty = fy - y0, i = y0 * dm.gw + x0;
+  return (dm.map[i] * (1 - tx) + dm.map[i + 1] * tx) * (1 - ty) + (dm.map[i + dm.gw] * (1 - tx) + dm.map[i + dm.gw + 1] * tx) * ty;
+}
+
+/* The air, painted into a composed reference: far places duller and toward
+ * the haze, as far as the depth style says. In place. */
+function applyDepthAir(pixels, width, height, plan, only = null) {
+  const k = plan?.depthStyle?.k || 0, dm = plan?.depthMap;
+  if (!k || !dm) return pixels;
+  const D = DEPTH_BRUSH, haze = dm.haze;
+  const gx0 = new Int32Array(width), gtx = new Float32Array(width);
+  for (let x = 0; x < width; x++) { const f = Math.max(0, Math.min(dm.gw - 1.001, (x + 0.5) / width * dm.gw - 0.5)); gx0[x] = f | 0; gtx[x] = f - gx0[x]; }
+  const line = new Float32Array(dm.gw);
+  for (let y = 0; y < height; y++) {
+    // This row's depths across the grid, then only a step between cells.
+    const fy = Math.max(0, Math.min(dm.gh - 1.001, (y + 0.5) / height * dm.gh - 0.5)), y0 = fy | 0, ty = fy - y0;
+    for (let gx = 0; gx < dm.gw; gx++) line[gx] = dm.map[y0 * dm.gw + gx] * (1 - ty) + dm.map[(y0 + 1) * dm.gw + gx] * ty;
+    for (let x = 0, i = y * width; x < width; x++, i++) {
+      if (only && !only[i]) continue;
+      const a = gx0[x], t = gtx[x], d = line[a] * (1 - t) + line[a + 1] * t;
+      if (d < 0.02) continue;
+      const keep = 1 - D.chroma * k * d, toward = D.haze * k * d * d, o = i * 4;
+      const r = pixels[o], g = pixels[o + 1], b = pixels[o + 2], l = 0.299 * r + 0.587 * g + 0.114 * b;
+      const r1 = l + (r - l) * keep, g1 = l + (g - l) * keep, b1 = l + (b - l) * keep;
+      pixels[o] = r1 + (haze[0] - r1) * toward; pixels[o + 1] = g1 + (haze[1] - g1) * toward; pixels[o + 2] = b1 + (haze[2] - b1) * toward;
+    }
+  }
+  return pixels;
+}
+
+/* How much depth this painting is painted with: each style's air on a small
+ * copy, tasted, with the words' leans ("far", "vast", "landscape" lean deep;
+ * "flat", "poster", "graphic" flat), votes and finished paintings. */
+function choosePlanDepth(plan, ground, width, height, params) {
+  if (!plan.depthMap || typeof document === "undefined") return DEPTH_STYLES.flat;
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0xde97) >>> 0);
+  const text = String(params?.__hexfieldWords?.text || "").toLowerCase();
+  const deepWords = /\b(far|distance|distant|vast|deep|depth|horizon|landscape|valley|mountains?|sea|ocean|sky|fog|mist|haze)\b/.test(text);
+  const flatWords = /\b(flat|poster|graphic|pattern|icon|logo|sticker|print)\b/.test(text);
+  const lean = (key) => (key === "flat" ? (flatWords ? 0.5 : 0) - (deepWords ? 0.3 : 0) : key === "deep" ? (deepWords ? 0.5 : 0) - (flatWords ? 0.3 : 0) : 0);
+  const { pixels: base, sw, sh } = smallCopy(ground, width, height);
+  const small = paintBuffer(sw, sh), sctx = small.getContext("2d", { willReadFrequently: true });
+  const scores = chooseByTaste(Object.keys(DEPTH_STYLES), {
+    rng, tasted: 2, axis: "depth", given: planStyleChain(plan), lean, learned: (key) => visualLearnedChoice(depthVoteWord(key)),
+    taste: (key) => {
+      const px = applyDepthAir(new Uint8ClampedArray(base), sw, sh, { depthMap: plan.depthMap, depthStyle: DEPTH_STYLES[key] });
+      sctx.putImageData(new ImageData(px, sw, sh), 0, 0);
+      return tastePrediction(tasteFeatures(sctx, sw, sh, signature(sctx, sw, sh)));
+    },
+  });
+  small.width = 0; small.height = 0;
+  plan.depthScores = summariseChoice(scores);
+  return DEPTH_STYLES[scores[0].key];
+}
+
+/* A painting's depth, a step at a time: its shapes bred in depth, the map,
+ * and (the first time) how much depth it is painted with. */
+function* planDepthSteps(plan, ground, width, height, params) {
+  yield* evolveShapesInDepthSteps(plan, ground, width, height);
+  plan.depthMap = buildDepthMap(plan, ground, width, height);
+  yield;
+  if (!plan.depthStyle) plan.depthStyle = choosePlanDepth(plan, ground, width, height, params);
+}
+function planDepth(plan, ground, width, height, params) {
+  const steps = planDepthSteps(plan, ground, width, height, params);
+  while (!steps.next().done);
+}
 
 /* The scene's layer painted into a composed reference, in place. */
 function applySceneLayer(pixels, width, height, plan, only = null) {
@@ -35330,8 +35466,9 @@ async function prepareNewPainting(result, raw, width, height, alive) {
   const source = bestRun?.params ? bestRun : current;
   if (!await step()) return null;
   refreshPlanShapes(plan, ground, width, height);
-  // Its shapes bred in depth (Shapes in depth), a taste at a time.
-  const depthSteps = evolveShapesInDepthSteps(plan, ground, width, height);
+  // Its shapes bred in depth, and its depth (Shapes in depth, Brushwork in
+  // depth), a taste at a time.
+  const depthSteps = planDepthSteps(plan, ground, width, height, source?.params);
   do { if (!await step()) return null; } while (!depthSteps.next().done);
   if (!await step()) return null;
   plan.dims = choosePlanDims(plan, ground, width, height, source?.params);
@@ -35347,7 +35484,10 @@ async function prepareNewPainting(result, raw, width, height, alive) {
     do { if (!await step()) return null; } while (!layerSteps.next().done);
   }
   if (!await step()) return null;
-  const composed = applyPlanScene(ground, width, height, plan);
+  // applyPlanScene, with the air (Brushwork in depth) a step of its own.
+  const composed = applyPlanLight(applySceneLayer(ground, width, height, plan), width, height, plan);
+  if (!await step()) return null;
+  applyDepthAir(composed, width, height, plan);
   if (!await step()) return null;
   plan.manner = choosePlanManner(plan, composed, width, height, source?.params);
   if (plan.style) plan.style.label = plan.manner.name + (plan.dims ? " · " + plan.dims.name : "") +
@@ -35372,7 +35512,7 @@ function prepareStrokeReference(ref, width, height, enhanced = enhanceStrokeRefe
   const ground = composeStrokeReference(enhanced, width, height, plan);
   if (fresh) {
     refreshPlanShapes(plan, ground, width, height);
-    evolveShapesInDepth(plan, ground, width, height);
+    planDepth(plan, ground, width, height, (bestRun?.params ? bestRun : current)?.params);
   }
   const choosing = fresh || !plan.manner;
   const source = bestRun?.params ? bestRun : current;
@@ -35418,12 +35558,15 @@ function scheduleStrokeReference(ref, width, height, refKey) {
     // picture being painted now, not the one the painting began from.
     refreshPlanShapes(plan, ground, width, height);
     // ...bred in depth again, in the new picture.
-    const depthSteps = evolveShapesInDepthSteps(plan, ground, width, height);
+    const depthSteps = planDepthSteps(plan, ground, width, height, null);
     do {
       await pause();
       if (!stillWanted()) return;
     } while (!depthSteps.next().done);
-    const composed = applyPlanScene(ground, width, height, plan);
+    const composed = applyPlanLight(applySceneLayer(ground, width, height, plan), width, height, plan);
+    await pause();
+    if (!stillWanted()) return;
+    applyDepthAir(composed, width, height, plan);
     await pause();
     if (!stillWanted()) return;
     strokePainter.enhanced = finishPlanReference(composed, width, height, plan);
@@ -35606,6 +35749,11 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
    * survives only occasionally, so the ground keeps its broad strokes. */
   const focus = gradient.focus;
   const brush = planManner()?.brush || null;
+  // How far off a place is, -1 (nearest) .. 1 (farthest), as strongly as the
+  // painting's depth style says; null for flat depth (Brushwork in depth).
+  const depthK = strokePainter.plan?.depthStyle?.k || 0;
+  const airAt = depthK && strokePainter.plan?.depthMap
+    ? (x, y) => depthK * (depthAt(strokePainter.plan, x, y, width, height) - 0.5) * 2 : null;
   if (focus && layer >= 2) {
     const detail = Number(planStyle()?.detail) || 0;
     const sigma = (layer === 2 ? 0.7 : 0.4) * (1 + 0.4 * detail), aspect = width / height;
@@ -35617,7 +35765,9 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       const nx = starts[i].x / width, ny = starts[i].y / height;
       const w = sharp && nx >= sharp.x0 && nx <= sharp.x1 && ny >= sharp.y0 && ny <= sharp.y1
         ? 1 : Math.exp(-(dx * dx + dy * dy) / (2 * sigma * sigma));
-      if (rng() > Math.max(floor, w)) starts.splice(i, 1);
+      // Less fine detail the farther off it is.
+      const far = airAt ? 1 - DEPTH_BRUSH.detail * Math.max(0, airAt(starts[i].x, starts[i].y)) : 1;
+      if (rng() > Math.max(floor, w) * far) starts.splice(i, 1);
     }
   }
   // Worst first, then shuffled within the batch so strokes do not march in rows.
@@ -35626,6 +35776,12 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
   for (let i = chosen.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
     [chosen[i], chosen[j]] = [chosen[j], chosen[i]];
+  }
+  // Far to near, loosely, so near strokes lie over far ones.
+  if (airAt) {
+    for (const start of chosen) start.air = airAt(start.x, start.y);
+    for (const start of chosen) start.order = start.air + (rng() - 0.5) * DEPTH_BRUSH.order;
+    chosen.sort((a, b) => b.order - a.order);
   }
   /* Looseness is the words' energy together with taste (planStyle); without
    * a plan, the words alone, as before. */
@@ -35667,7 +35823,10 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
     // Where the reference has no direction of its own, a stroke sweeps straight
     // at one angle for the whole painting, the way a hand settles into a rhythm.
     const settle = strokeSettleAngle + (rng() - 0.5) * 0.9;
-    for (let step = 1; step < maxLength; step++) {
+    // Near: longer sweeps; far: shorter touches.
+    const air = start.air || 0;
+    const steps = air ? Math.max(2, Math.round(maxLength * (1 - DEPTH_BRUSH.length * air))) : maxLength;
+    for (let step = 1; step < steps; step++) {
       const gi = Math.min(gradient.gh - 1, (y | 0) >> 1) * gradient.gw + Math.min(gradient.gw - 1, (x | 0) >> 1);
       const gX = gradient.gx[gi], gY = gradient.gy[gi];
       const mag = Math.hypot(gX, gY);
@@ -35720,7 +35879,7 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
     const stroke = {
       points,
       // Paint is loaded where the light falls and thin in the shade.
-      width: width2 * 2 * (0.8 + rng() * 0.35) * (1 + (lit > 0 ? 0.16 : 0.1) * lit),
+      width: width2 * 2 * (0.8 + rng() * 0.35) * (1 + (lit > 0 ? 0.16 : 0.1) * lit) * (1 - DEPTH_BRUSH.width * air),
       colour: colour.map((c) => Math.max(0, Math.min(255, Math.round(c + (rng() - 0.5) * jitter)))),
       bristle: rng(),
     };
@@ -35728,6 +35887,15 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
     if (Number(brush?.alpha) > 0) stroke.alpha = Number(brush.alpha);
     if (brush && brush.bristle === false) stroke.plain = true;
     if (brush?.round) stroke.round = true;
+    if (air) {
+      // Far: thinner paint and a smooth, soft touch; the tip reads `air`.
+      stroke.air = +air.toFixed(2);
+      if (air > 0) {
+        // (from the manner's paint, or the usual 0.82-0.96 a stroke is laid at)
+        stroke.alpha = (Number(stroke.alpha) || (0.82 + stroke.bristle * 0.14) / 0.97) * (1 - DEPTH_BRUSH.alpha * air);
+        if (!stroke.round && rng() < DEPTH_BRUSH.texture * air) stroke.plain = true;
+      }
+    }
     strokes.push(stroke);
   }
   return { strokes, candidates: starts.length, cells };
@@ -36625,6 +36793,7 @@ function planStyleChain(plan) {
     comp: plan?.comp?.key || null, morph: plan ? (plan.morph ? (plan.morph.kind === "plant" ? "plant" : "grown") : "none") : null,
     combo: plan?.finish ? plan.finish.combo || "single" : null, finish2: plan?.finish?.layers?.[0]?.key || null,
     look2: plan?.finish?.layers?.[0]?.look || null,
+    depth: plan?.depthStyle?.key || null,
     // The tuned value of the first filter's look, and of a stack's strength.
     tune: plan?.finish ? compactTune(plan.finish) : null,
   };
@@ -36742,7 +36911,7 @@ function computeStyleOutcomeStats() {
 /* A chain's choices as small numbers (axis and option), worked out once per
  * row: counting every pair of hundreds of chains by name cost a phone tens
  * of milliseconds. */
-const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form", "look", "light", "combo", "finish2", "look2", "comp", "morph"];
+const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form", "look", "light", "combo", "finish2", "look2", "comp", "morph", "depth"];
 function compactTune(finish) {
   const v = tuneValue(finish.key, finish.settings || {});
   const layer = finish.layers?.[0];
@@ -36889,6 +37058,13 @@ function chooseStrokeTip(stroke) {
   if (!own) {
     const short = Math.min(strokePainter.width || 600, strokePainter.height || 600);
     weights.soft = (weights.soft || 0) + clamp01((stroke.width / short - 0.035) / 0.05) * 0.7;
+  }
+  // Far strokes soft-tipped; near ones crisper and more textured (Brushwork in depth).
+  // (A manner with its own tips takes this only if softness is one of them.)
+  const air = Number(stroke.air) || 0;
+  if (air && (!own || own.soft > 0)) {
+    if (air > 0) weights.soft = (weights.soft || 0) + air * DEPTH_BRUSH.soft;
+    else { weights.soft = (weights.soft || 0) * Math.max(0, 1 + air * DEPTH_BRUSH.soft); weights.dry = (weights.dry || 0) - air * DEPTH_BRUSH.texture; }
   }
   if (stroke.round) { weights.filbert = (weights.filbert || 0) + (weights.flat || 0); weights.flat = 0; }
   // A touch shorter than the brush is wide is an oval, not a little square.
