@@ -15167,7 +15167,7 @@ async function connectTaste() {
       pullHarvestMaterials(), pullSharedVisualSymbols(),
       pullVisualSourceCorpus(), fetchKnownCreationHashes(), refreshMuseumStatus(),
       pullVisualLexicon(), pullFormMemory(), pullSharedKeeps(), pullStyleOutcomes(), pullSharedMorphs(),
-      pullFontReferences(),
+      pullFontReferences(), pullPictureReferences(),
     ]);
     queueTasteSync();
     scheduleSharedTasteFlush(0);
@@ -31677,6 +31677,8 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
   // the last few paintings (choosePlanComposition).
   plan.comp = choosePlanComposition(plan, ref, width, height, params);
   if (plan.comp) { plan.fx = plan.comp.fx; plan.fy = plan.comp.fy; fx = plan.fx; fy = plan.fy; }
+  // Its own colours or a reference picture's (References).
+  plan.refColour = choosePlanRefColour(plan, params);
   /* One light for the whole painting - the side light of a manner, the
    * modelling and cast shadows of solid things, the hatching of a print. The
    * direction toward it, always from above, left or right of overhead. */
@@ -32368,6 +32370,9 @@ function referenceFeatures(bitmap) {
 async function addTasteReference(file, kind = "picture") {
   const bitmap = await referenceBitmap(file);
   const features = referenceFeatures(bitmap);
+  // A picture's colours and layout travel with its like (a logo's do not:
+  // its colours are its lettering's, measured with its traits).
+  const stats = kind === "picture" ? referenceStats(bitmap) : null;
   const hash = await referenceHash("hf_", bitmap);
   taste.samples.push({ label: 1, weight: REFERENCE_WEIGHT, features, field: "reference", textMode: textMode(), source: "reference",
     at: Date.now(), traits: { reference: kind } });
@@ -32378,11 +32383,11 @@ async function addTasteReference(file, kind = "picture") {
   if (!HEXFIELD_LOCAL_ONLY) {
     // As a KEEP is: the measurements, by the person who chose it.
     enqueueSharedTasteObservation({ render_hash: hash, liked: true, source: "human",
-      features: Object.fromEntries(TASTE_FEATURES.map((key) => [key, featureValue(features, key)])), traits: { reference: kind } });
+      features: Object.fromEntries(TASTE_FEATURES.map((key) => [key, featureValue(features, key)])), traits: { reference: kind, ...(stats || {}) } });
     scheduleSharedTasteFlush(0);
   }
   const list = referenceList().filter((r) => r.hash !== hash);
-  list.push({ hash, kind, thumb: referenceThumb(bitmap), at: Date.now() });
+  list.push({ hash, kind, thumb: referenceThumb(bitmap), at: Date.now(), ...(stats ? { stats } : {}) });
   saveReferenceList(list);
   return { hash, bitmap };
 }
@@ -32455,6 +32460,115 @@ function towardFontReferences(program, k, rng = Math.random) {
   }
   if (rng() < k) out.curveRule = dir.curveRule;
   return finishBrushProgram(out);
+}
+
+
+/* A picture's colours and layout, for the paintings to borrow: its colour
+ * (mean and spread of OKLab lightness and the two colour axes), where its
+ * horizon runs (the strongest change from one band of rows to the next, and
+ * how strong) and where its subject sits (the centre of its rarest colours).
+ * Shared with its like, so everyone's references count. */
+function referenceStats(bitmap) {
+  const k = 64 / Math.max(bitmap.width, bitmap.height);
+  const w = Math.max(8, Math.round(bitmap.width * k)), h = Math.max(8, Math.round(bitmap.height * k));
+  const c = paintBuffer(w, h), x = c.getContext("2d", { willReadFrequently: true });
+  x.drawImage(bitmap, 0, 0, w, h);
+  const d = x.getImageData(0, 0, w, h).data;
+  c.width = 0;
+  const n = w * h, L = new Float32Array(n), A = new Float32Array(n), B = new Float32Array(n);
+  let mL = 0, mA = 0, mB = 0;
+  for (let i = 0, o = 0; i < n; i++, o += 4) {
+    const [l, a, b] = rgbToOklab(d[o], d[o + 1], d[o + 2]);
+    L[i] = l; A[i] = a; B[i] = b; mL += l; mA += a; mB += b;
+  }
+  mL /= n; mA /= n; mB /= n;
+  let sL = 0, sA = 0, sB = 0;
+  const rare = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    sL += (L[i] - mL) ** 2; sA += (A[i] - mA) ** 2; sB += (B[i] - mB) ** 2;
+    rare[i] = Math.hypot(L[i] - mL, (A[i] - mA) * 2, (B[i] - mB) * 2);
+  }
+  // The horizon: between the rows the picture changes most, in its middle.
+  const row = new Float32Array(h);
+  for (let y = 0; y < h; y++) { let s = 0; for (let xx = 0; xx < w; xx++) s += L[y * w + xx]; row[y] = s / w; }
+  let hy = 0.5, hc = 0;
+  for (let y = Math.round(h * 0.12); y < Math.round(h * 0.88); y++) {
+    const jump = Math.abs((row[y + 1] + row[Math.min(h - 1, y + 2)]) - (row[y - 1] + row[Math.max(0, y - 2)])) / 2;
+    if (jump > hc) { hc = jump; hy = (y + 0.5) / h; }
+  }
+  // The subject: where its rarest tenth of colours sits.
+  const cut = Float32Array.from(rare).sort()[Math.floor(n * 0.9)];
+  let fx = 0, fy = 0, fw = 0;
+  for (let i = 0; i < n; i++) if (rare[i] >= cut) { fx += (i % w) + 0.5; fy += ((i / w) | 0) + 0.5; fw++; }
+  const r5 = (v) => Math.round(v * 1e4) / 1e4;
+  return {
+    colour: { L: r5(mL), a: r5(mA), b: r5(mB), sL: r5(Math.sqrt(sL / n)), sa: r5(Math.sqrt(sA / n)), sb: r5(Math.sqrt(sB / n)) },
+    layout: { h: r5(hy), hc: r5(hc), fx: r5(fw ? fx / fw / w : 0.5), fy: r5(fw ? fy / fw / h : 0.5) },
+  };
+}
+let pictureReferenceShared = [];
+async function pullPictureReferences() {
+  if (HEXFIELD_LOCAL_ONLY) return 0;
+  try {
+    const session = await ensureTasteSession();
+    const res = await fetch(SUPABASE_URL + "/rest/v1/hexfield_taste_observations?select=render_hash,traits&traits->>reference=eq.picture&order=created_at.desc&limit=80", {
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token },
+    });
+    if (res.ok) pictureReferenceShared = (await res.json()).filter((row) => row.traits?.colour && row.traits?.layout)
+      .map((row) => ({ hash: row.render_hash, colour: row.traits.colour, layout: row.traits.layout }));
+  } catch { /* the local ones still count */ }
+  return pictureReferenceShared.length;
+}
+// The reference a painting borrows from (its seed picks one), or null.
+function pictureReferenceFor(drawSeed) {
+  const byHash = new Map();
+  for (const r of pictureReferenceShared) byHash.set(r.hash, r);
+  for (const r of referenceList()) if (r.kind === "picture" && r.stats) byHash.set(r.hash, { hash: r.hash, ...r.stats });
+  const pool = [...byHash.values()].filter((r) => r.colour && r.layout);
+  if (!pool.length) return null;
+  return pool[Math.floor(mulberry32(((Number(drawSeed) || 0) ^ 0x7ef5) >>> 0)() * pool.length)];
+}
+/* Whether a painting takes its reference's colours (axis "refColour",
+ * learned from votes like the other choices). */
+const REF_COLOUR = { chroma: 0.75, light: 0.35 };
+function choosePlanRefColour(plan, params) {
+  const ref = pictureReferenceFor(plan.drawSeed);
+  if (!ref || params?.__hexfieldWords?.namedColour === "chromatic") return null;
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x7ec0) >>> 0);
+  const scores = chooseByTaste(["own", "reference"], {
+    rng, tasted: 0, axis: "refColour", given: null, lean: (key) => (key === "reference" ? 0.2 : 0),
+    learned: (key) => visualLearnedChoice("refcolour" + key), taste: () => null,
+  });
+  plan.refColourScores = summariseChoice(scores);
+  return { key: scores[0].key, ref: scores[0].key === "reference" ? ref : null };
+}
+/* The composed picture carried toward the reference's colours: in OKLab,
+ * its colour axes moved most of the way to the reference's mean and spread,
+ * its lightness a little, so its structure stays its own. A step per band of
+ * rows. */
+function* transferReferenceColourSteps(pixels, width, height, ref) {
+  const n = width * height, step = Math.max(1, Math.round(Math.sqrt(n / 6000)));
+  let mL = 0, mA = 0, mB = 0, cnt = 0;
+  for (let o = 0; o < pixels.length; o += 4 * step) { const [l, a, b] = rgbToOklab(pixels[o], pixels[o + 1], pixels[o + 2]); mL += l; mA += a; mB += b; cnt++; }
+  mL /= cnt; mA /= cnt; mB /= cnt;
+  let sL = 0, sA = 0, sB = 0;
+  for (let o = 0; o < pixels.length; o += 4 * step) { const [l, a, b] = rgbToOklab(pixels[o], pixels[o + 1], pixels[o + 2]); sL += (l - mL) ** 2; sA += (a - mA) ** 2; sB += (b - mB) ** 2; }
+  sL = Math.sqrt(sL / cnt) || 1e-3; sA = Math.sqrt(sA / cnt) || 1e-3; sB = Math.sqrt(sB / cnt) || 1e-3;
+  const c = ref.colour, kc = REF_COLOUR.chroma, kl = REF_COLOUR.light;
+  const gA = 1 + (Math.min(3, c.sa / sA) - 1) * kc, gB = 1 + (Math.min(3, c.sb / sB) - 1) * kc, gL = 1 + (Math.min(2, c.sL / sL) - 1) * kl;
+  yield;
+  for (let y = 0; y < height; y++) {
+    if (y % 120 === 119) yield;
+    for (let x = 0, o = y * width * 4; x < width; x++, o += 4) {
+      const [l, a, b] = rgbToOklab(pixels[o], pixels[o + 1], pixels[o + 2]);
+      const [r, g, bb] = oklabToRgb(
+        mL + (c.L - mL) * kl + (l - mL) * gL,
+        mA + (c.a - mA) * kc + (a - mA) * gA,
+        mB + (c.b - mB) * kc + (b - mB) * gB);
+      pixels[o] = r; pixels[o + 1] = g; pixels[o + 2] = bb;
+    }
+  }
+  return pixels;
 }
 
 /* ── Fonts in the garden ───────────────────────────────────────────────
@@ -32858,9 +32972,13 @@ function choosePlanComposition(plan, ref, width, height, params) {
   const keys = Object.keys(COMP_ZONES);
   const near = (k) => Math.hypot(COMP_ZONES[k][0] - plan.fx, COMP_ZONES[k][1] - plan.fy);
   const nearest = keys.slice().sort((a, b) => near(a) - near(b));
+  // ...and toward where a reference picture's subject sits.
+  const refLayout = pictureReferenceFor(plan.drawSeed)?.layout;
+  const refZone = refLayout ? keys.slice().sort((a, b) => Math.hypot(COMP_ZONES[a][0] - refLayout.fx, COMP_ZONES[a][1] - refLayout.fy) -
+    Math.hypot(COMP_ZONES[b][0] - refLayout.fx, COMP_ZONES[b][1] - refLayout.fy))[0] : null;
   const scores = chooseByTaste(keys, {
     rng, tasted: 0, axis: "comp", given: null,
-    lean: (k) => (k === nearest[0] ? 0.5 : k === nearest[1] ? 0.2 : 0) +
+    lean: (k) => (k === nearest[0] ? 0.5 : k === nearest[1] ? 0.2 : 0) + (k === refZone ? 0.45 : 0) +
       words.filter((w) => (COMP_WORDS[k] || []).some((z) => w === z)).length * 0.5 +
       words.filter((w) => (COMP_WORDS[k.split("-")[1]] || []).includes(w)).length * 0.3 -
       recent.slice(0, COMP_REPEAT_PENALTY.length).reduce((sum, r, i) => sum + (r === k ? COMP_REPEAT_PENALTY[i] : 0), 0),
@@ -33035,8 +33153,16 @@ function chooseScenePerspective(read, width, height, ref, layoutFor, params, dra
     if (Number(persp.settings.depth) > 0) persp.settings.vanishX = vanishX;
     return persp;
   };
+  // A reference picture with a clear horizon leans toward the views whose
+  // horizon is near its.
+  const refLayout = pictureReferenceFor(drawSeed)?.layout;
+  const horizonLean = (key) => {
+    const hz = Number(perspOf(key).settings.horizon);
+    if (!refLayout || !(refLayout.hc > 0.04) || !Number.isFinite(hz)) return 0;
+    return 0.5 * Math.max(0, 1 - Math.abs(hz - refLayout.h) / 0.3);
+  };
   const scores = chooseByTaste(Craft.PERSPECTIVE_KEYS, {
-    rng, axis: "perspective", given, lean: (key) => leans[key] || 0, learned: (key) => visualLearnedChoice(perspVoteWord(key)),
+    rng, axis: "perspective", given, lean: (key) => (leans[key] || 0) + horizonLean(key), learned: (key) => visualLearnedChoice(perspVoteWord(key)),
     taste: (key) => {
       const { items, view: sview } = scaledLayout(layoutFor(perspOf(key).settings), sw / width, sh / height);
       sctx.putImageData(new ImageData(new Uint8ClampedArray(base), sw, sh), 0, 0);
@@ -33456,6 +33582,7 @@ function recordVisualVote(liked) {
   if (plan?.depthStyle) variations[depthVoteWord(plan.depthStyle.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.anatomy) variations[anatomyVoteWord(plan.anatomy.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.figure) variations[figureVoteWord(plan.figure.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  if (plan?.refColour) variations["refcolour" + plan.refColour.key] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.edgeStyle) variations[edgesVoteWord(plan.edgeStyle.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (scene?.perspective) variations[perspVoteWord(scene.perspective.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (scene?.forms) variations[formVoteWord(scene.forms.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
@@ -36990,6 +37117,8 @@ function finishPlanReference(composed, width, height, plan) {
  * adoptions), for a new painting prepared with the page free in between. */
 function* finishPlanReferenceSteps(composed, width, height, plan) {
   const manner = plan.manner || plainManner();
+  // In a reference picture's colours, when the painting chose to be.
+  if (plan.refColour?.ref) { yield* transferReferenceColourSteps(composed, width, height, plan.refColour.ref); yield; }
   let pixels = yield* applyMannerReferenceSteps(composed, width, height, plan, manner);
   yield;
   if (!plan.palette) {
