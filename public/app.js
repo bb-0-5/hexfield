@@ -31728,8 +31728,11 @@ function chooseMorph(plan, ref, width, height, params) {
   const { pixels: base, sw, sh } = smallCopy(ref, width, height);
   const small = paintBuffer(sw, sh), sctx = small.getContext("2d", { willReadFrequently: true });
   let best = null, bestScore = -Infinity;
+  // One pose for the painting's creature: standing, walking or sitting
+  // (a skeleton's joints; a body without bones has no pose).
+  const pose = lib.POSES ? lib.POSES[Math.floor(rng() * lib.POSES.length)] : null;
   for (const c of candidates) {
-    c.entry = lib.develop(c.genome);
+    c.entry = lib.develop(c.genome, pose ? { pose } : undefined);
     const read = { subjects: [{ key: "morph", entry: c.entry, count: 1, colour: null, morph: true }], settings: [] };
     const laid = Visual.layout(read, sw, sh, mulberry32(7), plan.fx, { placeY: plan.fy });
     sctx.putImageData(new ImageData(new Uint8ClampedArray(base), sw, sh), 0, 0);
@@ -31741,7 +31744,7 @@ function chooseMorph(plan, ref, width, height, params) {
     if (c.score > bestScore) { bestScore = c.score; best = c; }
   }
   small.width = 0;
-  return { kind, id: best.id || null, genome: best.genome, parents: best.parents, entry: best.entry, born: best.born,
+  return { kind, pose, id: best.id || null, genome: best.genome, parents: best.parents, entry: best.entry, born: best.born,
     primes: lib.primesOf ? lib.primesOf(best.genome) : null, clade: morphClade(best.genome),
     species: best.id ? pop.members.find((m) => m.id === best.id)?.species : null };
 }
@@ -31858,7 +31861,19 @@ function gardenChildren() {
     }
     kids.push(kid || { genome: allowedChild(parent, () => lib.mutate(parent, rng, GARDEN.small), lib, rng), how: "small step" });
   };
-  for (let i = 0; i < 3; i++) fresh(() => ({ genome: lib.mutate(parent, rng, GARDEN.small), how: "small step" }), GARDEN.minStep);
+  /* A body with a front, a back and a gut but no bones yet can grow a
+   * backbone (the skeleton, hexfield-morph.js): one child tries it, where
+   * the tree allows. It replaces one small step. */
+  let backbone = null;
+  if (kind === "creature" && Phylo && !parent.spine?.on && Phylo.classify(parent).path.some((n) => n.id === "bilateria")) {
+    for (let t = 0; t < GARDEN.planTries && !backbone; t++) {
+      const genome = lib.mutate(parent, rng, GARDEN.small);
+      genome.spine = { ...genome.spine, on: true };
+      if (Phylo.allowed(parent, genome)) backbone = { genome, how: "grows a backbone" };
+    }
+  }
+  if (backbone) kids.push(backbone);
+  for (let i = backbone ? 1 : 0; i < 3; i++) fresh(() => ({ genome: lib.mutate(parent, rng, GARDEN.small), how: "small step" }), GARDEN.minStep);
   fresh(() => ({ genome: lib.mutate(parent, rng, GARDEN.big), how: "big step" }), GARDEN.minBig);
   for (let i = 0; i < 2; i++) {
     fresh(() => {
@@ -31948,7 +31963,7 @@ function renderGarden(panel, small) {
     const name = document.createElement("div");
     name.className = "cladeName";
     name.textContent = clade ? clade.name : "";
-    if (kid?.how?.startsWith("new body plan")) name.style.fontWeight = "bold";
+    if (kid?.how?.startsWith("new body plan") || kid?.how === "grows a backbone") name.style.fontWeight = "bold";
     cell.appendChild(name);
     grid.appendChild(cell);
   });

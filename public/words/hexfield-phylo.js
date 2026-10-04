@@ -35,6 +35,18 @@
         bilateral: !!F.bilateral, umbel: !!F.umbel, set: B.set || "alternate",
       };
     }
+    // A body built on bones (hexfield-morph.js, the skeleton): read from them.
+    if (g.spine?.on) {
+      const S = g.spine, pairs = Math.max(0, Math.min(2, Math.round(S.pairs || 0)));
+      const wings = !S.swim && pairs >= 2 && Boolean(S.wings);
+      // Fins are not legs; a front pair that is wings leaves the hind legs.
+      const legs = S.swim ? 0 : wings ? 2 : pairs * 2;
+      return {
+        kind: "creature", sym: "mirror", legs, radialN: 0, limbPrime: "line", limbsDown: true, fork: 0,
+        head: true, eyes: 2, ears: Math.round(S.ears || 0), tail: (S.tail || 0) > 0, spikes: 0, segs: 1, upright: (S.posture || 0) > 0.9,
+        nest: 0, loop: false, texture: g.surface?.texture || null, sky: wings && g.anchor === "sky", backbone: true, wings, fins: Boolean(S.swim),
+      };
+    }
     const limbs = g.limbs || {}, head = g.head || {}, sym = g.symmetry || "none", n = Math.max(0, Math.min(8, limbs.n || 0));
     // Legs as drawn: mirror grows pairs, radial grows round the body.
     const legs = sym === "mirror" ? Math.ceil(n / 2) * 2 : sym === "radial" ? (n ? Math.max(n, g.radialN || 0) : 0) : n;
@@ -76,15 +88,15 @@
     ["mollusca", "bilateria", "Mollusca", "mollusc", "mollusc", (t) => (t.legs >= 6 && t.limbPrime === "arc") || (t.head && !t.legs && !t.tail && (t.nest > 0 || t.loop || t.ears > 0))],
     ["cephalopoda", "mollusca", "Cephalopoda", "octopus", "octopus", (t) => t.legs >= 6],
     ["gastropoda", "mollusca", "Gastropoda", "snail", "snail", (t) => t.nest > 0 || t.loop],
-    ["vertebrata", "bilateria", "Vertebrata", "vertebrate", "vertebrate", (t) => t.head && t.eyes > 0 && t.sym !== "radial" && t.legs <= 4 && t.segs <= 3 && (t.tail || t.legs >= 2)],
+    ["vertebrata", "bilateria", "Vertebrata", "vertebrate", "vertebrate", (t) => t.backbone || (t.head && t.eyes > 0 && t.sym !== "radial" && t.legs <= 4 && t.segs <= 3 && (t.tail || t.legs >= 2))],
     ["actinopterygii", "vertebrata", "Actinopterygii", "fish", "fish", (t) => !t.legs && t.tail],
     ["tetrapoda", "vertebrata", "Tetrapoda", "tetrapod", null, (t) => t.legs >= 2],
-    ["amniota", "tetrapoda", "Amniota", "amniote", null, (t) => t.texture === "fur" || t.texture === "scales" || t.ears > 0],
+    ["amniota", "tetrapoda", "Amniota", "amniote", null, (t) => t.texture === "fur" || t.texture === "scales" || t.ears > 0 || t.wings],
     ["mammalia", "amniota", "Mammalia", "mammal", "mammal", (t) => t.texture === "fur" || t.ears > 0],
     ["felidae", "mammalia", "Felidae", "cat family", "cat", (t) => t.tail && t.legs >= 4 && t.ears > 0 && !t.upright],
     ["hominidae", "mammalia", "Hominidae", "great ape", "ape", (t) => t.upright && !t.tail && t.legs === 4 && t.segs <= 2],
     ["reptilia", "amniota", "Reptilia", "reptile", "reptile", () => true],
-    ["aves", "reptilia", "Aves", "bird", "bird", (t) => t.legs === 2 || t.sky],
+    ["aves", "reptilia", "Aves", "bird", "bird", (t) => t.wings || t.legs === 2 || t.sky],
     ["amphibia", "tetrapoda", "Amphibia", "amphibian", "frog", () => true],
     ["annelida", "bilateria", "Annelida", "segmented worm", "worm", (t) => !t.legs && t.segs >= 3 && !t.upright],
     ["platyhelminthes", "bilateria", "Platyhelminthes", "flatworm", "flatworm", (t) => !t.legs && !t.head && t.segs === 1],
