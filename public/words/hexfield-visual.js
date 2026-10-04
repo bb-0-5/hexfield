@@ -3176,8 +3176,35 @@
       for (const r of behind.boxes) path.rect(r.x, r.y, r.w, r.h);
       c.clip(path);
     };
-    // A shadow on the ground, thrown away from the light and lying flat.
-    if (dims.cast > 0 && grounded) {
+    // A body with bones casts its own shadow: every part carried along the
+    // light onto the ground, its legs and tail and head in it
+    // (HexfieldMorph.shadowOf) - not its outline sheared.
+    const cast3d = dims.cast > 0 && grounded && lit && item.entry.genome && global.HexfieldMorph?.shadowOf
+      ? global.HexfieldMorph.shadowOf(item.entry, lit.dir) : null;
+    if (cast3d?.length) {
+      const off = document.createElement("canvas");
+      off.width = W; off.height = H;
+      const oc = off.getContext("2d");
+      oc.fillStyle = oc.strokeStyle = L ? rgba(shade, 1, 0.3) : "rgb(12, 12, 24)";
+      oc.lineCap = oc.lineJoin = "round";
+      const X = (u) => b.x + u * b.w, Y = (v) => b.y + v * b.h;
+      for (const p of cast3d) {
+        oc.beginPath();
+        const pts = p.poly || p.line;
+        pts.forEach(([u, v], k) => (k ? oc.lineTo(X(u), Y(v)) : oc.moveTo(X(u), Y(v))));
+        if (p.poly) { oc.closePath(); oc.fill(); } else { oc.lineWidth = Math.max(1, p.width * b.w); oc.stroke(); }
+      }
+      ctx.save();
+      clipToBehind(ctx);
+      ctx.globalAlpha = (item.alpha ?? 1) * dims.cast * 0.75 * (L ? strength * (1 - 0.45 * L.soft) : 1);
+      // Softened only a little: its legs are what make it read.
+      const blur = Math.min(b.w, b.h) * (0.008 + (L ? L.soft * 0.04 : 0));
+      if ("filter" in ctx) ctx.filter = `blur(${Math.max(1, Math.round(blur))}px)`;
+      ctx.drawImage(off, 0, 0);
+      ctx.restore();
+      off.width = 0;
+    } else if (dims.cast > 0 && grounded) {
+      // A shadow on the ground, thrown away from the light and lying flat.
       const shadow = tintedPatch(layer, W, H, b, L ? rgba(shade, 1, 0.3) : "rgb(12, 12, 24)");
       const yb = b.y + b.h;
       let A, B;

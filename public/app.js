@@ -31691,10 +31691,39 @@ function cullMorphs(pop, keep) {
   const living = new Set(pop.members.map((m) => m.species));
   for (const sid of Object.keys(pop.species)) if (!living.has(sid) && !pop.species[sid].name) delete pop.species[sid];
 }
+/* The garden's pick is painted: the creature or plant last chosen there is
+ * the painting's grown thing for the next few paintings (GARDEN_FAVOURITE),
+ * words or none - so breeding in the garden shows in the paintings, not
+ * only in the population's numbers. Kept over a reload. */
+const GARDEN_FAVOURITE = { key: "hexfield.gardenFavourite.v1", paintings: 3 };
+function gardenFavourite() {
+  try { return JSON.parse(localStorage.getItem(GARDEN_FAVOURITE.key) || "null"); } catch { return null; }
+}
+function setGardenFavourite(fav) {
+  try { if (fav) localStorage.setItem(GARDEN_FAVOURITE.key, JSON.stringify(fav)); else localStorage.removeItem(GARDEN_FAVOURITE.key); } catch { /* memory only */ }
+}
+function chooseFavouriteMorph(plan) {
+  const fav = gardenFavourite();
+  if (!fav?.genome || !(fav.left > 0)) return null;
+  const kind = fav.kind === "plant" ? "plant" : "creature", lib = GROWN[kind].lib();
+  if (!lib) return null;
+  fav.left--;
+  setGardenFavourite(fav.left > 0 ? fav : null);
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0xfa70) >>> 0);
+  const pose = lib.POSES ? lib.POSES[Math.floor(rng() * lib.POSES.length)] : null;
+  const yaw = rng() < 0.5 ? 0 : Math.PI;
+  const entry = lib.develop(fav.genome, pose ? { pose, yaw } : undefined);
+  plan.morphChoice = [{ key: "garden", score: 1 }];
+  return { kind, pose, id: fav.id || null, genome: fav.genome, parents: fav.parents || [], entry, born: !fav.id, favourite: true,
+    primes: lib.primesOf ? lib.primesOf(fav.genome) : null, clade: morphClade(fav.genome), species: null };
+}
 function chooseMorph(plan, ref, width, height, params) {
   const Visual = globalThis.HexfieldVisual;
   if (!Visual || !ref) return null;
-  // Only when the words name no thing: grown things come before words.
+  // The garden's pick first, whatever the words.
+  const favourite = chooseFavouriteMorph(plan);
+  if (favourite) return favourite;
+  // Otherwise only when the words name no thing: grown things come before words.
   if (Visual.read(params?.__hexfieldWords?.text || "").subjects.length) return null;
   const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x30e9) >>> 0);
   const featured = chooseByTaste(["grown", "plant", "none"], {
@@ -31738,20 +31767,27 @@ function chooseMorph(plan, ref, width, height, params) {
   // One pose for the painting's creature: standing, walking or sitting
   // (a skeleton's joints; a body without bones has no pose).
   const pose = lib.POSES ? lib.POSES[Math.floor(rng() * lib.POSES.length)] : null;
+  // A body with bones is tried turned, too: a couple of angles each (one
+  // on a phone), and taste picks body and angle together.
+  const turns = [0, -0.6, 0.6, Math.PI, Math.PI - 0.6, Math.PI + 0.6];
+  const tries = isMobileBrowser() ? 1 : 2;
   for (const c of candidates) {
-    c.entry = lib.develop(c.genome, pose ? { pose } : undefined);
-    const read = { subjects: [{ key: "morph", entry: c.entry, count: 1, colour: null, morph: true }], settings: [] };
-    const laid = Visual.layout(read, sw, sh, mulberry32(7), plan.fx, { placeY: plan.fy });
-    sctx.putImageData(new ImageData(new Uint8ClampedArray(base), sw, sh), 0, 0);
-    Visual.paint(sctx, sw, sh, laid.items, mulberry32(0x7e57a));
-    const taste = tastePrediction(tasteFeatures(sctx, sw, sh, signature(sctx, sw, sh)));
-    // A newcomer earns its unlikeness to everything living; a member has none.
-    const near = c.born ? nearestMorph(pop, c.genome).d : 0;
-    c.score = taste + MORPH.novelty * 0.1 * Math.min(1, near / 0.2) + (rng() - 0.5) * 0.01;
-    if (c.score > bestScore) { bestScore = c.score; best = c; }
+    const yaws = c.genome.spine?.on ? [0, ...Array.from({ length: tries }, () => turns[1 + Math.floor(rng() * (turns.length - 1))])] : [0];
+    for (const yaw of yaws) {
+      const entry = lib.develop(c.genome, pose ? { pose, yaw } : undefined);
+      const read = { subjects: [{ key: "morph", entry, count: 1, colour: null, morph: true }], settings: [] };
+      const laid = Visual.layout(read, sw, sh, mulberry32(7), plan.fx, { placeY: plan.fy });
+      sctx.putImageData(new ImageData(new Uint8ClampedArray(base), sw, sh), 0, 0);
+      Visual.paint(sctx, sw, sh, laid.items, mulberry32(0x7e57a));
+      const taste = tastePrediction(tasteFeatures(sctx, sw, sh, signature(sctx, sw, sh)));
+      // A newcomer earns its unlikeness to everything living; a member has none.
+      const near = c.born ? nearestMorph(pop, c.genome).d : 0;
+      const score = taste + MORPH.novelty * 0.1 * Math.min(1, near / 0.2) + (rng() - 0.5) * 0.01;
+      if (score > bestScore) { bestScore = score; best = c; c.entry = entry; c.yaw = yaw; }
+    }
   }
   small.width = 0;
-  return { kind, pose, id: best.id || null, genome: best.genome, parents: best.parents, entry: best.entry, born: best.born,
+  return { kind, pose, yaw: best.yaw || 0, id: best.id || null, genome: best.genome, parents: best.parents, entry: best.entry, born: best.born,
     primes: lib.primesOf ? lib.primesOf(best.genome) : null, clade: morphClade(best.genome),
     species: best.id ? pop.members.find((m) => m.id === best.id)?.species : null };
 }
@@ -31923,6 +31959,8 @@ function gardenPick(index) {
   // Kept: born into the population with a KEEP, and shared.
   const morph = { id: null, genome: kid.genome, parents: [garden.parent.id, kid.mate].filter(Boolean) };
   morphOutcome(morph, { vote: 1 });
+  // ...and is what the next paintings paint.
+  setGardenFavourite({ kind: garden.kind, id: morph.id, genome: kid.genome, parents: morph.parents, left: GARDEN_FAVOURITE.paintings });
   garden.back.push(garden.parent);
   garden.parent = { id: morph.id, genome: kid.genome };
   garden.line++;
@@ -31934,11 +31972,11 @@ function gardenBack() {
   garden.line = Math.max(0, garden.line - 1);
   gardenChildren();
 }
-function drawMorphInto(canvas, genome, width, height = width) {
+function drawMorphInto(canvas, genome, width, height = width, view = undefined) {
   const Visual = globalThis.HexfieldVisual, lib = grownLib(genome);
   const cx = canvas.getContext("2d");
   cx.fillStyle = "#efe9dc"; cx.fillRect(0, 0, width, height);
-  const e = lib.develop(genome), rw = width * 0.86, rh = height * 0.86;
+  const e = lib.develop(genome, view), rw = width * 0.86, rh = height * 0.86;
   const w = Math.min(rw, rh * e.aspect), h = w / e.aspect;
   Visual.paint(cx, width, height, [{ key: "morph", entry: e, box: { x: (width - w) / 2, y: (height - h) / 2, w, h }, alpha: 1 }], mulberry32(3));
 }
@@ -31975,6 +32013,28 @@ function renderGarden(panel, small) {
     grid.appendChild(cell);
   });
   wrap.appendChild(grid);
+  // A body with bones seen all round: the parent from the side, three
+  // quarters, the front and the back - grown from its genes each time, so
+  // every pick turns with it.
+  if (garden.parent.genome?.spine?.on) {
+    const views = document.createElement("div");
+    views.id = "gardenViews";
+    views.style.cssText = "display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:6px";
+    const vs = Math.max(60, Math.floor(size * 0.72));
+    for (const [label, yaw] of [["side", 0], ["three quarters", -0.7], ["front", -Math.PI / 2], ["back", Math.PI / 2]]) {
+      const cell = document.createElement("div");
+      cell.style.cssText = "text-align:center;font-size:10px";
+      const c = document.createElement("canvas");
+      c.width = vs; c.height = vs;
+      c.style.cssText = "width:100%;height:auto;aspect-ratio:1;border-radius:6px;background:#efe9dc;border:1px dashed #cfc6b4";
+      c.setAttribute("aria-label", "view: " + label);
+      drawMorphInto(c, garden.parent.genome, vs, vs, { yaw });
+      cell.appendChild(c);
+      const t = document.createElement("div"); t.textContent = label; cell.appendChild(t);
+      views.appendChild(cell);
+    }
+    wrap.appendChild(views);
+  }
   const member = pop.members.find((m) => m.id === garden.parent.id);
   const sp = member ? pop.species[member.species] : null;
   const clade = morphClade(garden.parent.genome);
@@ -31992,12 +32052,20 @@ function renderGarden(panel, small) {
   const info = document.createElement("div");
   info.style.cssText = "margin:4px 0 8px;font-size:12px";
   const word = clade?.word && pop.cladeWords?.[clade.word] ? ` · typing "${clade.word}" paints the fittest kept one` : "";
-  info.textContent = `${garden.line} picks down this line · parent ${garden.parent.id || "a new single cell"}` +
+  const fav = gardenFavourite();
+  const painting = fav?.left > 0 && fav.genome && JSON.stringify(fav.genome) === JSON.stringify(garden.parent.genome) ? ` · the next ${fav.left} painting${fav.left > 1 ? "s" : ""} paint it` : "";
+  info.textContent = `${garden.line} picks down this line · parent ${garden.parent.id || "a new single cell"}${painting}` +
     (member ? ` · species ${member.species}${sp?.name ? " (" + sp.name + ")" : ""}` : "") +
     (pr ? ` · ${pr.forms.join(" + ")}` + (pr.relations.length ? ` (${pr.relations.join(", ")})` : "") : "") + word;
   wrap.appendChild(info);
   const row = document.createElement("div");
   const button = (label, fn) => { const b = document.createElement("button"); b.textContent = label; b.style.cssText = small + ";margin:0 8px 6px 0"; b.onclick = fn; row.appendChild(b); };
+  button("paint it", () => {
+    // The parent, painted now: a new painting with it in the reference.
+    setGardenFavourite({ kind, id: garden.parent.id, genome: garden.parent.genome, parents: [], left: GARDEN_FAVOURITE.paintings });
+    document.getElementById("morphsPanel")?.remove();
+    document.getElementById("reseedNow")?.click();
+  });
   button("back", () => { gardenBack(); showMorphsPanel("garden"); });
   button("a new single cell", () => { garden = { kind, parent: { id: null, genome: lib.cellGenome(Math.random) }, back: [], line: 0 }; gardenChildren(); showMorphsPanel("garden"); });
   button("start from the fittest", () => { startGarden(null, kind); showMorphsPanel("garden"); });
@@ -32431,6 +32499,48 @@ function chooseScenePerspective(read, width, height, ref, layoutFor, params, dra
   return chosen;
 }
 
+/* ── Seen from an angle ─────────────────────────────────────────────────
+ * A grown body with bones (hexfield-morph.js) is three-dimensional, and a
+ * scene with perspective turns it to sit in it: facing the way taste chose
+ * (right or left), it is turned into the scene's depth or out of it - into
+ * it toward the vanishing point's side, by more the farther it stands from
+ * the vanishing point - its length laid along the perspective's lines, and
+ * tilted by where it stands against the eye line:
+ * below it we look down on its back, above it up at its belly. Its box keeps
+ * its height and foot; its width follows the turned body. */
+function orientGrownItems(laid, width, height, rng) {
+  const Morph = globalThis.HexfieldMorph, view = laid?.view;
+  if (!Morph || !view || view.iso || !Number.isFinite(view.horizon)) return;
+  for (const item of laid.items || []) {
+    const e = item.entry;
+    if (!e?.skeleton || !e.genome || !item.box) continue;
+    const cx = item.box.x + item.box.w / 2, foot = item.box.y + item.box.h;
+    const pitch = Math.max(-0.55, Math.min(0.55, (foot - item.box.h * 0.4 - view.horizon) / height * 1.4));
+    let yaw = Number(e.yaw) || 0, shear = 0;
+    if (Array.isArray(view.vanish)) {
+      const facingRight = Math.cos(yaw) >= 0, vpRight = view.vanish[0] > cx;
+      const t = Math.min(1.2, 0.7 + 0.6 * Math.abs(view.vanish[0] - cx) / width);
+      // Mostly into the depth, now and then coming out of it.
+      const into = (facingRight === vpRight) !== (rng() < 0.25);
+      yaw = facingRight ? (into ? t : -t) : (into ? Math.PI - t : Math.PI + t);
+      /* Its length laid along the scene's perspective: the way it heads, on
+       * the canvas, is across by how much it is side on, and toward the
+       * vanishing point by how much it heads into the depth. Seen straight
+       * on, the body would not lean that way; a shear (verticals stay
+       * vertical) makes up the difference. */
+      let ux = view.vanish[0] - cx, uy = view.vanish[1] - foot;
+      const ul = Math.hypot(ux, uy) || 1; ux /= ul; uy /= ul;
+      const hx = Math.cos(yaw), hz = Math.sin(yaw), dx = hx + hz * 0.6 * ux, dy = hz * 0.6 * uy;
+      const ax = hx, ay = -hz * Math.sin(pitch);
+      if (Math.abs(ax) > 0.25 && Math.abs(dx) > 0.05) shear = Math.max(-1.2, Math.min(1.2, dy / dx - ay / ax));
+    }
+    const entry = Morph.develop(e.genome, { pose: e.pose || "stand", yaw, pitch, shear });
+    const h = item.box.h, w = h * entry.aspect;
+    item.box = { x: cx - w / 2, y: item.box.y, w, h };
+    item.entry = { ...entry, size: e.size };
+  }
+}
+
 function planScene(params, width, height, fx, drawSeed, ref = null, blobs = null, fy = null, morph = null) {
   const Visual = globalThis.HexfieldVisual;
   const text = params?.__hexfieldWords?.text || "";
@@ -32439,7 +32549,8 @@ function planScene(params, width, height, fx, drawSeed, ref = null, blobs = null
   const read = Visual.read(text);
   // A thing grown, not named (Morphology): the painting's subject when the
   // words name none.
-  if (morph && !read.subjects.length) read.subjects.push({ key: "morph", entry: morph.entry, count: 1, colour: null, morph: true });
+  // (The garden's pick stands with the named things, too.)
+  if (morph && (!read.subjects.length || morph.favourite)) read.subjects.push({ key: "morph", entry: morph.entry, count: 1, colour: null, morph: true });
   if (!read.subjects.length && !read.settings.length && !letters) return null;
   /* Words that name only things to put onto something - "a hat", "a flag",
    * "apples" - put them onto the painting's main blob, in its tilt and
@@ -32470,6 +32581,8 @@ function planScene(params, width, height, fx, drawSeed, ref = null, blobs = null
   const persp = things && ref && globalThis.HexfieldCraft?.perspective && ref.length === width * height * 4
     ? chooseScenePerspective(read, width, height, ref, layoutFor, params, drawSeed, { form: forms?.key || null }) : null;
   const laid = layoutFor(persp?.settings || null);
+  // Grown bodies turned to the scene's perspective (Seen from an angle).
+  orientGrownItems(laid, width, height, mulberry32(((Number(drawSeed) || 0) ^ 0x0a6e) >>> 0));
   const literal = Object.values(variations).reduce((sum, v) => sum + v.literal, 0) / Math.max(1, Object.keys(variations).length);
   const scene = {
     words: read.words, items: laid.items, focus: laid.focus, width, height, layer: null,

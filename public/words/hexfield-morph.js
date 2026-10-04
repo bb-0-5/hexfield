@@ -181,9 +181,9 @@
     }
   }
 
-  function develop(genome, { pose = "stand" } = {}) {
+  function develop(genome, { pose = "stand", yaw = 0, pitch = 0, shear = 0, light = null } = {}) {
     const g = normalise(genome);
-    if (g.spine.on) return developSkeleton(g, pose);
+    if (g.spine.on) return developSkeleton(g, pose, yaw, pitch, shear, light);
     const out = { masses: [], lines: [], loops: [] };
     // The body: segments along an axis, each a scaled copy.
     const seg = g.segments, n = Math.max(1, Math.min(5, seg.n));
@@ -321,7 +321,9 @@
    * fur and wings come after, by the tree's order (hexfield-phylo.js).
    *
    * One skeleton stands, walks or sits: a pose changes the joints, not the
-   * genes. */
+   * genes. And it is a body in three dimensions, so it can be seen from any
+   * side (yaw) and from above or below (pitch): turned to sit in a scene's
+   * perspective, and looked down on below the eye line, up at above it. */
   const POSES = ["stand", "walk", "sit"];
   const SPINE_DEFAULT = {
     on: false, bones: 6, length: 1.2, curve: 0.1, posture: 0.1, swim: true, wings: false,
@@ -341,94 +343,118 @@
     };
   }
 
-  const dir = (a) => [Math.cos(a), Math.sin(a)];
-  const add = (p, d, k) => [p[0] + d[0] * k, p[1] + d[1] * k];
-
-  /* Grown from its bones, in order of drawing (far first). */
-  function developSkeleton(g, pose = "stand") {
+  /* Grown from its bones, in three dimensions, then seen from an angle:
+   * `yaw` turns it about the vertical (0 side on, head to the right; -pi/2
+   * facing the viewer; pi/2 facing away; pi head to the left) and `pitch`
+   * tilts the view (above it, positive: its back shows and its far side
+   * rises; below it, negative: its belly). The trunk is a chain of spheres
+   * round the spine, so it reads from any side; legs, ears and eyes come in
+   * left and right pairs; what is farther is drawn first. */
+  function developSkeleton(g, pose = "stand", yaw = 0, pitch = 0, shear = 0, light = null) {
     const S = { ...SPINE_DEFAULT, ...g.spine };
-    const items = [];
-    // What each part of the body is, for a brush that follows it: bones
-    // (a to b, r thick) of the trunk, neck, tail and legs, the head round
-    // its middle, the eye.
-    const anatomy = [];
-    const bonePart = (k, a, b, r) => anatomy.push({ k, a, b, r });
     const swim = Boolean(S.swim), sit = pose === "sit" && !swim, walk = pose === "walk" && !swim;
     const up = clamp((S.posture - 0.5) / 0.9, 0, 1);
-    // The trunk: hip at the origin, the head end to the right; an upright
-    // body's trunk stands up from the hips.
+    const add3 = (p, d, k) => [p[0] + d[0] * k, p[1] + d[1] * k, p[2] + d[2] * k];
+    const dxy = (a) => [Math.cos(a), Math.sin(a), 0];
+    const Z = [0, 0, 1];
+    const parts = [];      // { kind, ... } in 3D, projected below
+    const bones = [];      // anatomy, in 3D
+    // The trunk: hip at the origin, the head end to the right (+x); an
+    // upright body's trunk stands up from the hips. z is across the body.
     const trunkA = -(S.posture + (sit ? 0.5 * (1 - up) : 0));
     const n = Math.max(2, Math.round(S.bones)), bone = S.length / n;
-    const spine = [[0, 0]];
+    const spine = [[0, 0, 0]];
     let a = trunkA - S.curve / 2;
-    for (let i = 0; i < n; i++) { a += S.curve / n; spine.push(add(spine[spine.length - 1], dir(a), bone)); }
+    for (let i = 0; i < n; i++) { a += S.curve / n; spine.push(add3(spine[spine.length - 1], dxy(a), bone)); }
     const endA = a, shoulder = spine[n], hip = spine[0];
     const girth = spine.map((_, i) => { const t = i / n; return S.hips * (1 - t) + S.chest * t + S.belly * Math.sin(Math.PI * t); });
-    // Which way is up from the spine at each vertebra (perpendicular, toward
-    // the back).
-    const backAt = (i) => { const p = spine[Math.max(0, i - 1)], q = spine[Math.min(n, i + 1)], l = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1; return [(q[1] - p[1]) / l, -(q[0] - p[0]) / l]; };
-    // Neck and skull.
+    const backAt = (i) => { const p = spine[Math.max(0, i - 1)], q = spine[Math.min(n, i + 1)], l = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1; return [(q[1] - p[1]) / l, -(q[0] - p[0]) / l, 0]; };
+    // The trunk's flesh: a sphere at each vertebra, and between them.
+    const balls = [];
+    for (let i = 0; i <= n; i++) {
+      balls.push({ c: spine[i], r: girth[i] });
+      if (i < n) balls.push({ c: add3(spine[i], [spine[i + 1][0] - spine[i][0], spine[i + 1][1] - spine[i][1], 0], 0.5), r: (girth[i] + girth[i + 1]) / 2 });
+    }
+    parts.push({ trunk: balls, colour: "body", texture: g.surface?.texture || null });
+    for (let i = 0; i < n; i++) bones.push({ k: "trunk", a: spine[i], b: spine[i + 1], r: (girth[i] + girth[i + 1]) / 2 });
+    // Neck and head.
     const neckA = endA - S.lift * (1 - up);
-    const neckEnd = add(shoulder, dir(neckA), S.neck);
+    const neckEnd = add3(shoulder, dxy(neckA), S.neck);
     const skullA = neckA + (0 - neckA) * 0.65;
     const cr = S.skull * 0.32;
-    const cranium = add(neckEnd, dir(skullA), cr * 0.6);
+    const fwd = dxy(skullA), upS = dxy(skullA - Math.PI / 2);
+    const cranium = add3(neckEnd, fwd, cr * 0.6);
     const snoutLen = S.skull * (0.35 + 0.65 * S.snout);
-    const tip = add(cranium, dir(skullA), cr * 0.5 + snoutLen);
-    const upS = dir(skullA - Math.PI / 2);
-    // Limbs: where each girdle hangs from, and its joints for the pose.
+    const neckW = Math.max(girth[n] * 1.2, cr * 1.4);
+    parts.push({ line: [shoulder, add3(shoulder, dxy(neckA), S.neck * 0.5), neckEnd], width: neckW, colour: "body", bias: -0.005 });
+    bones.push({ k: "neck", a: shoulder, b: neckEnd, r: neckW / 2 });
+    parts.push({ ball: { c: cranium, r: cr }, colour: "body", tone: 0.04, bias: -0.01 });
+    // The snout: from the front of the skull to its tip, as wide as the
+    // jaw - its outline is the hull of where those points fall.
+    const base = add3(cranium, fwd, cr * 0.3);
+    parts.push({ hull: [add3(cranium, upS, cr * 0.7), add3(base, upS, -cr * 0.75), add3(base, Z, cr * 0.5), add3(base, Z, -cr * 0.5),
+      add3(cranium, fwd, cr * 0.5 + snoutLen), add3(add3(cranium, fwd, cr * 0.5 + snoutLen * 0.8), upS, -cr * 0.2)], colour: "body", tone: 0.04, bias: -0.015 });
+    bones.push({ k: "head", a: cranium, b: add3(cranium, fwd, cr * 0.5 + snoutLen), r: cr });
+    // Ears: a pair, left and right on top of the skull.
+    if (Math.round(S.ears) > 0) {
+      const len = S.skull * S.earLen * (Math.round(S.ears) === 1 ? 0.6 : 1);
+      for (const side of [-1, 1]) {
+        const back = dxy(skullA - Math.PI / 2 - 0.35), root = add3(add3(cranium, back, cr * 0.75), Z, side * cr * 0.45);
+        // A shade darker than the head, so an ear reads against the body
+        // behind it from the front or back.
+        parts.push({ poly: [add3(root, fwd, -cr * S.earW), add3(root, dxy(skullA - Math.PI / 2 - 0.5), len), add3(root, fwd, cr * S.earW)], colour: "body", tone: -0.12, bias: -0.012 });
+      }
+    }
+    // Eyes: a pair, seen only from their own side.
+    for (const side of [-1, 1]) {
+      const eye = add3(add3(add3(cranium, fwd, cr * 0.35), upS, cr * 0.25), Z, side * cr * 0.42);
+      parts.push({ eye: { c: eye, r: cr * 0.2, centre: cranium }, bias: -0.2 });
+    }
+    // Limbs: left and right of each girdle, joints by pose; walking, the
+    // diagonal pairs swing together.
     const legs = [];
     if (!swim && S.pairs > 0) {
       const girdles = S.pairs >= 2 ? [["front", n, shoulder], ["rear", 0, hip]] : [["rear", 0, hip]];
       for (const [which, i, at] of girdles) {
-        const back = backAt(i), root = add(at, back, -girth[i] * 0.45);
-        const wing = which === "front" && S.wings;
-        let angles;
-        if (wing) angles = null;
-        else if (up > 0.5) angles = which === "front" ? [Math.PI / 2 + 0.25, Math.PI / 2 - 0.2, Math.PI / 2] : [Math.PI / 2 - 0.05, Math.PI / 2 + 0.05, 0.05];
-        // On its toes: the hind foot is a long bone stood nearly upright (a
-        // cat's hock), the front a short pastern; only the toes lie forward.
-        else if (which === "rear") angles = sit ? [-0.25, Math.PI / 2 + 1.25, 0] : [Math.PI / 2 - 0.45 - S.bend * 0.25, Math.PI / 2 + 0.45 + S.bend * 0.4, Math.PI / 2 - 0.15 - S.bend * 0.15];
-        else angles = [Math.PI / 2 + 0.2, Math.PI / 2 - 0.08, Math.PI / 2 - 0.35];
-        legs.push({ which, root, angles, wing, i });
+        for (const side of [-1, 1]) {
+          const root = add3(add3(at, backAt(i), -girth[i] * 0.45), Z, side * girth[i] * 0.55);
+          const wing = which === "front" && S.wings;
+          let angles = null;
+          if (!wing) {
+            if (up > 0.5) angles = which === "front" ? [Math.PI / 2 + 0.25, Math.PI / 2 - 0.2, Math.PI / 2] : [Math.PI / 2 - 0.05, Math.PI / 2 + 0.05, 0.05];
+            else if (which === "rear") angles = sit ? [-0.25, Math.PI / 2 + 1.25, 0] : [Math.PI / 2 - 0.45 - S.bend * 0.25, Math.PI / 2 + 0.45 + S.bend * 0.4, Math.PI / 2 - 0.15 - S.bend * 0.15];
+            else angles = [Math.PI / 2 + 0.2, Math.PI / 2 - 0.08, Math.PI / 2 - 0.35];
+          }
+          const swing = walk ? (which === "front" ? 0.35 : -0.35) * side : 0;
+          legs.push({ which, side, root, angles, wing, swing });
+        }
       }
     }
-    const legPoints = (leg, swing) => {
+    const legPoints = (leg) => {
       const [u, l, f] = leg.angles;
-      const k = add(leg.root, dir(u + swing), S.upper);
-      const ankle = add(k, dir(l + swing * 0.6), S.lower);
-      const toe = add(ankle, dir(f), S.foot);
-      return [leg.root, k, ankle, toe];
+      const k = add3(leg.root, dxy(u + leg.swing), S.upper);
+      const ankle = add3(k, dxy(l + leg.swing * 0.6), S.lower);
+      return [leg.root, k, ankle, add3(ankle, dxy(f), S.foot)];
     };
-    const drawLeg = (leg, swing, colour) => {
-      const p = legPoints(leg, swing), w = S.legW;
-      items.push({ line: [p[0], p[1]], width: w, colour });
-      items.push({ line: [p[1], p[2]], width: w * 0.75, colour });
-      items.push({ line: [p[2], p[3]], width: w * 0.55, colour });
-      const k = colour === "far" ? "far" : "leg";
-      bonePart(k, p[0], p[1], w / 2); bonePart(k, p[1], p[2], w * 0.375); bonePart(k, p[2], p[3], w * 0.275);
-      // Toes, splayed a little.
+    for (const leg of legs) {
+      if (leg.wing) {
+        // A wing folded along the back: a fan of feathers from the shoulder.
+        const len = (S.upper + S.lower) * 1.5, back = trunkA + Math.PI, pts = [leg.root];
+        for (let k = 0; k <= 6; k++) pts.push(add3(add3(leg.root, dxy(back + 0.05 - k * 0.07), len * (1 - k * 0.06)), Z, leg.side * 0.04));
+        pts.push(add3(leg.root, dxy(back - 0.55), len * 0.35));
+        parts.push({ poly: pts, colour: "limb", leg: true });
+        bones.push({ k: "wing", a: leg.root, b: add3(leg.root, dxy(back - 0.2), len * 0.9), r: len * 0.18, leg: true });
+        continue;
+      }
+      const p = legPoints(leg), w = S.legW;
+      const group = [];
+      group.push({ line: [p[0], p[1]], width: w }, { line: [p[1], p[2]], width: w * 0.75 }, { line: [p[2], p[3]], width: w * 0.55 });
       for (let d = 0; d < Math.round(S.digits); d++) {
         const spread = (d / Math.max(1, Math.round(S.digits) - 1) - 0.5) * 0.7;
-        items.push({ line: [p[3], add(p[3], dir(spread * 0.6), S.foot * 0.35)], width: w * 0.2, colour });
+        group.push({ line: [p[3], add3(p[3], [Math.cos(spread * 0.6), Math.sin(spread * 0.6) * 0.3, Math.sin(spread) * 0.6], S.foot * 0.35)], width: w * 0.2 });
       }
-      return p;
-    };
-    const drawWing = (leg, colour, tone) => {
-      // A wing folded along the back: a long fan of feathers from the shoulder.
-      const len = (S.upper + S.lower) * 1.5, base = leg.root, back = trunkA + Math.PI;
-      const pts = [base];
-      for (let k = 0; k <= 6; k++) pts.push(add(base, dir(back + 0.05 - k * 0.07), len * (1 - k * 0.06)));
-      pts.push(add(base, dir(back - 0.55), len * 0.35));
-      items.push({ poly: pts, colour, tone, smooth: false });
-      bonePart("wing", base, add(base, dir(back - 0.2), len * 0.9), len * 0.18);
-    };
-    // The far side first: far legs (or wing), far ear.
-    const swingOf = (leg, far) => (walk ? (leg.which === "front" ? 0.35 : -0.35) * (far ? -1 : 1) : 0);
-    for (const leg of legs) {
-      if (leg.wing) continue;
-      const shifted = { ...leg, root: add(leg.root, dir(trunkA + Math.PI), S.legW * 0.6) };
-      drawLeg(shifted, swingOf(leg, true), "far");
+      parts.push({ group, leg: true, foot: p[3], which: leg.which });
+      bones.push({ k: "leg", a: p[0], b: p[1], r: w / 2, leg: true }, { k: "leg", a: p[1], b: p[2], r: w * 0.375, leg: true }, { k: "leg", a: p[2], b: p[3], r: w * 0.275, leg: true });
     }
     // The tail: the spine carried on behind, curling, thinning.
     if (S.tail > 0) {
@@ -436,62 +462,132 @@
       const tn = Math.round(S.tail), tl = S.tailLen / tn;
       for (let k = 0; k < tn; k++) {
         ta -= S.tailCurl / tn;
-        const q = add(p, dir(ta), tl);
-        items.push({ line: [p, q], width: Math.max(0.015, S.hips * 0.7 * (1 - k / tn)), colour: "body" });
-        bonePart("tail", p, q, Math.max(0.015, S.hips * 0.7 * (1 - k / tn)) / 2);
+        const q = add3(p, dxy(ta), tl), w = Math.max(0.015, S.hips * 0.7 * (1 - k / tn));
+        parts.push({ line: [p, q], width: w, colour: "body", bias: 0.01 });
+        bones.push({ k: "tail", a: p, b: q, r: w / 2 });
         p = q;
       }
-      // A fish's tail ends in a fin.
-      if (swim) items.push({ poly: [p, add(p, dir(ta - 0.7), S.tailLen * 0.45), add(p, dir(ta), S.tailLen * 0.2), add(p, dir(ta + 0.7), S.tailLen * 0.45)], colour: "limb", smooth: false });
+      if (swim) parts.push({ hull: [p, add3(p, dxy(ta - 0.7), S.tailLen * 0.45), add3(p, dxy(ta), S.tailLen * 0.2), add3(p, dxy(ta + 0.7), S.tailLen * 0.45)], colour: "limb", bias: 0.01 });
     }
-    // The trunk's flesh round the spine: along the back, round the chest,
-    // back under the belly, round the rump.
-    const outline = [];
-    for (let i = 0; i <= n; i++) outline.push(add(spine[i], backAt(i), girth[i] * 0.9));
-    for (let k = 1; k <= 4; k++) outline.push(add(shoulder, dir(endA - Math.PI / 2 + k * Math.PI / 5), girth[n]));
-    for (let i = n; i >= 0; i--) outline.push(add(spine[i], backAt(i), -girth[i] * 1.05));
-    for (let k = 1; k <= 4; k++) outline.push(add(hip, dir(trunkA + Math.PI / 2 + k * Math.PI / 5), girth[0]));
-    items.push({ poly: outline, colour: "body", texture: g.surface?.texture || null, smooth: true });
-    for (let i = 0; i < n; i++) bonePart("trunk", spine[i], spine[i + 1], (girth[i] + girth[i + 1]) / 2);
-    // Fins: a fish's on its back and under it where limbs will be.
+    // Fins: a fish's on its back, and a pair under it where limbs will be.
     if (swim) {
       const mid = Math.floor(n / 2), back = backAt(mid);
-      items.push({ poly: [add(spine[mid - 1 >= 0 ? mid - 1 : 0], back, girth[mid] * 0.8), add(spine[mid], back, girth[mid] * 1.7), add(spine[Math.min(n, mid + 1)], back, girth[mid] * 0.8)], colour: "limb", smooth: false });
+      parts.push({ poly: [add3(spine[Math.max(0, mid - 1)], back, girth[mid] * 0.8), add3(spine[mid], back, girth[mid] * 1.7), add3(spine[Math.min(n, mid + 1)], back, girth[mid] * 0.8)], colour: "limb", bias: 0.002 });
       for (const i of S.pairs >= 2 ? [n - 1, 1] : S.pairs >= 1 ? [1] : []) {
-        const b = backAt(i), root = add(spine[i], b, -girth[i] * 0.7);
-        items.push({ poly: [root, add(root, dir(trunkA + Math.PI * 0.75), S.upper * 0.6), add(root, dir(trunkA + Math.PI * 0.95), S.upper * 0.45)], colour: "limb", smooth: false });
+        for (const side of [-1, 1]) {
+          const root = add3(add3(spine[i], backAt(i), -girth[i] * 0.7), Z, side * girth[i] * 0.6);
+          parts.push({ poly: [root, add3(root, dxy(trunkA + Math.PI * 0.75), S.upper * 0.6), add3(add3(root, dxy(trunkA + Math.PI * 0.95), S.upper * 0.45), Z, side * 0.05)], colour: "limb", leg: true });
+        }
       }
     }
-    // Neck, head.
-    items.push({ line: [shoulder, add(shoulder, dir(neckA), S.neck * 0.5), neckEnd], width: Math.max(girth[n] * 1.2, cr * 1.4), colour: "body" });
-    bonePart("neck", shoulder, neckEnd, Math.max(girth[n] * 1.2, cr * 1.4) / 2);
-    bonePart("head", cranium, tip, cr);
-    const ears = Math.round(S.ears);
-    const ear = (k, colour) => {
-      const ba = skullA - Math.PI / 2 - 0.35 + k * 0.55, base = add(cranium, dir(ba), cr * 0.75), side = dir(ba + Math.PI / 2);
-      items.push({ poly: [add(base, side, -cr * S.earW), add(base, dir(ba - 0.15), S.skull * S.earLen), add(base, side, cr * S.earW)], colour, smooth: false });
+
+    /* Seen from the angle: turned by yaw, tilted by pitch; z2 is how far. */
+    const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+    const view = ([x, y, z]) => { const x1 = x * cy - z * sy, z1 = x * sy + z * cy; return [x1, y * cp - z1 * sp, y * sp + z1 * cp]; };
+    // ...and sheared so its length lies along the scene's perspective
+    // (verticals stay vertical): `shear` is set by the scene (orientGrownItems).
+    const flat = (p) => { const v = view(p); return [v[0], v[1] + v[0] * shear]; };
+    const depthOf = (pts) => pts.reduce((s, p) => s + view(p)[2], 0) / pts.length;
+    const trunkDepth = depthOf(spine);
+    const hull2 = (pts) => {
+      const P = pts.slice().sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+      const cross = (o, p, q) => (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0]);
+      const lo = [], hi = [];
+      for (const p of P) { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+      for (const p of P.slice().reverse()) { while (hi.length >= 2 && cross(hi[hi.length - 2], hi[hi.length - 1], p) <= 0) hi.pop(); hi.push(p); }
+      return lo.slice(0, -1).concat(hi.slice(0, -1));
     };
-    if (ears >= 2) ear(1, "far");
-    items.push({ ellipse: [cranium[0], cranium[1], cr, cr * 0.9], colour: "body", tone: 0.04 });
-    items.push({ poly: [add(cranium, upS, cr * 0.7), tip, add(add(cranium, dir(skullA), cr * 0.3), upS, -cr * 0.75)], colour: "body", tone: 0.04, smooth: true });
-    if (ears >= 1) ear(0, "body");
-    // The near side: legs (or wing) over the body.
-    for (const leg of legs) {
-      if (leg.wing) drawWing(leg, "limb", 0);
-      else drawLeg(leg, swingOf(leg, false), "limb");
+    const items = [];
+    for (const part of parts) {
+      if (part.trunk) {
+        // The union of the trunk's spheres as seen: each a disc; its outline
+        // the farthest edge of any disc along rays from their middle.
+        const discs = part.trunk.map((b) => ({ c: flat(b.c), r: b.r }));
+        const m = discs.reduce((s, d) => [s[0] + d.c[0] / discs.length, s[1] + d.c[1] / discs.length], [0, 0]);
+        const outline = [];
+        for (let k = 0; k < 40; k++) {
+          const t0 = (k / 40) * Math.PI * 2, u = [Math.cos(t0), Math.sin(t0)];
+          let far = 0;
+          for (const d of discs) {
+            const ox = d.c[0] - m[0], oy = d.c[1] - m[1], along = ox * u[0] + oy * u[1], off2 = ox * ox + oy * oy - along * along;
+            if (off2 < d.r * d.r) far = Math.max(far, along + Math.sqrt(d.r * d.r - off2));
+          }
+          outline.push([m[0] + u[0] * far, m[1] + u[1] * far]);
+        }
+        items.push({ poly: outline, colour: part.colour, texture: part.texture, smooth: true, depth: trunkDepth });
+      } else if (part.line) items.push({ line: part.line.map(flat), width: part.width, colour: part.colour, depth: depthOf(part.line) + (part.bias || 0) });
+      else if (part.poly) {
+        const d = depthOf(part.poly);
+        items.push({ poly: part.poly.map(flat), colour: part.leg && d > trunkDepth ? "far" : part.colour, tone: part.tone || 0, smooth: false, depth: d + (part.bias || 0) });
+      } else if (part.hull) items.push({ poly: hull2(part.hull.map(flat)), colour: part.colour, tone: part.tone || 0, smooth: true, depth: depthOf(part.hull) + (part.bias || 0) });
+      else if (part.ball) { const [x, y] = flat(part.ball.c); items.push({ ellipse: [x, y, part.ball.r, part.ball.r], colour: part.colour, tone: part.tone || 0, depth: depthOf([part.ball.c]) + (part.bias || 0) }); }
+      else if (part.eye) {
+        // Behind the head from here: not seen.
+        if (view(part.eye.c)[2] > view(part.eye.centre)[2] - part.eye.r * 0.2) continue;
+        const [x, y] = flat(part.eye.c), r = part.eye.r, d = depthOf([part.eye.c]) + part.bias;
+        items.push({ ellipse: [x, y, r, r], colour: "accent", tone: 0.3, depth: d }, { ellipse: [x + r * 0.15, y, r * 0.5, r * 0.6], colour: "eye", tone: 0, depth: d - 0.001 });
+      } else if (part.group) {
+        const d = depthOf(part.group.flatMap((l) => l.line));
+        const colour = d > trunkDepth ? "far" : "limb";
+        part.group.forEach((l, k) => items.push({ line: l.line.map(flat), width: l.width, colour, depth: d - k * 1e-4, foot: k === 2 ? flat(part.foot) : null, which: part.which }));
+      }
     }
-    // The eye.
-    const eye = add(add(cranium, dir(skullA), cr * 0.35), upS, cr * 0.25);
-    items.push({ ellipse: [eye[0], eye[1], cr * 0.2, cr * 0.2], colour: "accent", tone: 0.3 });
-    items.push({ ellipse: [eye[0] + cr * 0.03, eye[1], cr * 0.1, cr * 0.12], colour: "eye", tone: 0 });
-    bonePart("eye", eye, eye, cr * 0.2);
-    // Stood on the ground: tilted so the lowest front and rear feet are level.
-    if (legs.length === 2 && !legs.some((l) => l.wing) && !sit) {
-      const feet = legs.map((l) => legPoints(l, 0)[3]);
-      const tilt = Math.atan2(feet[0][1] - feet[1][1], feet[0][0] - feet[1][0]);
-      if (Math.abs(tilt) < 0.6 && Math.abs(tilt) > 0.01) rotateItems(items, -tilt, anatomy);
+    items.sort((p, q) => q.depth - p.depth);
+    const anatomy = bones.map((b) => {
+      const far = b.leg && depthOf([b.a, b.b]) > trunkDepth;
+      return { k: far ? (b.k === "leg" ? "far" : b.k) : b.k, a: flat(b.a), b: flat(b.b), r: b.r };
+    });
+    // The eye, last of all, is part of the anatomy too.
+    const eyeItem = items.find((it) => it.colour === "eye");
+    if (eyeItem) anatomy.push({ k: "eye", a: [eyeItem.ellipse[0], eyeItem.ellipse[1]], b: [eyeItem.ellipse[0], eyeItem.ellipse[1]], r: eyeItem.ellipse[2] * 2 });
+    // Stood on the ground: tilted so the lowest front and rear feet are level
+    // (side on enough for there to be a front and a back to level).
+    if (!sit && !legs.some((l) => l.wing) && Math.abs(cy) > 0.5 && Math.abs(pitch) < 0.3) {
+      const lowest = (which) => items.filter((it) => it.foot && it.which === which).reduce((best, it) => (!best || it.foot[1] > best[1] ? it.foot : best), null);
+      const f = lowest("front"), r = lowest("rear");
+      if (f && r) {
+        // The line from the rear foot to the front one, made level.
+        let dx = f[0] - r[0], dy = f[1] - r[1];
+        if (dx < 0) { dx = -dx; dy = -dy; }
+        const t = Math.atan2(dy, dx);
+        if (Math.abs(t) < 0.6 && Math.abs(t) > 0.01) rotateItems(items, -t, anatomy);
+      }
     }
-    return fitItems(g, items, swim, anatomy);
+    /* Its shadow, if a light is given (a direction toward it, in the scene:
+     * x across, y up negative, z into the picture): every part of the body
+     * carried along the light onto the ground it stands on, and seen from the
+     * same angle - so the shadow has its legs, tail and head, and says what
+     * the thing is even when the thing itself is painted loosely. */
+    const shadow = [];
+    if (light && !swim) {
+      // The light's travel, from the scene into the body's own frame.
+      const wx = -light[0], wy = -light[1], wz = -light[2];
+      const L = [wx * cy + wz * sy, Math.max(0.18, wy), -wx * sy + wz * cy];
+      const ground = Math.max(...legs.filter((l) => !l.wing).map((l) => legPoints(l)[3][1]), ...balls.map((b) => b.c[1] + b.r));
+      const onGround = (p) => { const t = (ground - p[1]) / L[1]; return [p[0] + L[0] * t, ground, p[2] + L[2] * t]; };
+      const disc = (c, r) => {
+        // A sphere's shadow: a disc on the ground, drawn out along the light.
+        const s = onGround(c), hx = L[0], hz = L[2], hl = Math.hypot(hx, hz) || 1, stretch = Math.min(3, 1 / L[1]);
+        const pts = [];
+        for (let k = 0; k < 12; k++) {
+          const t = (k / 12) * Math.PI * 2, a = Math.cos(t) * r * stretch, b = Math.sin(t) * r;
+          pts.push(flat([s[0] + (hx / hl) * a - (hz / hl) * b, ground, s[2] + (hz / hl) * a + (hx / hl) * b]));
+        }
+        return pts;
+      };
+      for (const b of balls) shadow.push({ poly: hull2(disc(b.c, b.r)) });
+      shadow.push({ poly: hull2(disc(cranium, cr)) });
+      shadow.push({ line: [shoulder, neckEnd].map((p) => flat(onGround(p))), width: neckW });
+      for (const part of parts) {
+        if (part.group) for (const l of part.group.slice(0, 3)) shadow.push({ line: l.line.map((p) => flat(onGround(p))), width: l.width });
+        else if (part.line && part.bias === 0.01) shadow.push({ line: part.line.map((p) => flat(onGround(p))), width: part.width });
+      }
+    }
+    const entry = fitItems(g, items, swim, anatomy, shadow);
+    // What it was grown from and how it is seen, so it can be turned again
+    // (a painting's perspective; the garden's views; a learned word).
+    entry.genome = g; entry.pose = pose; entry.yaw = yaw; entry.pitch = pitch; entry.shear = shear;
+    return entry;
   }
   function rotateItems(items, angle, anatomy = []) {
     const c = Math.cos(angle), s = Math.sin(angle), r = ([x, y]) => [x * c - y * s, x * s + y * c];
@@ -503,7 +599,7 @@
     }
   }
   /* Fitted into a box, in the order drawn. */
-  function fitItems(g, items, swim, anatomy = []) {
+  function fitItems(g, items, swim, anatomy = [], shadow = []) {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     const take = (x, y, pad = 0) => { x0 = Math.min(x0, x - pad); y0 = Math.min(y0, y - pad); x1 = Math.max(x1, x + pad); y1 = Math.max(y1, y + pad); };
     for (const it of items) {
@@ -530,6 +626,8 @@
       parts, grown: true, skeleton: true,
       // In the box's units (r in parts of its width).
       anatomy: anatomy.map((p) => ({ k: p.k, a: U(p.a), b: U(p.b), r: +(p.r / bw).toFixed(4) })),
+      // Its shadow, in the same units (it reaches outside the box).
+      ...(shadow.length ? { shadow: shadow.map((p) => (p.poly ? { poly: p.poly.map(U) } : { line: p.line.map(U), width: +(p.width / bw).toFixed(4) })) } : {}),
     };
   }
 
@@ -630,5 +728,12 @@
     return { forms: [...forms], relations: relations.filter(Boolean) };
   }
 
-  global.HexfieldMorph = { PRIME_FORMS, PRIME_RELATIONS, POSES, randomGenome, cellGenome, develop, mutate, crossover, distance, primesOf, normalise };
+  /* The shadow of a grown body as it was drawn (its genes, pose and angle on
+   * the entry), under a light (a direction toward it, in the scene). */
+  function shadowOf(entry, light) {
+    if (!entry?.genome?.spine?.on || !light) return null;
+    return develop(entry.genome, { pose: entry.pose, yaw: entry.yaw || 0, pitch: entry.pitch || 0, shear: entry.shear || 0, light }).shadow || null;
+  }
+
+  global.HexfieldMorph = { PRIME_FORMS, PRIME_RELATIONS, POSES, shadowOf, randomGenome, cellGenome, develop, mutate, crossover, distance, primesOf, normalise };
 })(typeof window !== "undefined" ? window : globalThis);
