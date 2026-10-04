@@ -3176,11 +3176,13 @@
       for (const r of behind.boxes) path.rect(r.x, r.y, r.w, r.h);
       c.clip(path);
     };
-    // A body with bones casts its own shadow: every part carried along the
-    // light onto the ground, its legs and tail and head in it
-    // (HexfieldMorph.shadowOf) - not its outline sheared.
-    const cast3d = dims.cast > 0 && grounded && lit && item.entry.genome && global.HexfieldMorph?.shadowOf
-      ? global.HexfieldMorph.shadowOf(item.entry, lit.dir) : null;
+    // A body with bones, or a plant, casts its own shadow: every part carried
+    // along the light onto the ground - legs, tail and head; trunk, branches
+    // and leaves (HexfieldMorph / HexfieldFlora shadowOf) - not its outline
+    // sheared.
+    const shadowLib = item.entry.plant ? global.HexfieldFlora : global.HexfieldMorph;
+    const cast3d = dims.cast > 0 && grounded && lit && item.entry.genome && shadowLib?.shadowOf
+      ? shadowLib.shadowOf(item.entry, lit.dir) : null;
     if (cast3d?.length) {
       const off = document.createElement("canvas");
       off.width = W; off.height = H;

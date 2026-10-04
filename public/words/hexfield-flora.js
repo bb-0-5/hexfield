@@ -73,10 +73,10 @@
     return pts;
   }
 
-  function develop(genome) {
+  function develop(genome, view = {}) {
     const g = normalise(genome);
     const out = { polys: [], lines: [], dots: [] };
-    const leafC = "leaf", stemC = "stem";
+    const leafC = "leaf";
     // One green cell, or a few: no stem, no leaves.
     if (!g.vascular && g.leaf.type === "none" && !(g.filament > 0)) {
       const r = g.cell.size * 0.5, pts = [];
@@ -98,102 +98,218 @@
       }
       return fit(g, out);
     }
-    // Everything else stands on a stem and branches.
-    const B = g.branching, L = g.leaf;
-    const height = g.vascular ? 0.4 + g.height * 1.2 : 0.18;
-    // No leaves on a stem that carries water: the stem is the leaf - thick,
-    // green and fleshy (a cactus).
+    // Everything else stands on a stem and branches, in three dimensions.
+    return develop3(g, view);
+  }
+
+  /* ── Growing in three dimensions ───────────────────────────────────────
+   * A plant on a stem grows in space, not on a page: each fork spreads round
+   * its stem (by the golden angle, as real shoots do), leaves are set round
+   * the stem by their arrangement - alternate, opposite, whorled, spiral -
+   * each blade lying across the stem, and flowers face outward and up. Then
+   * it is seen from an angle, like a grown creature (hexfield-morph.js):
+   * turned (yaw) and from above or below (pitch), farther parts first; and
+   * under a light its shadow is every stem, leaf and flower carried along the
+   * light onto the ground - a tree's shadow has its trunk and branches and
+   * the dapple of its leaves. y is down (the ground at 0), z into the
+   * picture. */
+  const GOLDEN = 2.39996;
+  const v3 = {
+    add: (p, d, k = 1) => [p[0] + d[0] * k, p[1] + d[1] * k, p[2] + d[2] * k],
+    lerp: (p, q, t) => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t],
+    dot: (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2],
+    cross: (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]],
+    norm: (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; },
+  };
+  // v turned about the unit axis k by t (Rodrigues).
+  const turnAbout = (v, k, t) => {
+    const c = Math.cos(t), s = Math.sin(t), d = v3.dot(k, v), x = v3.cross(k, v);
+    return [v[0] * c + x[0] * s + k[0] * d * (1 - c), v[1] * c + x[1] * s + k[1] * d * (1 - c), v[2] * c + x[2] * s + k[2] * d * (1 - c)];
+  };
+  const across = (d) => v3.norm(v3.cross(d, Math.abs(d[1]) < 0.9 ? [0, -1, 0] : [1, 0, 0]));
+  // d leant away from itself by `angle`, the lean turned round d by `round`.
+  const leanFrom = (d, angle, round) => v3.norm(turnAbout(turnAbout(d, across(d), angle), d, round));
+  const UP = [0, -1, 0];
+
+  function develop3(g, { yaw = 0, pitch = 0, shear = 0, light = null } = {}) {
+    const B = g.branching, L = g.leaf, F = g.flower;
+    const parts = [];   // 3D: { line, width, colour } | { poly, colour, tone, leaf } | { dot, r, colour, tone }
+    const leafC = "leaf", stemC = "stem";
     const fleshy = g.vascular && L.type === "none";
-    const trunkW = fleshy ? 0.1 + g.wood * 0.04 : (g.vascular ? 0.02 + g.wood * 0.08 : 0.015);
-    const tips = [];
-    const leafAt = (x, y, a, k) => {
-      if (L.type === "none") return;
+    // (Returns how many pieces it drew, for the budget.)
+    const leafAt = (p, ld, stemDir, k) => {
+      if (L.type === "none") return 0;
       const len = (L.type === "frond" ? 0.5 : 0.18) * (0.6 + L.size) * k;
+      // The blade's breadth lies across the stem.
+      let fv = v3.cross(ld, stemDir);
+      fv = Math.hypot(...fv) < 1e-3 ? across(ld) : v3.norm(fv);
       if (L.type === "frond") {
-        // A frond: a curved stalk with leaflets (pinnae) both sides.
-        const pts = [[x, y]]; let px = x, py = y, aa = a;
+        const pts = [p];
+        let q = p, aa = ld;
         const pin = Math.max(4, Math.round(6 + L.leaflets * 6));
         for (let i = 1; i <= pin; i++) {
-          aa += 0.06; px += Math.cos(aa) * len / pin; py += Math.sin(aa) * len / pin; pts.push([px, py]);
+          aa = v3.norm(turnAbout(aa, fv, 0.06));
+          q = v3.add(q, aa, len / pin); pts.push(q);
           const pl = len * 0.22 * (1 - i / (pin + 2));
-          for (const side of [-1, 1]) out.lines.push({ pts: [[px, py], [px + Math.cos(aa + side * 1.2) * pl, py + Math.sin(aa + side * 1.2) * pl]], width: 0.012, colour: leafC });
+          for (const side of [-1, 1]) parts.push({ line: [q, v3.add(q, v3.norm(v3.add(v3.add([0, 0, 0], aa, Math.cos(1.2)), fv, side * Math.sin(1.2))), pl)], width: 0.012, colour: leafC });
         }
-        out.lines.push({ pts, width: 0.014, colour: leafC });
-        return;
+        parts.push({ line: pts, width: 0.014, colour: leafC });
+        return pin * 2 + 1;
       }
-      const leaflets = L.type === "broad" ? Math.round(L.leaflets * 3) : 0;
       const shape = leafPolygon(L.type, L, len, L.aspect, L.lobes, L.serrate);
-      const put = (ox, oy, ang, scale = 1) => out.polys.push({ pts: shape.map(([u, v]) => [ox + (u * Math.cos(ang) - v * Math.sin(ang)) * scale, oy + (u * Math.sin(ang) + v * Math.cos(ang)) * scale]), colour: leafC, tone: 0, leaf: true });
+      const put = (o, dirL, scale = 1) => {
+        let fl = v3.cross(dirL, stemDir);
+        fl = Math.hypot(...fl) < 1e-3 ? fv : v3.norm(fl);
+        parts.push({ poly: shape.map(([u, v]) => v3.add(v3.add(o, dirL, u * scale), fl, v * scale)), colour: leafC, tone: 0, leaf: true });
+      };
+      const leaflets = L.type === "broad" ? Math.round(L.leaflets * 3) : 0;
       if (leaflets) {
-        // Compound: leaflets in pairs along a little stalk.
         for (let i = 0; i <= leaflets; i++) {
-          const t = (i + 0.5) / (leaflets + 1), lx = x + Math.cos(a) * len * t, ly = y + Math.sin(a) * len * t;
-          for (const side of [-1, 1]) put(lx, ly, a + side * 0.9, 0.45);
+          const o = v3.add(p, ld, len * (i + 0.5) / (leaflets + 1));
+          for (const side of [-1, 1]) put(o, v3.norm(v3.add(v3.add([0, 0, 0], ld, Math.cos(0.9)), fv, side * Math.sin(0.9))), 0.45);
         }
-        out.lines.push({ pts: [[x, y], [x + Math.cos(a) * len, y + Math.sin(a) * len]], width: 0.01, colour: stemC });
-      } else put(x, y, a);
+        parts.push({ line: [p, v3.add(p, ld, len)], width: 0.01, colour: stemC });
+        return (leaflets + 1) * 2 + 1;
+      }
+      put(p, ld);
+      return 1;
     };
-    const grow = (x, y, a, len, w, depth, gen) => {
-      const ex = x + Math.cos(a) * len, ey = y + Math.sin(a) * len;
-      const mid = [x + Math.cos(a + B.curl * 0.3) * len * 0.5, y + Math.sin(a + B.curl * 0.3) * len * 0.5];
-      out.lines.push({ pts: [[x, y], mid, [ex, ey]], width: w, colour: fleshy || !g.vascular ? leafC : stemC });
-      // Leaves set along it.
+    const tips = [];
+    // A budget: a whorled plant five forks deep would be thousands of
+    // branches; past this many stems it stops forking, past this many leaf
+    // pieces (a frond is a dozen) it stops leafing (it still flowers).
+    let stems = 160, leaves = 900, petals = 500;
+    const grow = (p, d, len, w, depth, gen, spin) => {
+      stems--;
+      const bend = turnAbout(d, across(d), B.curl * 0.3);
+      const mid = v3.add(p, bend, len * 0.5), end = v3.add(mid, d, len * 0.5);
+      parts.push({ line: [p, mid, end], width: w, colour: fleshy || !g.vascular ? leafC : stemC });
       const nodes = Math.max(1, Math.round(2 + L.density * 4 * len));
       for (let i = 1; i <= nodes; i++) {
-        const t = i / (nodes + 1), nx = x + (ex - x) * t, ny = y + (ey - y) * t;
-        const sides = B.set === "opposite" ? [-1, 1] : B.set === "whorled" ? Array.from({ length: B.whorl }, (_, k) => k) : [i % 2 ? 1 : -1];
-        sides.forEach((s, k) => {
-          const off = B.set === "whorled" ? (k / B.whorl) * Math.PI * 2 : B.set === "spiral" ? i * 2.4 : 0;
-          const la = a + (B.set === "whorled" || B.set === "spiral" ? Math.sin(off) * 1.1 + 0.15 : s * 0.9);
-          leafAt(nx, ny, la, 0.7 + 0.3 * (1 - t));
-        });
+        const np = v3.lerp(p, end, i / (nodes + 1)), t = i / (nodes + 1);
+        const rounds = B.set === "opposite" ? [spin + i * Math.PI / 2, spin + i * Math.PI / 2 + Math.PI]
+          : B.set === "whorled" ? Array.from({ length: B.whorl }, (_, k) => spin + i * 0.5 + (k / B.whorl) * Math.PI * 2)
+          : B.set === "spiral" ? [spin + i * GOLDEN] : [spin + i * Math.PI];
+        for (const r of rounds) if (leaves > 0) leaves -= leafAt(np, leanFrom(d, 0.9, r), d, 0.7 + 0.3 * (1 - t));
       }
-      if (depth <= 0) { tips.push([ex, ey, a]); return; }
-      // Branching: the leader goes on (apical dominance) and side branches fork off.
+      if (depth <= 0 || stems <= 0) { tips.push([end, d]); return; }
       const kids = B.set === "whorled" ? Math.max(2, B.whorl) : 2;
       for (let k = 0; k < kids; k++) {
-        const side = kids === 2 ? (k ? 1 : -1) : (k / (kids - 1) - 0.5) * 2;
-        grow(ex, ey, a + side * B.angle, len * B.ratio * (1 - B.apical * 0.3), w * 0.7, depth - 1, gen + 1);
+        grow(end, leanFrom(d, B.angle, spin + gen * GOLDEN + (k / kids) * Math.PI * 2), len * B.ratio * (1 - B.apical * 0.3), w * 0.7, depth - 1, gen + 1, spin + GOLDEN * (k + 1));
       }
-      if (B.apical > 0.45) grow(ex, ey, a + B.curl * 0.1, len * B.ratio, w * 0.8, depth - 1, gen + 1);
+      if (B.apical > 0.45) grow(end, leanFrom(d, Math.abs(B.curl) * 0.1, spin), len * B.ratio, w * 0.8, depth - 1, gen + 1, spin + GOLDEN);
     };
+    const height = g.vascular ? 0.4 + g.height * 1.2 : 0.18;
+    const trunkW = fleshy ? 0.1 + g.wood * 0.04 : (g.vascular ? 0.02 + g.wood * 0.08 : 0.015);
     const depth = g.vascular ? Math.max(0, Math.min(5, B.depth)) : 0;
-    const firstLen = height / (1 + (depth ? B.ratio : 0) * 1.4);
     if (!g.vascular) {
-      // Moss: a low cushion of tiny upright shoots.
-      for (let s = -3; s <= 3; s++) grow(s * 0.06, 0, -Math.PI / 2 + s * 0.12, 0.16 + 0.03 * Math.cos(s), 0.012, 0, 0);
-    } else grow(0, 0, -Math.PI / 2, firstLen, trunkW, depth, 0);
+      // Moss: a low cushion of tiny upright shoots, round as well as across.
+      for (let s = 0; s < 9; s++) {
+        const a = s * GOLDEN, r = 0.03 + 0.06 * Math.sqrt(s / 9);
+        grow([Math.cos(a) * r, 0, Math.sin(a) * r], leanFrom(UP, 0.15 + 0.2 * Math.sqrt(s / 9), a), 0.16 + 0.03 * Math.cos(s), 0.012, 0, 0, a);
+      }
+    } else grow([0, 0, 0], UP, height / (1 + (depth ? B.ratio : 0) * 1.4), trunkW, depth, 0, 0);
     // What it makes at its tips: spore heads, cones or flowers.
-    const F = g.flower;
-    for (const [tx, ty, ta] of tips) {
-      if (g.repro === "spores" && g.vascular && L.type === "scale") out.dots.push({ cx: tx, cy: ty, r: 0.035, colour: stemC, tone: 0.1 });
-      else if (!g.vascular) out.lines.push({ pts: [[tx, ty], [tx, ty - 0.08]], width: 0.008, colour: stemC }), out.dots.push({ cx: tx, cy: ty - 0.09, r: 0.012, colour: stemC, tone: 0 });
+    for (const [t, d] of tips) {
+      if (g.repro === "spores" && g.vascular && L.type === "scale") parts.push({ dot: t, r: 0.035, colour: stemC, tone: 0.1 });
+      else if (!g.vascular) { const q = v3.add(t, UP, 0.08); parts.push({ line: [t, q], width: 0.008, colour: stemC }, { dot: v3.add(q, UP, 0.01), r: 0.012, colour: stemC, tone: 0 }); }
       else if (g.repro === "cones") {
         const cl = 0.09 + F.size * 0.1;
-        for (let k = 0; k < 5; k++) out.dots.push({ cx: tx + Math.cos(ta) * cl * k / 5, cy: ty + Math.sin(ta) * cl * k / 5, r: cl * 0.28 * (1 - k / 8), colour: stemC, tone: -0.05 - k * 0.02 });
+        for (let k = 0; k < 5; k++) parts.push({ dot: v3.add(t, d, cl * k / 5), r: cl * 0.28 * (1 - k / 8), colour: stemC, tone: -0.05 - k * 0.02 });
       } else if (g.repro === "flowers") {
         const r = 0.05 + F.size * 0.16;
+        // It faces outward and up.
+        const face = v3.norm(v3.add(d, UP, 0.8));
         if (F.umbel) {
-          // An umbrella of small flowers on spokes from one point.
-          for (let k = 0; k < 9; k++) { const sa = -Math.PI / 2 + (k / 8 - 0.5) * 2.2, sx = tx + Math.cos(sa) * r * 1.4, sy = ty + Math.sin(sa) * r * 1.4;
-            out.lines.push({ pts: [[tx, ty], [sx, sy]], width: 0.006, colour: stemC }); out.dots.push({ cx: sx, cy: sy, r: r * 0.22, colour: "petal", tone: 0 }); }
+          for (let k = 0; k < 9; k++) {
+            const sp = leanFrom(face, 0.9, k * GOLDEN), q = v3.add(t, sp, r * 1.4);
+            parts.push({ line: [t, q], width: 0.006, colour: stemC }, { dot: q, r: r * 0.22, colour: "petal", tone: 0 });
+          }
           continue;
         }
-        const n = F.composite ? F.rays : F.petals;
+        // (Petals are budgeted too: past it, a flower is its centre alone.)
+        const n = petals > 0 ? (F.composite ? F.rays : F.petals) : 0;
+        petals -= n;
+        const side = across(face), up2 = v3.norm(v3.cross(face, side));
         for (let k = 0; k < n; k++) {
-          let pa = (k / n) * Math.PI * 2 - Math.PI / 2;
-          // A lip: one petal larger, the flower turned to one side (bilateral).
+          let a = (k / n) * Math.PI * 2;
           const lip = F.bilateral && k === 0;
-          if (F.bilateral) pa = -Math.PI / 2 + (k / n - 0.5) * Math.PI * 1.6 + Math.PI;
+          if (F.bilateral) a = -Math.PI / 2 + (k / n - 0.5) * Math.PI * 1.6 + Math.PI;
+          const pd = v3.norm(v3.add(v3.add([0, 0, 0], side, Math.cos(a)), up2, Math.sin(a)));
+          const pw3 = v3.norm(v3.cross(face, pd));
           const pl = r * (F.composite ? 1.3 : F.shape === "long" ? 1.5 : 1) * (lip ? 1.5 : 1), pw = F.composite ? r * 0.16 : r * (F.shape === "pointed" ? 0.45 : 0.62);
           const shape = F.shape === "pointed" || F.composite ? [[0, -pw / 2], [pl, 0], [0, pw / 2]]
-            : Array.from({ length: 10 }, (_, i) => { const t = (i / 9) * Math.PI; return [Math.sin(t / 2) * pl, Math.cos(t) * pw / 2]; });
-          out.polys.push({ pts: shape.map(([u, v]) => [tx + u * Math.cos(pa) - v * Math.sin(pa), ty + u * Math.sin(pa) + v * Math.cos(pa)]), colour: "petal", tone: lip ? -0.1 : 0 });
+            : Array.from({ length: 10 }, (_, i) => { const tt = (i / 9) * Math.PI; return [Math.sin(tt / 2) * pl, Math.cos(tt) * pw / 2]; });
+          parts.push({ poly: shape.map(([u, v]) => v3.add(v3.add(t, pd, u), pw3, v)), colour: "petal", tone: lip ? -0.1 : 0 });
         }
-        out.dots.push({ cx: tx, cy: ty, r: r * (F.composite ? 0.5 : 0.3), colour: "centre", tone: 0 });
+        parts.push({ dot: v3.add(t, face, 0.005), r: r * (F.composite ? 0.5 : 0.3), colour: "centre", tone: 0 });
       }
     }
-    return fit(g, out);
+
+    // Seen from the angle (as hexfield-morph.js's skeletons are).
+    const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+    const view = ([x, y, z]) => { const x1 = x * cy - z * sy, z1 = x * sy + z * cy; return [x1, y * cp - z1 * sp, y * sp + z1 * cp]; };
+    const flat = (p) => { const v = view(p); return [v[0], v[1] + v[0] * shear]; };
+    const depthOf = (pts) => pts.reduce((s, p) => s + view(p)[2], 0) / pts.length;
+    const items = parts.map((part) => {
+      if (part.line) return { line: part.line.map(flat), width: part.width, colour: part.colour, depth: depthOf(part.line) };
+      if (part.poly) return { poly: part.poly.map(flat), colour: part.colour, tone: part.tone || 0, smooth: !part.leaf || L.type === "broad", depth: depthOf(part.poly) };
+      const [x, y] = flat(part.dot);
+      return { dot: [x, y, part.r], colour: part.colour, tone: part.tone || 0, depth: depthOf([part.dot]) - part.r * 0.5 };
+    }).sort((p, q) => q.depth - p.depth);
+    // Its shadow: everything carried along the light onto the ground (y 0).
+    const shadow = [];
+    if (light && g.vascular) {
+      const wx = -light[0], wy = -light[1], wz = -light[2];
+      const Ld = [wx * cy + wz * sy, Math.max(0.18, wy), -wx * sy + wz * cy];
+      const onGround = (p) => { const t = (0 - p[1]) / Ld[1]; return [p[0] + Ld[0] * t, 0, p[2] + Ld[2] * t]; };
+      for (const part of parts) {
+        if (part.line) shadow.push({ line: part.line.map((p) => flat(onGround(p))), width: part.width });
+        else if (part.poly) shadow.push({ poly: part.poly.map((p) => flat(onGround(p))) });
+        else {
+          const c = onGround(part.dot), pts = [];
+          for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; pts.push(flat([c[0] + Math.cos(a) * part.r, 0, c[2] + Math.sin(a) * part.r])); }
+          shadow.push({ poly: pts });
+        }
+      }
+    }
+    return fit3(g, items, parts, flat, shadow, { yaw, pitch, shear });
+  }
+
+  /* Fitted into a box, in the order drawn, with its stems as anatomy and its
+   * shadow (which reaches outside the box) in the same units. */
+  function fit3(g, items, parts, flat, shadow, angle) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    const take = (x, y, pad = 0) => { x0 = Math.min(x0, x - pad); y0 = Math.min(y0, y - pad); x1 = Math.max(x1, x + pad); y1 = Math.max(y1, y + pad); };
+    for (const it of items) {
+      if (it.line) it.line.forEach(([x, y]) => take(x, y, it.width / 2));
+      else if (it.poly) it.poly.forEach(([x, y]) => take(x, y));
+      else take(it.dot[0], it.dot[1], it.dot[2]);
+    }
+    const bw = Math.max(1e-3, x1 - x0), bh = Math.max(1e-3, y1 - y0);
+    // (Rounded by arithmetic: a tree is thousands of points, and string
+    // rounding is slow.)
+    const r4 = (v) => Math.round(v * 1e4) / 1e4;
+    const U = ([x, y]) => [r4((x - x0) / bw), r4((y - y0) / bh)];
+    const out = items.map((it) => {
+      if (it.line) return { shape: "line", pts: it.line.map(U), width: r4(it.width / bw), colour: it.colour };
+      if (it.poly) return { shape: "poly", smooth: it.smooth, pts: it.poly.map(U), colour: it.colour, tone: it.tone };
+      const [cx, cy, r] = it.dot;
+      return { shape: "ellipse", box: [r4((cx - r - x0) / bw), r4((cy - r - y0) / bh), r4(2 * r / bw), r4(2 * r / bh)], colour: it.colour, tone: it.tone };
+    });
+    const c = g.colour, F = g.flower;
+    const anatomy = parts.filter((p) => p.line && p.line.length >= 2).flatMap((p) => p.line.slice(1).map((q, i) => ({ k: "stem", a: U(flat(p.line[i])), b: U(flat(q)), r: r4(p.width / 2 / bw) })));
+    return {
+      kind: "subject", anchor: "ground", size: clamp(g.size + (g.vascular ? g.height * 0.25 : 0), 0.12, 0.7),
+      aspect: clamp(bw / bh, 0.2, 4), depth: 0.5,
+      colours: {
+        leaf: [c.leaf, c.sat, c.light], stem: [c.stem, clamp(c.sat - 15, 10, 80), clamp(c.light - 10, 12, 60)],
+        petal: [F.h, F.s, F.l], centre: [(F.h + 60) % 360, 70, F.centre],
+      },
+      parts: out, grown: true, plant: true, anatomy,
+      ...(shadow.length ? { shadow: shadow.map((p) => (p.poly ? { poly: p.poly.map(U) } : { line: p.line.map(U), width: r4(p.width / bw) })) } : {}),
+      genome: g, yaw: angle.yaw, pitch: angle.pitch, shear: angle.shear, turnable: true,
+    };
   }
 
   function fit(g, out) {
@@ -274,5 +390,12 @@
     return d / n;
   }
 
-  global.HexfieldFlora = { cellGenome, develop, mutate, crossover, distance, normalise, LEAVES, REPRO };
+  /* The shadow of a plant as it was drawn (its genes and angle on the entry),
+   * under a light (a direction toward it, in the scene). */
+  function shadowOf(entry, light) {
+    if (!entry?.genome || !entry.turnable || !light) return null;
+    return develop(entry.genome, { yaw: entry.yaw || 0, pitch: entry.pitch || 0, shear: entry.shear || 0, light }).shadow || null;
+  }
+
+  global.HexfieldFlora = { cellGenome, develop, shadowOf, mutate, crossover, distance, normalise, LEAVES, REPRO };
 })(typeof window !== "undefined" ? window : globalThis);

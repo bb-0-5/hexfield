@@ -31772,7 +31772,8 @@ function chooseMorph(plan, ref, width, height, params) {
   const turns = [0, -0.6, 0.6, Math.PI, Math.PI - 0.6, Math.PI + 0.6];
   const tries = isMobileBrowser() ? 1 : 2;
   for (const c of candidates) {
-    const yaws = c.genome.spine?.on ? [0, ...Array.from({ length: tries }, () => turns[1 + Math.floor(rng() * (turns.length - 1))])] : [0];
+    const yaws = c.genome.spine?.on ? [0, ...Array.from({ length: tries }, () => turns[1 + Math.floor(rng() * (turns.length - 1))])]
+      : kind === "plant" ? [rng() * Math.PI * 2] : [0];
     for (const yaw of yaws) {
       const entry = lib.develop(c.genome, pose ? { pose, yaw } : undefined);
       const read = { subjects: [{ key: "morph", entry, count: 1, colour: null, morph: true }], settings: [] };
@@ -32016,19 +32017,23 @@ function renderGarden(panel, small) {
   // A body with bones seen all round: the parent from the side, three
   // quarters, the front and the back - grown from its genes each time, so
   // every pick turns with it.
-  if (garden.parent.genome?.spine?.on) {
+  const turnable = garden.parent.genome?.spine?.on || (garden.kind === "plant" && GROWN.plant.lib()?.develop(garden.parent.genome).turnable);
+  if (turnable) {
     const views = document.createElement("div");
     views.id = "gardenViews";
     views.style.cssText = "display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:6px";
     const vs = Math.max(60, Math.floor(size * 0.72));
-    for (const [label, yaw] of [["side", 0], ["three quarters", -0.7], ["front", -Math.PI / 2], ["back", Math.PI / 2]]) {
+    const angles = garden.kind === "plant"
+      ? [["side", { yaw: 0 }], ["turned", { yaw: 1.3 }], ["from above", { yaw: 0.4, pitch: 0.7 }], ["from below", { yaw: 0.4, pitch: -0.45 }]]
+      : [["side", { yaw: 0 }], ["three quarters", { yaw: -0.7 }], ["front", { yaw: -Math.PI / 2 }], ["back", { yaw: Math.PI / 2 }]];
+    for (const [label, angle] of angles) {
       const cell = document.createElement("div");
       cell.style.cssText = "text-align:center;font-size:10px";
       const c = document.createElement("canvas");
       c.width = vs; c.height = vs;
       c.style.cssText = "width:100%;height:auto;aspect-ratio:1;border-radius:6px;background:#efe9dc;border:1px dashed #cfc6b4";
       c.setAttribute("aria-label", "view: " + label);
-      drawMorphInto(c, garden.parent.genome, vs, vs, { yaw });
+      drawMorphInto(c, garden.parent.genome, vs, vs, angle);
       cell.appendChild(c);
       const t = document.createElement("div"); t.textContent = label; cell.appendChild(t);
       views.appendChild(cell);
@@ -32509,15 +32514,20 @@ function chooseScenePerspective(read, width, height, ref, layoutFor, params, dra
  * below it we look down on its back, above it up at its belly. Its box keeps
  * its height and foot; its width follows the turned body. */
 function orientGrownItems(laid, width, height, rng) {
-  const Morph = globalThis.HexfieldMorph, view = laid?.view;
-  if (!Morph || !view || view.iso || !Number.isFinite(view.horizon)) return;
+  const view = laid?.view;
+  if (!view || view.iso || !Number.isFinite(view.horizon)) return;
   for (const item of laid.items || []) {
     const e = item.entry;
-    if (!e?.skeleton || !e.genome || !item.box) continue;
+    const lib = e?.plant ? globalThis.HexfieldFlora : globalThis.HexfieldMorph;
+    if (!lib || !(e?.skeleton || e?.turnable) || !e.genome || !item.box) continue;
     const cx = item.box.x + item.box.w / 2, foot = item.box.y + item.box.h;
     const pitch = Math.max(-0.55, Math.min(0.55, (foot - item.box.h * 0.4 - view.horizon) / height * 1.4));
     let yaw = Number(e.yaw) || 0, shear = 0;
-    if (Array.isArray(view.vanish)) {
+    if (e.plant) {
+      // A plant has no front: each one in the scene turned its own way, so a
+      // row of them is not stamped.
+      yaw = rng() * Math.PI * 2;
+    } else if (Array.isArray(view.vanish)) {
       const facingRight = Math.cos(yaw) >= 0, vpRight = view.vanish[0] > cx;
       const t = Math.min(1.2, 0.7 + 0.6 * Math.abs(view.vanish[0] - cx) / width);
       // Mostly into the depth, now and then coming out of it.
@@ -32534,7 +32544,7 @@ function orientGrownItems(laid, width, height, rng) {
       const ax = hx, ay = -hz * Math.sin(pitch);
       if (Math.abs(ax) > 0.25 && Math.abs(dx) > 0.05) shear = Math.max(-1.2, Math.min(1.2, dy / dx - ay / ax));
     }
-    const entry = Morph.develop(e.genome, { pose: e.pose || "stand", yaw, pitch, shear });
+    const entry = lib.develop(e.genome, { pose: e.pose || "stand", yaw, pitch, shear });
     const h = item.box.h, w = h * entry.aspect;
     item.box = { x: cx - w / 2, y: item.box.y, w, h };
     item.entry = { ...entry, size: e.size };
