@@ -9661,40 +9661,45 @@ function applyPaletteBudget(ctx, W, H, params, { record = true } = {}) {
   };
   /* Each 15-bit colour's nearest ink, worked out once: a flat table rather
    * than a Map, because this runs for every pixel of every candidate. */
-  const cache = new Map();
+  /* The inks' values worked out once, in flat arrays: the same arithmetic as
+   * distance(), without its per-call luma of the ink and an object per
+   * colour (this was a third of a phone's long tasks, every candidate). */
+  const inks = selected.length;
+  const ir = new Float64Array(inks), ig = new Float64Array(inks), ib = new Float64Array(inks), il = new Float64Array(inks), packedInk = new Int32Array(inks);
+  selected.forEach((center, i) => {
+    ir[i] = center.r; ig[i] = center.g; ib[i] = center.b; il[i] = luma(center.r, center.g, center.b);
+    packedInk[i] = (Math.round(center.r) << 16) | (Math.round(center.g) << 8) | Math.round(center.b);
+  });
   const table = new Int32Array(32768).fill(-1);
+  const usedInks = new Set();
   const nearest = (key) => {
-    let hit = cache.get(key);
-    if (hit) return hit;
-    const r = (key & 31) * 8 + 4, g = ((key >> 5) & 31) * 8 + 4, b = ((key >> 10) & 31) * 8 + 4;
-    let winner = selected[0], best = Infinity;
-    for (const center of selected) {
-      const score = distance(r, g, b, center);
-      if (score < best) { best = score; winner = center; }
+    const r = (key & 31) * 8 + 4, g = ((key >> 5) & 31) * 8 + 4, b = ((key >> 10) & 31) * 8 + 4, l = luma(r, g, b);
+    let winner = 0, best = Infinity;
+    for (let i = 0; i < inks; i++) {
+      const value = Math.abs(l - il[i]);
+      const score = ((r - ir[i]) ** 2 + (g - ig[i]) ** 2 + (b - ib[i]) ** 2) / (255 * 255 * 3) * 0.58 + value * value * 1.42;
+      if (score < best) { best = score; winner = i; }
     }
-    hit = [Math.round(winner.r), Math.round(winner.g), Math.round(winner.b)];
-    cache.set(key, hit);
-    table[key] = (hit[0] << 16) | (hit[1] << 8) | hit[2];
-    return hit;
+    usedInks.add(packedInk[winner]);
+    return (table[key] = packedInk[winner]);
   };
   let errorSum = 0, errorN = 0;
   for (const [key, bin] of bins) {
-    const rgb = nearest(key);
-    errorSum += distance(bin.r, bin.g, bin.b, { r: rgb[0], g: rgb[1], b: rgb[2] });
+    const packed = table[key] >= 0 ? table[key] : nearest(key);
+    errorSum += distance(bin.r, bin.g, bin.b, { r: packed >> 16, g: (packed >> 8) & 255, b: packed & 255 });
     errorN++;
   }
   for (let o = 0, end = W * H * 4; o < end; o += 4) {
     if (data[o + 3] < 8) continue;
     const key = (data[o] >> 3) | ((data[o + 1] >> 3) << 5) | ((data[o + 2] >> 3) << 10);
     let packed = table[key];
-    if (packed < 0) { nearest(key); packed = table[key]; }
+    if (packed < 0) packed = nearest(key);
     data[o] = packed >> 16; data[o + 1] = (packed >> 8) & 255; data[o + 2] = packed & 255;
   }
   ctx.putImageData(image, 0, 0);
   const error = clamp01(errorSum / Math.max(1, errorN));
   const quality = clamp01(1 - error / 0.11);
-  const actualColours = new Set([...cache.values()].map((rgb) => rgb.join(",")));
-  const count = Math.min(budget, actualColours.size || selected.length);
+  const count = Math.min(budget, usedInks.size || selected.length);
   const diagnostic = {
     budget, count, quality, error,
     sourceCount: bins.size,
@@ -34426,6 +34431,28 @@ function shapeMoveAllowed(parts, mv, scene) {
  * a pixel that counts 0 takes its value from those round it. In place. */
 function boxBlurChannels(chans, w, h, r, weight = null) {
   if (r < 1) return;
+  if (!weight) {
+    // Unweighted, the common case: the same running sums, straight down each
+    // row and column (an index callback per sample made this a phone's
+    // longest background step).
+    const line = new Float32Array(Math.max(w, h));
+    const run = (ch, len, count, along, across) => {
+      for (let a = 0; a < count; a++) {
+        const base = a * across;
+        for (let i = 0; i < len; i++) line[i] = ch[base + i * along];
+        let sum = 0, n = 0;
+        for (let i = 0; i < Math.min(len, r); i++) { sum += line[i]; n++; }
+        for (let i = 0; i < len; i++) {
+          if (i + r < len) { sum += line[i + r]; n++; }
+          if (i - r - 1 >= 0) { sum -= line[i - r - 1]; n--; }
+          ch[base + i * along] = sum / n;
+        }
+      }
+    };
+    for (const ch of chans) run(ch, w, h, 1, w);
+    for (const ch of chans) run(ch, h, w, w, 1);
+    return;
+  }
   const line = new Float32Array(Math.max(w, h)), wl = new Float32Array(Math.max(w, h));
   const pass = (len, count, idx) => {
     for (let a = 0; a < count; a++) {
@@ -34631,7 +34658,7 @@ function* renderShapeMoveSteps(pixels, width, height, part, mv, scene) {
   const radius = Math.round(blurPx);
   if (radius >= 1) {
     const chans = [alpha, ...[0, 1, 2].map((c) => { const a = new Float32Array(tw * th); for (let k = 0; k < tw * th; k++) a[k] = colour[k * 3 + c]; return a; })];
-    for (let pass = 0; pass < 2; pass++) boxBlurChannels(chans, tw, th, radius);
+    for (let pass = 0; pass < 2; pass++) { boxBlurChannels(chans, tw, th, radius); yield; }
     for (let k = 0; k < tw * th; k++) for (let c = 0; c < 3; c++) colour[k * 3 + c] = chans[c + 1][k];
   }
   yield;
@@ -35038,11 +35065,12 @@ function adoptLaid(L, ref, canvas, gradient = null) {
    * carried the big brushes' bristle streaks into the reference - striped,
    * so the fine brushes painted stripes. */
   L.turn = ((L.turn || 0) + 1) % 8;
-  const row = width * 4;
+  const row = width * 4, touched = [];
   for (let k = 0; k < gw * gh; k++) {
     if (!L.fresh[k] && !(L.weight[k] && k % 8 === L.turn)) continue;
     L.fresh[k] = 0;
     L.weight[k] = 1;
+    touched.push(k);
     const gx = k % gw, gy = (k / gw) | 0;
     const x1 = Math.min(width, (gx + 1) * c);
     for (let y = gy * c; y < Math.min(height, (gy + 1) * c); y++) {
@@ -35058,7 +35086,12 @@ function adoptLaid(L, ref, canvas, gradient = null) {
     }
   }
   if (!L.any) return ref;
-  const out = new Uint8ClampedArray(ref), band = PLANES.band, take = PLANES.take;
+  /* Kept between batches: only the places refreshed above are blended again
+   * (re-blending the whole canvas every batch was a phone's longest task),
+   * and all of it when the reference or its contours are new. */
+  const fresh = !L.out || L.outFor !== ref || L.outGradient !== gradient;
+  if (fresh) { L.out = new Uint8ClampedArray(ref); L.outFor = ref; L.outGradient = gradient; }
+  const out = L.out, band = PLANES.band, take = PLANES.take;
   // How flat the reference is at each point of its contour grid, worked out
   // once per reference: 1 flat, 0 at a strong edge.
   let flat = null;
@@ -35069,24 +35102,26 @@ function adoptLaid(L, ref, canvas, gradient = null) {
       for (let i = 0; i < flat.length; i++) flat[i] = 1 - Math.max(0, Math.min(1, (Math.hypot(gradient.gx[i], gradient.gy[i]) - STROKE_GRADIENT_MIN) / 96));
     }
   }
-  for (let gy = 0; gy < gh; gy++) {
-    for (let gx = 0; gx < gw; gx++) {
-      if (!L.weight[gy * gw + gx]) continue;
-      const x1 = Math.min(width, (gx + 1) * c);
-      for (let y = gy * c; y < Math.min(height, (gy + 1) * c); y++) {
-        const frow = flat ? Math.min(gradient.gh - 1, y >> 1) * gradient.gw : 0;
-        for (let x = gx * c, o = (y * width + x) * 4; x < x1; x++, o += 4) {
-          const d = (Math.abs(L.paint[o] - out[o]) + Math.abs(L.paint[o + 1] - out[o + 1]) + Math.abs(L.paint[o + 2] - out[o + 2])) / 3;
-          if (d >= band) continue;
-          // Flat planes keep their paint; where the reference has structure
-          // (an edge, detail), the fine brushes still go for the reference.
-          const w = take * (1 - d / band) * (flat ? flat[frow + Math.min(gradient.gw - 1, x >> 1)] : 1);
-          if (w <= 0) continue;
-          out[o] += (L.paint[o] - out[o]) * w; out[o + 1] += (L.paint[o + 1] - out[o + 1]) * w; out[o + 2] += (L.paint[o + 2] - out[o + 2]) * w;
-        }
+  const blend = (k) => {
+    const gx = k % gw, gy = (k / gw) | 0;
+    const x1 = Math.min(width, (gx + 1) * c);
+    for (let y = gy * c; y < Math.min(height, (gy + 1) * c); y++) {
+      const frow = flat ? Math.min(gradient.gh - 1, y >> 1) * gradient.gw : 0;
+      for (let x = gx * c, o = (y * width + x) * 4; x < x1; x++, o += 4) {
+        // From the reference afresh: this place may have been blended before.
+        out[o] = ref[o]; out[o + 1] = ref[o + 1]; out[o + 2] = ref[o + 2];
+        const d = (Math.abs(L.paint[o] - out[o]) + Math.abs(L.paint[o + 1] - out[o + 1]) + Math.abs(L.paint[o + 2] - out[o + 2])) / 3;
+        if (d >= band) continue;
+        // Flat planes keep their paint; where the reference has structure
+        // (an edge, detail), the fine brushes still go for the reference.
+        const w = take * (1 - d / band) * (flat ? flat[frow + Math.min(gradient.gw - 1, x >> 1)] : 1);
+        if (w <= 0) continue;
+        out[o] += (L.paint[o] - out[o]) * w; out[o + 1] += (L.paint[o + 1] - out[o + 1]) * w; out[o + 2] += (L.paint[o + 2] - out[o + 2]) * w;
       }
     }
-  }
+  };
+  if (fresh) { for (let k = 0; k < gw * gh; k++) if (L.weight[k]) blend(k); }
+  else for (const k of touched) blend(k);
   return out;
 }
 
@@ -38600,8 +38635,35 @@ function landscapeReference(ref, width, height) {
   // Until the things' exact shapes are drawn (in the background), the first
   // strokes take out an ellipse in each thing's box instead.
   const cover = scene.layer?.cover || null;
-  const cache = strokePainter.landscape;
-  if (cache?.source === ref && cache.plan === plan && cache.exact === Boolean(cover)) return cache;
+  const cache = strokePainter.landscape?.plan === plan ? strokePainter.landscape : null;
+  if (cache && cache.source === ref && cache.exact === Boolean(cover)) return cache;
+  if (!cache) {
+    // The painting's first: made now, so not one stroke paints a thing early.
+    const steps = landscapeSteps(ref, width, height, things, cover, scene);
+    let done = steps.next();
+    while (!done.done) done = steps.next();
+    return (strokePainter.landscape = { source: ref, plan, pixels: done.value, exact: Boolean(cover), key: { landscape: true } });
+  }
+  // A new master or the exact shapes: remade a step per task, the last one
+  // painted toward meanwhile (a long task on a phone otherwise).
+  if (!cache.building || cache.building.source !== ref || cache.building.exact !== Boolean(cover)) {
+    const job = cache.building = { source: ref, exact: Boolean(cover) };
+    (async () => {
+      const steps = landscapeSteps(ref, width, height, things, cover, scene);
+      let done = steps.next();
+      while (!done.done) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        if (strokePainter.landscape !== cache || cache.building !== job) return;
+        done = steps.next();
+      }
+      if (strokePainter.landscape === cache && cache.building === job) {
+        strokePainter.landscape = { source: ref, plan, pixels: done.value, exact: job.exact, key: { landscape: true } };
+      }
+    })().catch((error) => console.warn("landscape failed", error));
+  }
+  return cache;
+}
+function* landscapeSteps(ref, width, height, things, cover, scene) {
   const pixels = new Uint8ClampedArray(ref);
   const lb = scene.lettering?.screenBox || scene.lettering?.box || null;
   for (const item of things) {
@@ -38629,11 +38691,11 @@ function landscapeReference(ref, width, height) {
         if (solid) { hole[y * bw + x] = 1; any++; }
       }
     }
+    yield;
     if (!any || any > bw * bh * 0.92) continue;
-    const steps = fillShapeHoleSteps(pixels, width, height, x0, y0, x1, y1, hole);
-    while (!steps.next().done) { /* small: a box at a time */ }
+    yield* fillShapeHoleSteps(pixels, width, height, x0, y0, x1, y1, hole);
   }
-  return (strokePainter.landscape = { source: ref, plan, pixels, exact: Boolean(cover), key: { landscape: true } });
+  return pixels;
 }
 
 function paintTowardReference(result, ref, width, height,
@@ -38732,7 +38794,11 @@ function paintTowardReference(result, ref, width, height,
   // What has been laid is taken into the plan (Planes, and painting from
   // what is laid): the reference the brush paints toward now.
   const laid = strokePainter.plan && current.length === ref.length ? laidState(strokePainter.plan, width, height) : null;
-  if (laid) strokePainter.laidReference = ref = adoptLaid(laid, ref, current, strokePainter.gradient);
+  // (Only on the painter's own reference: an accepted change is a new target
+  // each time - adopting the canvas into it re-blended the whole picture per
+  // change, the longest task on a phone, and pulled the change back toward
+  // what it was changing.)
+  if (laid && (enhance || prepared)) strokePainter.laidReference = ref = adoptLaid(laid, ref, current, strokePainter.gradient);
   // A detailed hand keeps working on smaller differences.
   const tolerance = STROKE_ERROR_TOLERANCE * (1 - 0.3 * (Number(planStyle()?.detail) || 0));
   const toleranceFor = (l) => l === 0 ? tolerance * 0.35 : tolerance;
