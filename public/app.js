@@ -32079,6 +32079,106 @@ function renderGarden(panel, small) {
   panel.appendChild(wrap);
 }
 
+/* ── Fonts in the garden ───────────────────────────────────────────────
+ * The lettering's font bred by eye, like the creatures and plants: the
+ * font in the middle, eight of its offspring round it - six variations of it
+ * (the font engine's own mutation, held to its family's rules so the word
+ * stays readable) and two from other families - each lettering the seed
+ * text. Tap one: it becomes the font the paintings letter with (until
+ * another is picked, or "let it choose"), and the parent of the next eight. */
+let fontGarden = null;
+const fontFamilyKeys = () => Object.keys(LETTER_FAMILY_LEANS).filter((f) => f !== "adaptive");
+const fontPreviewText = () => (seedText() || "Hexfield").slice(0, 12);
+function fontBaseProgram(family) {
+  return letterProgramForRender({ ...(current?.params || bestRun?.params || {}), __hexfieldBrushProgram: undefined, __hexfieldBrush: undefined }, family);
+}
+function startFontGarden(fresh = false) {
+  const fav = fresh ? null : fontFavourite();
+  const keys = fontFamilyKeys();
+  const family = fav?.family || keys[Math.floor(Math.random() * keys.length)];
+  fontGarden = { parent: { family, program: fav?.program || fontBaseProgram(family) }, back: [], line: 0 };
+  fontChildren();
+}
+function fontChildren() {
+  const rng = Math.random, { family, program } = fontGarden.parent, kids = [];
+  // The letterforms bred as the painting's lettering rounds breed them
+  // (mutateLetterforms: lean, extension, width, x-height, pen, curve habit,
+  // spacing, baseline, hand); three near variations and three further ones.
+  const grow = (fam, prog, how, times = 1) => {
+    const lettering = { mode: fam === "wildstyle" ? "wildstyle" : "throwup", family: fam };
+    let child = prog;
+    for (let t = 0; t < times; t++) child = mutateLetterforms(child, rng, lettering, fontFamilySpec(fam));
+    kids.push({ family: fam, program: child, how });
+  };
+  for (let i = 0; i < 6; i++) grow(family, program, i < 3 ? "a variation" : "a further variation", i < 3 ? 1 : 3);
+  const others = fontFamilyKeys().filter((f) => f !== family);
+  for (let i = 0; i < 2; i++) {
+    const fam = others[Math.floor(rng() * others.length)];
+    grow(fam, fontBaseProgram(fam), "another family: " + fam);
+  }
+  for (let i = kids.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [kids[i], kids[j]] = [kids[j], kids[i]]; }
+  fontGarden.children = kids;
+}
+function drawFontInto(canvas, font, w, h) {
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#efe9dc"; ctx.fillRect(0, 0, w, h);
+  const program = paintedLetterProgram({ ...font.program, lightness: 0.2, outlineMode: "none", outlineWidth: 0, depth3d: 0 });
+  try { letterInBox(ctx, { x: w * 0.05, y: h * 0.12, w: w * 0.9, h: h * 0.76 }, fontPreviewText(), program); } catch { /* an unreadable child draws nothing */ }
+}
+function renderFontGarden(panel, small) {
+  if (!fontGarden) startFontGarden();
+  const wrap = document.createElement("div");
+  wrap.style.cssText = "max-width:540px;margin:0 auto";
+  const tip = document.createElement("div");
+  tip.style.cssText = "margin:4px 0 8px";
+  tip.textContent = "Tap the lettering you like best. It becomes the font your paintings letter the seed text with, and the parent of the next eight.";
+  wrap.appendChild(tip);
+  const grid = document.createElement("div");
+  grid.id = "fontGrid";
+  grid.style.cssText = "display:grid;grid-template-columns:repeat(3,1fr);gap:6px";
+  const size = Math.max(90, Math.floor((Math.min(panel.clientWidth || 360, 540) - 24 - 12) / 3));
+  const cells = fontGarden.children.slice(0, 4).concat([null], fontGarden.children.slice(4, 8));
+  cells.forEach((kid) => {
+    const cell = document.createElement("div");
+    cell.style.cssText = "text-align:center;font-size:10px;line-height:1.2";
+    const c = document.createElement("canvas");
+    c.width = size; c.height = Math.round(size * 0.62);
+    c.style.cssText = `width:100%;height:auto;border-radius:8px;background:#efe9dc;cursor:pointer;border:${kid ? "1px solid #cfc6b4" : "3px solid #2f3540"}`;
+    drawFontInto(c, kid || fontGarden.parent, c.width, c.height);
+    c.setAttribute("aria-label", kid ? "font: " + kid.how : "the parent font");
+    if (kid) c.onclick = () => {
+      fontGarden.back.push(fontGarden.parent);
+      fontGarden.parent = { family: kid.family, program: kid.program };
+      fontGarden.line++;
+      setFontFavourite(fontGarden.parent);
+      fontChildren();
+      showMorphsPanel("fonts");
+    };
+    cell.appendChild(c);
+    const t = document.createElement("div"); t.textContent = (kid || fontGarden.parent).family; cell.appendChild(t);
+    grid.appendChild(cell);
+  });
+  wrap.appendChild(grid);
+  const fav = fontFavourite();
+  const info = document.createElement("div");
+  info.style.cssText = "margin:8px 0;font-size:12px";
+  info.textContent = `${fontGarden.line} picks · ${fontGarden.parent.family}` + (fav ? " · your paintings letter in this font" : " · the paintings choose their own font until you pick one");
+  wrap.appendChild(info);
+  const row = document.createElement("div");
+  const button = (label, fn) => { const b = document.createElement("button"); b.textContent = label; b.style.cssText = small + ";margin:0 8px 6px 0"; b.onclick = fn; row.appendChild(b); };
+  button("paint it", () => {
+    setFontFavourite(fontGarden.parent);
+    if (!seedText()) $("seed").value = fontPreviewText();
+    document.getElementById("morphsPanel")?.remove();
+    document.getElementById("reseedNow")?.click();
+  });
+  button("back", () => { if (fontGarden.back.length) { fontGarden.parent = fontGarden.back.pop(); fontGarden.line = Math.max(0, fontGarden.line - 1); fontChildren(); } showMorphsPanel("fonts"); });
+  button("new font", () => { startFontGarden(true); showMorphsPanel("fonts"); });
+  button("let it choose", () => { setFontFavourite(null); startFontGarden(true); showMorphsPanel("fonts"); });
+  wrap.appendChild(row);
+  panel.appendChild(wrap);
+}
+
 function showMorphsPanel(view = "garden") {
   const Visual = globalThis.HexfieldVisual, lib = GROWN[gardenKind].lib();
   const pop = lib && morphPopulation(gardenKind);
@@ -32109,6 +32209,7 @@ function showMorphsPanel(view = "garden") {
     tab(label, kind === gardenKind, () => { gardenKind = kind; showMorphsPanel(view); });
   }
   tab("garden", view === "garden", () => showMorphsPanel("garden"));
+  tab("fonts", view === "fonts", () => showMorphsPanel("fonts"));
   tab("all living", view === "living", () => showMorphsPanel("living"));
   const close = document.createElement("button");
   close.textContent = "close"; close.style.cssText = small; close.onclick = () => panel.remove();
@@ -32116,6 +32217,7 @@ function showMorphsPanel(view = "garden") {
   head.appendChild(tabs);
   panel.appendChild(head);
   if (view === "garden") { renderGarden(panel, small); return; }
+  if (view === "fonts") { renderFontGarden(panel, small); return; }
   // Every living one, by clade (deepest last) and species.
   const byClade = new Map();
   for (const m of pop.members) {
@@ -32657,36 +32759,110 @@ function paintedLetterProgram(program) {
   };
 }
 
+/* ── Lettering in the painting ──────────────────────────────────────────
+ * The seed word is part of the composition, not a caption over it. Where it
+ * goes is chosen like anything else (axis "letterPlace", learned from votes,
+ * never the same place twice running): a band at the top or the foot, beside
+ * the subject on the side it leaves free, up in the sky, or lying on the
+ * ground in the scene's perspective - foreshortened and leaning to the
+ * vanishing point, as road paint does - each scored for keeping clear of the
+ * subject and balancing it. Standing letters cast a shadow away from the
+ * painting's light; their colour is the true complement of the ground behind
+ * them (unless the words name one). The font is the one bred in the garden's
+ * fonts tab, if one was picked there. */
+const FONT_FAVOURITE_KEY = "hexfield.fontFavourite.v1";
+function fontFavourite() {
+  try { return JSON.parse(localStorage.getItem(FONT_FAVOURITE_KEY) || "null"); } catch { return null; }
+}
+function setFontFavourite(fav) {
+  try { if (fav) localStorage.setItem(FONT_FAVOURITE_KEY, JSON.stringify(fav)); else localStorage.removeItem(FONT_FAVOURITE_KEY); } catch { /* memory only */ }
+}
+function letterPlaceCandidates(W, H, k, main, laid) {
+  const wide = W / H > 2, out = [];
+  const hz = Number.isFinite(laid.horizon) ? laid.horizon : null;
+  const band = H * Math.min(0.34, (wide ? 0.5 : 0.27) * k), bw = W * Math.min(0.94, 0.86 * k);
+  out.push({ key: "top", box: { x: (W - bw) / 2, y: H * 0.05, w: bw, h: band } });
+  out.push({ key: "bottom", box: { x: (W - bw) / 2, y: H * 0.95 - band, w: bw, h: band } });
+  if (main) {
+    const w = W * Math.min(0.5, 0.44 * k), h = H * Math.min(0.5, (wide ? 0.6 : 0.36) * k);
+    const cy = Math.max(h / 2 + H * 0.04, Math.min(H * 0.96 - h / 2, main.fy * H));
+    out.push({ key: "beside", box: { x: main.fx < 0.5 ? W * 0.95 - w : W * 0.05, y: cy - h / 2, w, h } });
+  } else {
+    const h = H * Math.min(0.8, (wide ? 0.62 : 0.34) * k);
+    const cy = hz !== null ? Math.max(h / 2 + H * 0.04, hz * H * 0.48) : H * 0.46;
+    out.push({ key: "centre", box: { x: (W - bw) / 2, y: cy - h / 2, w: bw, h } });
+  }
+  if (hz !== null && hz > 0.3) {
+    const h = Math.min(band, hz * H * 0.6);
+    out.push({ key: "sky", box: { x: (W - bw) / 2, y: Math.max(H * 0.04, hz * H * 0.45 - h / 2), w: bw, h } });
+  }
+  const view = laid.view;
+  if (hz !== null && hz < 0.78 && view && !view.iso && Array.isArray(view.vanish) && H * 0.96 - Math.max(hz * H + (1 - hz) * H * 0.45, main?.box ? main.box.y + main.box.h + H * 0.02 : 0) > H * 0.12) {
+    // Lying on the ground: laid out in a box whose letters are then
+    // foreshortened into the band of ground they lie in (lettering.warp).
+    // In the foreground, in front of the main thing's feet, as road paint is.
+    const clear = main?.box ? main.box.y + main.box.h + H * 0.02 : 0;
+    const top = Math.max(hz * H + (1 - hz) * H * 0.45, clear), foot = H * 0.96, visible = foot - top;
+    const near = (top + foot) / 2, sy = Math.max(0.3, Math.min(0.75, 0.25 + 0.5 * (near - hz * H) / Math.max(1, (1 - hz) * H)));
+    const w = W * Math.min(0.92, 0.84 * k), h = visible / sy, cx = W / 2;
+    const shx = (view.vanish[0] - cx) / Math.max(1, near - view.vanish[1]);
+    out.push({ key: "ground", box: { x: cx - w / 2, y: foot - h, w, h }, warp: { sy, shx: Math.max(-1.2, Math.min(1.2, shx)), ay: foot },
+      screen: { x: cx - w / 2 - Math.abs(shx) * visible, y: top, w: w + 2 * Math.abs(shx) * visible, h: visible } });
+  }
+  return out;
+}
+// How well a place sits in this painting, before votes and variety.
+function letterPlaceLean(place, W, H, main, laid) {
+  const b = place.screen || place.box;
+  let lean = 0;
+  if (main?.box) {
+    const m = main.box, ox = Math.max(0, Math.min(b.x + b.w, m.x + m.w) - Math.max(b.x, m.x)), oy = Math.max(0, Math.min(b.y + b.h, m.y + m.h) - Math.max(b.y, m.y));
+    lean -= 1.4 * (ox * oy) / Math.max(1, m.w * m.h);
+  }
+  if (place.key === "beside") lean += 0.3;
+  if (place.key === "ground") lean += 0.25;
+  if (place.key === "sky") lean += 0.1;
+  if (place.key === "centre") lean += main ? -1 : 0.2;
+  return lean;
+}
+// The affine map of a lettering lying on the ground: about the foot line,
+// squashed by sy, its uprights leaning to the vanishing point by shx.
+function letteringWarpMatrix(warp) {
+  const { sy, shx, ay } = warp;
+  return [1, 0, -sy * shx, sy, sy * shx * ay, ay * (1 - sy)];
+}
+function warpLetterPoint(warp, [x, y]) {
+  const [a, b, c, d, e, f] = letteringWarpMatrix(warp);
+  return [a * x + c * y + e, b * x + d * y + f];
+}
+
 function planLettering(scene, letters, params, read, laid, rng) {
   const { width: W, height: H } = scene;
-  const family = chooseLetterFamily(params, rng);
+  const favourite = fontFavourite();
+  const family = favourite?.family || chooseLetterFamily(params, rng);
   const v = sampleVisualVariation("lettering", rng);
   scene.variations.lettering = v;
   scene.variations[fontVoteWord(family)] = { size: 0, hue: 0, light: 0, literal: 0 };
-  const wide = W / H > 2;
   const k = Math.exp(0.3 * v.size);
-  let box;
   const main = read.subjects.length ? laid.focus : null;
-  if (!main) {
-    const bw = W * Math.min(0.94, 0.86 * k), bh = H * Math.min(0.8, (wide ? 0.62 : 0.34) * k);
-    const cy = Number.isFinite(laid.horizon) ? Math.max(bh / 2 + H * 0.04, laid.horizon * H * 0.48) : H * 0.46;
-    box = { x: (W - bw) / 2, y: cy - bh / 2, w: bw, h: bh };
-  } else if (wide) {
-    // Beside the subject, across the two thirds it leaves.
-    const bw = W * Math.min(0.6, 0.52 * k), bh = H * Math.min(0.8, 0.58 * k);
-    const x = main.fx < 0.5 ? W * 0.94 - bw : W * 0.06;
-    box = { x, y: H * 0.46 - bh / 2, w: bw, h: bh };
-  } else {
-    // Above or below it - a band tall enough for the letters to paint.
-    const bw = W * Math.min(0.94, 0.86 * k), bh = H * Math.min(0.34, 0.27 * k);
-    box = { x: (W - bw) / 2, y: main.fy > 0.45 ? H * 0.05 : H * 0.95 - bh, w: bw, h: bh };
-  }
+  const mainItem = main ? laid.items.find((item) => item.entry?.kind === "subject" && !item.lettering) : null;
+  const where = main && mainItem ? { ...main, box: mainItem.box } : main;
+  // Where it goes: chosen, learned and varied (axis "letterPlace").
+  const places = letterPlaceCandidates(W, H, k, where, laid);
+  const scores = chooseByTaste(places.map((p) => p.key), {
+    rng, tasted: 0, axis: "letterPlace", given: null,
+    lean: (key) => letterPlaceLean(places.find((p) => p.key === key), W, H, where, laid),
+    learned: (key) => visualLearnedChoice("letterplace" + key), taste: () => null,
+  });
+  const place = places.find((p) => p.key === scores[0].key) || places[0];
+  scene.variations["letterplace" + place.key] = { size: 0, hue: 0, light: 0, literal: 0 };
+  const box = place.box;
   const colourWord = (params?.__hexfieldWords?.text || "").toLowerCase().match(/[a-z]+/g)?.find((w) => globalThis.HexfieldVisual.COLOUR_WORDS[w]);
   const named = colourWord ? globalThis.HexfieldVisual.COLOUR_WORDS[colourWord] : null;
   const hue = (((named ? named[0] : Number(params?.palette?.hue) || 200) + v.hue) % 360 + 360) % 360;
   // Provisional; makePaintingPlan sets it from the painting's value scheme.
   const light = (Number(params?.palette?.light) || 50) < 55 ? 0.84 : 0.2;
-  const base = letterProgramForRender({ ...params, __hexfieldBrushProgram: undefined, __hexfieldBrush: undefined }, family);
+  const base = favourite?.program || letterProgramForRender({ ...params, __hexfieldBrushProgram: undefined, __hexfieldBrush: undefined }, family);
   const program = paintedLetterProgram({
     ...base,
     primaryHue: hue, lightness: Math.max(0.08, Math.min(0.94, light + v.light / 100)),
@@ -32695,12 +32871,15 @@ function planLettering(scene, letters, params, read, laid, rng) {
   });
   scene.lettering = {
     text: letters, family, program, base: program, box,
+    place: place.key, warp: place.warp || null, screenBox: place.screen || box, namedColour: colourWord || null,
     stage: "block", passes: 0, rounds: 0, round: null, changed: false,
     mode: family === "wildstyle" ? "wildstyle" : "throwup",
   };
-  scene.items.push({ key: "letters", entry: { kind: "subject", parts: [], colours: { face: [hue, 70, light * 100] } }, box, alpha: 1, lettering: true });
-  scene.sharp = { x0: box.x / W, y0: box.y / H, x1: (box.x + box.w) / W, y1: (box.y + box.h) / H };
-  if (!main) scene.focus = { fx: (box.x + box.w / 2) / W, fy: (box.y + box.h / 2) / H };
+  scene.letterPlaceScores = summariseChoice(scores);
+  const seen = place.screen || box;
+  scene.items.push({ key: "letters", entry: { kind: "subject", parts: [], colours: { face: [hue, 70, light * 100] } }, box: seen, alpha: 1, lettering: true });
+  scene.sharp = { x0: seen.x / W, y0: seen.y / H, x1: (seen.x + seen.w) / W, y1: (seen.y + seen.h) / H };
+  if (!main) scene.focus = { fx: (seen.x + seen.w / 2) / W, fy: (seen.y + seen.h / 2) / H };
 }
 
 
@@ -32917,16 +33096,26 @@ function letterInBox(ctx, box, text, program) {
 function chooseLetteringValue(ctx, scene) {
   const lettering = scene.lettering;
   if (lettering.valueChosen) return;
-  const box = lettering.box;
+  const box = lettering.screenBox || lettering.box;
   const x = Math.max(0, Math.floor(box.x)), y = Math.max(0, Math.floor(box.y));
   const w = Math.max(1, Math.min(scene.width - x, Math.ceil(box.w))), h = Math.max(1, Math.min(scene.height - y, Math.ceil(box.h)));
   const pixels = ctx.getImageData(x, y, w, h).data;
-  let sum = 0, covered = 0, n = 0;
+  let sum = 0, covered = 0, n = 0, ga = 0, gb = 0, gl = 0;
   for (let o = 0; o < pixels.length; o += 4 * 7) {
     n++;
     if (pixels[o + 3] < 128) continue;
     covered++;
     sum += 0.2126 * pixels[o] + 0.7152 * pixels[o + 1] + 0.0722 * pixels[o + 2];
+    const [Lk, A, B] = rgbToOklab(pixels[o], pixels[o + 1], pixels[o + 2]);
+    gl += Lk; ga += A; gb += B;
+  }
+  // Its colour: the true complement of the ground behind it, unless the
+  // words named one (Lettering in the painting).
+  if (!lettering.namedColour && covered && Math.hypot(ga, gb) / covered > 0.02) {
+    const [r, g, b] = oklabToRgb(gl / covered, -ga / covered * 1.4, -gb / covered * 1.4);
+    const hue = Math.round(rgbToHsl(r, g, b).h) % 360;
+    lettering.program = { ...lettering.program, primaryHue: hue, outlineHue: hue };
+    lettering.base = { ...lettering.base, primaryHue: hue, outlineHue: hue };
   }
   const groundLight = covered > n * 0.5 ? sum / covered > 128 : Boolean(strokePainter.plan?.lightOnDark);
   const shift = (Number(scene.variations.lettering?.light) || 0) / 100;
@@ -32955,8 +33144,30 @@ function drawLetteringCushion(ctx, lettering, program) {
 }
 
 function drawSceneLettering(ctx, lettering, program = letteringStageProgram(lettering)) {
+  // Lying on the ground: everything drawn through its foreshortening.
+  if (lettering.warp && !lettering.warping) {
+    ctx.save();
+    ctx.transform(...letteringWarpMatrix(lettering.warp));
+    lettering.warping = true;
+    try { drawSceneLettering(ctx, lettering, program); } finally { lettering.warping = false; ctx.restore(); }
+    return;
+  }
   const { text, box } = lettering;
   try {
+    // Standing letters throw a shadow away from the painting's light.
+    if (!lettering.warp && strokePainter.plan && Number.isFinite(strokePainter.plan.lightAngle)) {
+      const away = strokePainter.plan.lightAngle + Math.PI, reach = box.h * 0.12;
+      const shadow = paintBuffer(Math.ceil(box.w), Math.ceil(box.h));
+      letterInBox(shadow.getContext("2d"), { x: 0, y: 0, w: box.w, h: box.h }, text, {
+        ...program, lightness: 0.06, outlineMode: "none", outlineWidth: 0, depth3d: 0,
+      });
+      ctx.save();
+      ctx.globalAlpha = 0.4;
+      ctx.filter = "blur(" + Math.max(2, Math.round(box.h / 30)) + "px)";
+      ctx.drawImage(shadow, box.x + Math.cos(away) * reach, box.y + Math.max(0.2, Math.sin(away)) * reach + box.h * 0.03);
+      ctx.restore();
+      shadow.width = 0; shadow.height = 0;
+    }
     drawLetteringCushion(ctx, lettering, program);
     if (lettering.stage === "block") {
       // Soft masses: drawn apart, then blurred onto the layer.
@@ -33238,7 +33449,8 @@ function letterSkeletonPolylines(lettering, program) {
     const map = (gx, gy) => {
       const x = at.x - glyphSize / 2 + (gx * wx + (1 - wx) * 0.5) * glyphSize;
       const y = at.y - glyphSize / 2 + (gy * xh + (1 - xh) * 0.5) * glyphSize;
-      return [box.x + x, box.y + box.h / 2 + (y - box.h / 2) * stretch];
+      const pt = [box.x + x, box.y + box.h / 2 + (y - box.h / 2) * stretch];
+      return lettering.warp ? warpLetterPoint(lettering.warp, pt) : pt;
     };
     for (const stroke of strokes) {
       let line = null, cur = null;
