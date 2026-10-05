@@ -33466,12 +33466,136 @@ function applyLockup(items, lockup) {
 const GROUND_WORDS = new Set(["road", "street", "path", "lane", "track", "runway", "pavement", "sidewalk", "floor", "court",
   "field", "meadow", "beach", "sand", "desert", "ground", "plaza", "square", "parking", "highway", "avenue", "playground"]);
 // How well a place sits in this painting, before votes and variety.
+/* ── Letters in the space there is ───────────────────────────────────────
+ * Not the word stamped whole in one box: each letter set by itself into the
+ * room the painting leaves, as a sign painter fits a word round a window -
+ * left to right along a line, lines top to bottom, a letter that would land
+ * on a thing stepping past it, and the whole as large as the free space
+ * allows. So a word can run across the sky, step round a tree and carry on
+ * the far side of it, or break onto a second line under a roof. */
+const FLOW_NARROW = new Set(["I", "1", "J", "L", "T", "!", "'", ".", ","]);
+const FLOW_WIDE = new Set(["M", "W", "@", "&"]);
+function flowLetterPlace(text, W, H, k, laid, rng) {
+  if (!String(text || "").trim()) return null;
+  // What the painting has already put there: its named things, a little
+  // inside their boxes so letters can tuck in close.
+  const c = Math.max(4, Math.round(Math.min(W, H) / 64)), gw = Math.ceil(W / c), gh = Math.ceil(H / c);
+  const taken = new Uint8Array(gw * gh);
+  for (const item of laid.items || []) {
+    if (item.entry?.kind !== "subject" || item.lettering || !item.box) continue;
+    const b = item.box, sx = b.w * 0.06, sy = b.h * 0.06;
+    const x0 = Math.max(0, Math.floor((b.x + sx) / c)), x1 = Math.min(gw - 1, Math.floor((b.x + b.w - sx) / c));
+    const y0 = Math.max(0, Math.floor((b.y + sy) / c)), y1 = Math.min(gh - 1, Math.floor((b.y + b.h - sy) / c));
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) taken[y * gw + x] = 1;
+  }
+  const free = (x, y, w, h) => {
+    const x0 = Math.floor(x / c), x1 = Math.min(gw - 1, Math.floor((x + w) / c));
+    const y0 = Math.floor(y / c), y1 = Math.min(gh - 1, Math.floor((y + h) / c));
+    for (let yy = y0; yy <= y1; yy++) for (let xx = x0; xx <= x1; xx++) if (taken[yy * gw + xx]) return false;
+    return true;
+  };
+  const margin = Math.min(W, H) * 0.05;
+  const aspect = (ch) => FLOW_NARROW.has(ch) ? 0.4 : FLOW_WIDE.has(ch) ? 0.8 : 0.58;
+  /* A word is kept whole where it can be: set where the whole of it fits
+   * unbroken - further along the line, past a thing, or on the next line -
+   * and split (a letter stepping past a thing, or onto the next line) only
+   * when no line has room for all of it. */
+  const words = String(text || "").toUpperCase().split(/\s+/).filter(Boolean).map((word) => [...word]);
+  const tryHeight = (h) => {
+    const glyphs = [], gap = h * 0.03, space = h * 0.36;
+    let split = false;
+    const widthOf = (word) => word.reduce((sum, ch) => sum + h * aspect(ch) + gap, -gap);
+    // Where on this line the whole word fits unbroken, from x on.
+    const runAt = (word, x, y) => {
+      const total = widthOf(word);
+      for (let at = x; at + total <= W - margin; at += c) {
+        let px = at, ok = true;
+        for (const ch of word) { const w = h * aspect(ch); if (!free(px, y, w, h)) { ok = false; break; } px += w + gap; }
+        if (ok) return at;
+      }
+      return -1;
+    };
+    let x = margin, y = margin, onLine = 0;
+    for (const word of words) {
+      let at = -1, tries = 0;
+      // Along this line, then the next ones, until the word fits whole.
+      while (y + h <= H - margin && tries < 40) {
+        at = runAt(word, onLine ? x + space : x, y);
+        if (at >= 0) break;
+        x = margin; y += h * 1.08; onLine = 0; tries++;
+      }
+      if (at >= 0 && y + h <= H - margin) {
+        for (const ch of word) { const w = h * aspect(ch); glyphs.push({ ch, box: { x: at, y, w, h } }); at += w + gap; }
+        x = at - gap; onLine++;
+        continue;
+      }
+      // No line has room for all of it: letter by letter, as far as it goes.
+      split = true;
+      x = margin; y = margin + Math.ceil(glyphs.length ? (glyphs[glyphs.length - 1].box.y - margin) / (h * 1.08) + 1 : 0) * h * 1.08;
+      for (const ch of word) {
+        const w = h * aspect(ch);
+        let placed = false;
+        while (!placed && y + h <= H - margin) {
+          let px = x;
+          while (px + w <= W - margin && !free(px, y, w, h)) px += c;
+          if (px + w <= W - margin) { glyphs.push({ ch, box: { x: px, y, w, h } }); x = px + w + gap; placed = true; }
+          else { x = margin; y += h * 1.08; }
+        }
+        if (!placed) return null;
+      }
+      onLine = 1;
+    }
+    return glyphs.length ? { glyphs, split } : null;
+  };
+  // As large as the space allows with every word whole; split only if no
+  // size keeps them whole.
+  let h = Math.min(H * 0.24, W * 0.32) * k, glyphs = null, fallback = null;
+  const least = Math.min(W, H) * 0.06;
+  for (; h >= least; h *= 0.9) {
+    const laidOut = tryHeight(h);
+    if (!laidOut) continue;
+    if (!laidOut.split) { glyphs = laidOut.glyphs; break; }
+    fallback ||= laidOut.glyphs;
+  }
+  glyphs ||= fallback;
+  if (!glyphs?.length) return null;
+  // A hand, not a typesetter: each letter a little bigger or smaller, a
+  // little up or down.
+  for (const g of glyphs) {
+    const s = 1 + (rng() - 0.5) * 0.12, dy = (rng() - 0.5) * 0.08 * g.box.h;
+    g.box = { x: g.box.x - g.box.w * (s - 1) / 2, y: g.box.y + dy - g.box.h * (s - 1) / 2, w: g.box.w * s, h: g.box.h * s };
+  }
+  const x0 = Math.min(...glyphs.map((g) => g.box.x)), y0 = Math.min(...glyphs.map((g) => g.box.y));
+  const x1 = Math.max(...glyphs.map((g) => g.box.x + g.box.w)), y1 = Math.max(...glyphs.map((g) => g.box.y + g.box.h));
+  const box = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  return { key: "flow", box, screen: box, glyphs };
+}
+
+/* Whether (x, y) is within the lettering: its box, or - when its letters
+ * were set one by one - one of the letters' own boxes (the box round them
+ * all can hold a tree). Null without lettering. `screen`: the box as seen
+ * (a lettering lying on the ground is foreshortened into it). */
+function letteringContains(lettering, screen = false) {
+  const box = screen ? lettering?.screenBox || lettering?.box : lettering?.box;
+  if (!box) return null;
+  const inBox = (b, x, y) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
+  const glyphs = lettering.glyphs;
+  if (!glyphs?.length) return (x, y) => inBox(box, x, y);
+  return (x, y) => {
+    if (!inBox(box, x, y)) return false;
+    for (const g of glyphs) if (inBox(g.box, x, y)) return true;
+    return false;
+  };
+}
+
 function letterPlaceLean(place, W, H, main, laid) {
   const b = place.screen || place.box;
   let lean = 0;
   // (A lockup moves the thing out of the word's way; leaning to it more once
   // logos have been given.)
   if (place.lockup) return 0.05 + (fontReferenceDirection() ? 0.35 : 0);
+  // Its letters keep off the things one by one, so the box may overlap them.
+  if (place.glyphs) return 1.2;
   if (main?.box) {
     const m = main.box, ox = Math.max(0, Math.min(b.x + b.w, m.x + m.w) - Math.max(b.x, m.x)), oy = Math.max(0, Math.min(b.y + b.h, m.y + m.h) - Math.max(b.y, m.y));
     lean -= 3 * (ox * oy) / Math.max(1, m.w * m.h);
@@ -33509,13 +33633,15 @@ function planLettering(scene, letters, params, read, laid, rng) {
   // (not even to the chooser's now-and-then exploring), while others remain.
   const hides = (place) => {
     const b = place.screen || place.box, m = where?.box;
-    if (!m || place.lockup) return false;
+    if (!m || place.lockup || place.glyphs) return false;
     const ox = Math.max(0, Math.min(b.x + b.w, m.x + m.w) - Math.max(b.x, m.x)), oy = Math.max(0, Math.min(b.y + b.h, m.y + m.h) - Math.max(b.y, m.y));
     return ox * oy > 0.25 * m.w * m.h;
   };
   const offered = letterPlaceCandidates(W, H, k, where, laid);
   const lockup = lockupCandidate(W, H, k, where);
   if (lockup) offered.push(lockup);
+  const flow = flowLetterPlace(letters, W, H, k, laid, rng);
+  if (flow) offered.push(flow);
   const surfaceWord = (params?.__hexfieldWords?.text || "").toLowerCase().match(/[a-z]+/g)?.some((w) => GROUND_WORDS.has(w)) || false;
   for (const place of offered) if (place.key === "ground") place.surfaceWord = surfaceWord;
   const places = offered.some((place) => !hides(place)) ? offered.filter((place) => !hides(place)) : offered;
@@ -33542,7 +33668,7 @@ function planLettering(scene, letters, params, read, laid, rng) {
     outlineHue: hue, depth3d: 0,
   });
   scene.lettering = {
-    text: letters, family, program, base: program, box,
+    text: letters, family, program, base: program, box, glyphs: place.glyphs || null,
     place: place.key, warp: place.warp || null, screenBox: place.screen || box, namedColour: colourWord || null,
     stage: "block", passes: 0, rounds: 0, round: null, changed: false,
     mode: family === "wildstyle" ? "wildstyle" : "throwup",
@@ -33937,6 +34063,11 @@ function drawSceneLettering(ctx, lettering, program = letteringStageProgram(lett
     try { drawSceneLettering(ctx, lettering, program, { shadow, cushion }); } finally { lettering.warping = false; ctx.restore(); }
     return;
   }
+  // Letters set one by one: each drawn as a lettering of its own.
+  if (lettering.glyphs?.length) {
+    for (const g of lettering.glyphs) drawSceneLettering(ctx, { ...lettering, text: g.ch, box: g.box, glyphs: null }, program, { shadow, cushion });
+    return;
+  }
   const { text, box } = lettering;
   try {
     // Standing letters throw a shadow away from the painting's light.
@@ -34254,6 +34385,16 @@ async function runLetteringRound(scene) {
  * offset, then the face over it. The skeleton is rebuilt exactly as the
  * reference drew it (same layout, same random sequence, same stretch). */
 function letterSkeletonPolylines(lettering, program) {
+  if (lettering.glyphs?.length) {
+    const parts = lettering.glyphs.map((g) => letterSkeletonPolylines({ ...lettering, text: g.ch, box: g.box, glyphs: null }, program)).filter(Boolean);
+    if (!parts.length) return null;
+    return {
+      lines: parts.flatMap((part) => part.lines),
+      width: parts.reduce((sum, part) => sum + part.width, 0) / parts.length,
+      glyphSize: Math.min(...parts.map((part) => part.glyphSize)),
+      stretch: parts[0].stretch,
+    };
+  }
   const { box, text } = lettering;
   const layout = layoutWord(box.w, box.h, text, program);
   if (!layout) return null;
@@ -35799,9 +35940,8 @@ function applyWaterReflection(pixels, width, height, plan, only = null) {
   const src = new Uint8ClampedArray(pixels);
   const unit = Math.min(width, height);
   // The words are not in the scene: water does not reflect them.
-  const lb = scene.lettering?.screenBox || scene.lettering?.box || null, cover = scene.layer.cover;
-  const lettered = (j) => lb && cover && cover[j] > 110 && (j % width) >= lb.x && (j % width) <= lb.x + lb.w &&
-    ((j / width) | 0) >= lb.y && ((j / width) | 0) <= lb.y + lb.h;
+  const within = letteringContains(scene.lettering, true), cover = scene.layer.cover;
+  const lettered = (j) => within && cover && cover[j] > 110 && within(j % width, (j / width) | 0);
   const line = new Int32Array(width).fill(-1);
   // A streak's sideways shift for each band of rows, the same down a band.
   const band = Math.max(2, Math.round(unit * 0.006));
@@ -37095,11 +37235,11 @@ function* applyMannerReferenceSteps(pixels, width, height, plan, manner, only = 
   const short = Math.min(width, height);
   const soft = blurPixels(pixels, width, height, m.blur * 0.02 * short);
   yield;
-  const lettering = plan.scene?.lettering?.box;
+  const lettering = letteringContains(plan.scene?.lettering);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const o = (y * width + x) * 4;
-      if (lettering && x >= lettering.x && x <= lettering.x + lettering.w && y >= lettering.y && y <= lettering.y + lettering.h) continue;
+      if (lettering && lettering(x, y)) continue;
       // The focus and the named things keep most of their edges: soft all
       // round, sharp where it matters. (exp(-d/σ²) is the square of the
       // falloff above.)
@@ -37162,9 +37302,9 @@ function* applyMannerContourSteps(pixels, width, height, plan, manner) {
     run = -1;
     for (let x = width - 1; x >= 0; x--) { if (edge[y * width + x]) run = x; if (run >= 0 && run - x <= t) wide[y * width + x] = 1; }
   }
-  const box = plan.scene?.lettering?.box;
+  const within = letteringContains(plan.scene?.lettering);
   const cover = plan.scene?.layer?.cover;
-  const inLetters = (x, y, i) => box && cover && x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h && cover[i] > 110;
+  const inLetters = (x, y, i) => within && cover && cover[i] > 110 && within(x, y);
   for (let x = 0; x < width; x++) {
     let run = -1;
     for (let y = 0; y < height; y++) {
@@ -37648,10 +37788,9 @@ async function pullFormMemory() {
  * few pixels. Letters are skipped - they have their own brush. */
 function traceContourLines(plan) {
   const { edge, width, height } = plan.contourEdge;
-  const box = plan.scene?.lettering?.box;
+  const within = letteringContains(plan.scene?.lettering);
   const cover = plan.scene?.layer?.cover;
-  const blocked = (x, y) => box && cover && x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h &&
-    cover[y * width + x] > 110;
+  const blocked = (x, y) => within && cover && cover[y * width + x] > 110 && within(x, y);
   return traceEdgeLines(edge, width, height, blocked);
 }
 
@@ -38241,7 +38380,7 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
    * a big sweep begun beside a word carry straight across it. */
   const guard = gradient.protect;
   const guardedAt = (x, y) => x >= 0 && y >= 0 && x < width && y < height &&
-    guard.cover[(y | 0) * guard.width + (x | 0)] > 110;
+    guard.cover[(y | 0) * guard.width + (x | 0)] > 110 && (!guard.within || guard.within(x, y));
   // The big brushes (the first two layers) also keep off painted things.
   const things = layer < 2 || gradient.protectThings?.all ? gradient.protectThings : null;
   const onThing = (x, y) => x >= 0 && y >= 0 && x < width && y < height && things.cover[(y | 0) * things.width + (x | 0)] > 200;
@@ -40018,7 +40157,7 @@ function landscapeReference(ref, width, height) {
 }
 function* landscapeSteps(ref, width, height, things, cover, scene) {
   const pixels = new Uint8ClampedArray(ref);
-  const lb = scene.lettering?.screenBox || scene.lettering?.box || null;
+  const inLetters = letteringContains(scene.lettering, true);
   for (const item of things) {
     const b = item.box, m = Math.max(6, Math.max(b.w, b.h) * 0.12);
     const x0 = Math.max(0, Math.floor(b.x - m)), y0 = Math.max(0, Math.floor(b.y - m));
@@ -40031,7 +40170,7 @@ function* landscapeSteps(ref, width, height, things, cover, scene) {
     for (let y = 0; y < bh; y++) {
       for (let x = 0; x < bw; x++) {
         const X = x0 + x, Y = y0 + y;
-        if (lb && X >= lb.x && X <= lb.x + lb.w && Y >= lb.y && Y <= lb.y + lb.h) continue;
+        if (inLetters && inLetters(X, Y)) continue;
         let solid = false;
         if (!cover) {
           const ex = (X - b.x - b.w / 2) / (b.w / 2 + 2), ey = (Y - b.y - b.h / 2) / (b.h / 2 + 2);
@@ -40184,7 +40323,7 @@ function strokesTowardReference(result, ref, width, height, { layer, limit, refK
   const cover = scene?.layer?.cover || scene?.previousCover;
   strokePainter.gradient.protect = scene?.lettering?.painted !== undefined && cover &&
     scene.width === width && scene.height === height
-    ? { cover, box: scene.lettering.box, width } : null;
+    ? { cover, box: scene.lettering.box, width, within: letteringContains(scene.lettering) } : null;
   // Things painted by their own brush are left to it by the big brushes.
   // (All brushes, once the thing brush has started: the things are its to
   // paint - the fine general brushes painted a tree's leaves back to the
