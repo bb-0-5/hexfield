@@ -2076,7 +2076,12 @@
     const items = [];
     let horizon = null;
     const eye = persp && Number.isFinite(persp.horizon) ? persp.horizon : null;
-    for (const s of scene.settings) {
+    /* Skies first: "the sea at night" names the sea first, but the night's
+     * sky lies behind it - drawn after, it covered the sea. Overlays last. */
+    const SKIES = ["sky", "night", "sunset", "storm"];
+    const order = (st) => SKIES.includes(st.key) ? 0 : st.entry.overlay ? 2 : 1;
+    const settings = scene.settings.map((st, k) => [st, k]).sort((x, y) => order(x[0]) - order(y[0]) || x[1] - y[1]).map((x) => x[0]);
+    for (const s of settings) {
       const [rx, ry, rw, rh] = s.entry.region;
       const h0 = s.entry.horizon;
       let y0 = ry, y1 = ry + rh;
@@ -2365,11 +2370,18 @@
   }
   /* `paint(..., "glow")` draws the parts that give their own light - lit
    * windows, flames, lamps - white and everything else black (so what stands
-   * in front still hides them): the map of what glows after dark. */
-  let glowing = false;
+   * in front still hides them): the map of what glows after dark.
+   * `paint(..., "water")`, the same for the water of the places - a sea, a
+   * lake, a river - that the things above it are reflected in. */
+  let masking = null;
   const GLOW_PARTS = new Set(["window", "flame", "glow", "lamp"]);
+  const WATER_PARTS = new Set(["water", "sea"]);
   function colourOf(item, part, name = part.colour) {
-    if (glowing) return GLOW_PARTS.has(name) ? [0, 0, 100] : [0, 0, 0];
+    if (masking) {
+      const on = masking === "glow" ? GLOW_PARTS.has(name)
+        : item.entry.kind === "setting" && (WATER_PARTS.has(name) || item.key === "sea");
+      return on ? [0, 0, 100] : [0, 0, 0];
+    }
     const colours = item.entry.colours;
     const main = Object.keys(colours)[0];
     if (item.colour && name === main) return item.colour;
@@ -3060,7 +3072,7 @@
       const colour = colourOf(item, part);
       ctx.fillStyle = hsl(colour, part.tone || 0);
       ctx.fill(path, "evenodd");
-      if (part.texture && !glowing) {
+      if (part.texture && !masking) {
         const b = part.box || [0, 0, 1, 1];
         const pbox = part.pts
           ? bounds(part.pts.map((pt) => P(box, pt)))
@@ -3499,8 +3511,8 @@
      * glow, no air. */
     const mono = Boolean(dims?.mono);
     if (mono) { cued = true; sourced = true; }
-    const glow = only === "glow";
-    if (glow) { cued = true; sourced = true; only = null; glowing = true; }
+    const glow = only === "glow" || only === "water";
+    if (glow) { cued = true; sourced = true; masking = only; only = null; }
     try {
       for (let index = 0; index < items.length; index++) {
         const item = items[index];
@@ -3535,7 +3547,7 @@
         ctx.restore();
       }
     } finally {
-      glowing = false;
+      masking = null;
     }
     if (!cued) groundCues(ctx, W, H, view);
     if (!sourced) paintLightSource(ctx, W, H, dims, view);

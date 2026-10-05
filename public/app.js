@@ -31709,6 +31709,9 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
   // Rain, snow, storm or fog in the words (Weather).
   plan.weather = choosePlanWeather(plan, params);
   if (scene) scene.weather = plan.weather;
+  // Water, and how still it lies (Reflections).
+  plan.water = choosePlanWater(plan, params);
+  if (scene) scene.water = plan.water;
   setBlobPitch(plan.blobs, plan, height);
   // How tightly the brush keeps to a grown thing's body (Brushwork that
   // follows anatomy).
@@ -33636,6 +33639,7 @@ function recordVisualVote(liked) {
   if (plan?.light) variations[lightVoteWord(plan.light.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.depthStyle) variations[depthVoteWord(plan.depthStyle.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.weather) variations[weatherVoteWord(plan.weather.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  if (plan?.water) variations[waterVoteWord(plan.water.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.anatomy) variations[anatomyVoteWord(plan.anatomy.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.figure) variations[figureVoteWord(plan.figure.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.refColour) variations["refcolour" + plan.refColour.key] = { size: 0, hue: 0, light: 0, literal: 0 };
@@ -34455,7 +34459,7 @@ function* planSceneLayerSteps(scene) {
     // mist) are left out: the air and the weather brush paint them instead.
     const items = scene.weather ? scene.items.filter((item) => !(item.entry.kind === "setting" && item.entry.overlay)) : scene.items;
     globalThis.HexfieldVisual.paint(ctx, width, height, items, mulberry32(0x7e57a), only, sceneDims(scene), scene.view);
-    if (scene.lettering && only !== "setting" && only !== "glow") {
+    if (scene.lettering && only !== "setting" && only !== "glow" && only !== "water") {
       if (!only) chooseLetteringValue(ctx, scene);
       drawSceneLettering(ctx, scene.lettering);
     }
@@ -34472,10 +34476,20 @@ function* planSceneLayerSteps(scene) {
     yield;
     glow = sceneGlowMap(draw("glow"), width, height);
   }
+  // The water the things above it are reflected in.
+  let water = null;
+  if (scene.water) {
+    yield;
+    const px = draw("water");
+    water = new Uint8Array(width * height);
+    let any = false;
+    for (let i = 0, o = 0; i < water.length; i++, o += 4) if ((px[o] + px[o + 1] + px[o + 2]) * px[o + 3] > 3 * 128 * 255) { water[i] = 1; any = true; }
+    if (!any) water = null;
+  }
   canvas.width = 0; canvas.height = 0;
   yield;
   // Whatever finished it first (a synchronous caller) wins.
-  if (!scene.layer) scene.layer = { all, cover, light: sceneLightMap(scene), glow };
+  if (!scene.layer) scene.layer = { all, cover, light: sceneLightMap(scene), glow, water };
 }
 
 /* The glow as a mask (0..255, where a window is lit) and its spill - the
@@ -34615,7 +34629,8 @@ function lightAt(plan, x, y, width, height) {
 
 /* Paint the scene into a composed reference, in place. */
 function applyPlanScene(pixels, width, height, plan, only = null) {
-  return applyDepthAir(applyPlanLight(applySceneLayer(pixels, width, height, plan, only), width, height, plan, only), width, height, plan, only);
+  const lit = applyPlanLight(applySceneLayer(pixels, width, height, plan, only), width, height, plan, only);
+  return applyDepthAir(applyWaterReflection(lit, width, height, plan, only), width, height, plan, only);
 }
 
 /* The painting under its light: the lights of the picture toward the
@@ -35644,6 +35659,87 @@ function applyWeatherAir(pixels, width, height, plan, only = null) {
         r += (mist[0] - r) * a; g += (mist[1] - g) * a; b += (mist[2] - b) * a;
       }
       pixels[o] = r; pixels[o + 1] = g; pixels[o + 2] = b;
+    }
+  }
+  return pixels;
+}
+
+/* ── Reflections ────────────────────────────────────────────────────────
+ * A sea, a lake or a river mirrors what stands above it: the sky, the sun or
+ * the moon, the far shore, the boat on it, the lit windows on its bank. Each
+ * column of water is mirrored about its own waterline - the last place,
+ * coming down the column, where something meets the water - so a boat is
+ * reflected under its own hull and the hills under the horizon. Ripples
+ * break the reflection into streaks, more the nearer the water; near the
+ * viewer the water shows more of its own colour and less of the sky (as
+ * water does, looked down into). Still, rippled or choppy is chosen like
+ * the other choices and learned from votes ("waterstill", ...). */
+const WATER_STYLES = {
+  still: { key: "still", name: "still water", reflect: 0.62, ripple: 0.006, streak: 0.25 },
+  rippled: { key: "rippled", name: "rippled water", reflect: 0.48, ripple: 0.016, streak: 0.55 },
+  choppy: { key: "choppy", name: "choppy water", reflect: 0.32, ripple: 0.032, streak: 0.85 },
+};
+const WATER_SETTINGS = new Set(["sea", "river", "island"]);
+const WATER_STILL = /\b(still|calm|mirror|glassy|lake|pond|quiet|reflection|reflected|reflecting|peaceful)\b/;
+const WATER_CHOPPY = /\b(wind\w*|waves?|choppy|rough|storm\w*|gale|surf|wild)\b/;
+const waterVoteWord = (key) => "water" + String(key).replace(/[^a-z]/g, "");
+
+function choosePlanWater(plan, params) {
+  if (!plan.scene?.items?.some((item) => item.entry.kind === "setting" && WATER_SETTINGS.has(item.key))) return null;
+  const text = String(params?.__hexfieldWords?.text || "").toLowerCase();
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x3a7e4) >>> 0);
+  const still = WATER_STILL.test(text), choppy = WATER_CHOPPY.test(text) || plan.weather?.kinds?.includes("storm");
+  const scores = chooseByTaste(Object.keys(WATER_STYLES), {
+    rng, tasted: 0, axis: "water", given: planStyleChain(plan),
+    lean: (key) => key === "still" ? (still ? 1 : 0) - (choppy ? 0.6 : 0) : key === "choppy" ? (choppy ? 1 : 0) - (still ? 0.6 : 0) : 0.2,
+    learned: (key) => visualLearnedChoice(waterVoteWord(key)), taste: () => null,
+  });
+  plan.waterScores = summariseChoice(scores);
+  return { ...WATER_STYLES[scores[0].key], phase: rng() * Math.PI * 2 };
+}
+
+function applyWaterReflection(pixels, width, height, plan, only = null) {
+  const W = plan?.water, scene = plan?.scene, mask = scene?.layer?.water;
+  if (!W || !mask || scene.width !== width || scene.height !== height || mask.length !== width * height) return pixels;
+  // Read from the picture as it was: a reflection is never of a reflection.
+  const src = new Uint8ClampedArray(pixels);
+  const unit = Math.min(width, height);
+  // The words are not in the scene: water does not reflect them.
+  const lb = scene.lettering?.screenBox || scene.lettering?.box || null, cover = scene.layer.cover;
+  const lettered = (j) => lb && cover && cover[j] > 110 && (j % width) >= lb.x && (j % width) <= lb.x + lb.w &&
+    ((j / width) | 0) >= lb.y && ((j / width) | 0) <= lb.y + lb.h;
+  const line = new Int32Array(width).fill(-1);
+  // A streak's sideways shift for each band of rows, the same down a band.
+  const band = Math.max(2, Math.round(unit * 0.006));
+  const shiftFor = (y, depth) => {
+    const b = (y / band) | 0;
+    const wave = Math.sin(b * 0.9 + W.phase) * 0.6 + Math.sin(b * 2.3 + W.phase * 1.7) * 0.4;
+    const jag = (((Math.imul(b + 1, 2654435761) >>> 0) % 1000) / 1000 - 0.5) * W.streak;
+    return (wave + jag) * unit * W.ripple * (0.4 + depth);
+  };
+  for (let y = 0; y < height; y++) {
+    for (let x = 0, i = y * width; x < width; x++, i++) {
+      if (!mask[i]) { line[x] = -1; continue; }
+      // Where this column's water began: its waterline.
+      if (line[x] < 0) line[x] = y;
+      if (only && !only[i]) continue;
+      const d = y - line[x];
+      const depth = Math.min(1, d / Math.max(1, height - line[x]));
+      // The far water mirrors most; the near shows more of itself.
+      const reflect = W.reflect * (1 - 0.55 * depth) * Math.min(1, (d + 1) / 2);
+      const sx = Math.max(0, Math.min(width - 1, Math.round(x + shiftFor(y, depth))));
+      // A little stretched, as reflections in moving water are.
+      const sy = line[x] - 1 - Math.round(d * (1 - W.streak * 0.15));
+      if (sy < 0) continue;
+      const j = sy * width + sx;
+      if (mask[j] || lettered(j)) continue;
+      const o = i * 4, s0 = j * 4;
+      // Softened down the column: the mean of three rows.
+      const up = Math.max(0, sy - 1) * width + sx, down = Math.min(height - 1, sy + 1) * width + sx;
+      for (let c = 0; c < 3; c++) {
+        const r = (src[s0 + c] * 2 + src[up * 4 + c] + src[down * 4 + c]) / 4 * 0.88;
+        pixels[o + c] = src[o + c] + (r - src[o + c]) * reflect;
+      }
     }
   }
   return pixels;
@@ -37651,6 +37747,8 @@ async function prepareNewPainting(result, raw, width, height, alive, onDraft = n
   // applyPlanScene, with the air (Brushwork in depth) a step of its own.
   const composed = applyPlanLight(applySceneLayer(ground, width, height, plan), width, height, plan);
   if (!await step()) return null;
+  applyWaterReflection(composed, width, height, plan);
+  if (!await step()) return null;
   applyDepthAir(composed, width, height, plan);
   if (onDraft) onDraft(mannerDraft(composed, width, height, plan));
   if (!await step()) return null;
@@ -37762,6 +37860,9 @@ function scheduleStrokeReference(ref, width, height, refKey) {
       if (!stillWanted()) return;
     } while (!depthSteps.next().done);
     const composed = applyPlanLight(applySceneLayer(ground, width, height, plan), width, height, plan);
+    await pause();
+    if (!stillWanted()) return;
+    applyWaterReflection(composed, width, height, plan);
     await pause();
     if (!stillWanted()) return;
     applyDepthAir(composed, width, height, plan);
