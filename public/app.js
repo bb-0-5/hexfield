@@ -32456,14 +32456,18 @@ async function pullFontReferences() {
  * onto the genes they move; calibrated on regular, bold, italic, serif,
  * monospaced and spaced-out type). Null with none given yet. */
 function fontReferenceDirection() {
-  const refs = fontReferenceShared.filter((t) => Number.isFinite(Number(t.weight)));
+  const valid = (t) => t && Number.isFinite(Number(t.weight));
+  const museum = fontReferenceShared.filter(valid), own = selfReferenceList().map((r) => r.traits).filter(valid);
+  const refs = museum.concat(own);
   if (!refs.length) return null;
-  const mean = (key) => refs.reduce((sum, t) => sum + (Number(t[key]) || 0), 0) / refs.length;
+  // The two halves count evenly, however many each holds.
+  const half = (list, key) => list.reduce((sum, t) => sum + (Number(t[key]) || 0), 0) / list.length;
+  const mean = (key) => !own.length ? half(museum, key) : !museum.length ? half(own, key) : (half(museum, key) + half(own, key)) / 2;
   const clampTo = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const widthAxis = clampTo((mean("width") - 0.45) * 0.9, 0, 0.62);
   const straight = mean("straight");
   return {
-    n: refs.length,
+    n: refs.length, given: museum.length, own: own.length,
     penWeight: clampTo(0.35 + (mean("weight") - 0.1) / 0.16 * 0.6, 0.3, 0.95),
     skeletonShear: clampTo(mean("lean"), -0.16, 0.26),
     widthAxis,
@@ -32484,6 +32488,62 @@ function towardFontReferences(program, k, rng = Math.random) {
   return finishBrushProgram(out);
 }
 
+
+/* ── Half museum, half self-updating ───────────────────────────────────
+ * The references are two halves. The museum half is what people have given
+ * it - pictures and logos, kept as they were. The other half updates itself:
+ * the studio's own best finished paintings, each measured as a given picture
+ * is (its colours and layout, and the letterforms of its lettering), scored
+ * by how its finish tastes and by the votes it got (a KEEP, liked choices),
+ * the scores fading a little with every new painting so that newer good
+ * work takes the place of the old. A painting borrows from either half
+ * evenly, so its look moves between what people showed it and what it has
+ * learned to do well. They lend colours, layouts and fonts only - never a
+ * like, or the taste would be praising its own work. */
+const SELF_REFERENCES_KEY = "hexfield.references.self.v1";
+const SELF_REFERENCE_FADE = 0.97;
+function selfReferenceList() {
+  try { const list = JSON.parse(localStorage.getItem(SELF_REFERENCES_KEY) || "[]"); return Array.isArray(list) ? list : []; } catch { return []; }
+}
+function saveSelfReferenceList(list) {
+  try { localStorage.setItem(SELF_REFERENCES_KEY, JSON.stringify(list)); } catch { /* memory only */ }
+}
+// As many as the museum half holds, between 6 and 24.
+function selfReferenceCap() {
+  return Math.max(6, Math.min(24, referenceList().length + pictureReferenceShared.length / 4));
+}
+function considerSelfReference(plan, taste) {
+  if (!plan || !Number.isFinite(taste) || typeof document === "undefined" || !view?.width) return null;
+  const votes = plan.scene?.votes || plan.votes || {};
+  const liked = Object.values(plan.choiceVotes || {});
+  const score = taste + (votes.kept ? 0.5 : 0) - (votes.rejected ? 1 : 0) +
+    0.1 * (liked.filter(Boolean).length - liked.filter((v) => v === false).length);
+  const list = selfReferenceList().map((r) => ({ ...r, score: +(r.score * SELF_REFERENCE_FADE).toFixed(4) }));
+  const cap = selfReferenceCap();
+  const weakest = list.reduce((low, r) => (!low || r.score < low.score ? r : low), null);
+  if (list.length >= cap && weakest && score <= weakest.score) { saveSelfReferenceList(list); return null; }
+  // The finished picture, as it is seen (its finish too).
+  const layer = refreshFinishLayer();
+  const source = layer && layer.style.display !== "none" ? layer : view;
+  const k = 320 / Math.max(source.width, source.height);
+  const pic = paintBuffer(Math.max(8, Math.round(source.width * k)), Math.max(8, Math.round(source.height * k)));
+  pic.getContext("2d").drawImage(source, 0, 0, pic.width, pic.height);
+  const entry = { hash: "self_" + Date.now().toString(36), kind: "self", at: Date.now(), score: +score.toFixed(4),
+    thumb: referenceThumb(pic), stats: referenceStats(pic), chain: planStyleChain(plan) };
+  // Its lettering's letterforms, measured as a logo's are.
+  const lettering = plan.scene?.lettering, box = lettering?.screenBox || lettering?.box;
+  if (box && plan.scene.width) {
+    const sx = pic.width / plan.scene.width, sy = pic.height / plan.scene.height;
+    const crop = paintBuffer(Math.max(8, Math.round(box.w * sx)), Math.max(8, Math.round(box.h * sy)));
+    crop.getContext("2d").drawImage(pic, box.x * sx, box.y * sy, box.w * sx, box.h * sy, 0, 0, crop.width, crop.height);
+    try { const traits = logoTraits(crop); if (traits) entry.traits = traits; } catch { /* no letters found */ }
+    crop.width = 0;
+  }
+  pic.width = 0;
+  const kept = list.length >= cap ? list.filter((r) => r !== weakest) : list;
+  saveSelfReferenceList([...kept, entry].sort((a, b) => b.score - a.score).slice(0, cap));
+  return entry;
+}
 
 /* A picture's colours and layout, for the paintings to borrow: its colour
  * (mean and spread of OKLab lightness and the two colour axes), where its
@@ -32546,9 +32606,13 @@ function pictureReferenceFor(drawSeed) {
   const byHash = new Map();
   for (const r of pictureReferenceShared) byHash.set(r.hash, r);
   for (const r of referenceList()) if (r.kind === "picture" && r.stats) byHash.set(r.hash, { hash: r.hash, ...r.stats });
-  const pool = [...byHash.values()].filter((r) => r.colour && r.layout);
-  if (!pool.length) return null;
-  return pool[Math.floor(mulberry32(((Number(drawSeed) || 0) ^ 0x7ef5) >>> 0)() * pool.length)];
+  const museum = [...byHash.values()].filter((r) => r.colour && r.layout);
+  const own = selfReferenceList().filter((r) => r.stats?.colour && r.stats?.layout).map((r) => ({ hash: r.hash, self: true, ...r.stats }));
+  if (!museum.length && !own.length) return null;
+  // Either half, evenly.
+  const rng = mulberry32(((Number(drawSeed) || 0) ^ 0x7ef5) >>> 0);
+  const pool = !own.length ? museum : !museum.length ? own : rng() < 0.5 ? museum : own;
+  return pool[Math.floor(rng() * pool.length)];
 }
 /* Whether a painting takes its reference's colours (axis "refColour",
  * learned from votes like the other choices). */
@@ -32718,7 +32782,8 @@ function renderReferences(panel, small) {
   status.id = "referenceStatus";
   status.style.cssText = "margin:6px 0;font-size:12px";
   const dir = fontReferenceDirection();
-  status.textContent = (referenceNote ? referenceNote + " · " : "") + (dir ? dir.n + " logos shared so far · fonts lean " + (dir.skeletonShear > 0.05 ? "italic, " : "") +
+  status.textContent = (referenceNote ? referenceNote + " · " : "") + (dir ? (dir.given ? dir.given + " logos shared" : "no logos shared yet") +
+    (dir.own ? " · " + dir.own + " of its own letterings" : "") + " · fonts lean " + (dir.skeletonShear > 0.05 ? "italic, " : "") +
     (dir.penWeight > 0.65 ? "heavy, " : dir.penWeight < 0.45 ? "light, " : "") + dir.curveRule : "no logos shared yet");
   const row = document.createElement("div");
   const picker = (label, kind) => {
@@ -32748,16 +32813,35 @@ function renderReferences(panel, small) {
   picker("add logos & lettering", "logo");
   wrap.appendChild(row);
   wrap.appendChild(status);
-  const grid = document.createElement("div");
-  grid.id = "referenceGrid";
-  grid.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px";
-  for (const ref of referenceList().slice().reverse()) {
-    const img = document.createElement("img");
-    img.src = ref.thumb; img.alt = ref.kind; img.title = ref.kind;
-    img.style.cssText = "height:56px;border-radius:6px;border:2px solid " + (ref.kind === "logo" ? "#c58b2a" : "#2f3540");
-    grid.appendChild(img);
-  }
-  wrap.appendChild(grid);
+  const half = (title, note, refs, id) => {
+    const head = document.createElement("div");
+    head.style.cssText = "margin:10px 0 2px;font-size:12px;font-weight:700;letter-spacing:.06em";
+    head.textContent = title;
+    const sub = document.createElement("div");
+    sub.style.cssText = "font-size:11px;opacity:.75";
+    sub.textContent = note;
+    const grid = document.createElement("div");
+    grid.id = id;
+    grid.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;min-height:20px";
+    if (!refs.length) {
+      const empty = document.createElement("div");
+      empty.style.cssText = "font-size:11px;opacity:.6";
+      empty.textContent = id === "referenceGrid" ? "nothing given yet - add pictures or logos above" : "none yet";
+      grid.appendChild(empty);
+    }
+    for (const ref of refs) {
+      const img = document.createElement("img");
+      img.src = ref.thumb; img.alt = ref.kind;
+      img.title = ref.kind === "self" ? "its own painting · score " + ref.score + (ref.traits ? " · lettering measured" : "") : ref.kind;
+      img.style.cssText = "height:56px;border-radius:6px;border:2px solid " + (ref.kind === "logo" ? "#c58b2a" : ref.kind === "self" ? "#4d7d68" : "#2f3540");
+      grid.appendChild(img);
+    }
+    wrap.appendChild(head); wrap.appendChild(sub); wrap.appendChild(grid);
+  };
+  const own = selfReferenceList();
+  half("MUSEUM", "what people have given it - kept as they are", referenceList().slice().reverse(), "referenceGrid");
+  half("SELF-UPDATING", own.length ? "its own best paintings - " + own.length + " of " + Math.round(selfReferenceCap()) + ", replaced as it paints better ones"
+    : "its own best paintings join here as it finishes them", own, "selfReferenceGrid");
   panel.appendChild(wrap);
 }
 
@@ -39670,6 +39754,7 @@ function recordStyleOutcome(plan, source) {
   styleOutcomeQueue.push(row);
   pushStyleOutcomes();
   if (plan.morph) morphOutcome(plan.morph, { taste });
+  try { considerSelfReference(plan, taste); } catch (error) { console.warn("self reference skipped", error); }
   return row;
 }
 
