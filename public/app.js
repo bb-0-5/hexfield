@@ -39867,7 +39867,10 @@ function paintTonedGround(reference, width, height) {
 const STROKE_LOG_MAX = 60000;
 const STROKE_LOG_TILE = 16;
 const strokeLog = { base: null, strokes: [], mark: null, pixels: null, width: 0, height: 0, checkpoints: 0, patches: 0,
-  drawing: false, epoch: 0 };
+  drawing: false, epoch: 0, history: [], newPainting: false };
+// The painting's earlier bases and their strokes, for the time-lapse: kept
+// from the toned ground on, a few at most (the first and the latest).
+const STROKE_LOG_HISTORY = 6;
 
 function pixelMark(pixels) {
   const words = new Uint32Array(pixels.buffer, pixels.byteOffset, pixels.byteLength >> 2);
@@ -39934,6 +39937,14 @@ function strokeLogBegin(pixels, width, height) {
     strokeLog.patches++;
     return;
   }
+  // What the old base had come to is the start of this painting's story,
+  // unless this base is a new painting's ground.
+  if (strokeLog.newPainting) strokeLog.history = [];
+  else if (strokeLog.base && strokeLog.strokes.length && strokeLog.width === width && strokeLog.height === height) {
+    strokeLog.history.push({ base: strokeLog.base, strokes: strokeLog.strokes });
+    if (strokeLog.history.length > STROKE_LOG_HISTORY) strokeLog.history.splice(1, 1);
+  }
+  strokeLog.newPainting = false;
   // Always a fresh canvas: a REJECT snapshot may still hold the old base.
   const base = paintBuffer(width, height);
   base.getContext("2d").drawImage(view, 0, 0);
@@ -40030,6 +40041,141 @@ async function paintExportFromLog(out, onProgress = null) {
     ctx.restore();
   }
   return true;
+}
+
+/* ── Time-lapse ─────────────────────────────────────────────────────────
+ * The painting being made, stroke by stroke, as a short video to share: the
+ * log's bases and strokes (the toned ground, the sketch, the big brushes,
+ * the things, the letters, the weather) replayed onto a canvas a recorder
+ * is watching, a few strokes a frame, then the finished picture - finish and
+ * all - held for a moment at the end. Recorded in real time, so it takes
+ * as long as it lasts. */
+const TIMELAPSE = { fps: 30, minSeconds: 6, maxSeconds: 18, strokesPerSecond: 160, hold: 2, long: 1280, bitrate: 6e6 };
+
+function timelapseFormat() {
+  if (typeof MediaRecorder === "undefined" || !HTMLCanvasElement.prototype.captureStream) return null;
+  for (const type of ["video/mp4;codecs=avc1.42E01E", "video/mp4", "video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"]) {
+    if (MediaRecorder.isTypeSupported(type)) return { type, extension: type.startsWith("video/mp4") ? "mp4" : "webm" };
+  }
+  return null;
+}
+
+/* The painting's story so far: each base with the strokes laid over it, the
+ * last one carrying whatever else has changed the canvas since. Null when
+ * nothing is painted yet. */
+function timelapseSegments() {
+  if (!strokeLog.base || strokeLog.drawing || strokeLog.width !== view.width || strokeLog.height !== view.height) return null;
+  let strokes = strokeLog.strokes.slice();
+  const pixels = vctx.getImageData(0, 0, view.width, view.height).data;
+  if (strokeLog.mark !== pixelMark(pixels)) {
+    const patches = strokeLogPatches(pixels, view.width, view.height);
+    if (!patches) return null;
+    strokes = strokes.concat(patches);
+  }
+  return [...strokeLog.history.filter((seg) => seg.base.width === strokeLog.width), { base: strokeLog.base, strokes }];
+}
+
+async function recordTimelapse(onProgress = null) {
+  const format = timelapseFormat();
+  if (!format) throw new Error("no-recorder");
+  for (let waited = 0; strokeLog.drawing && waited < 3000; waited += 50) await new Promise((resolve) => setTimeout(resolve, 50));
+  const segments = timelapseSegments();
+  if (!segments) throw new Error("nothing-painted");
+  const W = strokeLog.width, H = strokeLog.height;
+  const k = Math.min(1, TIMELAPSE.long / Math.max(W, H));
+  const out = document.createElement("canvas");
+  out.width = Math.max(2, Math.round(W * k / 2) * 2);
+  out.height = Math.max(2, Math.round(H * k / 2) * 2);
+  const ctx = out.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  const total = segments.reduce((sum, seg) => sum + seg.strokes.length, 0);
+  const seconds = Math.max(TIMELAPSE.minSeconds, Math.min(TIMELAPSE.maxSeconds, total / TIMELAPSE.strokesPerSecond));
+  const drawBase = (seg) => {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+    ctx.drawImage(seg.base, 0, 0, out.width, out.height);
+  };
+  drawBase(segments[0]);
+  const stream = out.captureStream(TIMELAPSE.fps);
+  const recorder = new MediaRecorder(stream, { mimeType: format.type, videoBitsPerSecond: TIMELAPSE.bitrate });
+  const chunks = [];
+  recorder.ondataavailable = (event) => { if (event.data?.size) chunks.push(event.data); };
+  const stopped = new Promise((resolve) => { recorder.onstop = resolve; });
+  recorder.start(1000);
+  const frame = () => new Promise((resolve) => setTimeout(resolve, 1000 / TIMELAPSE.fps));
+  try {
+    await frame();
+    // Paced by the clock: each frame draws the strokes due by now, so a slow
+    // phone records a video as long as a fast one, only in bigger steps.
+    const started = performance.now();
+    let done = 0;
+    for (const seg of segments) {
+      if (seg !== segments[0]) drawBase(seg);
+      for (let i = 0; i < seg.strokes.length;) {
+        ctx.setTransform(out.width / W, 0, 0, out.height / H, 0, 0);
+        const due = Math.ceil(total * Math.min(1, (performance.now() - started) / 1000 / seconds));
+        const end = Math.min(seg.strokes.length, i + Math.max(1, due - done));
+        for (; i < end; i++, done++) {
+          const event = seg.strokes[i];
+          if (event.patch) ctx.drawImage(event.patch, event.ox, event.oy, event.w, event.h, event.x, event.y, event.w, event.h);
+          else drawPaintStroke(ctx, event);
+        }
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        if (onProgress) onProgress(Math.min(1, done / Math.max(1, total)));
+        await frame();
+      }
+    }
+    // The finished picture: the painting's finish over its strokes, as on screen.
+    const finish = strokePainter.plan?.finish;
+    if (hasFinish(finish)) {
+      const finished = renderFinishRecipe(out, out.width, out.height, finish, 1600, { reuse: "always" });
+      ctx.drawImage(finished, 0, 0, out.width, out.height);
+      finished.width = 0;
+    }
+    for (let t = 0; t < TIMELAPSE.hold * TIMELAPSE.fps; t++) {
+      // A still canvas sends no frames: touch it so the hold is recorded.
+      ctx.fillStyle = "rgba(0,0,0,0)";
+      ctx.fillRect(0, 0, 1, 1);
+      await frame();
+    }
+  } finally {
+    if (recorder.state !== "inactive") recorder.stop();
+    await stopped;
+    for (const track of stream.getTracks()) track.stop();
+    out.width = 0; out.height = 0;
+  }
+  return { blob: new Blob(chunks, { type: format.type.split(";")[0] }), extension: format.extension, seconds: seconds + TIMELAPSE.hold, strokes: total };
+}
+
+let timelapseInFlight = false;
+async function saveTimelapse() {
+  if (timelapseInFlight) return;
+  timelapseInFlight = true;
+  const button = $("timelapse");
+  if (button) button.disabled = true;
+  try {
+    setExportStatus("recording the time-lapse…");
+    const result = await recordTimelapse((frac) => setExportStatus(`recording the time-lapse… ${Math.round(frac * 100)}%`));
+    if (!result.blob.size) throw new Error("empty");
+    const url = URL.createObjectURL(result.blob);
+    const a = document.createElement("a");
+    const slug = (seedText() || "painting").toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40);
+    a.href = url;
+    a.download = `hexfield-${slug}-timelapse.${result.extension}`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    view.dataset.timelapseBytes = String(result.blob.size);
+    setExportStatus(`saved the time-lapse · ${result.strokes} strokes in ${Math.round(result.seconds)} s · ${Math.round(result.blob.size / 1024)} KB`);
+  } catch (error) {
+    console.warn("time-lapse failed", error);
+    setExportStatus(error?.message === "no-recorder" ? "this browser cannot record video"
+      : error?.message === "nothing-painted" ? "nothing painted yet - try again in a moment" : "time-lapse failed - try again");
+  } finally {
+    timelapseInFlight = false;
+    if (button) button.disabled = false;
+  }
 }
 
 function continueMasterDetail(result) {
@@ -40330,6 +40476,9 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
     strokePainter.enhancedPlan = null;
     hideFinishLayer();
     const quickTone = paintTonedGround(raw, width, height);
+    // The time-lapse starts again from this ground.
+    strokeLog.newPainting = true;
+    strokeLog.history = [];
     strokePainter.layer = 0;
     strokePainter.layerBatches = 0;
     strokePainter.strokes = 0;
@@ -45186,6 +45335,7 @@ async function startCheckout() {
   }
 }
 
+$("timelapse")?.addEventListener("click", saveTimelapse);
 $("export").addEventListener("click", async () => {
   if (!current || exportInFlight) return;
   exportInFlight = true;
@@ -45490,6 +45640,8 @@ function mountShopEssentials() {
 
   const exportBtn = document.getElementById("export");
   if (exportBtn) host.appendChild(exportBtn);
+  const timelapseBtn = document.getElementById("timelapse");
+  if (timelapseBtn) host.appendChild(timelapseBtn);
 
   /* MUSEUM survived in the source but not on screen for the same reason
    * EXPORT didn't: it sat in the blacked-out sidebar row alongside TASTE
