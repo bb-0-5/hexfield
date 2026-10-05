@@ -31289,6 +31289,8 @@ const median3 = (list) => {
 let strokePainter = { reference: null, layer: 0, layerBatches: 0, gradient: null, width: 0, height: 0, strokes: 0 };
 // How many paintings have been prepared since the page opened.
 let paintingsPrepared = 0;
+// The first sketch's strokes, laid while a new painting is prepared.
+const SKETCH_STROKES = isMobileBrowser() ? 50 : 90, SKETCH_BATCHES = 4, SKETCH_GAP = 450;
 
 /* What brush sizes are measured against: the short side, but never more than
  * 45% of the long one. The 4.4:1 strip keeps its brushes exactly (its height);
@@ -37318,7 +37320,7 @@ function choosePlanManner(plan, composed, width, height, params) {
  * task. The same steps in the same order as prepareStrokeReference with a
  * fresh plan, so the painting is the same; `alive` stops it as soon as a newer
  * painting has begun. Resolves { plan, reference }, or null if superseded. */
-async function prepareNewPainting(result, raw, width, height, alive) {
+async function prepareNewPainting(result, raw, width, height, alive, onDraft = null) {
   const pause = () => new Promise((resolve) => setTimeout(resolve, 0));
   const step = async () => { await pause(); return alive(); };
   if (!await step()) return null;
@@ -37327,6 +37329,8 @@ async function prepareNewPainting(result, raw, width, height, alive) {
   const plan = makePaintingPlan(enhanced, width, height, result?.drawSeed, result?.params);
   if (!await step()) return null;
   const ground = composeStrokeReference(enhanced, width, height, plan);
+  // (Each stage, as it is reached, is what the first sketch paints toward.)
+  onDraft?.(ground);
   const source = bestRun?.params ? bestRun : current;
   if (!await step()) return null;
   refreshPlanShapes(plan, ground, width, height);
@@ -37353,6 +37357,7 @@ async function prepareNewPainting(result, raw, width, height, alive) {
   const composed = applyPlanLight(applySceneLayer(ground, width, height, plan), width, height, plan);
   if (!await step()) return null;
   applyDepthAir(composed, width, height, plan);
+  onDraft?.(new Uint8ClampedArray(composed));
   if (!await step()) return null;
   plan.manner = choosePlanManner(plan, composed, width, height, source?.params);
   if (plan.style) plan.style.label = plan.manner.name + (plan.dims ? " · " + plan.dims.name : "") +
@@ -40078,7 +40083,23 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
     paintRevision++;
     view.dataset.paintRevision = String(paintRevision);
     const alive = () => strokePainter.preparing === token;
-    visiblePaintCompletion = prepareNewPainting(result, raw, width, height, alive).then((ready) => {
+    /* A first sketch while it is prepared: big strokes toward the picture as
+     * it came, so the painting starts at once instead of after the plan (four
+     * to five seconds on a phone). The prepared painting's own big strokes
+     * take over and correct it - their batch stops this one. */
+    // A few small batches, each toward the latest stage the preparation has
+    // reached (the picture as it came, then composed to the plan, then with
+    // its scene, light and air), so the sketch moves toward the painting.
+    let draft = raw;
+    (async () => {
+      for (let batch = 0; batch < SKETCH_BATCHES && alive(); batch++) {
+        await new Promise((resolve) => setTimeout(resolve, batch ? SKETCH_GAP : 0));
+        if (!alive()) return;
+        await paintTowardReference({ drawSeed: result?.drawSeed, params: result?.params }, draft, width, height,
+          { layer: 0, limit: SKETCH_STROKES, prepared: true });
+      }
+    })().catch(() => {});
+    visiblePaintCompletion = prepareNewPainting(result, raw, width, height, alive, (pixels) => { draft = pixels; }).then((ready) => {
       if (!ready || !alive()) return false;
       strokePainter.preparing = null;
       strokePainter.plan = ready.plan;
@@ -40086,9 +40107,11 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
       strokePainter.enhanced = ready.reference;
       strokePainter.enhancedKey = null;
       strokePainter.enhancedPlan = ready.plan;
-      // The ground in the prepared reference's own tone, if the quick one was off.
+      // The ground in the prepared reference's own tone, if the quick one was
+      // off - unless the sketch is already down: its strokes are corrected,
+      // not wiped.
       const tone = toneOf(ready.reference);
-      if (Math.hypot(tone[0] - quickTone[0], tone[1] - quickTone[1], tone[2] - quickTone[2]) > 10) {
+      if (!(strokePainter.strokes > 0) && Math.hypot(tone[0] - quickTone[0], tone[1] - quickTone[1], tone[2] - quickTone[2]) > 10) {
         paintTonedGround(ready.reference, width, height);
       }
       updateWordPaints();
