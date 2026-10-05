@@ -35704,16 +35704,7 @@ function applyWeatherAir(pixels, width, height, plan, only = null) {
     for (let x = 0; x < width; x++) { const f = Math.max(0, Math.min(dm.gw - 1.001, (x + 0.5) / width * dm.gw - 0.5)); gx0[x] = f | 0; gtx[x] = f - gx0[x]; }
   }
   const damp = 1 - 0.28 * k, dark = 1 - 0.08 * k;
-  const bank = new Float32Array(height);
-  if (fog) {
-    const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0xf06) >>> 0);
-    const waves = [0, 1, 2].map((j) => ({ f: (2 + j * 1.7 + rng()) * Math.PI * 2, p: rng() * Math.PI * 2, a: 0.3 / (j + 1) }));
-    for (let y = 0; y < height; y++) {
-      let v = 1;
-      for (const w of waves) v += w.a * Math.sin(y / height * w.f + w.p);
-      bank[y] = Math.max(0.35, v);
-    }
-  }
+  const bank = fog ? fogBanks(plan, height) : null;
   for (let y = 0; y < height; y++) {
     const up = 1 - y / height;
     if (dm) {
@@ -35846,6 +35837,106 @@ function applyWaterReflection(pixels, width, height, plan, only = null) {
     }
   }
   return pixels;
+}
+
+/* The banks the fog lies in, row by row (0.35..1.6). */
+function fogBanks(plan, height) {
+  const bank = new Float32Array(height);
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0xf06) >>> 0);
+  const waves = [0, 1, 2].map((j) => ({ f: (2 + j * 1.7 + rng()) * Math.PI * 2, p: rng() * Math.PI * 2, a: 0.3 / (j + 1) }));
+  for (let y = 0; y < height; y++) {
+    let v = 1;
+    for (const w of waves) v += w.a * Math.sin(y / height * w.f + w.p);
+    bank[y] = Math.max(0.35, v);
+  }
+  return bank;
+}
+
+/* ── Through every manner ───────────────────────────────────────────────
+ * The weather, the season and the hour are painted into the picture before
+ * its manner - and a strong manner (a two-tone print, a five-colour bold
+ * line, full chroma, a high-keyed broken colour) snaps, saturates or lifts
+ * them away: an autumn tree printed green, fog gone flat, night made bright.
+ * So after the manner they are touched in again, as far as the manner
+ * overrode them (painterly, not at all), in colours that join the palette:
+ * autumn's ochre and rust, the rime and snow on the tops of things, the
+ * mist, the lit windows, and the dark of the hour. In place; true if it did
+ * anything. */
+const AUTUMN_TOUCH = { light: [214, 142, 54], dark: [150, 62, 32] };
+function mannerTouch(manner) {
+  const ref = manner?.reference || {};
+  if (!manner || manner.key === "painterly") return 0;
+  const lifted = Array.isArray(ref.keys) && ref.keys[0] > 40 ? 0.4 : 0;
+  return Math.min(1, (Number(ref.snap) || 0) * 0.5 + (Number(ref.twoTone) || 0) * 0.5 + (Number(ref.chroma) || 0) * 0.5 +
+    Math.abs((Number(ref.saturation) || 1) - 1) * 0.5 + lifted);
+}
+
+function applyWeatherTouch(pixels, width, height, plan, manner, before = null) {
+  const t = mannerTouch(manner), W = plan.weather, scene = plan.scene;
+  const L = plan.light?.settings, exposure = Number(L?.exposure) || 1;
+  const glow = scene?.layer?.glow && scene.width === width && scene.height === height && exposure < GLOW_EXPOSURE ? scene.layer.glow : null;
+  const has = (kind) => Boolean(W?.kinds?.includes(kind));
+  const autumn = has("autumn"), snow = has("snow"), frost = has("frost"), fog = has("fog");
+  if (!t || (!autumn && !snow && !frost && !fog && !glow && exposure >= 0.9)) return false;
+  const k = W?.k || 0.55;
+  const cover = (snow || frost) && scene?.layer?.cover?.length === width * height ? scene.layer.cover : null;
+  const capPx = Math.max(2, Math.round(Math.min(width, height) * (snow ? 0.01 + 0.014 * k : 0.003 + 0.004 * k)));
+  const cap = snow ? [244, 247, 252] : [222, 234, 250];
+  const run = cover ? new Uint16Array(width) : null;
+  const mist = [214, 220, 226];
+  const bank = fog ? fogBanks(plan, height) : null;
+  // The dark of the hour, where a high-keyed manner lifted it.
+  const dim = exposure < 0.9 ? 1 - (0.9 - exposure) * t * 1.4 : 1;
+  // Where the greens were before the manner (a print takes them away).
+  const src = before?.length === pixels.length ? before : pixels;
+  // Its colours join the palette, so what is painted later keeps them.
+  const join = (c) => {
+    if (!plan.palette || plan.palette.length >= planPaletteSize(plan) + 12) return;
+    const near = nearestPaletteColour(plan.palette, c[0], c[1], c[2]);
+    if (Math.hypot(near[0] - c[0], near[1] - c[1], near[2] - c[2]) > 30) plan.palette.push(c.slice());
+  };
+  if (autumn) { join(AUTUMN_TOUCH.light); join(AUTUMN_TOUCH.dark); }
+  if (cover) join(cap);
+  if (fog) join(mist);
+  if (glow) join(GLOW_COLOUR);
+  for (let y = 0; y < height; y++) {
+    const fogRow = fog ? bank[y] : 0;
+    for (let x = 0, i = y * width; x < width; x++, i++) {
+      if (run) run[x] = cover[i] > 128 ? Math.min(65535, run[x] + 1) : 0;
+      const o = i * 4;
+      let r = pixels[o], g = pixels[o + 1], b = pixels[o + 2];
+      if (dim !== 1) { r *= dim; g *= dim; b *= dim; }
+      if (autumn) {
+        const r0 = src[o], g0 = src[o + 1], b0 = src[o + 2];
+        const max = Math.max(r0, g0, b0), min = Math.min(r0, g0, b0);
+        if (max - min > 10 && g0 >= r0 && g0 >= b0) {
+          const greenness = Math.min(1, (g0 - Math.max(r0, b0)) / Math.max(1, max - min) * 1.6);
+          const to = 0.299 * r + 0.587 * g + 0.114 * b > 100 ? AUTUMN_TOUCH.light : AUTUMN_TOUCH.dark;
+          const a = greenness * t * 0.9;
+          r += (to[0] - r) * a; g += (to[1] - g) * a; b += (to[2] - b) * a;
+        }
+      }
+      if (frost) {
+        const a = 0.45 * t * k;
+        r += (206 - r) * a; g += (220 - g) * a; b += (240 - b) * a;
+      }
+      if (fog) {
+        const d = depthAt(plan, x, y, width, height);
+        const a = Math.min(0.5, k * (0.08 + 0.4 * d * d) * fogRow) * t * (cover ? 1 - 0.7 * cover[i] / 255 : 1);
+        r += (mist[0] - r) * a; g += (mist[1] - g) * a; b += (mist[2] - b) * a;
+      }
+      if (run && run[x] > 0 && run[x] <= capPx) {
+        const a = Math.min(1, 0.6 + t * 0.4);
+        r += (cap[0] - r) * a; g += (cap[1] - g) * a; b += (cap[2] - b) * a;
+      }
+      if (glow && glow.mask[i]) {
+        const a = Math.min(1, glow.mask[i] / 255 * (0.5 + t * 0.5));
+        r += (GLOW_COLOUR[0] - r) * a; g += (GLOW_COLOUR[1] - g) * a; b += (GLOW_COLOUR[2] - b) * a;
+      }
+      pixels[o] = r; pixels[o + 1] = g; pixels[o + 2] = b;
+    }
+  }
+  return true;
 }
 
 /* Rain as thin slanted streaks and snow as round flakes, each larger, longer
@@ -37683,6 +37774,8 @@ function* finishPlanReferenceSteps(composed, width, height, plan) {
   const manner = plan.manner || plainManner();
   // In a reference picture's colours, when the painting chose to be.
   if (plan.refColour?.ref) { yield* transferReferenceColourSteps(composed, width, height, plan.refColour.ref); yield; }
+  // (The manner works in place: autumn's touch reads the greens from before it.)
+  const before = plan.weather?.kinds?.includes("autumn") && mannerTouch(manner) ? new Uint8ClampedArray(composed) : null;
   let pixels = yield* applyMannerReferenceSteps(composed, width, height, plan, manner);
   yield;
   if (!plan.palette) {
@@ -37708,6 +37801,8 @@ function* finishPlanReferenceSteps(composed, width, height, plan) {
   }
   pixels = snapToPalette(pixels, plan.palette, planSnapAmount(plan));
   yield;
+  // The weather, season and hour touched in again over a strong manner.
+  if (applyWeatherTouch(pixels, width, height, plan, manner, before)) yield;
   pixels = yield* applyMannerContourSteps(pixels, width, height, plan, manner);
   yield;
   if (plan.contourInk && !plan.palette.some((p) => Math.hypot(p[0] - plan.contourInk[0], p[1] - plan.contourInk[1], p[2] - plan.contourInk[2]) < 30)) {
