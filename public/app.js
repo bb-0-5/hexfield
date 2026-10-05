@@ -35518,15 +35518,25 @@ function applyWeatherAir(pixels, width, height, plan, only = null) {
   const rain = has("rain"), storm = has("storm"), snow = has("snow"), fog = has("fog");
   const haze = dm?.haze || [200, 205, 210];
   const mist = [214, 220, 226].map((c, j) => c * 0.75 + haze[j] * 0.25);
-  const cover = snow && plan.scene?.layer?.cover?.length === width * height ? plan.scene.layer.cover : null;
-  const capPx = Math.max(2, Math.round(Math.min(width, height) * (0.006 + 0.008 * k)));
-  const run = cover ? new Uint16Array(width) : null;
+  const cover = (snow || fog) && plan.scene?.layer?.cover?.length === width * height ? plan.scene.layer.cover : null;
+  const capPx = Math.max(3, Math.round(Math.min(width, height) * (0.01 + 0.014 * k)));
+  const run = cover && snow ? new Uint16Array(width) : null;
   let gx0 = null, gtx = null, line = null;
   if (dm) {
     gx0 = new Int32Array(width); gtx = new Float32Array(width); line = new Float32Array(dm.gw);
     for (let x = 0; x < width; x++) { const f = Math.max(0, Math.min(dm.gw - 1.001, (x + 0.5) / width * dm.gw - 0.5)); gx0[x] = f | 0; gtx[x] = f - gx0[x]; }
   }
   const damp = 1 - 0.28 * k, dark = 1 - 0.08 * k;
+  const bank = new Float32Array(height);
+  if (fog) {
+    const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0xf06) >>> 0);
+    const waves = [0, 1, 2].map((j) => ({ f: (2 + j * 1.7 + rng()) * Math.PI * 2, p: rng() * Math.PI * 2, a: 0.3 / (j + 1) }));
+    for (let y = 0; y < height; y++) {
+      let v = 1;
+      for (const w of waves) v += w.a * Math.sin(y / height * w.f + w.p);
+      bank[y] = Math.max(0.35, v);
+    }
+  }
   for (let y = 0; y < height; y++) {
     const up = 1 - y / height;
     if (dm) {
@@ -35557,7 +35567,10 @@ function applyWeatherAir(pixels, width, height, plan, only = null) {
         }
       }
       if (fog) {
-        const a = Math.min(0.85, k * (0.12 + 0.7 * d * d));
+        // In layers: banks of mist lying across the picture, thicker with
+        // distance, never so thick that the far things are lost.
+        // (The named things and the words stand in front of it, lightly misted.)
+        const a = Math.min(0.62, k * (0.1 + 0.55 * d * d) * bank[y]) * (cover ? 1 - 0.7 * cover[i] / 255 : 1);
         r += (mist[0] - r) * a; g += (mist[1] - g) * a; b += (mist[2] - b) * a;
       }
       pixels[o] = r; pixels[o + 1] = g; pixels[o + 2] = b;
