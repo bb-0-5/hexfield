@@ -37333,6 +37333,13 @@ async function prepareNewPainting(result, raw, width, height, alive, onDraft = n
   onDraft?.(ground);
   const source = bestRun?.params ? bestRun : current;
   if (!await step()) return null;
+  /* The manner, chosen this early so the first sketch is already in the
+   * painting's own colours (it was chosen near the end, and the sketch
+   * changed colour when the painting arrived). Tasted over the picture
+   * composed to the plan. */
+  plan.manner = choosePlanManner(plan, ground, width, height, source?.params);
+  if (onDraft) onDraft(mannerDraft(ground, width, height, plan));
+  if (!await step()) return null;
   refreshPlanShapes(plan, ground, width, height);
   // Its shapes bred in depth, and its depth (Shapes in depth, Brushwork in
   // depth), a taste at a time.
@@ -37357,9 +37364,8 @@ async function prepareNewPainting(result, raw, width, height, alive, onDraft = n
   const composed = applyPlanLight(applySceneLayer(ground, width, height, plan), width, height, plan);
   if (!await step()) return null;
   applyDepthAir(composed, width, height, plan);
-  onDraft?.(new Uint8ClampedArray(composed));
+  if (onDraft) onDraft(mannerDraft(composed, width, height, plan));
   if (!await step()) return null;
-  plan.manner = choosePlanManner(plan, composed, width, height, source?.params);
   if (plan.style) plan.style.label = plan.manner.name + (plan.dims ? " · " + plan.dims.name : "") +
     (plan.scene?.perspective ? " · " + plan.scene.perspective.name : "") + " · " + plan.style.label;
   const steps = finishPlanReferenceSteps(composed, width, height, plan);
@@ -37369,6 +37375,23 @@ async function prepareNewPainting(result, raw, width, height, alive, onDraft = n
     next = steps.next();
   } while (!next.done);
   return { plan, reference: next.value };
+}
+
+/* A stage of the preparation as the painting will look: its manner, a
+ * palette and an outline, worked on a small copy (the sketch's brushes are
+ * big) and drawn back up to size. */
+function mannerDraft(pixels, width, height, plan) {
+  const { pixels: base, sw, sh } = smallCopy(pixels, width, height, 160);
+  const probe = { ...plan, palette: null, scene: null, contourInk: null, chromaMid: undefined, chromaUnlit: undefined };
+  const look = finishPlanReference(base, sw, sh, probe);
+  const small = paintBuffer(sw, sh);
+  small.getContext("2d").putImageData(new ImageData(look, sw, sh), 0, 0);
+  const full = paintBuffer(width, height), fctx = full.getContext("2d", { willReadFrequently: true });
+  fctx.imageSmoothingEnabled = true; fctx.imageSmoothingQuality = "high";
+  fctx.drawImage(small, 0, 0, width, height);
+  const out = fctx.getImageData(0, 0, width, height).data;
+  small.width = 0; full.width = 0;
+  return out;
 }
 
 function prepareStrokeReference(ref, width, height, enhanced = enhanceStrokeReference(ref)) {
