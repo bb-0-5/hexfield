@@ -254,7 +254,11 @@
     },
     dusk: {
       name: "dusk", settings: { elev: 0.12, front: 0.2, colour: [255, 128, 96], ambient: [58, 46, 116], soft: 0.4, strength: 0.7, point: false, sky: "sun", grade: 0.3, exposure: 0.8 },
-      words: ["sunset", "dusk", "evening", "twilight", "sundown", "sunrise", "dawn"],
+      words: ["sunset", "dusk", "evening", "twilight", "sundown"],
+    },
+    dawn: {
+      name: "dawn", settings: { elev: 0.16, front: 0.35, colour: [255, 172, 160], ambient: [92, 96, 158], soft: 0.55, strength: 0.55, point: false, sky: "sun", grade: 0.28, exposure: 0.86 },
+      words: ["dawn", "sunrise", "daybreak", "first light"],
     },
     moon: {
       name: "moonlight", settings: { elev: 0.8, front: 0.3, colour: [176, 196, 255], ambient: [22, 26, 62], soft: 0.3, strength: 0.9, point: false, sky: "moon", grade: 0.32, exposure: 0.55 },

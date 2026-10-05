@@ -2363,7 +2363,13 @@
     const [h, s, l] = c;
     return `hsla(${h}, ${s}%, ${clamp(l + tone * 100, 0, 100)}%, ${alpha})`;
   }
+  /* `paint(..., "glow")` draws the parts that give their own light - lit
+   * windows, flames, lamps - white and everything else black (so what stands
+   * in front still hides them): the map of what glows after dark. */
+  let glowing = false;
+  const GLOW_PARTS = new Set(["window", "flame", "glow", "lamp"]);
   function colourOf(item, part, name = part.colour) {
+    if (glowing) return GLOW_PARTS.has(name) ? [0, 0, 100] : [0, 0, 0];
     const colours = item.entry.colours;
     const main = Object.keys(colours)[0];
     if (item.colour && name === main) return item.colour;
@@ -3054,7 +3060,7 @@
       const colour = colourOf(item, part);
       ctx.fillStyle = hsl(colour, part.tone || 0);
       ctx.fill(path, "evenodd");
-      if (part.texture) {
+      if (part.texture && !glowing) {
         const b = part.box || [0, 0, 1, 1];
         const pbox = part.pts
           ? bounds(part.pts.map((pt) => P(box, pt)))
@@ -3493,37 +3499,43 @@
      * glow, no air. */
     const mono = Boolean(dims?.mono);
     if (mono) { cued = true; sourced = true; }
-    for (let index = 0; index < items.length; index++) {
-      const item = items[index];
-      if (!cued && item.entry.kind !== "setting") { groundCues(ctx, W, H, view); cued = true; }
-      if (!sourced && item.entry.kind !== "setting") { paintLightSource(ctx, W, H, dims, view); sourced = true; }
-      if (only && item.entry.kind !== only) continue;
-      if (pick !== null && index !== pick) continue;
-      lctx.clearRect(0, 0, W, H);
-      paintItem(lctx, item, seededRandom(seeds[index]));
-      if (mono) {
-        if (item.entry.kind !== "subject" || item.lettering) continue;
-        lctx.save();
-        lctx.globalCompositeOperation = "source-atop";
-        lctx.fillStyle = "rgb(128, 128, 128)";
-        lctx.fillRect(0, 0, W, H);
-        lctx.restore();
+    const glow = only === "glow";
+    if (glow) { cued = true; sourced = true; only = null; glowing = true; }
+    try {
+      for (let index = 0; index < items.length; index++) {
+        const item = items[index];
+        if (!cued && item.entry.kind !== "setting") { groundCues(ctx, W, H, view); cued = true; }
+        if (!sourced && item.entry.kind !== "setting") { paintLightSource(ctx, W, H, dims, view); sourced = true; }
+        if (only && item.entry.kind !== only) continue;
+        if (pick !== null && index !== pick) continue;
+        lctx.clearRect(0, 0, W, H);
+        paintItem(lctx, item, seededRandom(seeds[index]));
+        if (mono) {
+          if (item.entry.kind !== "subject" || item.lettering) continue;
+          lctx.save();
+          lctx.globalCompositeOperation = "source-atop";
+          lctx.fillStyle = "rgb(128, 128, 128)";
+          lctx.fillRect(0, 0, W, H);
+          lctx.restore();
+        }
+        if (solid && !glow && item.entry.kind === "subject" && !item.lettering) dimensionItem(ctx, layer, lctx, item, W, H, dims, behind);
+        if (behind && item.entry.kind === "subject" && !item.lettering && item.entry.anchor !== "sky") behind.boxes.push(item.box);
+        // Distance: far things fade toward the air.
+        if (item.aerial && !mono && !glow) {
+          lctx.save();
+          lctx.globalCompositeOperation = "source-atop";
+          lctx.fillStyle = `rgba(196, 208, 226, ${item.aerial})`;
+          lctx.fillRect(0, 0, W, H);
+          lctx.restore();
+        }
+        ctx.save();
+        ctx.globalAlpha = item.alpha ?? 1;
+        if (item.keystone && item.keystone !== 1) drawKeystoned(ctx, layer, item.box, item.keystone, W);
+        else ctx.drawImage(layer, 0, 0);
+        ctx.restore();
       }
-      if (solid && item.entry.kind === "subject" && !item.lettering) dimensionItem(ctx, layer, lctx, item, W, H, dims, behind);
-      if (behind && item.entry.kind === "subject" && !item.lettering && item.entry.anchor !== "sky") behind.boxes.push(item.box);
-      // Distance: far things fade toward the air.
-      if (item.aerial && !mono) {
-        lctx.save();
-        lctx.globalCompositeOperation = "source-atop";
-        lctx.fillStyle = `rgba(196, 208, 226, ${item.aerial})`;
-        lctx.fillRect(0, 0, W, H);
-        lctx.restore();
-      }
-      ctx.save();
-      ctx.globalAlpha = item.alpha ?? 1;
-      if (item.keystone && item.keystone !== 1) drawKeystoned(ctx, layer, item.box, item.keystone, W);
-      else ctx.drawImage(layer, 0, 0);
-      ctx.restore();
+    } finally {
+      glowing = false;
     }
     if (!cued) groundCues(ctx, W, H, view);
     if (!sourced) paintLightSource(ctx, W, H, dims, view);

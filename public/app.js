@@ -34452,7 +34452,7 @@ function* planSceneLayerSteps(scene) {
     // mist) are left out: the air and the weather brush paint them instead.
     const items = scene.weather ? scene.items.filter((item) => !(item.entry.kind === "setting" && item.entry.overlay)) : scene.items;
     globalThis.HexfieldVisual.paint(ctx, width, height, items, mulberry32(0x7e57a), only, sceneDims(scene), scene.view);
-    if (scene.lettering && only !== "setting") {
+    if (scene.lettering && only !== "setting" && only !== "glow") {
       if (!only) chooseLetteringValue(ctx, scene);
       drawSceneLettering(ctx, scene.lettering);
     }
@@ -34461,12 +34461,54 @@ function* planSceneLayerSteps(scene) {
   const all = draw(null);
   yield;
   const subjects = draw("subject");
-  canvas.width = 0; canvas.height = 0;
   const cover = new Uint8Array(width * height);
   for (let i = 0; i < cover.length; i++) cover[i] = subjects[i * 4 + 3];
+  // After dark, what gives its own light: lit windows, flames, lamps.
+  let glow = null;
+  if ((Number(scene.lighting?.exposure) || 1) < GLOW_EXPOSURE) {
+    yield;
+    glow = sceneGlowMap(draw("glow"), width, height);
+  }
+  canvas.width = 0; canvas.height = 0;
   yield;
   // Whatever finished it first (a synchronous caller) wins.
-  if (!scene.layer) scene.layer = { all, cover, light: sceneLightMap(scene) };
+  if (!scene.layer) scene.layer = { all, cover, light: sceneLightMap(scene), glow };
+}
+
+/* The glow as a mask (0..255, where a window is lit) and its spill - the
+ * same, spread wide and soft at a quarter size - or null if nothing glows. */
+const GLOW_EXPOSURE = 0.9;
+function sceneGlowMap(pixels, width, height) {
+  const mask = new Uint8Array(width * height);
+  let any = false;
+  for (let i = 0, o = 0; i < mask.length; i++, o += 4) {
+    const l = (pixels[o] + pixels[o + 1] + pixels[o + 2]) / 3 * pixels[o + 3] / 255;
+    if (l > 150) { mask[i] = Math.min(255, (l - 150) * 2.5); any = true; }
+  }
+  if (!any) return null;
+  const S = 4, sw = Math.ceil(width / S), sh = Math.ceil(height / S);
+  const spill = new Float32Array(sw * sh);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) spill[((y / S) | 0) * sw + ((x / S) | 0)] += mask[y * width + x] / (255 * S * S);
+  // Three box blurs, across and down: near enough a gaussian.
+  const r = Math.max(2, Math.round(Math.min(sw, sh) * 0.03));
+  const line = new Float32Array(Math.max(sw, sh) + 1);
+  const blur = (n, at) => {
+    // Running sums along one line, then each cell the mean of its window.
+    line[0] = 0;
+    for (let k = 0; k < n; k++) line[k + 1] = line[k] + spill[at(k)];
+    for (let k = 0; k < n; k++) {
+      const a = Math.max(0, k - r), b = Math.min(n, k + r + 1);
+      spill[at(k)] = (line[b] - line[a]) / (b - a);
+    }
+  };
+  for (let pass = 0; pass < 3; pass++) {
+    for (let y = 0; y < sh; y++) blur(sw, (k) => y * sw + k);
+    for (let x = 0; x < sw; x++) blur(sh, (k) => k * sw + x);
+  }
+  let top = 0;
+  for (const v of spill) if (v > top) top = v;
+  if (top > 0) for (let i = 0; i < spill.length; i++) spill[i] = Math.min(1, spill[i] / top);
+  return { mask, spill, S, sw, sh };
 }
 
 /* ── The light map ──────────────────────────────────────────────────────
@@ -34609,6 +34651,31 @@ function applyPlanLight(pixels, width, height, plan, only = null) {
     pixels[o] = r + r * lr * up + (dark[0] - r) * down;
     pixels[o + 1] = g + g * lg * up + (dark[1] - g) * down;
     pixels[o + 2] = b + b * lb * up + (dark[2] - b) * down;
+  }
+  return applyGlow(pixels, width, height, plan, exposure, only);
+}
+
+/* After dark the lit windows (and flames, and lamps) keep their light: warm
+ * and bright, the darker the hour the more they stand out, with a soft spill
+ * of their light on the walls and ground around them. In place. */
+const GLOW_COLOUR = [255, 212, 138];
+function applyGlow(pixels, width, height, plan, exposure, only = null) {
+  const glow = plan?.scene?.layer?.glow, scene = plan?.scene;
+  if (!glow || exposure >= GLOW_EXPOSURE || scene.width !== width || scene.height !== height) return pixels;
+  const dark = Math.min(1, (GLOW_EXPOSURE - exposure) / 0.35);
+  const { mask, spill, S, sw } = glow;
+  for (let y = 0, i = 0; y < height; y++) {
+    const row = ((y / S) | 0) * sw;
+    for (let x = 0; x < width; x++, i++) {
+      if (only && !only[i]) continue;
+      const m = mask[i] / 255 * (0.55 + 0.4 * dark), h = spill[row + ((x / S) | 0)] * 0.45 * dark;
+      if (m <= 0 && h <= 0.004) continue;
+      const o = i * 4;
+      for (let c = 0; c < 3; c++) {
+        const v = pixels[o + c] + GLOW_COLOUR[c] * h * (1 - pixels[o + c] / 255);
+        pixels[o + c] = v + (GLOW_COLOUR[c] - v) * m;
+      }
+    }
   }
   return pixels;
 }
@@ -38170,15 +38237,27 @@ const tipsVoteWord = (key) => "tips" + String(key).replace(/[^a-z]/g, "");
  * manner's side light and the hatching agree with the shadows. A lamp
  * stands beside the focus, on the light's side, above it. */
 const lightVoteWord = (key) => "light" + String(key).replace(/[^a-z]/g, "");
+const TIME_WORDS = {
+  moon: /\b(night|midnight|nighttime|moonlit|moonlight)\b/,
+  dawn: /\b(dawn|sunrise|daybreak)\b/,
+  dusk: /\b(dusk|sunset|evening|twilight|sundown)\b/,
+  noon: /\b(noon|midday)\b/,
+  golden: /\b(golden hour)\b/,
+};
 function choosePlanLight(plan, params) {
   const Craft = globalThis.HexfieldCraft;
   if (!Craft?.light) return null;
   const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x119b8) >>> 0);
-  const leans = Craft.lightLeans(params?.__hexfieldWords?.text || "");
+  const text = String(params?.__hexfieldWords?.text || "").toLowerCase();
+  const leans = Craft.lightLeans(text);
+  // A time of day in the words is the time of day it is painted at.
+  const hour = Object.keys(TIME_WORDS).find((key) => Craft.LIGHT_KEYS.includes(key) && TIME_WORDS[key].test(text)) || null;
+  if (hour) leans[hour] = (leans[hour] || 0) + 2.5;
   const scores = chooseByTaste(Craft.LIGHT_KEYS, {
     rng, tasted: 0, axis: "light", given: planStyleChain(plan), lean: (key) => leans[key] || 0,
     learned: (key) => visualLearnedChoice(lightVoteWord(key)), taste: () => null,
   });
+  if (hour && scores[0].key !== hour) scores.unshift(...scores.splice(scores.findIndex((x) => x.key === hour), 1));
   plan.lightScores = summariseChoice(scores);
   const light = Craft.light(scores[0].key);
   if (light.settings.point) {
