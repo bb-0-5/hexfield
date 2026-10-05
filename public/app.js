@@ -31710,6 +31710,8 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
   // Rain, snow, storm or fog in the words (Weather).
   plan.weather = choosePlanWeather(plan, params);
   if (scene) scene.weather = plan.weather;
+  // How closely it follows its picture (Abstraction).
+  plan.abstraction = choosePlanAbstraction(plan, params);
   // Water, and how still it lies (Reflections).
   plan.water = choosePlanWater(plan, params);
   if (scene) scene.water = plan.water;
@@ -33851,6 +33853,7 @@ function recordVisualVote(liked) {
   if (plan?.depthStyle) variations[depthVoteWord(plan.depthStyle.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.weather) variations[weatherVoteWord(plan.weather.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.water) variations[waterVoteWord(plan.water.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  if (plan?.abstraction) variations[abstractionVoteWord(plan.abstraction.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.anatomy) variations[anatomyVoteWord(plan.anatomy.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.figure) variations[figureVoteWord(plan.figure.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.refColour) variations["refcolour" + plan.refColour.key] = { size: 0, hue: 0, light: 0, literal: 0 };
@@ -33887,6 +33890,7 @@ function paintingChoices(plan) {
   const scene = plan.scene, out = [];
   const add = (label, word) => { if (label && /^[a-z]{1,24}$/.test(word)) out.push({ label, word }); };
   if (plan.manner) add(plan.manner.name || plan.manner.key, mannerVoteWord(plan.manner.key));
+  if (plan.abstraction) add(plan.abstraction.name, abstractionVoteWord(plan.abstraction.key));
   if (plan.light) add(plan.light.name || plan.light.key, lightVoteWord(plan.light.key));
   if (plan.weather) add(plan.weather.kinds.join(" + ") + " · " + plan.weather.key, weatherVoteWord(plan.weather.key));
   if (plan.water) add(plan.water.name, waterVoteWord(plan.water.key));
@@ -37973,13 +37977,155 @@ function mannerDeposit(ref, width, height, plan, canvasNow = null) {
   return snapToPalette(out, plan.palette, planSnapAmount(plan));
 }
 
+/* ── Abstraction ────────────────────────────────────────────────────────
+ * How closely a painting follows its picture. The careful passes are made
+ * to copy - each looks for where the canvas differs and paints it away, the
+ * finest brush last - so the picture itself is simplified first, and the
+ * brush allowed to stop short of it:
+ *   faithful  as before
+ *   loose     detail smaller than a brush merged into its masses (the big
+ *             edges kept), the finest brush never reached, a rougher match
+ *             accepted
+ *   abstract  the picture cut into flat facets with straight edges (none
+ *             crossing a thing's outline, so things still read), a handful
+ *             of colours, and only the big brushes
+ * Chosen like the other choices, leaned by the words and learned from votes
+ * ("abstractionloose", ...). The words' letters are never abstracted. */
+const ABSTRACTIONS = {
+  faithful: { key: "faithful", name: "faithful", coarser: 0, tolerance: 1 },
+  loose: { key: "loose", name: "loose", coarser: 1, tolerance: 1.5 },
+  abstract: { key: "abstract", name: "abstract", coarser: 2, tolerance: 2.2, palette: 6, snap: 0.85 },
+};
+const ABSTRACT_WORDS = /\b(abstract\w*|geometric|cubis\w*|facet\w*|shapes|minimal\w*|modern|bauhaus|mosaic)\b/;
+const LOOSE_WORDS = /\b(loose|sketch\w*|gestur\w*|expressive|rough|impression\w*|quick|messy|wild)\b/;
+const FAITHFUL_WORDS = /\b(realistic|real|detailed|detail|photo\w*|precise|faithful|accurate|portrait)\b/;
+const abstractionVoteWord = (key) => "abstraction" + String(key).replace(/[^a-z]/g, "");
+
+function choosePlanAbstraction(plan, params) {
+  const text = String(params?.__hexfieldWords?.text || "").toLowerCase();
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0xab57) >>> 0);
+  const words = { abstract: ABSTRACT_WORDS.test(text), loose: LOOSE_WORDS.test(text), faithful: FAITHFUL_WORDS.test(text) };
+  const scores = chooseByTaste(Object.keys(ABSTRACTIONS), {
+    rng, tasted: 0, axis: "abstraction", given: planStyleChain(plan),
+    lean: (key) => (words[key] ? 1.2 : 0) + (key === "faithful" ? 0.15 : key === "loose" ? 0.1 : 0),
+    learned: (key) => visualLearnedChoice(abstractionVoteWord(key)), taste: () => null,
+  });
+  plan.abstractionScores = summariseChoice(scores);
+  return ABSTRACTIONS[scores[0].key];
+}
+
+// The finest brush the painting goes down to.
+function maxStrokeLayer(plan = strokePainter.plan) {
+  return Math.max(0, STROKE_LAYER_FRACTIONS.length - 1 - (plan?.abstraction?.coarser || 0));
+}
+
+// The picture simplified to the painting's abstraction, in place, a step at a time.
+function* applyAbstractionSteps(pixels, width, height, plan) {
+  const A = plan.abstraction;
+  if (!A || A.key === "faithful" || pixels.length !== width * height * 4) return pixels;
+  const short = Math.min(width, height);
+  const letters = letteringContains(plan.scene?.lettering);
+  const cover = plan.scene?.layer?.cover?.length === width * height ? plan.scene.layer.cover : null;
+  const isLetter = (x, y, i) => letters && cover && cover[i] > 110 && letters(x, y);
+  // The big edges: where a broad blur of the picture changes fast.
+  const broad = blurPixels(pixels, width, height, short * 0.02);
+  yield;
+  const edge = new Float32Array(width * height);
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1, i = y * width + 1; x < width - 1; x++, i++) {
+      const o = i * 4, dx = (Math.abs(broad[o + 4] - broad[o - 4]) + Math.abs(broad[o + 5] - broad[o - 3]) + Math.abs(broad[o + 6] - broad[o - 2]));
+      const w4 = width * 4, dy = (Math.abs(broad[o + w4] - broad[o - w4]) + Math.abs(broad[o + w4 + 1] - broad[o - w4 + 1]) + Math.abs(broad[o + w4 + 2] - broad[o - w4 + 2]));
+      edge[i] = Math.min(1, (dx + dy) / 60);
+    }
+  }
+  yield;
+  if (A.key === "loose") {
+    // Texture and small detail merged into the masses; the big edges kept.
+    const soft = blurPixels(pixels, width, height, short * 0.012);
+    for (let y = 0, i = 0; y < height; y++) {
+      for (let x = 0; x < width; x++, i++) {
+        if (isLetter(x, y, i)) continue;
+        const o = i * 4, keep = edge[i] * 0.7;
+        for (let c = 0; c < 3; c++) pixels[o + c] = soft[o + c] + (pixels[o + c] - soft[o + c]) * keep;
+      }
+    }
+    return pixels;
+  }
+  // Abstract: facets. Seeds on a jittered grid, more along the big edges and
+  // round the focus; each a facet of the side of a thing's outline it lies on.
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0xfa7e) >>> 0);
+  const seeds = [];
+  const grid = Math.max(6, Math.round(Math.sqrt(width * height / (short * short)) * 7));
+  const step = Math.max(width, height) / grid;
+  for (let gy = 0; gy < height; gy += step) for (let gx = 0; gx < width; gx += step) seeds.push([gx + rng() * step, gy + rng() * step]);
+  const extra = Math.round(seeds.length * 1.2);
+  for (let tries = 0, added = 0; added < extra && tries < extra * 30; tries++) {
+    const x = rng() * width, y = rng() * height, i = (y | 0) * width + (x | 0);
+    const focus = Math.exp(-((x / width - plan.fx) ** 2 + (y / height - plan.fy) ** 2) / 0.04);
+    if (rng() < edge[i] * 0.8 + focus * 0.25) { seeds.push([x, y]); added++; }
+  }
+  const side = (x, y) => cover ? (cover[Math.min(height - 1, y | 0) * width + Math.min(width - 1, x | 0)] > 128 ? 1 : 0) : 0;
+  const seedSide = seeds.map(([x, y]) => side(x, y));
+  yield;
+  // Which facet each point is in, on a quarter-size grid.
+  const S = 4, lw = Math.ceil(width / S), lh = Math.ceil(height / S);
+  const label = new Int32Array(lw * lh);
+  for (let ly = 0; ly < lh; ly++) {
+    for (let lx = 0; lx < lw; lx++) {
+      const x = lx * S + S / 2, y = ly * S + S / 2, own = side(x, y);
+      let best = -1, bd = Infinity;
+      for (let k = 0; k < seeds.length; k++) {
+        if (seedSide[k] !== own) continue;
+        const d = (seeds[k][0] - x) ** 2 + (seeds[k][1] - y) ** 2;
+        if (d < bd) { bd = d; best = k; }
+      }
+      label[ly * lw + lx] = best;
+    }
+    if (ly % 40 === 39) yield;
+  }
+  // Each facet in its own mean colour, a little apart from its neighbours'
+  // values (light against dark), over a breath of the picture underneath.
+  const sum = new Float64Array(seeds.length * 4);
+  for (let y = 0, i = 0; y < height; y++) {
+    const row = ((y / S) | 0) * lw;
+    for (let x = 0; x < width; x++, i++) {
+      const k = label[row + ((x / S) | 0)];
+      if (k < 0) continue;
+      const o = i * 4;
+      sum[k * 4] += pixels[o]; sum[k * 4 + 1] += pixels[o + 1]; sum[k * 4 + 2] += pixels[o + 2]; sum[k * 4 + 3]++;
+    }
+  }
+  let mean = 0, n = 0;
+  for (let k = 0; k < seeds.length; k++) if (sum[k * 4 + 3]) { mean += (sum[k * 4] + sum[k * 4 + 1] + sum[k * 4 + 2]) / 3 / sum[k * 4 + 3]; n++; }
+  mean /= Math.max(1, n);
+  const colour = seeds.map((_, k) => {
+    const c = sum[k * 4 + 3] || 1, rgb = [sum[k * 4] / c, sum[k * 4 + 1] / c, sum[k * 4 + 2] / c];
+    const l = (rgb[0] + rgb[1] + rgb[2]) / 3, push = (l - mean) * 0.25;
+    return rgb.map((v) => v + push);
+  });
+  yield;
+  for (let y = 0, i = 0; y < height; y++) {
+    const row = ((y / S) | 0) * lw;
+    for (let x = 0; x < width; x++, i++) {
+      const k = label[row + ((x / S) | 0)];
+      if (k < 0 || isLetter(x, y, i)) continue;
+      const o = i * 4, c = colour[k];
+      pixels[o] = c[0] * 0.85 + pixels[o] * 0.15; pixels[o + 1] = c[1] * 0.85 + pixels[o + 1] * 0.15; pixels[o + 2] = c[2] * 0.85 + pixels[o + 2] * 0.15;
+    }
+  }
+  return pixels;
+}
+
 function planPaletteSize(plan) {
-  return Number(plan.manner?.reference?.palette) || plan.style?.paletteSize || PLAN_PALETTE_SIZE;
+  const size = Number(plan.manner?.reference?.palette) || plan.style?.paletteSize || PLAN_PALETTE_SIZE;
+  // An abstract painting keeps to a handful of colours.
+  return plan.abstraction?.palette ? Math.min(size, plan.abstraction.palette) : size;
 }
 
 function planSnapAmount(plan) {
   const snap = Number(plan.manner?.reference?.snap);
-  return snap >= 0 ? snap : planPaletteSnap(plan);
+  const base = snap >= 0 ? snap : planPaletteSnap(plan);
+  return plan.abstraction?.snap ? Math.max(base, plan.abstraction.snap) : base;
 }
 
 /* Composed picture -> the manner's reference: values and colour, the palette
@@ -38001,6 +38147,8 @@ function* finishPlanReferenceSteps(composed, width, height, plan) {
   const before = plan.weather?.kinds?.includes("autumn") && mannerTouch(manner) ? new Uint8ClampedArray(composed) : null;
   let pixels = yield* applyMannerReferenceSteps(composed, width, height, plan, manner);
   yield;
+  // Simplified as far as the painting's abstraction goes.
+  pixels = yield* applyAbstractionSteps(pixels, width, height, plan);
   if (!plan.palette) {
     plan.palette = paletteFromPixels(pixels, planPaletteSize(plan),
       mulberry32(((Number(plan.drawSeed) || 0) ^ 0x51f15e) >>> 0), width * height < 12000 ? 600 : 3000);
@@ -39720,6 +39868,7 @@ function planStyleChain(plan) {
     combo: plan?.finish ? plan.finish.combo || "single" : null, finish2: plan?.finish?.layers?.[0]?.key || null,
     look2: plan?.finish?.layers?.[0]?.look || null,
     depth: plan?.depthStyle?.key || null,
+    abstraction: plan?.abstraction?.key || null,
     anatomy: plan?.anatomy?.key || null,
     figure: plan?.figure?.key || null,
     edges: plan?.edgeStyle?.key || null,
@@ -40436,12 +40585,14 @@ function strokesTowardReference(result, ref, width, height, { layer, limit, refK
     adoptSource = source;
   }
   // A detailed hand keeps working on smaller differences.
-  const tolerance = STROKE_ERROR_TOLERANCE * (1 - 0.3 * (Number(planStyle()?.detail) || 0));
+  const tolerance = STROKE_ERROR_TOLERANCE * (1 - 0.3 * (Number(planStyle()?.detail) || 0)) * (strokePainter.plan?.abstraction?.tolerance || 1);
+  const finestLayer = maxStrokeLayer();
   const toleranceFor = (l) => l === 0 ? tolerance * 0.35 : tolerance;
   let plan = planStrokeBatch(current, ref, strokePainter.gradient, width, height,
     strokeRadiusForLayer(useLayer, strokeBrushBase(width, height)), rng, hand, limit, toleranceFor(useLayer), useLayer, palette);
   // A layer with (almost) nothing left to fix hands over to the next, finer one.
-  while (plan.candidates < Math.max(3, plan.cells * 0.01) && useLayer < STROKE_LAYER_FRACTIONS.length - 1) {
+  if (useLayer > finestLayer) useLayer = finestLayer;
+  while (plan.candidates < Math.max(3, plan.cells * 0.01) && useLayer < finestLayer) {
     useLayer++;
     plan = planStrokeBatch(current, ref, strokePainter.gradient, width, height,
       strokeRadiusForLayer(useLayer, strokeBrushBase(width, height)), rng, hand, limit, toleranceFor(useLayer), useLayer, palette);
@@ -40456,7 +40607,7 @@ function strokesTowardReference(result, ref, width, height, { layer, limit, refK
     strokePainter.layerBatches++;
     const allowed = STROKE_LAYER_BATCHES[Math.min(useLayer, STROKE_LAYER_BATCHES.length - 1)];
     if ((strokePainter.layerBatches >= allowed || plan.candidates <= limit) &&
-        strokePainter.layer < STROKE_LAYER_FRACTIONS.length - 1) {
+        strokePainter.layer < finestLayer) {
       strokePainter.layer++;
       strokePainter.layerBatches = 0;
     }
@@ -40969,7 +41120,7 @@ function continueMasterDetail(result) {
    * named thing is painted, rain or snow is a pass of its own, once. */
   const weather = plan?.weather;
   const weatherTurn = Boolean(!letterTurn && !thingTurn && !inkTurn && weather?.brush && !weather.painted && !weather.painting &&
-    refReady && strokePainter.layer >= STROKE_LAYER_FRACTIONS.length - 1 && (!planHasThings(plan) || scene?.thing?.done));
+    refReady && strokePainter.layer >= maxStrokeLayer(plan) && (!planHasThings(plan) || scene?.thing?.done));
   const completion = letterTurn
     ? paintLetteringStrokes(detailResult, strokePainter.plan.scene)
     : thingTurn ? paintThingStrokes(detailResult, scene, scene.thing.pass)
