@@ -27772,7 +27772,10 @@ async function evaluateTasteStudy(params, drawSeed, targetCtx = pctx, targetW = 
   const poorlyComposed = structure(sig) < MIN_STRUCTURE || coverage(sig) < minCov;
   const finishedShapes = extractShapes(targetCtx, targetW, targetH, 8, 0.0016, 0.58);
   if (pause) await pause();
-  const grammar = canvasGrammar(targetCtx, targetW, targetH, finishedShapes);
+  // The edges a task of their own, then the rest of the grammar over them.
+  const grammarEdges = pause ? analyzeMultiScaleEdges(targetCtx, targetW, targetH) : null;
+  if (pause) await pause();
+  const grammar = canvasGrammar(targetCtx, targetW, targetH, finishedShapes, grammarEdges);
   if (pause) await pause();
   const rawFeatures = tasteFeatures(targetCtx, targetW, targetH, sig);
   const rawNovelty = novelty(sig, against);
@@ -36800,7 +36803,8 @@ function* applyMannerReferenceSteps(pixels, width, height, plan, manner, only = 
  * soft gradient or a texture draws no line), thinned to one pixel, then drawn
  * at an even width in whichever of ink or chalk the ground is not. In place,
  * after the palette. */
-function applyMannerContour(pixels, width, height, plan, manner) {
+// A step for the smoothing, one for the edges, one for the inking.
+function* applyMannerContourSteps(pixels, width, height, plan, manner) {
   const amount = Number(manner?.reference?.contour) || 0;
   if (!amount) return pixels;
   const short = Math.min(width, height);
@@ -36813,6 +36817,7 @@ function applyMannerContour(pixels, width, height, plan, manner) {
   // smoothed edge never reads as one.
   const blur = Math.max(1, Math.round(short * 0.006));
   const smooth = blurPixels(pixels, width, height, blur);
+  yield;
   const d = blur + 1;
   const sx = new Float32Array(width * height), sy = new Float32Array(width * height);
   const diff = (a, b) => Math.abs(smooth[a] - smooth[b]) + Math.abs(smooth[a + 1] - smooth[b + 1]) + Math.abs(smooth[a + 2] - smooth[b + 2]);
@@ -36832,6 +36837,7 @@ function applyMannerContour(pixels, width, height, plan, manner) {
       if (h >= v ? h >= sx[i - 1] && h >= sx[i + 1] : v >= sy[i - width] && v >= sy[i + width]) edge[i] = 1;
     }
   }
+  yield;
   // Thickened to t with a square pen, by two running passes.
   const wide = new Uint8Array(width * height);
   for (let y = 0; y < height; y++) {
@@ -37477,7 +37483,7 @@ function* finishPlanReferenceSteps(composed, width, height, plan) {
   }
   pixels = snapToPalette(pixels, plan.palette, planSnapAmount(plan));
   yield;
-  pixels = applyMannerContour(pixels, width, height, plan, manner);
+  pixels = yield* applyMannerContourSteps(pixels, width, height, plan, manner);
   yield;
   if (plan.contourInk && !plan.palette.some((p) => Math.hypot(p[0] - plan.contourInk[0], p[1] - plan.contourInk[1], p[2] - plan.contourInk[2]) < 30)) {
     plan.palette.push(plan.contourInk.slice());
@@ -37656,14 +37662,28 @@ async function prepareNewPainting(result, raw, width, height, alive, onDraft = n
     if (!await step()) return null;
     next = steps.next();
   } while (!next.done);
-  return { plan, reference: next.value };
+  // The land behind its things (Far to near), a step per task here rather
+  // than all at once in the first detail pass.
+  let landscape = null;
+  const scene = plan.scene, cover = scene?.layer?.cover || null;
+  const things = (scene?.items || []).filter((item) => item.entry.kind === "subject" && !item.lettering && item.box);
+  if (things.length && scene.width === width && scene.height === height) {
+    const land = landscapeSteps(next.value, width, height, things, cover, scene);
+    let done;
+    do {
+      if (!await step()) return null;
+      done = land.next();
+    } while (!done.done);
+    landscape = { source: next.value, plan, pixels: done.value, exact: Boolean(cover), key: { landscape: true } };
+  }
+  return { plan, reference: next.value, landscape };
 }
 
 /* A stage of the preparation as the painting will look: its manner, a
  * palette and an outline, worked on a small copy (the sketch's brushes are
  * big) and drawn back up to size. */
 function mannerDraft(pixels, width, height, plan) {
-  const { pixels: base, sw, sh } = smallCopy(pixels, width, height, 160);
+  const { pixels: base, sw, sh } = smallCopy(pixels, width, height, 120);
   const probe = { ...plan, palette: null, scene: null, contourInk: null, chromaMid: undefined, chromaUnlit: undefined };
   const look = finishPlanReference(base, sw, sh, probe);
   const small = paintBuffer(sw, sh);
@@ -37723,6 +37743,9 @@ function scheduleStrokeReference(ref, width, height, refKey) {
   const stillWanted = () => strokeReferenceJob === job && strokePainter.plan === plan;
   const pause = () => new Promise((resolve) => setTimeout(resolve, 0));
   (async () => {
+    // (Not in the task that asked for it: that one is a painting pass.)
+    await pause();
+    if (!stillWanted()) return;
     const enhanced = enhanceStrokeReference(ref);
     await pause();
     if (!stillWanted()) return;
@@ -39847,12 +39870,22 @@ function strokesTowardReference(result, ref, width, height, { layer, limit, refK
   strokeLogBegin(current, width, height);
   // What has been laid is taken into the plan (Planes, and painting from
   // what is laid): the reference the brush paints toward now.
+  let adoptSource = null;
   const laid = strokePainter.plan && current.length === ref.length ? laidState(strokePainter.plan, width, height) : null;
   // (Only on the painter's own reference: an accepted change is a new target
   // each time - adopting the canvas into it re-blended the whole picture per
   // change, the longest task on a phone, and pulled the change back toward
   // what it was changing.)
-  if (laid && (enhance || prepared)) strokePainter.laidReference = ref = adoptLaid(laid, ref, current, strokePainter.gradient);
+  if (laid && (enhance || prepared)) {
+    // Taken ahead, after the last batch landed, when nothing has been painted since.
+    const ahead = strokePainter.adoptedAhead;
+    strokePainter.adoptedAhead = null;
+    const source = ref;
+    ref = ahead && ahead.laid === laid && ahead.source === ref && ahead.revision === paintRevision
+      ? ahead.pixels : adoptLaid(laid, ref, current, strokePainter.gradient);
+    strokePainter.laidReference = ref;
+    adoptSource = source;
+  }
   // A detailed hand keeps working on smaller differences.
   const tolerance = STROKE_ERROR_TOLERANCE * (1 - 0.3 * (Number(planStyle()?.detail) || 0));
   const toleranceFor = (l) => l === 0 ? tolerance * 0.35 : tolerance;
@@ -39899,7 +39932,21 @@ function strokesTowardReference(result, ref, width, height, { layer, limit, refK
     markPaintTimingCompleted(result);
     return Promise.resolve(false);
   }
-  return animateLoggedStrokes(result, strokes, animation);
+  const landing = animateLoggedStrokes(result, strokes, animation);
+  if (adoptSource) landing.then(() => adoptLaidAhead(laid, adoptSource));
+  return landing;
+}
+
+/* What a batch laid, taken into the plan in a task of its own once it has
+ * landed - so the next pass, if nothing else is painted first, begins with
+ * it done instead of doing it (the longest part of a detail pass). */
+function adoptLaidAhead(laid, source) {
+  const revision = paintRevision;
+  setTimeout(() => {
+    if (paintRevision !== revision || strokeLog.drawing || strokePainter.laid !== laid || !vctx) return;
+    const canvas = vctx.getImageData(0, 0, laid.width, laid.height).data;
+    strokePainter.adoptedAhead = { laid, source, revision, pixels: adoptLaid(laid, source, canvas, strokePainter.gradient) };
+  }, 0);
 }
 
 /* Draw planned strokes onto the canvas a few per frame, logging each for
@@ -40621,6 +40668,7 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
       strokePainter.enhanced = ready.reference;
       strokePainter.enhancedKey = null;
       strokePainter.enhancedPlan = ready.plan;
+      if (ready.landscape) strokePainter.landscape = ready.landscape;
       // The ground in the prepared reference's own tone, if the quick one was
       // off - unless the sketch is already down: its strokes are corrected,
       // not wiped.
