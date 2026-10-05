@@ -31703,6 +31703,9 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
   const scene = planScene(params, width, height, fx, drawSeed, ref, plan.blobs, plan.comp ? fy : null, plan.morph);
   if (scene?.focus) { plan.fx = scene.focus.fx; plan.fy = scene.focus.fy; }
   plan.scene = scene;
+  // Rain, snow, storm or fog in the words (Weather).
+  plan.weather = choosePlanWeather(plan, params);
+  if (scene) scene.weather = plan.weather;
   setBlobPitch(plan.blobs, plan, height);
   // How tightly the brush keeps to a grown thing's body (Brushwork that
   // follows anatomy).
@@ -33629,6 +33632,7 @@ function recordVisualVote(liked) {
   if (plan?.finish?.look) variations[lookVoteWord(plan.finish.look)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.light) variations[lightVoteWord(plan.light.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.depthStyle) variations[depthVoteWord(plan.depthStyle.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  if (plan?.weather) variations[weatherVoteWord(plan.weather.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.anatomy) variations[anatomyVoteWord(plan.anatomy.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.figure) variations[figureVoteWord(plan.figure.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.refColour) variations["refcolour" + plan.refColour.key] = { size: 0, hue: 0, light: 0, literal: 0 };
@@ -34444,7 +34448,10 @@ function* planSceneLayerSteps(scene) {
   // The same seed both times, so the subjects' coverage matches the full layer.
   const draw = (only) => {
     ctx.clearRect(0, 0, width, height);
-    globalThis.HexfieldVisual.paint(ctx, width, height, scene.items, mulberry32(0x7e57a), only, sceneDims(scene), scene.view);
+    // With weather painted, its flat overlays (a sheet of streaks, a wash of
+    // mist) are left out: the air and the weather brush paint them instead.
+    const items = scene.weather ? scene.items.filter((item) => !(item.entry.kind === "setting" && item.entry.overlay)) : scene.items;
+    globalThis.HexfieldVisual.paint(ctx, width, height, items, mulberry32(0x7e57a), only, sceneDims(scene), scene.view);
     if (scene.lettering && only !== "setting") {
       if (!only) chooseLetteringValue(ctx, scene);
       drawSceneLettering(ctx, scene.lettering);
@@ -35432,7 +35439,8 @@ function depthAt(plan, x, y, width, height, landscape = false) {
  * the haze, as far as the depth style says. In place. */
 function applyDepthAir(pixels, width, height, plan, only = null) {
   const k = plan?.depthStyle?.k || 0, dm = plan?.depthMap;
-  if (!k || !dm) return pixels;
+  // The weather's air comes after the depth's (fog thickens with it).
+  if (!k || !dm) return plan?.weather ? applyWeatherAir(pixels, width, height, plan, only) : pixels;
   const D = DEPTH_BRUSH, haze = dm.haze;
   const gx0 = new Int32Array(width), gtx = new Float32Array(width);
   for (let x = 0; x < width; x++) { const f = Math.max(0, Math.min(dm.gw - 1.001, (x + 0.5) / width * dm.gw - 0.5)); gx0[x] = f | 0; gtx[x] = f - gx0[x]; }
@@ -35451,6 +35459,199 @@ function applyDepthAir(pixels, width, height, plan, only = null) {
       pixels[o] = r1 + (haze[0] - r1) * toward; pixels[o + 1] = g1 + (haze[1] - g1) * toward; pixels[o + 2] = b1 + (haze[2] - b1) * toward;
     }
   }
+  return plan?.weather ? applyWeatherAir(pixels, width, height, plan, only) : pixels;
+}
+
+/* ── Weather ────────────────────────────────────────────────────────────
+ * Rain, storm, snow and fog painted as part of the picture rather than laid
+ * over it: their air in the reference (damp, dark, white-capped, misted -
+ * thicker with distance), and rain and snow a brush pass of their own once
+ * the picture is painted, far drops first, then near. Light or heavy is
+ * chosen like the other axes and learned from votes ("weatherlight",
+ * "weatherheavy"). */
+const WEATHER_WORDS = {
+  rain: /\b(rain\w*|drizzl\w*|showers?|downpour|monsoon)\b/,
+  storm: /\b(storm\w*|thunder\w*|lightning|tempest|gale)\b/,
+  snow: /\b(snow\w*|blizzard|sleet)\b/,
+  fog: /\b(fog\w*|mist\w*|haze|hazy|murk\w*)\b/,
+};
+const WEATHER_STRENGTH = { light: 0.55, heavy: 1 };
+const WEATHER_HEAVY = /\b(heavy|pouring|downpour|blizzard|thick|dense|torrential|lashing|deep)\b/;
+const WEATHER_LIGHT = /\b(light|drizzl\w*|gentle|soft|faint|thin|hazy)\b/;
+
+function choosePlanWeather(plan, params) {
+  const text = String(params?.__hexfieldWords?.text || "").toLowerCase();
+  const keys = new Set((plan.scene?.items || []).map((item) => item.key));
+  const kinds = Object.keys(WEATHER_WORDS).filter((kind) => keys.has(kind) || WEATHER_WORDS[kind].test(text));
+  if (!kinds.length) return null;
+  // A storm rains.
+  if (kinds.includes("storm") && !kinds.includes("rain")) kinds.push("rain");
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x3a7e) >>> 0);
+  const heavyWords = WEATHER_HEAVY.test(text), lightWords = WEATHER_LIGHT.test(text);
+  const scores = chooseByTaste(Object.keys(WEATHER_STRENGTH), {
+    rng, tasted: 0, axis: "weather", given: planStyleChain(plan),
+    lean: (key) => key === "heavy" ? (heavyWords ? 0.8 : 0) + (kinds.includes("storm") ? 0.3 : 0) - (lightWords ? 0.5 : 0)
+      : (lightWords ? 0.8 : 0) - (heavyWords ? 0.5 : 0),
+    learned: (key) => visualLearnedChoice(weatherVoteWord(key)), taste: () => null,
+  });
+  plan.weatherScores = summariseChoice(scores);
+  const key = scores[0].key, k = WEATHER_STRENGTH[key];
+  // Slanted with the wind, which blows away from the light's side.
+  const side = Math.cos(plan.lightAngle || 0) >= 0 ? -1 : 1;
+  return {
+    kinds, key, k, slant: side * (0.08 + 0.22 * k) * (0.8 + rng() * 0.4),
+    brush: kinds.includes("rain") || kinds.includes("snow"),
+    strokes: null, painted: false, painting: false, width: 0, height: 0,
+  };
+}
+const weatherVoteWord = (key) => "weather" + String(key).replace(/[^a-z]/g, "");
+
+/* The weather's air in a composed reference, in place: rain damps it (duller,
+ * a little darker and cooler), a storm darkens the sky and the far places,
+ * snow lightens it and lies white along the tops of things, and fog mixes
+ * toward a light mist the more the farther off. */
+function applyWeatherAir(pixels, width, height, plan, only = null) {
+  const W = plan?.weather;
+  if (!W?.kinds?.length) return pixels;
+  const k = W.k, dm = plan.depthMap;
+  const has = (kind) => W.kinds.includes(kind);
+  const rain = has("rain"), storm = has("storm"), snow = has("snow"), fog = has("fog");
+  const haze = dm?.haze || [200, 205, 210];
+  const mist = [214, 220, 226].map((c, j) => c * 0.75 + haze[j] * 0.25);
+  const cover = snow && plan.scene?.layer?.cover?.length === width * height ? plan.scene.layer.cover : null;
+  const capPx = Math.max(2, Math.round(Math.min(width, height) * (0.006 + 0.008 * k)));
+  const run = cover ? new Uint16Array(width) : null;
+  let gx0 = null, gtx = null, line = null;
+  if (dm) {
+    gx0 = new Int32Array(width); gtx = new Float32Array(width); line = new Float32Array(dm.gw);
+    for (let x = 0; x < width; x++) { const f = Math.max(0, Math.min(dm.gw - 1.001, (x + 0.5) / width * dm.gw - 0.5)); gx0[x] = f | 0; gtx[x] = f - gx0[x]; }
+  }
+  const damp = 1 - 0.28 * k, dark = 1 - 0.08 * k;
+  for (let y = 0; y < height; y++) {
+    const up = 1 - y / height;
+    if (dm) {
+      const fy = Math.max(0, Math.min(dm.gh - 1.001, (y + 0.5) / height * dm.gh - 0.5)), y0 = fy | 0, ty = fy - y0;
+      for (let gx = 0; gx < dm.gw; gx++) line[gx] = dm.map[y0 * dm.gw + gx] * (1 - ty) + dm.map[(y0 + 1) * dm.gw + gx] * ty;
+    }
+    for (let x = 0, i = y * width; x < width; x++, i++) {
+      // The tops of things are counted down from wherever they begin.
+      if (run) run[x] = cover[i] > 128 ? Math.min(65535, run[x] + 1) : 0;
+      if (only && !only[i]) continue;
+      const d = dm ? line[gx0[x]] * (1 - gtx[x]) + line[gx0[x] + 1] * gtx[x] : 0.25 + 0.5 * up;
+      const o = i * 4;
+      let r = pixels[o], g = pixels[o + 1], b = pixels[o + 2];
+      if (rain) {
+        const l = 0.299 * r + 0.587 * g + 0.114 * b;
+        r = (l + (r - l) * damp) * dark; g = (l + (g - l) * damp) * dark; b = (l + (b - l) * damp) * dark + 6 * k;
+      }
+      if (storm) {
+        const s = Math.min(0.75, k * (0.15 + 0.55 * d) * (0.4 + 0.6 * up));
+        r += (52 - r) * s; g += (60 - g) * s; b += (78 - b) * s;
+      }
+      if (snow) {
+        const s = 0.1 * k;
+        r += (236 - r) * s; g += (240 - g) * s; b += (246 - b) * s;
+        if (run && run[x] > 0 && run[x] <= capPx) {
+          const t = 0.9 * (1 - 0.45 * (run[x] - 1) / capPx);
+          r += (244 - r) * t; g += (247 - g) * t; b += (252 - b) * t;
+        }
+      }
+      if (fog) {
+        const a = Math.min(0.85, k * (0.12 + 0.7 * d * d));
+        r += (mist[0] - r) * a; g += (mist[1] - g) * a; b += (mist[2] - b) * a;
+      }
+      pixels[o] = r; pixels[o + 1] = g; pixels[o + 2] = b;
+    }
+  }
+  return pixels;
+}
+
+/* Rain as thin slanted streaks and snow as round flakes, each larger, longer
+ * and stronger the nearer it falls; far ones first, so the near fall over
+ * them. Their colours from the reference under them, lifted toward the
+ * light. */
+function planWeatherStrokes(plan, ref, width, height) {
+  const W = plan.weather, strokes = [];
+  if (!ref || ref.length !== width * height * 4) return strokes;
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x3a1b) >>> 0);
+  const mobile = isMobileBrowser(), area = width * height, unit = Math.min(width, height);
+  const heavy = W.key === "heavy";
+  const sample = (x, y) => {
+    const o = (Math.min(height - 1, Math.max(0, Math.round(y))) * width + Math.min(width - 1, Math.max(0, Math.round(x)))) * 4;
+    return [ref[o], ref[o + 1], ref[o + 2]];
+  };
+  if (W.kinds.includes("rain")) {
+    const n = Math.min(mobile ? 360 : 700, Math.round(area / (heavy ? 700 : 1600)));
+    const sx = Math.sin(W.slant), sy = Math.cos(W.slant);
+    for (let i = 0; i < n; i++) {
+      const x = rng() * width * 1.1 - width * 0.05, y = rng() * height;
+      const near = 1 - depthAt(plan, x, y, width, height);
+      const len = unit * (0.025 + 0.075 * near * near) * (0.7 + rng() * 0.6);
+      const lift = 0.35 + 0.2 * near, c = sample(x, y);
+      strokes.push({
+        points: [[x - sx * len / 2, y - sy * len / 2], [x + sx * len / 2, y + sy * len / 2]],
+        width: Math.min(2.4, 0.7 + 1.5 * near), colour: c.map((v, j) => Math.round(v + ([226, 232, 240][j] - v) * lift)),
+        alpha: 0.28 + 0.3 * near, bristle: rng(), plain: true, tip: "ink", near,
+      });
+    }
+  }
+  if (W.kinds.includes("snow")) {
+    const n = Math.min(mobile ? 260 : 500, Math.round(area / (heavy ? 900 : 2000)));
+    for (let i = 0; i < n; i++) {
+      const x = rng() * width, y = rng() * height;
+      const near = 1 - depthAt(plan, x, y, width, height), c = sample(x, y);
+      strokes.push({
+        points: [[x, y]], width: (1.2 + 4.5 * near ** 1.6) * (0.7 + rng() * 0.6) * Math.max(1, unit / 700),
+        colour: c.map((v, j) => Math.round(v * 0.1 + [240, 244, 250][j] * 0.9)),
+        alpha: 0.7 + 0.25 * near, bristle: rng(), plain: true, tip: "ink", near,
+      });
+    }
+  }
+  strokes.sort((a, b) => a.near - b.near);
+  for (const stroke of strokes) delete stroke.near;
+  return strokes;
+}
+
+function paintWeatherStrokes(result, plan) {
+  const W = view.width, H = view.height, weather = plan.weather;
+  markPaintTimingStarted(result);
+  const animation = ++activePaintAnimation;
+  if (!weather.strokes || weather.width !== W || weather.height !== H) {
+    weather.strokes = planWeatherStrokes(plan, strokePainter.enhanced, W, H);
+    weather.width = W; weather.height = H;
+  }
+  const strokes = weather.strokes;
+  result.paintStrokeLayer = strokePainter.layer;
+  result.paintStrokeCount = strokes.length;
+  result.paintBrush = {
+    families: ["weather"], textures: ["flat"], signatures: [], lineageObjects: [],
+    source: "weather-brush", lifts: 0, smudges: 0,
+    minSize: strokes.length ? Math.min(...strokes.map((s) => s.width)) : 0,
+    maxSize: strokes.length ? Math.max(...strokes.map((s) => s.width)) : 0,
+    nonRedundancy: 0.5, count: (Number(result.paintBrush?.count) || 0) + strokes.length,
+    wordHand: weather.kinds.join(" + ") + " · " + weather.key,
+  };
+  if (!strokes.length) {
+    if (activePaintAnimation === animation) activePaintAnimation = 0;
+    markPaintTimingCompleted(result);
+    return Promise.resolve(false);
+  }
+  strokeLogBegin(vctx.getImageData(0, 0, W, H).data, W, H);
+  return animateLoggedStrokes(result, strokes, animation);
+}
+
+/* Once painted, the weather's strokes are part of the plan: drawn into every
+ * reference after it, so the careful passes keep them instead of painting
+ * them out. In place. */
+function stampWeather(pixels, width, height, plan) {
+  const W = plan?.weather;
+  if (!W?.painted || !W.strokes?.length || W.width !== width || W.height !== height ||
+      pixels?.length !== width * height * 4 || typeof document === "undefined") return pixels;
+  const canvas = paintBuffer(width, height), ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.putImageData(new ImageData(new Uint8ClampedArray(pixels), width, height), 0, 0);
+  for (const stroke of W.strokes) drawPaintStroke(ctx, stroke);
+  pixels.set(ctx.getImageData(0, 0, width, height).data);
+  canvas.width = 0; canvas.height = 0;
   return pixels;
 }
 
@@ -37214,7 +37415,8 @@ function* finishPlanReferenceSteps(composed, width, height, plan) {
     const near = nearestPaletteColour(plan.palette, f.colour[0], f.colour[1], f.colour[2]);
     if (Math.hypot(near[0] - f.colour[0], near[1] - f.colour[1], near[2] - f.colour[2]) > 30 && plan.palette.length < planPaletteSize(plan) + 8) plan.palette.push(f.colour);
   }
-  return pixels;
+  // The weather already painted stays painted.
+  return stampWeather(pixels, width, height, plan);
 }
 
 /* A small copy by block averages - cheap, and taste reads it the same. */
@@ -39898,10 +40100,16 @@ function continueMasterDetail(result) {
     thingTurn = things.masksReady && !things.painting && !things.done && things.item >= 0 && strokePainter.layer >= 2;
     if (thingTurn) things.started = true;
   }
+  /* The weather falls last: once the finest brush is at work and every
+   * named thing is painted, rain or snow is a pass of its own, once. */
+  const weather = plan?.weather;
+  const weatherTurn = Boolean(!letterTurn && !thingTurn && !inkTurn && weather?.brush && !weather.painted && !weather.painting &&
+    refReady && strokePainter.layer >= STROKE_LAYER_FRACTIONS.length - 1 && (!planHasThings(plan) || scene?.thing?.done));
   const completion = letterTurn
     ? paintLetteringStrokes(detailResult, strokePainter.plan.scene)
     : thingTurn ? paintThingStrokes(detailResult, scene, scene.thing.pass)
     : inkTurn ? paintContourInk(detailResult, plan)
+    : weatherTurn ? paintWeatherStrokes(detailResult, plan)
     : paintTowardReference(detailResult, reference, width, height, { refKey: source.params, enhance: true });
   if (thingTurn) {
     const things = scene.thing;
@@ -39927,6 +40135,17 @@ function continueMasterDetail(result) {
             }
           }
         }
+      }
+    });
+  }
+  if (weatherTurn) {
+    weather.painting = true;
+    completion.then((landed) => {
+      weather.painting = false;
+      // Painted (or nothing to paint): from now on part of the reference.
+      if (landed || !detailResult.paintStrokeCount) {
+        weather.painted = true;
+        if (strokePainter.enhancedPlan === plan) stampWeather(strokePainter.enhanced, width, height, plan);
       }
     });
   }
