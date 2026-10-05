@@ -35559,7 +35559,14 @@ const WEATHER_WORDS = {
   storm: /\b(storm\w*|thunder\w*|lightning|tempest|gale)\b/,
   snow: /\b(snow\w*|blizzard|sleet)\b/,
   fog: /\b(fog\w*|mist\w*|haze|hazy|murk\w*)\b/,
+  // The seasons, and the wind (Seasons and wind).
+  autumn: /\b(autumn\w*|fall|falling leaves|october|november|harvest)\b/,
+  spring: /\b(spring\w*|blossom\w*|cherry|petals?|april)\b/,
+  frost: /\b(frost\w*|icy|ice|frozen|freezing|winter\w*)\b/,
+  wind: /\b(wind\w*|breez\w*|gusts?|gusty|gale|blowing|blown)\b/,
 };
+// What leans in the wind, from its foot.
+const WIND_LEANS = new Set(["tree", "pine", "palm", "bush", "flower", "sunflower", "flag", "kite", "balloon", "umbrella"]);
 const WEATHER_STRENGTH = { light: 0.55, heavy: 1 };
 const WEATHER_HEAVY = /\b(heavy|pouring|downpour|blizzard|thick|dense|torrential|lashing|deep)\b/;
 const WEATHER_LIGHT = /\b(light|drizzl\w*|gentle|soft|faint|thin|hazy)\b/;
@@ -35569,8 +35576,9 @@ function choosePlanWeather(plan, params) {
   const keys = new Set((plan.scene?.items || []).map((item) => item.key));
   const kinds = Object.keys(WEATHER_WORDS).filter((kind) => keys.has(kind) || WEATHER_WORDS[kind].test(text));
   if (!kinds.length) return null;
-  // A storm rains.
+  // A storm rains, and blows.
   if (kinds.includes("storm") && !kinds.includes("rain")) kinds.push("rain");
+  if (kinds.includes("storm") && !kinds.includes("wind")) kinds.push("wind");
   const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x3a7e) >>> 0);
   const heavyWords = WEATHER_HEAVY.test(text), lightWords = WEATHER_LIGHT.test(text);
   const scores = chooseByTaste(Object.keys(WEATHER_STRENGTH), {
@@ -35583,9 +35591,17 @@ function choosePlanWeather(plan, params) {
   const key = scores[0].key, k = WEATHER_STRENGTH[key];
   // Slanted with the wind, which blows away from the light's side.
   const side = Math.cos(plan.lightAngle || 0) >= 0 ? -1 : 1;
+  const wind = kinds.includes("wind");
+  // In the wind, trees and flowers lean away from it, from their feet.
+  if (wind) {
+    for (const item of plan.scene?.items || []) {
+      if (item.entry.kind === "subject" && !item.lettering && WIND_LEANS.has(item.key)) item.lean = -side * (0.1 + 0.16 * k) * (0.8 + rng() * 0.4);
+    }
+  }
   return {
-    kinds, key, k, slant: side * (0.08 + 0.22 * k) * (0.8 + rng() * 0.4),
-    brush: kinds.includes("rain") || kinds.includes("snow"),
+    kinds, key, k, side, wind,
+    slant: side * (wind ? 0.35 + 0.25 * k : 0.08 + 0.22 * k) * (0.8 + rng() * 0.4),
+    brush: ["rain", "snow", "autumn", "spring", "wind"].some((kind) => kinds.includes(kind)),
     strokes: null, painted: false, painting: false, width: 0, height: 0,
   };
 }
@@ -35601,11 +35617,14 @@ function applyWeatherAir(pixels, width, height, plan, only = null) {
   const k = W.k, dm = plan.depthMap;
   const has = (kind) => W.kinds.includes(kind);
   const rain = has("rain"), storm = has("storm"), snow = has("snow"), fog = has("fog");
+  const autumn = has("autumn"), spring = has("spring"), frost = has("frost");
   const haze = dm?.haze || [200, 205, 210];
   const mist = [214, 220, 226].map((c, j) => c * 0.75 + haze[j] * 0.25);
-  const cover = (snow || fog) && plan.scene?.layer?.cover?.length === width * height ? plan.scene.layer.cover : null;
-  const capPx = Math.max(3, Math.round(Math.min(width, height) * (0.01 + 0.014 * k)));
-  const run = cover && snow ? new Uint16Array(width) : null;
+  const cover = (snow || fog || frost) && plan.scene?.layer?.cover?.length === width * height ? plan.scene.layer.cover : null;
+  // Snow lies thick along the tops of things; frost is a thin rime.
+  const capPx = Math.max(snow ? 3 : 2, Math.round(Math.min(width, height) * (snow ? 0.01 + 0.014 * k : 0.003 + 0.004 * k)));
+  const cap = snow ? [244, 247, 252] : [222, 234, 250];
+  const run = cover && (snow || frost) ? new Uint16Array(width) : null;
   let gx0 = null, gtx = null, line = null;
   if (dm) {
     gx0 = new Int32Array(width); gtx = new Float32Array(width); line = new Float32Array(dm.gw);
@@ -35643,12 +35662,23 @@ function applyWeatherAir(pixels, width, height, plan, only = null) {
         const s = Math.min(0.75, k * (0.15 + 0.55 * d) * (0.4 + 0.6 * up));
         r += (52 - r) * s; g += (60 - g) * s; b += (78 - b) * s;
       }
-      if (snow) {
-        const s = 0.1 * k;
-        r += (236 - r) * s; g += (240 - g) * s; b += (246 - b) * s;
+      if (autumn || spring) {
+        // Autumn turns the greens to ochre, orange and rust; spring makes
+        // them fresh and light.
+        const max = Math.max(r, g, b), min = Math.min(r, g, b);
+        if (max - min > 12 && g >= r && g >= b) {
+          const greenness = Math.min(1, (g - Math.max(r, b)) / Math.max(1, max - min) * 1.6);
+          const t = greenness * (autumn ? 0.6 + 0.35 * k : 0.35 * k);
+          const to = autumn ? [max * 0.92, max * 0.55, min * 0.6] : [Math.min(255, r * 1.05 + 12), Math.min(255, g * 1.08 + 10), b];
+          r += (to[0] - r) * t; g += (to[1] - g) * t; b += (to[2] - b) * t;
+        }
+      }
+      if (snow || frost) {
+        const s = (snow ? 0.1 : 0.12) * k, tint = snow ? [236, 240, 246] : [206, 220, 240];
+        r += (tint[0] - r) * s; g += (tint[1] - g) * s; b += (tint[2] - b) * s;
         if (run && run[x] > 0 && run[x] <= capPx) {
-          const t = 0.9 * (1 - 0.45 * (run[x] - 1) / capPx);
-          r += (244 - r) * t; g += (247 - g) * t; b += (252 - b) * t;
+          const t = (snow ? 0.9 : 0.75) * (1 - 0.45 * (run[x] - 1) / capPx);
+          r += (cap[0] - r) * t; g += (cap[1] - g) * t; b += (cap[2] - b) * t;
         }
       }
       if (fog) {
@@ -35783,6 +35813,32 @@ function planWeatherStrokes(plan, ref, width, height) {
         points: [[x, y]], width: (1.2 + 4.5 * near ** 1.6) * (0.7 + rng() * 0.6) * Math.max(1, unit / 700),
         colour: c.map((v, j) => Math.round(v * 0.1 + [240, 244, 250][j] * 0.9)),
         alpha: 0.7 + 0.25 * near, bristle: rng(), plain: true, tip: "ink", near,
+      });
+    }
+  }
+  // Leaves and petals: autumn's falling, some already down on the ground;
+  // spring's blossom drifting; in the wind alone, green leaves blown across.
+  const leafKinds = [
+    W.kinds.includes("autumn") && { colours: [[214, 96, 38], [190, 60, 30], [226, 150, 50], [150, 70, 30], [235, 180, 70]], per: heavy ? 1500 : 3000, cap: mobile ? 220 : 400, fallen: 0.35, petal: false },
+    W.kinds.includes("spring") && { colours: [[250, 205, 220], [255, 235, 240], [240, 170, 195], [255, 250, 250]], per: heavy ? 1600 : 3200, cap: mobile ? 200 : 360, fallen: 0.15, petal: true },
+    W.wind && !W.kinds.includes("autumn") && !W.kinds.includes("spring") && { colours: [[90, 140, 60], [120, 160, 70], [150, 170, 80]], per: 5200, cap: mobile ? 90 : 160, fallen: 0, petal: false },
+  ].filter(Boolean);
+  const drift = W.wind ? Math.PI / 2 - W.slant * 2.2 : Math.PI / 2;
+  for (const kind of leafKinds) {
+    const n = Math.min(kind.cap, Math.round(area / kind.per));
+    for (let i = 0; i < n; i++) {
+      const down = rng() < kind.fallen;
+      const x = rng() * width, y = down ? height * (0.72 + rng() * 0.28) : rng() * height;
+      const near = 1 - depthAt(plan, x, y, width, height);
+      const c = kind.colours[Math.floor(rng() * kind.colours.length)].map((v) => Math.max(0, Math.min(255, Math.round(v + (rng() - 0.5) * 24))));
+      const size = unit * (kind.petal ? 0.004 + 0.008 * near : 0.006 + 0.014 * near) * (0.7 + rng() * 0.6);
+      // Lying flat on the ground, tumbling in the air, or blown along the wind.
+      const angle = down ? (rng() - 0.5) * 0.6 : W.wind ? drift + (rng() - 0.5) * 0.9 : rng() * Math.PI;
+      const dx = Math.cos(angle) * size, dy = Math.sin(angle) * size * (down ? 0.5 : 1);
+      strokes.push({
+        points: kind.petal ? [[x, y]] : [[x - dx / 2, y - dy / 2], [x + dx / 2, y + dy / 2]],
+        width: Math.min(6, kind.petal ? size : size * 0.5), colour: c,
+        alpha: 0.8 + 0.15 * near, bristle: rng(), plain: true, tip: "ink", near,
       });
     }
   }

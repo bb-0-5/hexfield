@@ -3542,6 +3542,8 @@
         }
         ctx.save();
         ctx.globalAlpha = item.alpha ?? 1;
+        // Leaning in the wind, from its foot.
+        if (item.lean) { const foot = item.box.y + item.box.h; ctx.transform(1, 0, -item.lean, 1, item.lean * foot, 0); }
         if (item.keystone && item.keystone !== 1) drawKeystoned(ctx, layer, item.box, item.keystone, W);
         else ctx.drawImage(layer, 0, 0);
         ctx.restore();
