@@ -30976,6 +30976,7 @@ function rejectPaintEvidence(result, reason) {
 }
 
 function updatePainterStatus(result) {
+  renderChoiceCard();
   lastPassCompletedAt = Date.now();
   const label = document.getElementById("painterStatus");
   if (!label) return;
@@ -33663,6 +33664,78 @@ function recordVisualVote(liked) {
   }
   writeVisualPending();
   flushVisualVotes();
+}
+
+/* ── Voting on a choice ─────────────────────────────────────────────────
+ * A painting is many choices - a manner, a light, a weather, a water, a
+ * finish - and a KEEP or REJECT says only that the whole of it was liked or
+ * not. Each choice is listed under the painting to be liked or disliked by
+ * itself: a vote that names one choice teaches that choice alone, and counts
+ * twice what a whole painting's vote gives it. */
+function paintingChoices(plan) {
+  if (!plan) return [];
+  const scene = plan.scene, out = [];
+  const add = (label, word) => { if (label && /^[a-z]{1,24}$/.test(word)) out.push({ label, word }); };
+  if (plan.manner) add(plan.manner.name || plan.manner.key, mannerVoteWord(plan.manner.key));
+  if (plan.light) add(plan.light.name || plan.light.key, lightVoteWord(plan.light.key));
+  if (plan.weather) add(plan.weather.kinds.join(" + ") + " · " + plan.weather.key, weatherVoteWord(plan.weather.key));
+  if (plan.water) add(plan.water.name, waterVoteWord(plan.water.key));
+  if (plan.finish && plan.finish.key !== "none") add("finish: " + (plan.finish.look ? plan.finish.look.replace(/^[a-z]+\./, "") : plan.finish.key), plan.finish.look ? lookVoteWord(plan.finish.look) : finishVoteWord(plan.finish.key));
+  if (scene?.perspective) add(scene.perspective.name || scene.perspective.key, perspVoteWord(scene.perspective.key));
+  if (plan.depthStyle) add((plan.depthStyle.name || plan.depthStyle.key) + " depth", depthVoteWord(plan.depthStyle.key));
+  if (plan.dims) add(plan.dims.name || plan.dims.key, dimsVoteWord(plan.dims.key));
+  if (plan.tips) add(plan.tips.key + " brushes", tipsVoteWord(plan.tips.key));
+  return out;
+}
+
+function recordChoiceVote(word, liked) {
+  const plan = strokePainter.plan;
+  if (!plan || !/^[a-z]{1,24}$/.test(word)) return false;
+  const votes = plan.choiceVotes || (plan.choiceVotes = {});
+  if (votes[word] !== undefined) return false;
+  votes[word] = Boolean(liked);
+  for (let n = 0; n < 2; n++) {
+    const vote = { word, liked: Boolean(liked), size: 0, hue: 0, light: 0, literal: 0 };
+    visualLexiconAdd(vote);
+    visualVotesPending.push(vote);
+  }
+  writeVisualPending();
+  flushVisualVotes();
+  return true;
+}
+
+let choiceCardFor = null;
+function renderChoiceCard(force = false) {
+  const card = typeof document !== "undefined" ? document.getElementById("choiceCard") : null;
+  const plan = strokePainter.plan;
+  if (!card || (!force && choiceCardFor === plan && card.childElementCount)) return;
+  choiceCardFor = plan;
+  card.textContent = "";
+  for (const choice of paintingChoices(plan)) {
+    const voted = plan.choiceVotes?.[choice.word];
+    const chip = document.createElement("span");
+    chip.className = "choice" + (voted === true ? " liked" : voted === false ? " disliked" : "");
+    chip.title = "like or dislike this choice by itself";
+    const label = document.createElement("span");
+    label.textContent = choice.label;
+    chip.appendChild(label);
+    for (const [liked, mark, name] of [[true, "+", "like"], [false, "\u2212", "dislike"]]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = mark;
+      button.setAttribute("aria-label", name + " " + choice.label);
+      button.dataset.word = choice.word;
+      button.disabled = voted !== undefined;
+      button.addEventListener("click", () => {
+        if (!recordChoiceVote(choice.word, liked)) return;
+        renderChoiceCard(true);
+        const status = document.getElementById("localLearningStatus");
+        if (status) status.textContent = (liked ? "liked " : "disliked ") + choice.label + " - it will choose it " + (liked ? "more" : "less") + " often";
+      });
+      chip.appendChild(button);
+    }
+    card.appendChild(chip);
+  }
 }
 
 async function flushVisualVotes() {

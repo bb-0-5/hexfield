@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- autodeploy-check: workers-builds-verify-8f2c1a -->
-<!-- hexfield build 258 (2026-10-05) -->
+<!-- hexfield build 259 (2026-10-05) -->
 <html lang="en">
 <head>
 <script>
@@ -535,6 +535,21 @@
   #voteUp { border-color: #4d7d68; }
   #voteDown { border-color: #7d4d56; }
   #openReferences { border-color: #8a6a2e; }
+  /* One row, fixed height: scrolls sideways rather than moving anything. */
+  #choiceCard { display: flex; gap: 4px; overflow-x: auto; overflow-y: hidden; height: 24px; min-height: 24px; margin-top: 5px;
+                scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  #choiceCard::-webkit-scrollbar { display: none; }
+  #choiceCard:empty { visibility: hidden; }
+  #choiceCard .choice { flex: 0 0 auto; display: flex; align-items: center; gap: 1px; height: 22px; padding: 0 1px 0 7px;
+                        border: 1px solid rgba(190,218,230,.24); border-radius: 11px; color: #cfd8e6; font-size: 9px;
+                        white-space: nowrap; background: rgba(20,29,38,.6); }
+  #choiceCard .choice.liked { border-color: #5f9c80; background: rgba(77,125,104,.32); }
+  #choiceCard .choice.disliked { border-color: #a0606c; background: rgba(125,77,86,.32); }
+  #choiceCard .choice button { width: 18px; height: 18px; min-height: 0 !important; padding: 0 !important; margin: 0;
+                               border: none !important; border-radius: 9px; background: transparent !important;
+                               font-size: 10px; line-height: 18px; color: #e8f4f8 !important; transform: none !important; }
+  #choiceCard .choice button:hover:not(:disabled) { background: rgba(109,201,242,.18) !important; }
+  #choiceCard .choice button:disabled { opacity: .35; }
   #localLearningStatus { margin-top: 4px; color: #aeb6cf; font-size: 8px; line-height: 1.3;
                          height: 22px; min-height: 22px; max-height: 22px; overflow: hidden; }
   /* Live diagnostics may change words, not geometry. */
@@ -749,6 +764,8 @@
       <button id="voteDown" type="button" disabled>REJECT</button>
       <button id="openReferences" type="button" title="give it pictures and logos to learn from">REFERENCES</button>
     </div>
+    <!-- The painting's own choices, each to be liked or disliked by itself. -->
+    <div id="choiceCard" aria-label="this painting's choices - like or dislike each one"></div>
     <div id="localLearningStatus" aria-live="polite">teach it directly, or let the resident painter keep learning in the background</div>
     <!-- Inside #autonomousControls on purpose. The autonomous presentation
          blacks out the sidebar with `aside > div:not(#autonomousControls)`, so
@@ -768,7 +785,7 @@
     <div id="colourChoice">colour: choosing…</div>
     <div id="robBossMood" aria-live="polite">rob boss: waking up · show me 4–8 clear choices</div>
     <div id="painterStatus">seed held · preparing the first paint pass</div>
-    <div id="buildBadge">build 258</div>
+    <div id="buildBadge">build 259</div>
     <div id="bootErrors" style="display:none;color:#ff6b6b;font-size:10px;white-space:pre-wrap;margin-top:4px;"></div>
   </div>
   <div id="shopEssentials" aria-label="print controls"></div>
