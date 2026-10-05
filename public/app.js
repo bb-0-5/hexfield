@@ -33410,6 +33410,36 @@ function letterPlaceCandidates(W, H, k, main, laid) {
   }
   return out;
 }
+/* A lockup, as a logo pairs its symbol with its name: the main thing made
+ * small - an icon a little taller than the letters - and the word beside it
+ * on the same middle line, a small gap between, the pair centred where the
+ * painting's focus is. The thing (and whatever is attached to it) moves and
+ * shrinks with it, so the two read as one mark. */
+function lockupCandidate(W, H, k, main) {
+  const item = main?.item, m = main?.box;
+  if (!item || !m || item.lettering || !(m.w > 4 && m.h > 4)) return null;
+  const iconH = H * Math.min(0.34, 0.26 * k), s = iconH / m.h, iconW = m.w * s;
+  if (iconW > W * 0.42) return null;
+  const gap = iconH * 0.14, wordH = iconH * 0.78;
+  const wordW = Math.min(W * 0.62, W * 0.92 - iconW - gap);
+  if (wordW < W * 0.3) return null;
+  const groupW = iconW + gap + wordW, x0 = (W - groupW) / 2;
+  const cy = Math.max(H * 0.22, Math.min(H * 0.78, (Number(main.fy) || 0.5) * H));
+  const icon = { x: x0, y: cy - iconH / 2, w: iconW, h: iconH };
+  const word = { x: x0 + iconW + gap, y: cy - wordH / 2, w: wordW, h: wordH };
+  return { key: "lockup", box: word, lockup: { icon, item }, group: { x: x0, y: icon.y, w: groupW, h: iconH } };
+}
+// Moves a lockup's thing into its icon place, with what is attached to it.
+function applyLockup(items, lockup) {
+  const { item, icon } = lockup, from = { ...item.box };
+  const s = icon.w / Math.max(1, from.w);
+  for (const other of items) {
+    if (other !== item && other.attachedTo !== item.key) continue;
+    const b = other.box;
+    other.box = { x: icon.x + (b.x - from.x) * s, y: icon.y + (b.y - from.y) * s, w: b.w * s, h: b.h * s };
+  }
+}
+
 // Words that name a surface something can be painted on.
 const GROUND_WORDS = new Set(["road", "street", "path", "lane", "track", "runway", "pavement", "sidewalk", "floor", "court",
   "field", "meadow", "beach", "sand", "desert", "ground", "plaza", "square", "parking", "highway", "avenue", "playground"]);
@@ -33417,6 +33447,9 @@ const GROUND_WORDS = new Set(["road", "street", "path", "lane", "track", "runway
 function letterPlaceLean(place, W, H, main, laid) {
   const b = place.screen || place.box;
   let lean = 0;
+  // (A lockup moves the thing out of the word's way; leaning to it more once
+  // logos have been given.)
+  if (place.lockup) return 0.05 + (fontReferenceDirection() ? 0.35 : 0);
   if (main?.box) {
     const m = main.box, ox = Math.max(0, Math.min(b.x + b.w, m.x + m.w) - Math.max(b.x, m.x)), oy = Math.max(0, Math.min(b.y + b.h, m.y + m.h) - Math.max(b.y, m.y));
     lean -= 3 * (ox * oy) / Math.max(1, m.w * m.h);
@@ -33448,17 +33481,19 @@ function planLettering(scene, letters, params, read, laid, rng) {
   const k = Math.exp(0.3 * v.size);
   const main = read.subjects.length ? laid.focus : null;
   const mainItem = main ? laid.items.find((item) => item.main) || laid.items.find((item) => item.entry?.kind === "subject" && !item.lettering) : null;
-  const where = main && mainItem ? { ...main, box: mainItem.box } : main;
+  const where = main && mainItem ? { ...main, box: mainItem.box, item: mainItem } : main;
   // Where it goes: chosen, learned and varied (axis "letterPlace").
   // A place that hides more than a quarter of the main thing is not offered
   // (not even to the chooser's now-and-then exploring), while others remain.
   const hides = (place) => {
     const b = place.screen || place.box, m = where?.box;
-    if (!m) return false;
+    if (!m || place.lockup) return false;
     const ox = Math.max(0, Math.min(b.x + b.w, m.x + m.w) - Math.max(b.x, m.x)), oy = Math.max(0, Math.min(b.y + b.h, m.y + m.h) - Math.max(b.y, m.y));
     return ox * oy > 0.25 * m.w * m.h;
   };
   const offered = letterPlaceCandidates(W, H, k, where, laid);
+  const lockup = lockupCandidate(W, H, k, where);
+  if (lockup) offered.push(lockup);
   const surfaceWord = (params?.__hexfieldWords?.text || "").toLowerCase().match(/[a-z]+/g)?.some((w) => GROUND_WORDS.has(w)) || false;
   for (const place of offered) if (place.key === "ground") place.surfaceWord = surfaceWord;
   const places = offered.some((place) => !hides(place)) ? offered.filter((place) => !hides(place)) : offered;
@@ -33468,6 +33503,7 @@ function planLettering(scene, letters, params, read, laid, rng) {
     learned: (key) => visualLearnedChoice("letterplace" + key), taste: () => null,
   });
   const place = places.find((p) => p.key === scores[0].key) || places[0];
+  if (place.lockup) applyLockup(scene.items, place.lockup);
   scene.variations["letterplace" + place.key] = { size: 0, hue: 0, light: 0, literal: 0 };
   const box = place.box;
   const colourWord = (params?.__hexfieldWords?.text || "").toLowerCase().match(/[a-z]+/g)?.find((w) => globalThis.HexfieldVisual.COLOUR_WORDS[w]);
@@ -33492,8 +33528,9 @@ function planLettering(scene, letters, params, read, laid, rng) {
   scene.letterPlaceScores = summariseChoice(scores);
   const seen = place.screen || box;
   scene.items.push({ key: "letters", entry: { kind: "subject", parts: [], colours: { face: [hue, 70, light * 100] } }, box: seen, alpha: 1, lettering: true });
-  scene.sharp = { x0: seen.x / W, y0: seen.y / H, x1: (seen.x + seen.w) / W, y1: (seen.y + seen.h) / H };
-  if (!main) scene.focus = { fx: (seen.x + seen.w / 2) / W, fy: (seen.y + seen.h / 2) / H };
+  const sharp = place.group || seen;
+  scene.sharp = { x0: sharp.x / W, y0: sharp.y / H, x1: (sharp.x + sharp.w) / W, y1: (sharp.y + sharp.h) / H };
+  if (!main || place.group) scene.focus = { fx: (sharp.x + sharp.w / 2) / W, fy: (sharp.y + sharp.h / 2) / H };
 }
 
 
