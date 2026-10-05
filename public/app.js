@@ -39661,8 +39661,47 @@ function paintTowardReference(result, ref, width, height,
    * the light and the manner are worked on those pixels alone. (Doing the
    * whole picture for every accepted change was most of its cost.) */
   const depositing = !enhance && !prepared && strokePainter.plan;
-  const scened = depositing && (strokePainter.plan.scene || strokePainter.plan.light);
-  const mannered = depositing && planManner() && planManner().key !== "painterly";
+  const steps = depositSteps(ref, width, height, depositing && (strokePainter.plan.scene || strokePainter.plan.light),
+    depositing && planManner() && planManner().key !== "painterly");
+  /* `split`: an accepted change a step per task - the deposit put in the
+   * painting's scene, then in its manner, then the new target's contours and
+   * found edges, then the plan of the strokes over it. Made in one task, it
+   * was the longest task left on a phone. (Only where the caller does not
+   * read the stroke count straight away.) */
+  if (split) {
+    const planAt = strokePainter.plan;
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const stale = () => {
+      if (strokePainter.plan === planAt) return false;
+      markPaintTimingCompleted(result);
+      result.paintStrokeCount = 0;
+      return true;
+    };
+    return (async () => {
+      let step;
+      do {
+        await pause();
+        if (stale()) return false;
+        step = steps.next();
+      } while (!step.done);
+      ref = step.value;
+      if (refreshStrokeGradient(ref, refKey, width, height)) {
+        await pause();
+        if (stale()) return false;
+      }
+      return strokesTowardReference(result, ref, width, height, { layer, limit, refKey, enhance, prepared, palette });
+    })();
+  }
+  let step;
+  do step = steps.next(); while (!step.done);
+  return strokesTowardReference(result, step.value, width, height, { layer, limit, refKey, enhance, prepared, palette });
+}
+
+/* An accepted deposit, worked into the painting where it differs from the
+ * canvas: its scene and light, then its manner - an accepted deposit arrives
+ * as raw field pixels, and a flat-colour or two-tone painting would otherwise
+ * scribble them in as they are. A step each. */
+function* depositSteps(ref, width, height, scened, mannered) {
   let canvasNow = null, changed = null;
   if ((scened || mannered) && vctx) {
     canvasNow = vctx.getImageData(0, 0, width, height).data;
@@ -39675,47 +39714,39 @@ function paintTowardReference(result, ref, width, height,
   }
   if (scened) {
     ref = applyPlanScene(new Uint8ClampedArray(ref), width, height, strokePainter.plan, changed);
+    if (mannered) yield;
   }
-  // ...and in the painting's manner: an accepted deposit arrives as raw field
-  // pixels, and a flat-colour or two-tone painting would otherwise scribble
-  // them in as they are.
-  if (mannered) {
-    ref = mannerDeposit(ref, width, height, strokePainter.plan, canvasNow);
+  if (mannered) ref = mannerDeposit(ref, width, height, strokePainter.plan, canvasNow);
+  return ref;
+}
+
+/* The reference's contours are reused while it is the same picture - a
+ * detail pass re-reads the held master every time, but it has not changed.
+ * True when they were made afresh. */
+function refreshStrokeGradient(ref, refKey, width, height) {
+  const sameReference = refKey ? strokePainter.refKey === refKey : strokePainter.reference === ref;
+  if (sameReference && strokePainter.width === width && strokePainter.height === height) {
+    strokePainter.reference = ref;
+    return false;
   }
-  /* `split`: the target made in this task, the strokes planned in the next.
-   * An accepted change made both in one task - a new target's contours,
-   * found edges and the plan of the strokes over it - and was the longest
-   * task left on a phone. (Only where the caller does not read the stroke
-   * count straight away.) */
-  if (split) {
-    const planAt = strokePainter.plan;
-    return new Promise((resolve) => setTimeout(resolve, 0)).then(() => {
-      if (strokePainter.plan !== planAt) { markPaintTimingCompleted(result); result.paintStrokeCount = 0; return false; }
-      return strokesTowardReference(result, ref, width, height, { layer, limit, refKey, enhance, prepared, palette });
-    });
-  }
-  return strokesTowardReference(result, ref, width, height, { layer, limit, refKey, enhance, prepared, palette });
+  strokePainter.gradient = strokeReferenceGradient(ref, width, height);
+  // Which of its edges are found and which lost (Lost and found edges).
+  if (strokePainter.plan) strokePainter.gradient.edges = buildEdgeMap(strokePainter.plan, strokePainter.gradient, width, height);
+  // The fine brushes gather where the plan put the focus - and stay on the
+  // lettering wherever it is.
+  if (strokePainter.plan) strokePainter.gradient.focus = { fx: strokePainter.plan.fx, fy: strokePainter.plan.fy };
+  // (The lettering box used to keep every fine brush; the letter brush does
+  // the letters now, and fine strokes across the whole box made confetti.)
+  strokePainter.refKey = refKey;
+  strokePainter.width = width;
+  strokePainter.height = height;
+  strokePainter.reference = ref;
+  return true;
 }
 
 function strokesTowardReference(result, ref, width, height, { layer, limit, refKey, enhance, prepared, palette }) {
   const animation = ++activePaintAnimation;
-  // The reference's contours are reused while it is the same picture - a
-  // detail pass re-reads the held master every time, but it has not changed.
-  const sameReference = refKey ? strokePainter.refKey === refKey : strokePainter.reference === ref;
-  if (!sameReference || strokePainter.width !== width || strokePainter.height !== height) {
-    strokePainter.gradient = strokeReferenceGradient(ref, width, height);
-    // Which of its edges are found and which lost (Lost and found edges).
-    if (strokePainter.plan) strokePainter.gradient.edges = buildEdgeMap(strokePainter.plan, strokePainter.gradient, width, height);
-    // The fine brushes gather where the plan put the focus - and stay on the
-    // lettering wherever it is.
-    if (strokePainter.plan) strokePainter.gradient.focus = { fx: strokePainter.plan.fx, fy: strokePainter.plan.fy };
-    // (The lettering box used to keep every fine brush; the letter brush does
-    // the letters now, and fine strokes across the whole box made confetti.)
-    strokePainter.refKey = refKey;
-    strokePainter.width = width;
-    strokePainter.height = height;
-  }
-  strokePainter.reference = ref;
+  refreshStrokeGradient(ref, refKey, width, height);
   const hand = wordBrushHand(result?.params || bestRun?.params);
   const rng = mulberry32(((Number(result?.drawSeed) || 0) ^ (painterPass * 0x9e3779b9) ^ paintRevision) >>> 0);
   let useLayer = layer ?? strokePainter.layer;
