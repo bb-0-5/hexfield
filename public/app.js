@@ -22621,7 +22621,14 @@ function scoreColourTreatment(candidate) {
  * state of the model reaches the same answer. */
 let colourBallotRun = null;
 let colourBallotKey = "";
-function scheduleColourTreatmentChoice(reason = "taste") {
+function scheduleColourTreatmentChoice(reason = "taste", asked = Date.now()) {
+  /* Nothing waits on the ballot, so it waits for a painting's strokes to be
+   * landing: run while a new painting was being prepared, it took 1.6s of a
+   * phone's processor from the 6s before the first stroke. (At most 20s.) */
+  if (!(strokePainter.strokes > 0) && Date.now() - asked < 20000) {
+    setTimeout(() => scheduleColourTreatmentChoice(reason, asked), 700);
+    return;
+  }
   const key = visibleTasteEpoch + "|" + (globalTaste.ready ? globalTaste.effectiveSampleCount : 0);
   if (colourBallotRun) { colourBallotRun.pending = reason; return; }
   if (key === colourBallotKey && colourTreatmentChoice) return;
@@ -27314,7 +27321,8 @@ publishFoundedFamilyOptions();
 /* And the colour treatment, for the same reason one step further on: the first
  * iso candidate is sampled well before any print has been voted on, so without
  * this the studio's opening run of work carries a treatment nobody chose. */
-scheduleColourTreatmentChoice("first look");
+/* (The first look is taken when the first painting is committed - see
+ * scheduleColourTreatmentChoice, which waits for its strokes.) */
 
 /* Cadence, not throttle. This was 2500ms with a 400ms floor, capping the loop
  * at 0.4Hz however cheap a cycle became - a fair guard when a cycle cost over a
@@ -31279,6 +31287,8 @@ const median3 = (list) => {
   return out;
 };
 let strokePainter = { reference: null, layer: 0, layerBatches: 0, gradient: null, width: 0, height: 0, strokes: 0 };
+// How many paintings have been prepared since the page opened.
+let paintingsPrepared = 0;
 
 /* What brush sizes are measured against: the short side, but never more than
  * 45% of the long one. The 4.4:1 strip keeps its brushes exactly (its height);
@@ -35243,7 +35253,10 @@ function* evolveShapesInDepthSteps(plan, ground, width, height) {
   let base = record.base = record.last = tasteOf(small);
   let analysis = null;
   try {
-    for (let round = 0; round < D.rounds; round++) {
+    // The first painting after the page opens breeds one round, not three:
+    // it is what the visitor is waiting to see start (Phone speed).
+    const rounds = paintingsPrepared === 0 ? 1 : D.rounds;
+    for (let round = 0; round < rounds; round++) {
       analysis = yield* shapesInDepthSteps(plan, ground, width, height);
       plan.depthParts = analysis;
       if (round === 0) record.parts = analysis.parts.map((p) => ({ depth: +p.depth.toFixed(2), place: +p.place.toFixed(2), look: +p.look.toFixed(2),
@@ -37321,6 +37334,7 @@ async function prepareNewPainting(result, raw, width, height, alive) {
   // depth), a taste at a time.
   const depthSteps = planDepthSteps(plan, ground, width, height, source?.params);
   do { if (!await step()) return null; } while (!depthSteps.next().done);
+  paintingsPrepared++;
   if (!await step()) return null;
   plan.dims = choosePlanDims(plan, ground, width, height, source?.params);
   if (plan.scene) {
