@@ -31714,6 +31714,8 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
   plan.abstraction = choosePlanAbstraction(plan, params);
   // How far its boxy things are turned (Solids).
   plan.turn = choosePlanTurn(plan, params);
+  // How the paint goes on: opaque, or glazed (Application).
+  plan.application = choosePlanApplication(plan, params);
   // Water, and how still it lies (Reflections).
   plan.water = choosePlanWater(plan, params);
   if (scene) scene.water = plan.water;
@@ -33857,6 +33859,7 @@ function recordVisualVote(liked) {
   if (plan?.water) variations[waterVoteWord(plan.water.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.abstraction) variations[abstractionVoteWord(plan.abstraction.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.turn) variations[turnVoteWord(plan.turn.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  if (plan?.application) variations[applyVoteWord(plan.application.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.anatomy) variations[anatomyVoteWord(plan.anatomy.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.figure) variations[figureVoteWord(plan.figure.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.refColour) variations["refcolour" + plan.refColour.key] = { size: 0, hue: 0, light: 0, literal: 0 };
@@ -33895,6 +33898,7 @@ function paintingChoices(plan) {
   if (plan.manner) add(plan.manner.name || plan.manner.key, mannerVoteWord(plan.manner.key));
   if (plan.abstraction) add(plan.abstraction.name, abstractionVoteWord(plan.abstraction.key));
   if (plan.turn) add("turned " + plan.turn.name, turnVoteWord(plan.turn.key));
+  if (plan.application) add(plan.application.name, applyVoteWord(plan.application.key));
   if (plan.light) add(plan.light.name || plan.light.key, lightVoteWord(plan.light.key));
   if (plan.weather) add(plan.weather.kinds.join(" + ") + " · " + plan.weather.key, weatherVoteWord(plan.weather.key));
   if (plan.water) add(plan.water.name, waterVoteWord(plan.water.key));
@@ -38732,6 +38736,37 @@ function litStrokeColour(colour, lit, plan) {
  * it, and its colour is mixed from its own place only. A thing's turn has
  * passed once the thing brush has reached it. */
 const ORDER = { on: true, spillSteps: 2, landBands: 10, landStep: 1.5, cell: 4 };
+
+/* ── Application: how the paint goes on ────────────────────────────────
+ * Opaque, or glazed like watercolour: thin paint, what is under it showing
+ * through, its pigment gathering in a darker rim at its edge - so a stroke
+ * laid over another leaves a fine line of contrast where they overlap, and
+ * one stroke gives an edge the eye reads as detail. And a double-loaded
+ * brush: two colours on one brush, one down each side, one side's edge
+ * crisp and the other's soft, wherever the picture differs from one side of
+ * the stroke to the other - a form's light and shade in a single stroke.
+ * Glazed or opaque is chosen and learned like the other choices
+ * ("applyglazed"); `APPLY` holds the double-loading rule. */
+// (Double-loading is off: on the benchmark it left the outlines rougher - see tools/paint_bench.py.)
+const APPLY = { double: false, doubleMin: 16, doubleWidth: 8 };
+const APPLICATIONS = {
+  opaque: { key: "opaque", name: "opaque", glaze: 0 },
+  glazed: { key: "glazed", name: "watercolour glaze", glaze: 0.6 },
+};
+const GLAZE_WORDS = /\b(water\s?colou?rs?|watercolou?r\w*|wash\w*|glaz\w*|transparent|translucent|aquarelle|ink)\b/;
+const applyVoteWord = (key) => "apply" + String(key).replace(/[^a-z]/g, "");
+function choosePlanApplication(plan, params) {
+  const text = String(params?.__hexfieldWords?.text || "").toLowerCase();
+  const glazeWords = GLAZE_WORDS.test(text);
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0xa991) >>> 0);
+  const scores = chooseByTaste(Object.keys(APPLICATIONS), {
+    rng, tasted: 0, axis: "application", given: planStyleChain(plan),
+    lean: (key) => key === "opaque" ? 0.2 - (glazeWords ? 0.8 : 0) : (glazeWords ? 1.2 : 0),
+    learned: (key) => visualLearnedChoice(applyVoteWord(key)), taste: () => null,
+  });
+  plan.applicationScores = summariseChoice(scores);
+  return APPLICATIONS[scores[0].key];
+}
 function paintingOrder(plan, width, height) {
   if (!ORDER.on || !plan) return null;
   const scene = plan.scene;
@@ -39116,6 +39151,29 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       colour: colour.map((c) => Math.max(0, Math.min(255, Math.round(c + (rng() - 0.5) * jitter)))),
       bristle: rng(),
     };
+    // Double-loaded where the picture differs across the brush: each side
+    // its own colour (Application).
+    if (APPLY.double && stroke.width >= APPLY.doubleWidth && points.length > 1) {
+      const side = stroke.width * 0.42, sides = [[0, 0, 0], [0, 0, 0]];
+      let count = 0;
+      for (let i = 0; i < points.length; i++) {
+        const [px, py] = points[i], [qx, qy] = points[Math.min(points.length - 1, i + 1)], [ax, ay] = points[Math.max(0, i - 1)];
+        let tx = qx - ax, ty = qy - ay;
+        const l = Math.hypot(tx, ty) || 1; tx /= l; ty /= l;
+        // Left as the brush travels is (-ty, tx), as drawPaintStroke draws it.
+        const a = colourAt(ref, px - ty * side, py + tx * side), c = colourAt(ref, px + ty * side, py - tx * side);
+        for (let k = 0; k < 3; k++) { sides[0][k] += a[k]; sides[1][k] += c[k]; }
+        count++;
+      }
+      const leftSide = sides[0].map((v) => v / count), rightSide = sides[1].map((v) => v / count);
+      if (diff(leftSide, rightSide) > APPLY.doubleMin) {
+        const base = asPainted(rightSide.map((v, k) => (v + colour[k]) / 2), lit);
+        stroke.colour = base.map((c, k) => Math.max(0, Math.min(255, Math.round(c + (stroke.colour[k] - colour[k])))));
+        stroke.load2 = asPainted(leftSide, lit).map((c) => Math.max(0, Math.min(255, Math.round(c))));
+      }
+    }
+    const application = strokePainter.plan?.application;
+    if (application?.glaze) stroke.glaze = +(application.glaze * (0.85 + rng() * 0.3)).toFixed(2);
     // The manner's handling travels with the stroke, so EXPORT replays it.
     if (Number(brush?.alpha) > 0) stroke.alpha = Number(brush.alpha);
     if (brush && brush.bristle === false) stroke.plain = true;
@@ -40093,6 +40151,7 @@ function planStyleChain(plan) {
     depth: plan?.depthStyle?.key || null,
     abstraction: plan?.abstraction?.key || null,
     turn: plan?.turn?.key || null,
+    application: plan?.application?.key || null,
     anatomy: plan?.anatomy?.key || null,
     figure: plan?.figure?.key || null,
     edges: plan?.edgeStyle?.key || null,
@@ -40442,7 +40501,9 @@ function drawPaintStroke(ctx, stroke) {
   const [r, g, b] = stroke.colour;
   const pts = stroke.points;
   const tip = stroke.tip || (stroke.tip = chooseStrokeTip(stroke));
-  const alpha = stroke.alpha ? Math.min(1, stroke.alpha * (0.94 + stroke.bristle * 0.06)) : 0.82 + stroke.bristle * 0.14;
+  // A glaze is thin paint: what is under it shows through (Application).
+  const glaze = Number(stroke.glaze) || 0;
+  const alpha = (stroke.alpha ? Math.min(1, stroke.alpha * (0.94 + stroke.bristle * 0.06)) : 0.82 + stroke.bristle * 0.14) * (1 - 0.5 * glaze);
   if (tip === "ink" || stroke.width < 2.5) {
     // Lines and the finest touches: one even mark.
     ctx.beginPath();
@@ -40532,6 +40593,37 @@ function drawPaintStroke(ctx, stroke) {
     ctx.globalAlpha = tip === "dry" ? alpha * 0.5 : alpha;
     body(1);
     ctx.fill();
+  }
+  /* Double-loaded: the brush carries a second colour on one side (its left,
+   * as it travels), that side's outer edge soft, the other side's crisp -
+   * one stroke lays a form's two values and the edge between them. */
+  if (stroke.load2) {
+    ctx.fillStyle = `rgb(${stroke.load2[0]},${stroke.load2[1]},${stroke.load2[2]})`;
+    for (const [scale, a] of [[1.15, 0.2], [0.9, 0.34], [0.62, 0.46]]) {
+      ctx.globalAlpha = alpha * a;
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const [x, y] = spine[i];
+        const px = x + (left[i][0] - x) * scale, py = y + (left[i][1] - y) * scale;
+        if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+      }
+      for (let i = n - 1; i >= 0; i--) ctx.lineTo(spine[i][0], spine[i][1]);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+  // A glaze's pigment gathers at its edge: a thin darker rim, so where washes
+  // overlap the edge reads as a line of its own.
+  if (glaze) {
+    ctx.globalAlpha = Math.min(1, alpha * 1.2) * glaze;
+    ctx.strokeStyle = tipShade(stroke.colour, -30);
+    ctx.lineWidth = Math.max(0.8, w * 0.06);
+    ctx.lineJoin = "round";
+    for (const edge of [left, right]) {
+      ctx.beginPath();
+      edge.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      ctx.stroke();
+    }
   }
   // Bristle lines, a shade off, some running out before the stroke ends -
   // all of one stroke's in one path, so they cost one draw.
