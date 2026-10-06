@@ -38718,6 +38718,72 @@ function litStrokeColour(colour, lit, plan) {
   return colour.map((c, i) => c + (L.ambient[i] * 0.7 - c) * k * 0.55);
 }
 
+/* ── Overlap and the order of application ───────────────────────────────
+ * A painter gets fine edges out of a big brush by the order things are
+ * painted in: what is painted later covers the edge of what was painted
+ * before it, so the earlier stroke may run on over that edge - loose, wide,
+ * confident - and the later one cuts the edge in, crisp, with the same
+ * brush. Every place has its turn: the land far to near (by depth, only
+ * where the depth jumps - a sloping field is one place), then the named
+ * things back to front, then the letters. A stroke takes the turn of where
+ * it starts. It may spill a step or two into anything whose turn comes
+ * later and is still to be painted (it will be covered), never back over
+ * anything whose turn has passed; what it covers there is not held against
+ * it, and its colour is mixed from its own place only. A thing's turn has
+ * passed once the thing brush has reached it. */
+const ORDER = { on: true, spillSteps: 2, landBands: 10, landStep: 1.5, cell: 4 };
+function paintingOrder(plan, width, height) {
+  if (!ORDER.on || !plan) return null;
+  const scene = plan.scene;
+  let O = plan.order;
+  if (!O || O.width !== width || O.height !== height || O.layer !== scene?.layer) {
+    const c = ORDER.cell, gw = Math.ceil(width / c), gh = Math.ceil(height / c);
+    const land = new Float32Array(gw * gh), thing = new Int16Array(gw * gh).fill(-1), letter = new Uint8Array(gw * gh);
+    const cover = scene?.layer?.cover?.length === width * height && scene.width === width ? scene.layer.cover : null;
+    const letters = letteringContains(scene?.lettering);
+    const items = (scene?.items || []).map((item, index) => ({ item, index }))
+      .filter(({ item }) => item.entry?.kind === "subject" && !item.lettering && item.box);
+    for (let gy = 0; gy < gh; gy++) {
+      for (let gx = 0; gx < gw; gx++) {
+        const x = Math.min(width - 1, gx * c + c / 2), y = Math.min(height - 1, gy * c + c / 2), k = gy * gw + gx;
+        land[k] = (1 - depthAt(plan, x, y, width, height, true)) * ORDER.landBands;
+        const covered = cover && cover[(y | 0) * width + (x | 0)] > 128;
+        if (covered && letters && letters(x, y)) { letter[k] = 1; continue; }
+        if (!covered) continue;
+        // The nearest of the things here: the last drawn.
+        for (let j = items.length - 1; j >= 0; j--) {
+          const b = items[j].item.box;
+          if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) { thing[k] = items[j].index; break; }
+        }
+      }
+    }
+    O = plan.order = { width, height, c, gw, gh, land, thing, letter, layer: scene?.layer || null };
+  }
+  const things = scene?.thing;
+  // Whether a thing's turn has passed: the thing brush has reached it.
+  const done = (index) => Boolean(things?.started && (things.done || index <= things.item));
+  const cellOf = (x, y) => Math.max(0, Math.min(O.gh - 1, (y / O.c) | 0)) * O.gw + Math.max(0, Math.min(O.gw - 1, (x / O.c) | 0));
+  return {
+    rank(x, y) {
+      const k = cellOf(x, y);
+      if (O.letter[k]) return 1000;
+      const t = O.thing[k];
+      return t >= 0 ? 100 + t : O.land[k];
+    },
+    // Whether a later place has had its turn already (a thing its brush has
+    // reached, the letters once lettered): no spilling into it.
+    painted(x, y) {
+      const k = cellOf(x, y);
+      if (O.letter[k]) return scene?.lettering?.painted !== undefined;
+      const t = O.thing[k];
+      return t >= 0 && done(t);
+    },
+    // Two turns are the same where the land runs on (a field, a slope).
+    later: (a, b) => b - a > ORDER.landStep,
+    earlier: (a, b) => a - b > ORDER.landStep,
+  };
+}
+
 function planStrokeBatch(current, ref, gradient, width, height, radius, rng, hand = null, limit = STROKE_BATCH,
                          tolerance = STROKE_ERROR_TOLERANCE, layer = 0, palette = null) {
   const cell = Math.max(2, Math.round(radius));
@@ -38753,6 +38819,8 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
   };
   const starts = [];
   let cells = 0;
+  // How far each cell is from the reference: whether it is still to be painted.
+  const cgw = Math.ceil(width / cell), cellError = new Float32Array(cgw * Math.ceil(height / cell));
   for (let cy = 0; cy < height; cy += cell) {
     for (let cx = 0; cx < width; cx += cell) {
       cells++;
@@ -38765,6 +38833,7 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
           if (e > worst) { worst = e; wx = x; wy = y; }
         }
       }
+      cellError[((cy / cell) | 0) * cgw + ((cx / cell) | 0)] = n ? sum / n : 0;
       if (guarded(wx, wy)) continue;
       if (n && sum / n > tolerance) starts.push({ x: wx, y: wy, error: sum / n });
     }
@@ -38889,9 +38958,13 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
     }
     return lit ? litStrokeColour(colour, lit, strokePainter.plan) : colour;
   };
-  let dropped = 0;
+  let dropped = 0, spilt = 0;
+  const order = paintingOrder(strokePainter.plan, width, height);
+  const pending = (x, y) => cellError[Math.min(cellError.length - 1, ((y / cell) | 0) * cgw + ((x / cell) | 0))] > tolerance * 0.5;
   for (const start of chosen) {
     if (strokes.length >= limit) break;
+    const turn = order ? order.rank(start.x, start.y) : 0;
+    let spill = 0, cutIn = false, prevRank = turn;
     // Mixed from round the start, not the one (worst) pixel it is on.
     const r0 = radius * 0.5;
     let colour = care
@@ -38960,6 +39033,21 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       }
       x += dx * radius; y += dy * radius;
       if (x < 0 || y < 0 || x >= width || y >= height || guarded(x, y)) break;
+      if (order) {
+        // At an edge in depth (the turn jumps from one step to the next, not
+        // a field sloping away): never back over what was painted before it...
+        const here = order.rank(x, y);
+        if (!spill && order.earlier(prevRank, here)) { cutIn = points.length > 1; break; }
+        // ...but on over what will be painted after it, a step or two, while
+        // that is still to be painted.
+        if (spill || order.later(prevRank, here)) {
+          if (spill++ >= ORDER.spillSteps || !pending(x, y) || order.painted(x, y)) break;
+          points.push([x, y]);
+          lastDx = dx; lastDy = dy;
+          continue;
+        }
+        prevRank = here;
+      }
       // Stop where carrying on would paint a colour the reference does not have.
       // From the second step on: waiting until the third let a big brush run
       // most of a stroke length past the edge of a shape.
@@ -38996,18 +39084,31 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
         if (l) { tx /= l; ty /= l; } else { tx = 1; ty = 0; }
         for (const k of [0, 1, -1]) under.push([px - ty * side * k, py + tx * side * k]);
       }
-      const mixed = median3(under.map(([ux, uy]) => colourAt(ref, ux, uy)));
+      // What lies in a later place will be covered: neither its colour nor
+      // what it does there counts. What lies in an earlier place counts double.
+      const turnOf = order ? under.map(([ux, uy]) => order.rank(ux, uy)) : null;
+      const free = order ? under.map(([ux, uy], i) => turnOf[i] - turn > ORDER.landStep * 2 && !order.painted(ux, uy)) : null;
+      const own = order ? under.filter((_, i) => !free[i]) : under;
+      if (!own.length) { dropped++; continue; }
+      const mixed = median3(own.map(([ux, uy]) => colourAt(ref, ux, uy)));
       // Laid only if it brings what it covers nearer the reference.
       let gain = 0;
-      for (const [ux, uy] of under) {
+      under.forEach(([ux, uy], i) => {
+        if (order && free[i]) return;
         const want = colourAt(ref, ux, uy);
-        gain += diff(colourAt(current, ux, uy), want) - diff(mixed, want);
-      }
-      if (gain / under.length < tolerance * STROKE_CARE.gain) { dropped++; continue; }
+        const g = diff(colourAt(current, ux, uy), want) - diff(mixed, want);
+        gain += order && turn - turnOf[i] > ORDER.landStep * 2 && g < 0 ? g * 2 : g;
+      });
+      if (gain / own.length < tolerance * STROKE_CARE.gain) { dropped++; continue; }
+      if (spill) spilt++;
       colour = asPainted(mixed, lit);
     }
     const jitter = (Number(brush?.jitter) >= 0 ? Number(brush.jitter) : 6 + 10 * Math.max(0, ene)) *
       (care ? STROKE_CARE.jitter[Math.min(layer, STROKE_CARE.jitter.length - 1)] : 1);
+    // Cutting in: a stroke that ends on the edge of something painted before
+    // it is laid from that edge, so the brush's full, crisp start defines the
+    // edge and its thinning tail runs off into its own place.
+    if (order && cutIn) points.reverse();
     const stroke = {
       points,
       // Paint is loaded where the light falls and thin in the shade.
@@ -39038,7 +39139,8 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
     }
     strokes.push(stroke);
   }
-  return { strokes, candidates: starts.length, cells, dropped };
+  strokePainter.spilt = (strokePainter.spilt || 0) + spilt;
+  return { strokes, candidates: starts.length, cells, dropped, spilt };
 }
 
 /* ── Brush tips ─────────────────────────────────────────────────────────
