@@ -32975,7 +32975,10 @@ const growerShelf = (kind) => (growerLibrary().kinds[kind] ||= { gen: 0, next: 1
 function growerDrawing(outcome) {
   let entry = growerDrawings.get(outcome.id);
   if (!entry) {
-    entry = globalThis.HexfieldGrowers.grow(outcome.genes, { age: outcome.age, yaw: outcome.yaw, pitch: outcome.pitch });
+    const G = globalThis.HexfieldGrowers;
+    entry = outcome.patch ? G.patches.draw(outcome.patch, outcome.pool, outcome.genes)
+      : G.grow(outcome.genes, { age: outcome.age, yaw: outcome.yaw, pitch: outcome.pitch });
+    if (!entry) return null;
     growerDrawings.set(outcome.id, entry);
   }
   return entry;
@@ -33066,9 +33069,52 @@ function breedGrower(kind, rng = mulberry32((Date.now() ^ Math.imul(growing.step
   saveGrowerLibrary();
   return outcome;
 }
+/* A patch (Patches, words/hexfield-growers.js): a scene sim of the kind's
+ * best kept outcomes grown together - spreading, shading each other out -
+ * and the best moment of it, judged as a grouping, kept whole on the
+ * kind's patch shelf ("fern:patch"): its rules, the outcomes it grew from
+ * and where each one stood, so it is drawn again without playing it out. */
+const patchShelfOf = (kind) => kind + ":patch";
+function breedPatch(kind, rng = mulberry32((Date.now() ^ Math.imul(growing.steps + 7, 0x85ebca6b)) >>> 0)) {
+  const S = globalThis.HexfieldGrowers?.patches;
+  const members = growerShelf(kind).outcomes;
+  if (!S || members.length < 3) return null;
+  const shelf = growerShelf(patchShelfOf(kind)), kept = shelf.outcomes;
+  // Grown from the kind's best (a few of them, so a patch is a few kinds of fern).
+  const best = members.slice().sort((a, b) => growerRank(b) - growerRank(a)).slice(0, 6);
+  const pool = best.map((o) => ({ id: o.id, genes: o.genes, age: o.age, aspect: o.aspect, judge: o.judge }));
+  const parent = kept.length ? kept.slice().sort((a, b) => growerRank(b) - growerRank(a))[Math.floor(rng() * Math.min(3, kept.length))] : null;
+  const genes = !parent || rng() < GROWER_LIB.seedFresh ? S.seed(rng) : S.mutate(parent.genes, rng, 0.35);
+  const snaps = S.simulate(genes, pool);
+  let top = null;
+  for (const snap of snaps) { const judged = S.judge(snap, pool, genes); if (!top || judged.score > top.judge) top = { snap, judge: judged.score }; }
+  growing.steps++;
+  if (!top) return null;
+  const entry = S.draw(top.snap, pool, genes);
+  if (!entry) return null;
+  const outcome = {
+    id: kind[0] + "p" + shelf.next++, genes, gen: shelf.gen++, born: Date.now(), patch: top.snap, pool, age: top.snap.day,
+    judge: +top.judge.toFixed(4), taste: +growerTaste(entry).toFixed(4), aspect: +entry.aspect.toFixed(4), size: entry.size,
+    kept: 0, rejected: 0, used: 0, paintN: 0, paintSum: 0,
+  };
+  const rank = growerRank(outcome);
+  if (kept.length >= Math.round(GROWER_LIB.cap / 2)) {
+    const weakest = kept.filter((o) => !(o.kept > o.rejected)).sort((a, b) => growerRank(a) - growerRank(b))[0];
+    if (!weakest || growerRank(weakest) >= rank) { saveGrowerLibrary(); return null; }
+    kept.splice(kept.indexOf(weakest), 1);
+    growerDrawings.delete(weakest.id);
+  }
+  outcome.snap = growerThumb(entry);
+  growerDrawings.set(outcome.id, entry);
+  kept.push(outcome);
+  saveGrowerLibrary();
+  return outcome;
+}
 /* In the background, a step every few seconds while the page is seen, each
- * kind in turn - the shelves fill and improve while the studio paints. */
-function scheduleGrowerBreeding(delay = GROWER_LIB.everyMs) {
+ * kind in turn and its patches - the shelves fill and improve while the
+ * studio paints (half as often on a phone: a step is a fifth of a second
+ * there). */
+function scheduleGrowerBreeding(delay = GROWER_LIB.everyMs * (isMobileBrowser() ? 2 : 1)) {
   if (typeof window === "undefined" || growing.timer) return;
   growing.timer = setTimeout(() => {
     growing.timer = null;
@@ -33076,7 +33122,10 @@ function scheduleGrowerBreeding(delay = GROWER_LIB.everyMs) {
     const kinds = Object.keys(globalThis.HexfieldGrowers?.GROWERS || {});
     const step = () => {
       if (!document.hidden && kinds.length) {
-        try { breedGrower(kinds[growing.steps % kinds.length]); } catch (error) { console.warn("grower step skipped", error); }
+        const turn = growing.steps % (kinds.length * 3), kind = kinds[Math.floor(turn / 3)];
+        // Two of the kind to one of its patches, once it has some to grow them from.
+        try { if (turn % 3 === 2 && growerShelf(kind).outcomes.length >= 3) breedPatch(kind); else breedGrower(kind); }
+        catch (error) { console.warn("grower step skipped", error); }
       }
       scheduleGrowerBreeding();
     };
@@ -33090,6 +33139,9 @@ function scheduleGrowerBreeding(delay = GROWER_LIB.everyMs) {
 function pickGrowerOutcomes(kind, n, rng) {
   const shelf = growerShelf(kind);
   for (let i = 0; shelf.outcomes.length < 3 && i < 8; i++) breedGrower(kind, mulberry32((Math.floor(rng() * 4294967296) ^ i) >>> 0));
+  return pickGrowerOutcomesFrom(shelf, n, rng);
+}
+function pickGrowerOutcomesFrom(shelf, n, rng) {
   const pool = shelf.outcomes.slice();
   const picked = [];
   while (picked.length < n && pool.length) {
@@ -33111,6 +33163,24 @@ function growSceneSubjects(read, rng) {
   for (const s of read.subjects) {
     const kind = s.entry?.grower;
     if (!kind) continue;
+    /* Many of them with no number - "ferns", "bracken" - are a patch grown
+     * together, dropped in whole; a number is that many separate ones. */
+    if (s.mass) {
+      const shelf = growerShelf(patchShelfOf(kind));
+      for (let i = 0; !shelf.outcomes.length && i < 3; i++) {
+        if (growerShelf(kind).outcomes.length < 3) pickGrowerOutcomes(kind, 1, rng);
+        breedPatch(kind, mulberry32((Math.floor(rng() * 4294967296) ^ i) >>> 0));
+      }
+      const [patch] = shelf.outcomes.length ? pickGrowerOutcomesFrom(shelf, 1, rng) : [];
+      const drawing = patch && growerDrawing(patch);
+      if (drawing) {
+        s.entry = { ...drawing, outcome: patch.id };
+        s.count = 1;
+        patch.used = (patch.used || 0) + 1;
+        used.push({ kind: patchShelfOf(kind), id: patch.id });
+        continue;
+      }
+    }
     const picked = pickGrowerOutcomes(kind, Math.max(1, s.count), rng);
     if (!picked.length) continue;
     s.variants = picked.map((o) => ({ ...growerDrawing(o), outcome: o.id }));
@@ -33142,7 +33212,7 @@ function registerGrowerWords() {
       const best = growerShelf(kind).outcomes.slice().sort((a, b) => growerRank(b) - growerRank(a))[0]
         || breedGrower(kind, mulberry32(0x6fe2));
       return best ? growerDrawing(best) : null;
-    });
+    }, !!G.MASS?.[word]);
   }
 }
 if (typeof window !== "undefined") {
@@ -33155,17 +33225,20 @@ if (typeof window !== "undefined") {
 function renderGrowerShelves(panel, small) {
   const G = globalThis.HexfieldGrowers;
   if (!G) return;
-  for (const kind of Object.keys(G.GROWERS)) {
+  for (const kind of Object.keys(G.GROWERS).flatMap((k) => [k, patchShelfOf(k)])) {
     const shelf = growerShelf(kind);
     const row = document.createElement("div");
     row.style.cssText = "margin:10px 0;padding:8px;background:#f7f3ea;border-radius:8px";
     const t = document.createElement("div");
-    t.textContent = `${kind} · ${shelf.outcomes.length} kept of ${shelf.gen} grown · best first`;
+    t.textContent = `${kind.replace(/:patch$/, " patches")} · ${shelf.outcomes.length} kept of ${shelf.gen} grown · best first`;
     t.style.fontWeight = "bold";
     row.appendChild(t);
     const breed = document.createElement("button");
     breed.textContent = "grow 10 more"; breed.style.cssText = small;
-    breed.onclick = () => { for (let i = 0; i < 10; i++) breedGrower(kind); showMorphsPanel("growers"); };
+    breed.onclick = () => {
+      for (let i = 0; i < 10; i++) { if (kind.endsWith(":patch")) breedPatch(kind.split(":")[0]); else breedGrower(kind); }
+      showMorphsPanel("growers");
+    };
     row.appendChild(breed);
     const strip = document.createElement("div");
     strip.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px";
@@ -33175,11 +33248,12 @@ function renderGrowerShelves(panel, small) {
       const c = document.createElement("canvas"); c.width = 120; c.height = 110;
       c.style.cssText = "background:#efe9dc;border-radius:6px;width:120px;height:110px";
       const entry = growerDrawing(o), ctx = c.getContext("2d");
+      if (!entry) continue;
       const h = 100, w = Math.min(114, h * entry.aspect), hh = w / entry.aspect;
       globalThis.HexfieldVisual.paint(ctx, 120, 110, [{ key: kind, entry, box: { x: (120 - w) / 2, y: 106 - hh, w, h: hh }, alpha: 1 }], mulberry32(0x9e1));
       cell.appendChild(c);
       const line = document.createElement("div");
-      line.textContent = `${o.id} · day ${o.age.toFixed(0)} · rules ${o.judge.toFixed(2)} · taste ${Number(o.taste).toFixed(2)} · kept ${o.kept || 0}/${o.rejected || 0} · used ${o.used || 0}`;
+      line.textContent = `${o.id}${o.patch ? " · " + o.patch.members.length + " plants" : ""} · day ${o.age.toFixed(0)} · rules ${o.judge.toFixed(2)} · taste ${Number(o.taste).toFixed(2)} · kept ${o.kept || 0}/${o.rejected || 0} · used ${o.used || 0}`;
       cell.appendChild(line);
       for (const [label, vote] of [["keep", 1], ["reject", -1]]) {
         const b = document.createElement("button");

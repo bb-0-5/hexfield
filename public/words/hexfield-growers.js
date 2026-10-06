@@ -303,6 +303,8 @@
     facts.balance = mass ? mx / mass : 0.5;
     facts.crown = r4((0 - x0) / bw);
     facts.aspect = bw / bh;
+    // Its real extent, for setting it among others at its true size.
+    facts.span = [r4(bw), r4(bh)];
     return {
       kind: "subject", anchor: "ground", size: clamp(0.22 + 0.14 * g.length, 0.15, 0.5),
       aspect: clamp(bw / bh, 0.3, 4), depth: 0.5,
@@ -339,11 +341,173 @@
     return { score: Math.exp(s / w), reasons };
   }
 
+  /* ── Patches: things grown together ──────────────────────────────────
+   * A scene sim: a few founders on a plot of ground - each one of the
+   * kind's kept outcomes (their rules) - grow side by side for weeks. A
+   * grown one spreads by its rhizome, putting up a young one a step away;
+   * a taller neighbour shades a smaller one, which loses vigour and stays
+   * small or dies; a gap is filled by whoever spreads into it. Snapshots of
+   * the whole patch along the way are judged as a grouping - a clear
+   * largest, sizes stepping down, uneven spacing, overlapping but not one
+   * blob, a broken top line - and the best is kept as one composition,
+   * drawn as one thing: the painter drops a whole stand of ferns in at once. */
+  const PATCH = {
+    kind: "patch",
+    numeric: [
+      ["founders", 1, 4, 1, true],      // crowns it starts from
+      ["clones", 0, 1, 0.2],            // how often a founder is the same rules as another
+      ["spread", 0.12, 0.4, 0.04],      // a rhizome's step, across the plot
+      ["recruit", 0.02, 0.12, 0.015],   // chance a day a grown one puts up a young one
+      ["shade", 0.2, 1.4, 0.15],        // how hard shade weakens the shaded
+      ["days", 25, 90, 8, true],        // how long it is played out
+      ["depth", 0.15, 0.45, 0.05],      // how far back the plot runs
+      ["width", 1, 2.4, 0.2],           // how wide it is
+    ],
+    choices: [],
+  };
+  const PATCH_CAP = 9;
+
+  /* Played out. `pool` is the kept outcomes it may be grown from: { genes,
+   * age (its best day), aspect, judge }. Returns snapshots along the way:
+   * [{ day, members: [{ x, z, pick, born, vigour, yaw }] }]. */
+  function simulatePatch(p, pool, rng = seeded(p.seed ^ 0x9a7c)) {
+    if (!pool.length) return [];
+    const members = [];
+    const picks = [];
+    for (let f = 0; f < p.founders; f++) {
+      picks.push(f && rng() < p.clones ? picks[Math.floor(rng() * picks.length)] : Math.floor(rng() * pool.length));
+      members.push({ x: (rng() - 0.5) * p.width * 0.6, z: rng() * p.depth, pick: picks[f], born: -rng() * 6 - (f ? 0 : 8), vigour: 1, yaw: rng() * Math.PI * 2 });
+    }
+    const height = (m, day) => {
+      const o = pool[m.pick], a = day - m.born;
+      return o.genes.length * (0.35 + 0.65 * smooth(a / Math.max(4, o.age))) * (0.55 + 0.45 * m.vigour);
+    };
+    const snaps = [];
+    const every = Math.max(3, Math.round(p.days / 8));
+    for (let day = 0; day <= p.days; day++) {
+      // Light: shaded by every taller neighbour near enough to overlap.
+      for (const m of members) {
+        const h = height(m, day);
+        let shade = 0;
+        for (const n of members) {
+          if (n === m) continue;
+          const hn = height(n, day), reach = (h + hn) * 0.35;
+          const d = Math.hypot(m.x - n.x, (m.z - n.z) * 2);
+          if (hn > h && d < reach) shade += (hn - h) / hn * (1 - d / reach);
+        }
+        m.vigour = clamp(m.vigour + 0.04 - p.shade * 0.12 * shade, 0, 1);
+      }
+      for (let i = members.length - 1; i >= 0; i--) if (members[i].vigour <= 0 && day - members[i].born > 3) members.splice(i, 1);
+      // Spreading into the room left.
+      for (const m of members.slice()) {
+        if (members.length >= PATCH_CAP || day - m.born < pool[m.pick].age * 0.5 || rng() > p.recruit * m.vigour) continue;
+        const a = rng() * Math.PI * 2, r = p.spread * (0.6 + rng() * 0.8);
+        const x = clamp(m.x + Math.cos(a) * r, -p.width / 2, p.width / 2), z = clamp(m.z + Math.sin(a) * r * 0.5, 0, p.depth);
+        if (members.some((n) => Math.hypot(n.x - x, (n.z - z) * 2) < p.spread * 0.4)) continue;
+        members.push({ x, z, pick: m.pick, born: day, vigour: 0.8, yaw: rng() * Math.PI * 2 });
+      }
+      if (day >= every && day % every === 0 || day === p.days) {
+        snaps.push({ day, members: members.map((m) => ({ ...m, h: +height(m, day).toFixed(4) })) });
+      }
+    }
+    return snaps;
+  }
+
+  // Where each member stands in the picture: farther back is higher and smaller.
+  function patchPlaces(snap, pool, p) {
+    return snap.members.map((m) => {
+      const k = 1 - 0.4 * m.z / 0.45;
+      const h = m.h * k, w = h * (pool[m.pick].aspect || 1.5);
+      return { m, k, cx: m.x * k, foot: -m.z * 0.6, w, h };
+    }).filter((s) => s.h > 0.05);
+  }
+
+  /* A grouping, judged as a picture: 0..1 with the reasons. */
+  function judgePatch(snap, pool, p) {
+    const places = patchPlaces(snap, pool, p);
+    const n = places.length;
+    const band = (v, lo, hi, soft) => v < lo ? Math.max(0, 1 - (lo - v) / soft) : v > hi ? Math.max(0, 1 - (v - hi) / soft) : 1;
+    if (!n) return { score: 0, reasons: {} };
+    const hs = places.map((s) => s.h).sort((a, b) => b - a);
+    const mean = hs.reduce((a, b) => a + b, 0) / n;
+    const cv = Math.sqrt(hs.reduce((a, h) => a + (h - mean) ** 2, 0) / n) / mean;
+    const xs = places.map((s) => s.cx).sort((a, b) => a - b);
+    const gaps = xs.slice(1).map((x, i) => x - xs[i]);
+    const gm = gaps.reduce((a, b) => a + b, 0) / Math.max(1, gaps.length);
+    const gcv = gaps.length > 1 ? Math.sqrt(gaps.reduce((a, g) => a + (g - gm) ** 2, 0) / gaps.length) / Math.max(1e-3, gm) : 0.5;
+    let overlapping = 0;
+    for (const s of places) if (places.some((t) => t !== s && Math.abs(t.cx - s.cx) < (t.w + s.w) * 0.3)) overlapping++;
+    const left = Math.min(...places.map((s) => s.cx - s.w / 2)), right = Math.max(...places.map((s) => s.cx + s.w / 2));
+    const top = Math.max(...places.map((s) => s.h - s.foot));
+    const reasons = {
+      count: band(n, 3, 7, 3) * (n % 2 ? 1 : 0.92),
+      dominant: n > 1 ? band(hs[0] / hs[1], 1.12, 1.9, 0.6) : 0.5,
+      steps: band(cv, 0.18, 0.55, 0.3),
+      spacing: band(gcv, 0.3, 1, 0.4),
+      grouped: band(overlapping / n, 0.35, 0.9, 0.4),
+      shape: band((right - left) / Math.max(0.05, top), 1.4, 3.6, 1.2),
+      members: places.reduce((a, s) => a + (pool[s.m.pick].judge || 0.5), 0) / n,
+    };
+    const weights = { count: 1, dominant: 1, steps: 0.8, spacing: 0.8, grouped: 1, shape: 0.6, members: 0.8 };
+    let s = 0, w = 0;
+    for (const k in weights) { s += Math.log(Math.max(0.05, reasons[k])) * weights[k]; w += weights[k]; }
+    return { score: Math.exp(s / w), reasons };
+  }
+
+  /* The patch drawn as one thing: each member grown (its rules, at an age
+   * by how long it has stood, as large as its vigour let it), set at its
+   * place, farther ones first, and the whole fitted to a unit box. Each
+   * member's rules keep their own colours (leaf, leaf~1, ...). */
+  function drawPatch(snap, pool, p, pitch = 0.2) {
+    const places = patchPlaces(snap, pool, p).sort((a, b) => b.m.z - a.m.z);
+    const parts = [], colours = {}, anatomy = [];
+    const boxes = [];
+    for (const s of places) {
+      const o = pool[s.m.pick], a = snap.day - s.m.born;
+      const age = o.age * clamp(a / Math.max(4, o.age), 0.15, 1);
+      const e = GROWERS[o.genes.kind].grow(o.genes, { age, yaw: s.m.yaw, pitch });
+      const suffix = s.m.pick ? "~" + s.m.pick : "";
+      for (const [name, c] of Object.entries(e.colours)) colours[name + suffix] = c;
+      // Shaded and far: a little darker and duller.
+      const dim = -0.12 * (1 - s.m.vigour) - 0.08 * s.m.z / Math.max(0.01, p.depth);
+      // At its true grown size (smaller for vigour lost and for distance),
+      // its crown on its place.
+      const k = s.k * (0.6 + 0.4 * s.m.vigour), span = e.facts?.span || [s.w, s.h];
+      const w = span[0] * k, h = span[1] * k;
+      const x0 = s.cx - (e.facts?.crown ?? 0.5) * w, y0 = s.foot - h;
+      boxes.push({ x0, y0, w, h });
+      for (const part of e.parts) parts.push({ part, x0, y0, w, h, suffix, dim });
+      for (const an of e.anatomy || []) anatomy.push({ an, x0, y0, w, h });
+    }
+    if (!boxes.length) return null;
+    const X0 = Math.min(...boxes.map((b) => b.x0)), X1 = Math.max(...boxes.map((b) => b.x0 + b.w));
+    // (y up is negative: the plot's front edge is at 0.)
+    const Y0 = Math.min(...boxes.map((b) => b.y0)), Y1 = Math.max(...boxes.map((b) => b.y0 + b.h));
+    const BW = Math.max(1e-3, X1 - X0), BH = Math.max(1e-3, Y1 - Y0);
+    const r4 = (v) => Math.round(v * 1e4) / 1e4;
+    const U = (q, pt) => [r4((q.x0 + pt[0] * q.w - X0) / BW), r4((q.y0 + pt[1] * q.h - Y0) / BH)];
+    const out = parts.map((q) => {
+      const part = q.part, colour = part.colour + q.suffix, tone = (part.tone || 0) + q.dim;
+      if (part.shape === "line") return { shape: "line", pts: part.pts.map((pt) => U(q, pt)), width: r4(part.width * q.w / BW), colour, tone };
+      if (part.shape === "poly") return { shape: "poly", smooth: true, pts: part.pts.map((pt) => U(q, pt)), colour, tone };
+      const [bx, by, bw, bh] = part.box, at = U(q, [bx, by]);
+      return { shape: "ellipse", box: [at[0], at[1], r4(bw * q.w / BW), r4(bh * q.h / BH)], colour, tone };
+    });
+    const first = Object.keys(colours).filter((k) => !k.includes("~"));
+    const ordered = {};
+    for (const k of ["leaf", ...first, ...Object.keys(colours)]) if (colours[k] && !ordered[k]) ordered[k] = colours[k];
+    return {
+      kind: "subject", anchor: "ground", size: clamp(0.3 + 0.12 * p.width, 0.3, 0.6), aspect: clamp(BW / BH, 0.6, 5), depth: 0.6,
+      colours: ordered, parts: out, grown: true, plant: true, grower: "patch", members: places.length, day: snap.day,
+      anatomy: anatomy.map(({ an, ...q }) => ({ k: an.k, a: U(q, an.a), b: U(q, an.b), r: r4(an.r * q.w / BW) })),
+    };
+  }
+
   /* ── The growers ───────────────────────────────────────────────────── */
   const GROWERS = { fern: FERN };
   // The words that name a grower's thing.
   // (Plurals are read as plurals by the dictionary: "ferns" is a few.)
-  const WORDS = { fern: "fern", bracken: "fern", frond: "fern", fiddlehead: "fern" };
+  const WORDS = { fern: "fern", bracken: "fern", undergrowth: "fern", fernery: "fern", frond: "fern", fiddlehead: "fern" };
 
   function seed(kind, rng) { return seedFrom(GROWERS[kind], rng); }
   function mutate(genes, rng, rate) { return mutateBy(GROWERS[genes.kind], genes, rng, rate); }
@@ -353,6 +517,13 @@
   function judge(entry) { return GROWERS[entry.grower]?.judge(entry) || { score: 0.5, reasons: {} }; }
   function lifespan(genes) { return GROWERS[genes.kind].lifespan(genes); }
   const kindOfWord = (word) => WORDS[String(word || "").toLowerCase()] || null;
+  // Words for many grown together: a patch of the kind, not separate ones.
+  const MASS = { bracken: "fern", undergrowth: "fern", fernery: "fern" };
+  const patches = {
+    seed: (rng) => seedFrom(PATCH, rng), mutate: (g, rng, rate) => mutateBy(PATCH, g, rng, rate),
+    crossover: (a, b, rng) => crossBy(PATCH, a, b, rng), distance: (a, b) => distanceBy(PATCH, a, b),
+    simulate: simulatePatch, judge: judgePatch, draw: drawPatch,
+  };
 
-  global.HexfieldGrowers = { GROWERS, WORDS, kindOfWord, seed, mutate, crossover, distance, grow, judge, lifespan };
+  global.HexfieldGrowers = { GROWERS, WORDS, MASS, kindOfWord, seed, mutate, crossover, distance, grow, judge, lifespan, patches };
 })(typeof window !== "undefined" ? window : globalThis);

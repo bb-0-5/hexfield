@@ -1664,13 +1664,14 @@
    * library holds best - before a written entry or a family it would
    * otherwise fall back to ("fern" was a bush). */
   const GROWN_WORDS = {}, GROWN_KINDS = {};
-  function grows(word, kind, best) {
-    GROWN_WORDS[word] = kind;
+  // (`mass`: a word for many grown together - "bracken", "undergrowth".)
+  function grows(word, kind, best, mass = false) {
+    GROWN_WORDS[word] = { kind, mass };
     GROWN_KINDS[kind] = () => { const e = best(); return e ? { ...e, grower: kind } : null; };
   }
   function grownLookup(word) {
-    const kind = GROWN_WORDS[word];
-    return kind && GROWN_KINDS[kind]() ? { keys: [kind], plural: false } : null;
+    const grown = GROWN_WORDS[word];
+    return grown && GROWN_KINDS[grown.kind]() ? { keys: [grown.kind], plural: grown.mass, mass: grown.mass } : null;
   }
 
   function lookup(word) {
@@ -1753,7 +1754,10 @@
           if (key === "mountain" && found.plural && !settings.some((s) => s.key === "mountains")) {
             settings.push({ key: "mountains", entry: ENTRIES.mountains, colour });
           } else {
-            subjects.push({ key, entry, count: Math.min(key === "star" ? 30 : 6, many), colour, relation });
+            // A few with no number given ("ferns", "bracken") are many of
+            // it together, which a grown thing can paint as one patch.
+            subjects.push({ key, entry, count: Math.min(key === "star" ? 30 : 6, many), colour, relation,
+              ...(found.plural && count <= 1 ? { mass: true } : {}) });
           }
           lastWasThing = true;
         }
