@@ -1657,7 +1657,9 @@
     if (entry) LEARNED[word] = entry; else delete LEARNED[word];
     return true;
   }
-  const entryOf = (key) => ENTRIES[key] || LEARNED[key] || GROWN_KINDS[key]?.();
+  // (A grown kind's drawing only for the words its grower names: "oak" is a
+  // grown tree, but "lion" - a cat by family - stays a lion.)
+  const entryOf = (key, word = null) => (word && grownFor(word)?.kind === key && GROWN_KINDS[key]?.()) || ENTRIES[key] || LEARNED[key] || GROWN_KINDS[key]?.();
 
   /* Words for things grown from rules (words/hexfield-growers.js, app.js
    * "Growers"): the word reads as its kind, drawn from whatever the grower's
@@ -1669,6 +1671,7 @@
     GROWN_WORDS[word] = { kind, mass };
     GROWN_KINDS[kind] = () => { const e = best(); return e ? { ...e, grower: kind } : null; };
   }
+  const grownFor = (word) => GROWN_WORDS[word] || (word.endsWith("es") && GROWN_WORDS[word.slice(0, -2)]) || (word.endsWith("s") && GROWN_WORDS[word.slice(0, -1)]) || null;
   function grownLookup(word) {
     const grown = GROWN_WORDS[word];
     return grown && GROWN_KINDS[grown.kind]() ? { keys: [grown.kind], plural: grown.mass, mass: grown.mass } : null;
@@ -1730,7 +1733,7 @@
       const found = lookup(word);
       if (!found) continue;
       for (const key of found.keys) {
-        const entry = entryOf(key);
+        const entry = entryOf(key, word);
         if (entry.kind === "setting") {
           if (!settings.some((s) => s.key === key) && settings.length < 3) settings.push({ key, entry, colour });
           // "A whale under the sea", "a fish in the river": in water, a thing
@@ -1856,6 +1859,7 @@
   }
   // The head: the highest roundish part of a moderate size.
   function headOf(entry) {
+    if (entry?.head) return entry.head;
     let best = null;
     for (const part of entry?.parts || []) {
       if (!part.box || part.cut || !["ellipse", "egg", "dome", "almond"].includes(part.shape)) continue;
@@ -1910,6 +1914,7 @@
   // The leafy mass: the biggest rounded, clustered or many-sided part in the
   // upper part of the drawing (a pine's triangles count).
   function canopyOf(entry) {
+    if (entry?.canopy) return entry.canopy;
     let best = null;
     for (const part of entry?.parts || []) {
       if (part.cut || part.shape === "line") continue;
@@ -2185,7 +2190,16 @@
         // The earlier thing is <relation> this one. Above and below keep their
         // own place across the canvas; on and in line the two up.
         if (s.relation === "above") bottom = Math.max(b.y + b.h + h * 1.02, bottom);
-        if (s.relation === "below") bottom = Math.min(b.y - h * 0.1, bottom);
+        if (s.relation === "below") {
+          /* "A cat under a tree": a tall thing that stands on the ground
+           * stands over the other - its foot just behind the other's - not
+           * floating above it as a bird over a cat would. */
+          if (anchor === "ground" && before.entry.anchor === "ground" && h > b.h * 1.3) {
+            cx = under + (rng() - 0.5) * b.w * 0.5;
+            bottom = b.y + b.h * 0.94;
+            guideDepth = (before.depth || 0) + 0.04;
+          } else bottom = Math.min(b.y - h * 0.1, bottom);
+        }
         if (s.relation === "on") { cx = under; z = -1; lift = before.key; }
         if (s.relation === "in") { cx = under; bottom = b.y + b.h / 2 + h * 0.55; z = -1; }
         /* Along the other's guide lines, on the same ground: "a cat behind a

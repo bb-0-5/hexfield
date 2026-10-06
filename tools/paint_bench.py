@@ -108,7 +108,10 @@ def run_one(url, scene, config_js, seed, manner, cap_seconds):
         page.wait_for_timeout(1500)
         # The background taste simulation keeps learning (and so changing the
         # painter's choices) at whatever pace the machine allows: off.
-        setup = "if (typeof headlessSim !== 'undefined') { headlessSim.running = false; clearTimeout(headlessSim.timer); }; " + (config_js or "")
+        # Nor do the growers' shelves fill in the background (a bare shelf
+        # paints the written drawing, the same every run).
+        setup = ("if (typeof headlessSim !== 'undefined') { headlessSim.running = false; clearTimeout(headlessSim.timer); }; "
+                 "if (typeof growing !== 'undefined') { growing.running = false; clearTimeout(growing.timer); }; " + (config_js or ""))
         if manner:
             setup += "; choosePlanManner = () => HexfieldCraft.manner(%s);" % json.dumps(manner)
         if setup.strip():

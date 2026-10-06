@@ -32957,7 +32957,7 @@ if (SHOW_MORPHS && typeof window !== "undefined") window.addEventListener("load"
  * again (the drawing is grown once and held). Paintings it is in judge it,
  * and your keeps and rejects count most; ?morphs shows the shelves. */
 const GROWER_LIB_KEY = "hexfield.growers.v1";
-const GROWER_LIB = { cap: 12, days: 5, everyMs: 7000, firstMs: 9000, thumb: 72, duplicate: 0.05, seedFresh: 0.15, cross: 0.35 };
+const GROWER_LIB = { cap: 12, days: 5, everyMs: 7000, firstMs: 3000, thumb: 72, duplicate: 0.05, seedFresh: 0.15, cross: 0.35 };
 const growing = { running: true, timer: null, steps: 0 };
 let growerLib = null;
 // A kept outcome's drawing, grown once (its snapshot's vector form).
@@ -32980,6 +32980,7 @@ function growerDrawing(outcome) {
       : G.grow(outcome.genes, { age: outcome.age, yaw: outcome.yaw, pitch: outcome.pitch });
     if (!entry) return null;
     growerDrawings.set(outcome.id, entry);
+    storeGrowerDrawing(outcome.id, entry);
   }
   return entry;
 }
@@ -33017,9 +33018,11 @@ function growerThumb(entry, size = GROWER_LIB.thumb) {
 /* One step of breeding a kind: new rules, grown through their life, the
  * best day judged and kept if it earns a place. Its own chance (not
  * Math.random), so it never shifts a painting's choices. */
-function breedGrower(kind, rng = mulberry32((Date.now() ^ Math.imul(growing.steps + 1, 0x9e3779b1)) >>> 0)) {
+/* Breeding in three steps: a candidate's rules (here), played out and
+ * judged (in the worker, or here when there is none), and kept or not
+ * (here: your taste and the thumbnail need a canvas). */
+function growerCandidate(kind, rng) {
   const G = globalThis.HexfieldGrowers;
-  if (!G?.GROWERS?.[kind] || !globalThis.HexfieldVisual) return null;
   const shelf = growerShelf(kind), kept = shelf.outcomes;
   const parent = () => {
     let best = null;
@@ -33034,40 +33037,73 @@ function breedGrower(kind, rng = mulberry32((Date.now() ^ Math.imul(growing.step
   } else { const a = parent(); genes = G.mutate(a.genes, rng, 0.3); parents = [a.id]; }
   // Played out through its life; the best day of it, seen from a few angles.
   const life = G.lifespan(genes);
+  const at = Array.from({ length: GROWER_LIB.days }, (_, k) => ({
+    age: life * (0.1 + 0.85 * (k + rng()) / GROWER_LIB.days), yaw: rng() * Math.PI * 2, pitch: 0.1 + rng() * 0.25 }));
+  return { kind, genes, parents, at };
+}
+function bestGrown(candidate, entries, judged) {
   let best = null;
-  for (let k = 0; k < GROWER_LIB.days; k++) {
-    const age = life * (0.1 + 0.85 * (k + rng()) / GROWER_LIB.days);
-    const yaw = rng() * Math.PI * 2, pitch = 0.1 + rng() * 0.25;
-    const entry = G.grow(genes, { age, yaw, pitch });
-    const judged = G.judge(entry);
-    if (!best || judged.score > best.judge) best = { age, yaw, pitch, entry, judge: judged.score, reasons: judged.reasons };
-  }
+  entries.forEach((entry, k) => {
+    if (!best || judged[k].score > best.judge) best = { ...candidate.at[k], entry, judge: judged[k].score, reasons: judged[k].reasons };
+  });
+  return best;
+}
+function keepGrower(candidate, best) {
+  const G = globalThis.HexfieldGrowers;
+  const { kind, genes, parents } = candidate;
+  const shelf = growerShelf(kind), kept = shelf.outcomes;
   growing.steps++;
   const outcome = {
     id: kind[0] + shelf.next++, genes, parents, gen: shelf.gen++, born: Date.now(),
     age: +best.age.toFixed(3), yaw: +best.yaw.toFixed(4), pitch: +best.pitch.toFixed(4),
     judge: +best.judge.toFixed(4), taste: +growerTaste(best.entry).toFixed(4),
     aspect: +best.entry.aspect.toFixed(4), size: best.entry.size, kept: 0, rejected: 0, used: 0, paintN: 0, paintSum: 0,
+    height: best.entry.facts?.span?.[1] ?? null,
   };
   // A near copy of a kept one takes its place only if better.
   const twin = kept.find((o) => G.distance(o.genes, genes) < GROWER_LIB.duplicate);
-  const rank = growerRank(outcome);
   if (twin) {
-    if (rank <= growerRank(twin) || twin.kept > twin.rejected) { saveGrowerLibrary(); return null; }
-    kept.splice(kept.indexOf(twin), 1);
-    growerDrawings.delete(twin.id);
-  } else if (kept.length >= GROWER_LIB.cap) {
-    // The weakest goes - never one you kept more than rejected.
-    const weakest = kept.filter((o) => !(o.kept > o.rejected)).sort((a, b) => growerRank(a) - growerRank(b))[0];
-    if (!weakest || growerRank(weakest) >= rank) { saveGrowerLibrary(); return null; }
-    kept.splice(kept.indexOf(weakest), 1);
-    growerDrawings.delete(weakest.id);
-  }
-  outcome.snap = growerThumb(best.entry);
-  growerDrawings.set(outcome.id, best.entry);
+    if (growerRank(outcome) <= growerRank(twin) || twin.kept > twin.rejected) { saveGrowerLibrary(); return null; }
+    dropGrowerOutcome(kept, twin);
+  } else if (!makeRoomOnShelf(kept, outcome, GROWER_LIB.cap)) { saveGrowerLibrary(); return null; }
+  return shelveGrower(kept, outcome, best.entry);
+}
+// Room for a newcomer: the weakest goes - never one you kept more than rejected.
+function makeRoomOnShelf(kept, outcome, cap) {
+  if (kept.length < cap) return true;
+  const weakest = kept.filter((o) => !(o.kept > o.rejected)).sort((a, b) => growerRank(a) - growerRank(b))[0];
+  if (!weakest || growerRank(weakest) >= growerRank(outcome)) return false;
+  dropGrowerOutcome(kept, weakest);
+  return true;
+}
+function dropGrowerOutcome(kept, o) {
+  kept.splice(kept.indexOf(o), 1);
+  growerDrawings.delete(o.id);
+  storeGrowerDrawing(o.id, null);
+}
+function shelveGrower(kept, outcome, entry) {
+  outcome.snap = growerThumb(entry);
+  growerDrawings.set(outcome.id, entry);
+  storeGrowerDrawing(outcome.id, entry);
   kept.push(outcome);
   saveGrowerLibrary();
   return outcome;
+}
+const growerRng = (salt) => mulberry32((Date.now() ^ Math.imul(growing.steps + salt, 0x9e3779b1)) >>> 0);
+function breedGrower(kind, rng = growerRng(1)) {
+  const G = globalThis.HexfieldGrowers;
+  if (!G?.GROWERS?.[kind] || !globalThis.HexfieldVisual) return null;
+  const candidate = growerCandidate(kind, rng);
+  const entries = G.growAt(candidate.genes, candidate.at);
+  return keepGrower(candidate, bestGrown(candidate, entries, entries.map((e) => G.judge(e))));
+}
+async function breedGrowerAway(kind, rng = growerRng(1)) {
+  const G = globalThis.HexfieldGrowers;
+  if (!G?.GROWERS?.[kind] || !globalThis.HexfieldVisual) return null;
+  const candidate = growerCandidate(kind, rng);
+  const done = await growerWorkerCall({ op: "grow", genes: candidate.genes, at: candidate.at });
+  if (!done) return breedGrower(kind, rng);
+  return keepGrower(candidate, bestGrown(candidate, done.entries, done.judged));
 }
 /* A patch (Patches, words/hexfield-growers.js): a scene sim of the kind's
  * best kept outcomes grown together - spreading, shading each other out -
@@ -33075,74 +33111,165 @@ function breedGrower(kind, rng = mulberry32((Date.now() ^ Math.imul(growing.step
  * kind's patch shelf ("fern:patch"): its rules, the outcomes it grew from
  * and where each one stood, so it is drawn again without playing it out. */
 const patchShelfOf = (kind) => kind + ":patch";
-function breedPatch(kind, rng = mulberry32((Date.now() ^ Math.imul(growing.steps + 7, 0x85ebca6b)) >>> 0)) {
+function patchCandidate(kind, rng) {
   const S = globalThis.HexfieldGrowers?.patches;
   const members = growerShelf(kind).outcomes;
-  if (!S || members.length < 3) return null;
-  const shelf = growerShelf(patchShelfOf(kind)), kept = shelf.outcomes;
-  // Grown from the kind's best (a few of them, so a patch is a few kinds of fern).
+  if (!S || members.length < 3 || !globalThis.HexfieldGrowers.GROWERS[kind]?.patches) return null;
+  const kept = growerShelf(patchShelfOf(kind)).outcomes;
+  // Grown from the kind's best (a few of them, so a patch is a few of a kind).
   const best = members.slice().sort((a, b) => growerRank(b) - growerRank(a)).slice(0, 6);
-  const pool = best.map((o) => ({ id: o.id, genes: o.genes, age: o.age, aspect: o.aspect, judge: o.judge }));
+  const pool = best.map((o) => ({ id: o.id, genes: o.genes, age: o.age, aspect: o.aspect, judge: o.judge, height: o.height }));
   const parent = kept.length ? kept.slice().sort((a, b) => growerRank(b) - growerRank(a))[Math.floor(rng() * Math.min(3, kept.length))] : null;
   const genes = !parent || rng() < GROWER_LIB.seedFresh ? S.seed(rng) : S.mutate(parent.genes, rng, 0.35);
-  const snaps = S.simulate(genes, pool);
-  let top = null;
-  for (const snap of snaps) { const judged = S.judge(snap, pool, genes); if (!top || judged.score > top.judge) top = { snap, judge: judged.score }; }
+  return { kind, genes, pool };
+}
+function keepPatch(candidate, top, entry) {
   growing.steps++;
-  if (!top) return null;
-  const entry = S.draw(top.snap, pool, genes);
-  if (!entry) return null;
+  if (!top || !entry) return null;
+  const { kind, genes, pool } = candidate;
+  const shelf = growerShelf(patchShelfOf(kind));
   const outcome = {
     id: kind[0] + "p" + shelf.next++, genes, gen: shelf.gen++, born: Date.now(), patch: top.snap, pool, age: top.snap.day,
     judge: +top.judge.toFixed(4), taste: +growerTaste(entry).toFixed(4), aspect: +entry.aspect.toFixed(4), size: entry.size,
     kept: 0, rejected: 0, used: 0, paintN: 0, paintSum: 0,
   };
-  const rank = growerRank(outcome);
-  if (kept.length >= Math.round(GROWER_LIB.cap / 2)) {
-    const weakest = kept.filter((o) => !(o.kept > o.rejected)).sort((a, b) => growerRank(a) - growerRank(b))[0];
-    if (!weakest || growerRank(weakest) >= rank) { saveGrowerLibrary(); return null; }
-    kept.splice(kept.indexOf(weakest), 1);
-    growerDrawings.delete(weakest.id);
+  if (!makeRoomOnShelf(shelf.outcomes, outcome, Math.round(GROWER_LIB.cap / 2))) { saveGrowerLibrary(); return null; }
+  return shelveGrower(shelf.outcomes, outcome, entry);
+}
+function breedPatch(kind, rng = growerRng(7)) {
+  const S = globalThis.HexfieldGrowers?.patches;
+  const candidate = patchCandidate(kind, rng);
+  if (!candidate) return null;
+  let top = null;
+  for (const snap of S.simulate(candidate.genes, candidate.pool)) {
+    const judged = S.judge(snap, candidate.pool, candidate.genes);
+    if (!top || judged.score > top.judge) top = { snap, judge: judged.score };
   }
-  outcome.snap = growerThumb(entry);
-  growerDrawings.set(outcome.id, entry);
-  kept.push(outcome);
-  saveGrowerLibrary();
-  return outcome;
+  return keepPatch(candidate, top, top && S.draw(top.snap, candidate.pool, candidate.genes));
+}
+async function breedPatchAway(kind, rng = growerRng(7)) {
+  const candidate = patchCandidate(kind, rng);
+  if (!candidate) return null;
+  const done = await growerWorkerCall({ op: "patch", genes: candidate.genes, pool: candidate.pool });
+  if (!done) return breedPatch(kind, rng);
+  return keepPatch(candidate, done.top, done.entry);
+}
+
+/* The worker the growers run in (words/hexfield-growers-worker.js): one,
+ * answering in turn. Without one (or if it fails) they run here. */
+let growerWorker = null, growerWorkerBroken = false, growerWorkerNext = 1;
+const growerWorkerWaiting = new Map();
+function growerWorkerCall(message, timeout = 20000) {
+  if (growerWorkerBroken || typeof Worker === "undefined") return Promise.resolve(null);
+  if (!growerWorker) {
+    try {
+      growerWorker = new Worker("words/hexfield-growers-worker.js");
+      growerWorker.onmessage = (event) => {
+        const { id } = event.data || {};
+        const wait = growerWorkerWaiting.get(id);
+        if (!wait) return;
+        growerWorkerWaiting.delete(id); clearTimeout(wait.timer);
+        wait.resolve(event.data.error ? null : event.data);
+      };
+      growerWorker.onerror = () => {
+        growerWorkerBroken = true;
+        for (const wait of growerWorkerWaiting.values()) { clearTimeout(wait.timer); wait.resolve(null); }
+        growerWorkerWaiting.clear();
+      };
+    } catch { growerWorkerBroken = true; return Promise.resolve(null); }
+  }
+  const id = growerWorkerNext++;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { growerWorkerWaiting.delete(id); resolve(null); }, timeout);
+    growerWorkerWaiting.set(id, { resolve, timer });
+    growerWorker.postMessage({ ...message, id });
+  });
+}
+
+/* Kept outcomes' drawings, saved (IndexedDB: a tree is too big for local
+ * storage), so a painting after a reload drops a kept tree or patch in
+ * without growing it again. */
+let growerDbOpen = null;
+function growerDb() {
+  if (growerDbOpen) return growerDbOpen;
+  growerDbOpen = new Promise((resolve) => {
+    try {
+      const req = indexedDB.open("hexfield-growers", 1);
+      req.onupgradeneeded = () => req.result.createObjectStore("drawings");
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+    } catch { resolve(null); }
+  });
+  return growerDbOpen;
+}
+function storeGrowerDrawing(id, entry) {
+  growerDb().then((db) => {
+    if (!db) return;
+    try {
+      const store = db.transaction("drawings", "readwrite").objectStore("drawings");
+      if (entry) store.put(entry, id); else store.delete(id);
+    } catch { /* not saved: grown again when needed */ }
+  });
+}
+/* At start: every kept outcome's drawing back from the store, and any
+ * missing drawn in the worker. */
+async function loadGrowerDrawings() {
+  const db = await growerDb();
+  const all = Object.values(growerLibrary().kinds).flatMap((shelf) => shelf.outcomes);
+  for (const o of all) {
+    if (growerDrawings.has(o.id)) continue;
+    const entry = db ? await new Promise((resolve) => {
+      try {
+        const req = db.transaction("drawings").objectStore("drawings").get(o.id);
+        req.onsuccess = () => resolve(req.result || null); req.onerror = () => resolve(null);
+      } catch { resolve(null); }
+    }) : null;
+    if (entry) { growerDrawings.set(o.id, entry); continue; }
+    const done = await growerWorkerCall({ op: "draw", outcome: { genes: o.genes, age: o.age, yaw: o.yaw, pitch: o.pitch, patch: o.patch, pool: o.pool } });
+    if (done?.entry && !growerDrawings.has(o.id)) { growerDrawings.set(o.id, done.entry); storeGrowerDrawing(o.id, done.entry); }
+  }
 }
 /* In the background, a step every few seconds while the page is seen, each
- * kind in turn and its patches - the shelves fill and improve while the
- * studio paints (half as often on a phone: a step is a fifth of a second
- * there). */
+ * kind in turn and its patches, played out in the worker - the shelves fill
+ * and improve while the studio paints. */
 function scheduleGrowerBreeding(delay = GROWER_LIB.everyMs * (isMobileBrowser() ? 2 : 1)) {
   if (typeof window === "undefined" || growing.timer) return;
-  growing.timer = setTimeout(() => {
+  growing.timer = setTimeout(async () => {
     growing.timer = null;
     if (!growing.running) return;
     const kinds = Object.keys(globalThis.HexfieldGrowers?.GROWERS || {});
-    const step = () => {
-      if (!document.hidden && kinds.length) {
-        const turn = growing.steps % (kinds.length * 3), kind = kinds[Math.floor(turn / 3)];
-        // Two of the kind to one of its patches, once it has some to grow them from.
-        try { if (turn % 3 === 2 && growerShelf(kind).outcomes.length >= 3) breedPatch(kind); else breedGrower(kind); }
-        catch (error) { console.warn("grower step skipped", error); }
-      }
-      scheduleGrowerBreeding();
-    };
-    if (typeof requestIdleCallback === "function") requestIdleCallback(step, { timeout: 2000 }); else step();
+    // A bare shelf is filled first, quickly; then each kind in turn.
+    const bare = kinds.find((k) => growerShelf(k).outcomes.length < 3);
+    if (!document.hidden && kinds.length) {
+      const turn = growing.steps % (kinds.length * 3), kind = bare || kinds[Math.floor(turn / 3)];
+      // Two of the kind to one of its patches, once it has some to grow them from.
+      try {
+        if (!bare && turn % 3 === 2 && globalThis.HexfieldGrowers.GROWERS[kind]?.patches && growerShelf(kind).outcomes.length >= 3) await breedPatchAway(kind);
+        else await breedGrowerAway(kind);
+      } catch (error) { console.warn("grower step skipped", error); growing.steps++; }
+    }
+    scheduleGrowerBreeding(bare ? 1500 : undefined);
   }, delay);
 }
 /* The kept outcomes a painting uses for a kind: as many as it has copies,
  * different ones, the better ranked likelier (and the least used, so the
  * same fern is not every fern). A shelf too bare is filled first, there
  * and then. */
-function pickGrowerOutcomes(kind, n, rng) {
+/* Kinds cheap enough to grow there and then when a painting needs one and
+ * the shelf is bare; the others are painted from their written drawing
+ * until the background has grown some. */
+const GROWER_SYNC = { fern: 3 };
+function pickGrowerOutcomes(kind, n, rng, traits = null) {
   const shelf = growerShelf(kind);
-  for (let i = 0; shelf.outcomes.length < 3 && i < 8; i++) breedGrower(kind, mulberry32((Math.floor(rng() * 4294967296) ^ i) >>> 0));
-  return pickGrowerOutcomesFrom(shelf, n, rng);
+  for (let i = 0; shelf.outcomes.length < (GROWER_SYNC[kind] || 0) && i < 8; i++) breedGrower(kind, mulberry32((Math.floor(rng() * 4294967296) ^ i) >>> 0));
+  return pickGrowerOutcomesFrom(shelf, n, rng, traits);
 }
-function pickGrowerOutcomesFrom(shelf, n, rng) {
-  const pool = shelf.outcomes.slice();
+// Does a kept outcome already have what the words ask for?
+const growerMatches = (o, traits) => !traits || Object.entries(traits.match).every(([gene, options]) => options.includes(o.genes[gene]));
+function pickGrowerOutcomesFrom(shelf, n, rng, traits = null) {
+  // Those that already match the words first, when any do.
+  const matching = shelf.outcomes.filter((o) => growerMatches(o, traits));
+  const pool = (matching.length ? matching : shelf.outcomes).slice();
   const picked = [];
   while (picked.length < n && pool.length) {
     const weights = pool.map((o) => Math.exp((growerRank(o) - 0.1 * Math.min(5, o.used || 0)) * 6));
@@ -33154,20 +33281,39 @@ function pickGrowerOutcomesFrom(shelf, n, rng) {
   for (let i = 0; picked.length < n && picked.length; i++) picked.push(picked[i]);
   return picked;
 }
+/* A kept outcome as the words ask for it: its own drawing if it already
+ * is what they say, or its rules with theirs put in ("a sleeping cat" is a
+ * kept cat curled up; "a willow" a kept tree weeping) - grown once, held. */
+function growerDrawingFor(o, traits, rng) {
+  if (!traits?.key || (growerMatches(o, traits) && !Object.keys(traits.set).length && traits.age == null)) return growerDrawing(o);
+  const id = o.id + "~" + traits.key;
+  let entry = growerDrawings.get(id);
+  if (!entry) {
+    const G = globalThis.HexfieldGrowers, genes = { ...o.genes, ...traits.set };
+    for (const [gene, options] of Object.entries(traits.match)) if (!options.includes(genes[gene])) genes[gene] = options[Math.floor(rng() * options.length)];
+    // An age is of its growing up: years for a cat, a share of its years for a tree.
+    const age = traits.age == null ? o.age : genes.kind === "cat" ? traits.age : traits.age * (genes.years || 1);
+    entry = G.grow(genes, { age, yaw: o.yaw, pitch: o.pitch });
+    growerDrawings.set(id, entry);
+  }
+  return entry;
+}
 /* The words name a grown kind: its subject takes kept outcomes - one per
  * copy - instead of a drawn idea. */
-function growSceneSubjects(read, rng) {
+function growSceneSubjects(read, rng, text = "") {
   const G = globalThis.HexfieldGrowers;
   if (!G) return null;
   const used = [];
   for (const s of read.subjects) {
     const kind = s.entry?.grower;
     if (!kind) continue;
-    /* Many of them with no number - "ferns", "bracken" - are a patch grown
-     * together, dropped in whole; a number is that many separate ones. */
-    if (s.mass) {
+    const traits = G.traitsOf ? G.traitsOf(kind, text) : null;
+    /* Many of them with no number - "ferns", "trees", "bracken" - are a
+     * patch grown together, dropped in whole; a number is that many
+     * separate ones. */
+    if (s.mass && G.GROWERS[kind]?.patches) {
       const shelf = growerShelf(patchShelfOf(kind));
-      for (let i = 0; !shelf.outcomes.length && i < 3; i++) {
+      for (let i = 0; GROWER_SYNC[kind] && !shelf.outcomes.length && i < 3; i++) {
         if (growerShelf(kind).outcomes.length < 3) pickGrowerOutcomes(kind, 1, rng);
         breedPatch(kind, mulberry32((Math.floor(rng() * 4294967296) ^ i) >>> 0));
       }
@@ -33181,9 +33327,9 @@ function growSceneSubjects(read, rng) {
         continue;
       }
     }
-    const picked = pickGrowerOutcomes(kind, Math.max(1, s.count), rng);
+    const picked = pickGrowerOutcomes(kind, Math.max(1, s.count), rng, traits);
     if (!picked.length) continue;
-    s.variants = picked.map((o) => ({ ...growerDrawing(o), outcome: o.id }));
+    s.variants = picked.map((o) => ({ ...growerDrawingFor(o, traits, rng), outcome: o.id }));
     s.entry = s.variants[0];
     for (const o of picked) { o.used = (o.used || 0) + 1; if (!used.some((u) => u.id === o.id)) used.push({ kind, id: o.id }); }
   }
@@ -33209,8 +33355,10 @@ function registerGrowerWords() {
   if (!G || !Visual?.grows) return;
   for (const [word, kind] of Object.entries(G.WORDS)) {
     Visual.grows(word, kind, () => {
+      // (A bare shelf: grown there and then if the kind is quick to grow,
+      // otherwise the written drawing stands in until some are grown.)
       const best = growerShelf(kind).outcomes.slice().sort((a, b) => growerRank(b) - growerRank(a))[0]
-        || breedGrower(kind, mulberry32(0x6fe2));
+        || (GROWER_SYNC[kind] ? breedGrower(kind, mulberry32(0x6fe2)) : null);
       return best ? growerDrawing(best) : null;
     }, !!G.MASS?.[word]);
   }
@@ -33218,6 +33366,7 @@ function registerGrowerWords() {
 if (typeof window !== "undefined") {
   registerGrowerWords();
   scheduleGrowerBreeding(GROWER_LIB.firstMs);
+  setTimeout(() => loadGrowerDrawings().catch(() => {}), 1500);
 }
 
 /* The shelves (?morphs, "growers"): every kept outcome by kind with its
@@ -33225,7 +33374,7 @@ if (typeof window !== "undefined") {
 function renderGrowerShelves(panel, small) {
   const G = globalThis.HexfieldGrowers;
   if (!G) return;
-  for (const kind of Object.keys(G.GROWERS).flatMap((k) => [k, patchShelfOf(k)])) {
+  for (const kind of Object.keys(G.GROWERS).flatMap((k) => G.GROWERS[k].patches ? [k, patchShelfOf(k)] : [k])) {
     const shelf = growerShelf(kind);
     const row = document.createElement("div");
     row.style.cssText = "margin:10px 0;padding:8px;background:#f7f3ea;border-radius:8px";
@@ -33235,8 +33384,13 @@ function renderGrowerShelves(panel, small) {
     row.appendChild(t);
     const breed = document.createElement("button");
     breed.textContent = "grow 10 more"; breed.style.cssText = small;
-    breed.onclick = () => {
-      for (let i = 0; i < 10; i++) { if (kind.endsWith(":patch")) breedPatch(kind.split(":")[0]); else breedGrower(kind); }
+    // (In the worker, one after another, the shelf redrawn when done.)
+    breed.onclick = async () => {
+      breed.disabled = true;
+      for (let i = 0; i < 10; i++) {
+        breed.textContent = `growing ${i + 1} of 10…`;
+        if (kind.endsWith(":patch")) await breedPatchAway(kind.split(":")[0]); else await breedGrowerAway(kind);
+      }
       showMorphsPanel("growers");
     };
     row.appendChild(breed);
@@ -33693,7 +33847,7 @@ function planScene(params, width, height, fx, drawSeed, ref = null, blobs = null
   }
   const rng = mulberry32(((Number(drawSeed) || 0) ^ 0x5ce4e) >>> 0);
   // Things grown from rules take kept outcomes, one per copy (Growers).
-  const growers = growSceneSubjects(read, rng);
+  const growers = growSceneSubjects(read, rng, text);
   // Each named thing is painted a little differently each time, around what
   // votes have taught that word so far (see "Words learn their look").
   const variations = {};
