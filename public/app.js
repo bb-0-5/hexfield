@@ -34199,6 +34199,79 @@ function flowLetterPlace(text, W, H, k, laid, rng) {
   return { key: "flow", box, screen: box, glyphs };
 }
 
+/* Letters stacked: one above another in a column down whichever side of the
+ * picture its things leave freer, as big as the column allows. */
+function stackLetterPlace(text, W, H, k, laid, rng) {
+  const chars = String(text || "").replace(/\s+/g, "").split("");
+  if (chars.length < 2 || chars.length > 9) return null;
+  const margin = Math.min(W, H) * 0.04;
+  const h = Math.min((H - margin * 2) / chars.length / 1.05, W * 0.2) * k, w = h * 0.92;
+  const overlap = (x) => (laid.items || []).reduce((sum, it) => {
+    if (it.entry?.kind !== "subject" || it.lettering || !it.box) return sum;
+    const b = it.box, ox = Math.max(0, Math.min(b.x + b.w, x + w) - Math.max(b.x, x));
+    return sum + ox * b.h;
+  }, 0);
+  const left = margin, right = W - margin - w;
+  const x = overlap(left) < overlap(right) || (overlap(left) === overlap(right) && rng() < 0.5) ? left : right;
+  const top = Math.max(margin, (H - chars.length * h * 1.05) / 2);
+  const glyphs = chars.map((ch, i) => ({ ch, box: { x: x + (rng() - 0.5) * w * 0.12, y: top + i * h * 1.05, w, h } }));
+  const box = { x, y: top, w, h: chars.length * h * 1.05 };
+  return { key: "stack", box, screen: box, glyphs };
+}
+
+/* How the letters are dressed (axis "letterDress"): plain; bubble - fat and
+ * rounded, a dark ink rim round them and a white shine inside; or blocks -
+ * each letter printed on the front of a cube, the cube in perspective with
+ * a lit top, a shaded side and inked edges, like a child's alphabet blocks. */
+const LETTER_DRESSES = ["plain", "bubble", "blocks"];
+function chooseLetterDress(params, rng) {
+  const text = String(params?.__hexfieldWords?.text || "").toLowerCase();
+  const scores = chooseByTaste(LETTER_DRESSES, {
+    rng, tasted: 0, axis: "letterDress", given: null,
+    lean: (key) => key === "plain" ? 0.1 : key === "bubble" ? (/\b(bubble|balloon|graffiti|puffy|cartoon)\b/.test(text) ? 1 : 0)
+      : (/\b(blocks?|cubes?|toys?|alphabet|abc)\b/.test(text) ? 1 : 0),
+    learned: (key) => visualLearnedChoice("letterdress" + key), taste: () => null,
+  });
+  return scores[0].key;
+}
+/* One letter on the front of a cube (Letter dress, blocks). */
+function drawLetterBlock(ctx, lettering, program) {
+  const { text, box } = lettering;
+  const s = Math.min(box.w, box.h) * 0.8, d = s * 0.3;
+  // The cube recedes toward the painting's vanishing point when it has one.
+  const vx = strokePainter.plan?.drawn?.vx ?? strokePainter.plan?.scene?.view?.vanish?.[0];
+  const dir = Number.isFinite(vx) ? Math.sign(vx - (box.x + box.w / 2)) || 1 : 1;
+  const fx = box.x + (box.w - s) / 2 - dir * d * 0.35, fy = box.y + box.h - s;
+  const hue = (Number(program.primaryHue) || 0) / 360;
+  const rgb = (l, sat = 0.45) => { const c = hslToRgb(hue, sat, l); return `rgb(${c[0]},${c[1]},${c[2]})`; };
+  const ink = "rgb(24,22,28)";
+  const front = [[fx, fy], [fx + s, fy], [fx + s, fy + s], [fx, fy + s]];
+  const top = [[fx, fy], [fx + dir * d, fy - d], [fx + s + dir * d, fy - d], [fx + s, fy]];
+  const side = dir > 0 ? [[fx + s, fy], [fx + s + d, fy - d], [fx + s + d, fy + s - d], [fx + s, fy + s]]
+    : [[fx, fy], [fx - d, fy - d], [fx - d, fy + s - d], [fx, fy + s]];
+  const poly = (pts, fill) => {
+    ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath();
+    ctx.fillStyle = fill; ctx.fill();
+    ctx.strokeStyle = ink; ctx.lineWidth = Math.max(1.5, s * 0.035); ctx.lineJoin = "round"; ctx.stroke();
+  };
+  ctx.save();
+  poly(side, rgb(0.5)); poly(top, rgb(0.82)); poly(front, rgb(0.7));
+  ctx.restore();
+  // The letter on its face, in the lettering's own colour (dark on the light block).
+  const inset = s * 0.16;
+  letterInBox(ctx, { x: fx + inset, y: fy + inset, w: s - inset * 2, h: s - inset * 2 }, text, { ...program, lightness: 0.16, outlineMode: "none", outlineWidth: 0, depth3d: 0 });
+}
+/* Bubble letters: an ink rim, the fat letter, a shine inside. */
+function drawBubbleLetters(ctx, box, text, program) {
+  const pen = Number(program.penWeight) || 1;
+  letterInBox(ctx, box, text, { ...program, penWeight: pen * 1.55, lightness: 0.08, outlineMode: "none", outlineWidth: 0, depth3d: 0 });
+  letterInBox(ctx, box, text, { ...program, penWeight: pen * 1.2, outlineMode: "none", outlineWidth: 0, depth3d: 0 });
+  ctx.save();
+  ctx.globalAlpha = 0.6;
+  letterInBox(ctx, { ...box, x: box.x - box.h * 0.03, y: box.y - box.h * 0.04 }, text, { ...program, penWeight: pen * 0.32, lightness: 0.97, outlineMode: "none", outlineWidth: 0, depth3d: 0 });
+  ctx.restore();
+}
+
 /* Whether (x, y) is within the lettering: its box, or - when its letters
  * were set one by one - one of the letters' own boxes (the box round them
  * all can hold a tree). Null without lettering. `screen`: the box as seen
@@ -34270,6 +34343,8 @@ function planLettering(scene, letters, params, read, laid, rng) {
   if (lockup) offered.push(lockup);
   const flow = flowLetterPlace(letters, W, H, k, laid, rng);
   if (flow) offered.push(flow);
+  const stack = stackLetterPlace(letters, W, H, k, laid, rng);
+  if (stack) offered.push(stack);
   const surfaceWord = (params?.__hexfieldWords?.text || "").toLowerCase().match(/[a-z]+/g)?.some((w) => GROUND_WORDS.has(w)) || false;
   for (const place of offered) if (place.key === "ground") place.surfaceWord = surfaceWord;
   const places = offered.some((place) => !hides(place)) ? offered.filter((place) => !hides(place)) : offered;
@@ -34300,7 +34375,9 @@ function planLettering(scene, letters, params, read, laid, rng) {
     place: place.key, warp: place.warp || null, screenBox: place.screen || box, namedColour: colourWord || null,
     stage: "block", passes: 0, rounds: 0, round: null, changed: false,
     mode: family === "wildstyle" ? "wildstyle" : "throwup",
+    dress: chooseLetterDress(params, rng),
   };
+  scene.variations["letterdress" + scene.lettering.dress] = { size: 0, hue: 0, light: 0, literal: 0 };
   scene.letterPlaceScores = summariseChoice(scores);
   const seen = place.screen || box;
   scene.items.push({ key: "letters", entry: { kind: "subject", parts: [], colours: { face: [hue, 70, light * 100] } }, box: seen, alpha: 1, lettering: true });
@@ -34699,6 +34776,12 @@ function drawSceneLettering(ctx, lettering, program = letteringStageProgram(lett
     try { drawSceneLettering(ctx, lettering, program, { shadow, cushion }); } finally { lettering.warping = false; ctx.restore(); }
     return;
   }
+  // Blocks: a cube for each letter, even when the word was set as one.
+  if (lettering.dress === "blocks" && !lettering.glyphs?.length && String(lettering.text).replace(/\s+/g, "").length > 1) {
+    const chars = String(lettering.text).replace(/\s+/g, "").split(""), b = lettering.box, w = b.w / chars.length;
+    drawSceneLettering(ctx, { ...lettering, glyphs: chars.map((ch, i) => ({ ch, box: { x: b.x + i * w, y: b.y, w, h: b.h } })) }, program, { shadow, cushion });
+    return;
+  }
   // Letters set one by one: each drawn as a lettering of its own.
   if (lettering.glyphs?.length) {
     for (const g of lettering.glyphs) drawSceneLettering(ctx, { ...lettering, text: g.ch, box: g.box, glyphs: null }, program, { shadow, cushion });
@@ -34720,7 +34803,7 @@ function drawSceneLettering(ctx, lettering, program = letteringStageProgram(lett
       ctx.restore();
       shadow.width = 0; shadow.height = 0;
     }
-    if (cushion) drawLetteringCushion(ctx, lettering, program);
+    if (cushion && lettering.dress !== "blocks") drawLetteringCushion(ctx, lettering, program);
     if (lettering.stage === "block") {
       // Soft masses: drawn apart, then blurred onto the layer.
       const soft = paintBuffer(Math.ceil(box.w), Math.ceil(box.h));
@@ -34732,7 +34815,9 @@ function drawSceneLettering(ctx, lettering, program = letteringStageProgram(lett
       soft.width = 0; soft.height = 0;
       return;
     }
-    letterInBox(ctx, box, text, program);
+    if (lettering.dress === "blocks") drawLetterBlock(ctx, lettering, program);
+    else if (lettering.dress === "bubble") drawBubbleLetters(ctx, box, text, program);
+    else letterInBox(ctx, box, text, program);
   } catch (error) {
     console.warn("painted lettering skipped", error);
   }
@@ -38979,8 +39064,8 @@ function boxFaces(ids, lines, boxes, width, height) {
 
 function* applyPerspectivePlanesSteps(pixels, width, height, plan, amount = 1) {
   if (!(amount > 0) || pixels.length !== width * height * 4) return pixels;
-  const { ids, indoor, lines, boxes } = perspectiveRegions(width, height, plan);
-  plan.drawn = { indoor, lines, ids, width, height, boxes };
+  const { ids, indoor, lines, boxes, vx } = perspectiveRegions(width, height, plan);
+  plan.drawn = { indoor, lines, ids, width, height, boxes, vx };
   yield;
   const cover = plan.scene?.layer?.cover?.length === width * height ? plan.scene.layer.cover : null;
   const sums = new Map();
@@ -39458,6 +39543,8 @@ async function prepareNewPainting(result, raw, width, height, alive, onDraft = n
    * changed colour when the painting arrived). Tasted over the picture
    * composed to the plan. */
   plan.manner = choosePlanManner(plan, ground, width, height, source?.params);
+  // A drawn painting letters crisp from the start (it has no brush to block in with).
+  if (plan.manner?.reference?.planes && plan.scene?.lettering) plan.scene.lettering.stage = "detail";
   if (onDraft) onDraft(mannerDraft(ground, width, height, plan));
   if (!await step()) return null;
   refreshPlanShapes(plan, ground, width, height);
