@@ -1657,9 +1657,25 @@
     if (entry) LEARNED[word] = entry; else delete LEARNED[word];
     return true;
   }
-  const entryOf = (key) => ENTRIES[key] || LEARNED[key];
+  const entryOf = (key) => ENTRIES[key] || LEARNED[key] || GROWN_KINDS[key]?.();
+
+  /* Words for things grown from rules (words/hexfield-growers.js, app.js
+   * "Growers"): the word reads as its kind, drawn from whatever the grower's
+   * library holds best - before a written entry or a family it would
+   * otherwise fall back to ("fern" was a bush). */
+  const GROWN_WORDS = {}, GROWN_KINDS = {};
+  function grows(word, kind, best) {
+    GROWN_WORDS[word] = kind;
+    GROWN_KINDS[kind] = () => { const e = best(); return e ? { ...e, grower: kind } : null; };
+  }
+  function grownLookup(word) {
+    const kind = GROWN_WORDS[word];
+    return kind && GROWN_KINDS[kind]() ? { keys: [kind], plural: false } : null;
+  }
 
   function lookup(word) {
+    const grown = grownLookup(word) || ((word.endsWith("s") && grownLookup(word.slice(0, -1))) ? { ...grownLookup(word.slice(0, -1)), plural: true } : null);
+    if (grown) return grown;
     if (ENTRIES[word]) return { keys: [word], plural: false };
     if (FAMILIES[word]) return { keys: [].concat(FAMILIES[word]), plural: false };
     const singulars = [];
@@ -2222,6 +2238,14 @@
         if (bh > room && room > 0) { bw *= room / bh; bh = room; }
         const box = { x: x - bw / 2, y: Math.min(H - bh * 0.02, y) - bh, w: bw, h: bh };
         const item = { ...s, box, alpha: 1, z, depth, relTo: s.relation && before ? before.key : null };
+        // Copies of a grown thing are different outcomes of its rules, each
+        // in its own proportions on the same foot.
+        if (s.variants?.length > 1) {
+          const v = s.variants[c % s.variants.length];
+          const vw = box.h * v.aspect;
+          item.entry = { ...v, size: s.entry.size };
+          item.box = { ...box, x: box.x + box.w / 2 - vw / 2, w: vw };
+        }
         // Copies are cousins, not clones: the same style, their own genes.
         if (s.form) item.form = c ? { ...s.form, seed: (s.form.seed + c * 7919) >>> 0, parts: null } : s.form;
         if (persp?.aerial && depth) item.aerial = Math.min(0.7, depth * persp.aerial);
@@ -3815,7 +3839,7 @@
     return out;
   }
 
-  global.HexfieldVisual = { ENTRIES, FAMILIES, COLOUR_WORDS, RELATIONS, LEARNED, lookup, read, layout, paint, subjectColours,
+  global.HexfieldVisual = { ENTRIES, FAMILIES, COLOUR_WORDS, RELATIONS, LEARNED, grows, lookup, read, layout, paint, subjectColours,
     FORM_STYLES, FORM_KEYS: Object.keys(FORM_STYLES), sampleForm, entryVariant, poseFor, learn,
     frameOf, framePoint, drawFrames, SOLIDS, solidOfPart, solidsOf, turnedFaces, isBoxy };
 })(typeof globalThis !== "undefined" ? globalThis : this);

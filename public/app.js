@@ -14135,6 +14135,12 @@ let globalTaste = {
  * so nothing that scores a canvas can reach them before they exist. */
 // Votes the factory tuning is worth when the crowd model is weighed against it.
 const CROWD_PRIOR_VOTES = 40;
+/* The owner's taste. The studio paints to one person's taste - whoever
+ * votes in this browser - rather than an average of everyone's: a few of
+ * your votes and your taste steers, wherever the crowd agrees or not, and
+ * what everyone else taught (the crowd's taste, their paintings' outcomes)
+ * stays only as a light fallback for what you have not voted on yet. */
+const OWNER_TASTE = { on: true, crowd: 0.25, halfVotes: 4 };
 // Your own votes at which you hold half of the say you can have on a feature.
 const PERSONAL_HALF_VOTES = 10;
 // The say this browser's own model keeps before any vote - the autonomous
@@ -14949,7 +14955,7 @@ async function pullTasteAgreement() {
 function crowdTasteTrust() {
   if (!globalTaste.ready) return 0;
   const votes = Math.max(0, Number(globalTaste.effectiveSampleCount) || 0);
-  return votes / (votes + CROWD_PRIOR_VOTES);
+  return votes / (votes + CROWD_PRIOR_VOTES) * (OWNER_TASTE.on ? OWNER_TASTE.crowd : 1);
 }
 
 // Your own evidence: explicit votes, plus lingering, which is a quieter vote.
@@ -14988,9 +14994,9 @@ function tasteLayers() {
     taste.samples.length, last?.at || 0, globalTaste.ready, globalTaste.effectiveSampleCount].join("|");
   if (tasteLayerCache && tasteLayerCache.key === key) return tasteLayerCache;
   const evidence = personalTasteEvidence();
-  const ramp = Math.max(PERSONAL_FLOOR, evidence / (evidence + PERSONAL_HALF_VOTES));
+  const ramp = Math.max(PERSONAL_FLOOR, evidence / (evidence + (OWNER_TASTE.on ? OWNER_TASTE.halfVotes : PERSONAL_HALF_VOTES)));
   const openness = { bias: ramp * 0.5 };
-  for (const feature of TASTE_FEATURES) openness[feature] = ramp * (1 - tasteAgreement(feature));
+  for (const feature of TASTE_FEATURES) openness[feature] = ramp * (OWNER_TASTE.on ? 1 : 1 - tasteAgreement(feature));
   const base = tasteBaseWeights();
   const weights = {};
   for (const feature of ["bias", ...TASTE_FEATURES]) {
@@ -32883,6 +32889,7 @@ function showMorphsPanel(view = "garden") {
   tab("garden", view === "garden", () => showMorphsPanel("garden"));
   tab("fonts", view === "fonts", () => showMorphsPanel("fonts"));
   tab("references", view === "references", () => showMorphsPanel("references"));
+  tab("growers", view === "growers", () => showMorphsPanel("growers"));
   tab("all living", view === "living", () => showMorphsPanel("living"));
   const close = document.createElement("button");
   close.textContent = "close"; close.style.cssText = small; close.onclick = () => panel.remove();
@@ -32892,6 +32899,7 @@ function showMorphsPanel(view = "garden") {
   if (view === "garden") { renderGarden(panel, small); return; }
   if (view === "fonts") { renderFontGarden(panel, small); return; }
   if (view === "references") { renderReferences(panel, small); return; }
+  if (view === "growers") { renderGrowerShelves(panel, small); return; }
   // Every living one, by clade (deepest last) and species.
   const byClade = new Map();
   for (const m of pop.members) {
@@ -32934,6 +32942,257 @@ function showMorphsPanel(view = "garden") {
   }
 }
 if (SHOW_MORPHS && typeof window !== "undefined") window.addEventListener("load", () => setTimeout(showMorphsPanel, 800));
+
+/* ── Growers: rules played out, the best outcomes kept ─────────────────
+ * A thing with a grower (words/hexfield-growers.js) is not drawn from one
+ * idea of it but grown: its rules are played out over its life - a fern's
+ * crown putting up fronds that unroll, arch and yellow - and the best day of
+ * it is kept. Here those outcomes are bred and kept, a few at a time in the
+ * background: a new set of rules (from the best kept ones, nudged or
+ * crossed, now and then a fresh one) is grown through its life, judged by
+ * the grower's own rules of a good picture of it and by your taste, and the
+ * best day goes on its kind's shelf if it beats the weakest there. Each kept
+ * outcome is a snapshot - its rules, its day and angle, a thumbnail and the
+ * room it takes - so the painter drops it in without growing or composing it
+ * again (the drawing is grown once and held). Paintings it is in judge it,
+ * and your keeps and rejects count most; ?morphs shows the shelves. */
+const GROWER_LIB_KEY = "hexfield.growers.v1";
+const GROWER_LIB = { cap: 12, days: 5, everyMs: 7000, firstMs: 9000, thumb: 72, duplicate: 0.05, seedFresh: 0.15, cross: 0.35 };
+const growing = { running: true, timer: null, steps: 0 };
+let growerLib = null;
+// A kept outcome's drawing, grown once (its snapshot's vector form).
+const growerDrawings = new Map();
+function growerLibrary() {
+  if (growerLib) return growerLib;
+  try { growerLib = JSON.parse(localStorage.getItem(GROWER_LIB_KEY) || "null"); } catch { growerLib = null; }
+  if (!growerLib?.kinds) growerLib = { kinds: {} };
+  return growerLib;
+}
+function saveGrowerLibrary() {
+  try { localStorage.setItem(GROWER_LIB_KEY, JSON.stringify(growerLibrary())); } catch { /* full storage: memory only */ }
+}
+const growerShelf = (kind) => (growerLibrary().kinds[kind] ||= { gen: 0, next: 1, outcomes: [] });
+function growerDrawing(outcome) {
+  let entry = growerDrawings.get(outcome.id);
+  if (!entry) {
+    entry = globalThis.HexfieldGrowers.grow(outcome.genes, { age: outcome.age, yaw: outcome.yaw, pitch: outcome.pitch });
+    growerDrawings.set(outcome.id, entry);
+  }
+  return entry;
+}
+/* How good a kept outcome is: its rules' judgement and your taste at first,
+ * then more and more what paintings and your votes said. */
+function growerRank(o) {
+  const votes = (o.kept || 0) - 0.8 * (o.rejected || 0), said = (o.kept || 0) + (o.rejected || 0);
+  const painted = o.paintN ? (o.paintSum / o.paintN - 0.5) * Math.min(1, o.paintN / 4) : 0;
+  return 0.6 * (o.judge || 0) + 0.4 * (Number.isFinite(o.taste) ? o.taste : 0.5) + 0.35 * votes / (said + 1) + 0.3 * painted;
+}
+/* Your taste for a grown drawing, alone on a plain ground (small: the same
+ * features the painting's taste reads). */
+function growerTaste(entry, size = 64) {
+  const Visual = globalThis.HexfieldVisual;
+  const canvas = paintBuffer(size, size), ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.fillStyle = "#d9d3c0"; ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = "#9aa07c"; ctx.fillRect(0, size * 0.8, size, size * 0.2);
+  const h = size * 0.7, w = Math.min(size * 0.92, h * entry.aspect), hh = w / entry.aspect;
+  Visual.paint(ctx, size, size, [{ key: entry.grower, entry, box: { x: (size - w) / 2, y: size * 0.86 - hh, w, h: hh }, alpha: 1 }], mulberry32(0x9e0));
+  let taste = 0.5;
+  try { taste = tastePrediction(tasteFeatures(ctx, size, size, signature(ctx, size, size))); } catch { /* no taste yet */ }
+  canvas.width = 0;
+  return taste;
+}
+// A kept outcome's thumbnail, for the shelves.
+function growerThumb(entry, size = GROWER_LIB.thumb) {
+  const canvas = paintBuffer(size, size), ctx = canvas.getContext("2d");
+  const h = size * 0.86, w = Math.min(size * 0.96, h * entry.aspect), hh = w / entry.aspect;
+  globalThis.HexfieldVisual.paint(ctx, size, size, [{ key: entry.grower, entry, box: { x: (size - w) / 2, y: size * 0.95 - hh, w, h: hh }, alpha: 1 }], mulberry32(0x9e1));
+  let url = null;
+  try { url = canvas.toDataURL("image/webp", 0.7); } catch { /* no thumbnail */ }
+  canvas.width = 0;
+  return url && url.startsWith("data:image/webp") ? url : null;
+}
+/* One step of breeding a kind: new rules, grown through their life, the
+ * best day judged and kept if it earns a place. Its own chance (not
+ * Math.random), so it never shifts a painting's choices. */
+function breedGrower(kind, rng = mulberry32((Date.now() ^ Math.imul(growing.steps + 1, 0x9e3779b1)) >>> 0)) {
+  const G = globalThis.HexfieldGrowers;
+  if (!G?.GROWERS?.[kind] || !globalThis.HexfieldVisual) return null;
+  const shelf = growerShelf(kind), kept = shelf.outcomes;
+  const parent = () => {
+    let best = null;
+    for (let i = 0; i < 3; i++) { const o = kept[Math.floor(rng() * kept.length)]; if (!best || growerRank(o) > growerRank(best)) best = o; }
+    return best;
+  };
+  let genes, parents = [];
+  if (kept.length < 3 || rng() < GROWER_LIB.seedFresh) genes = G.seed(kind, rng);
+  else if (kept.length > 1 && rng() < GROWER_LIB.cross) {
+    const a = parent(); let b = parent(); if (b === a) b = kept[Math.floor(rng() * kept.length)];
+    genes = G.mutate(G.crossover(a.genes, b.genes, rng), rng, 0.15); parents = [a.id, b.id];
+  } else { const a = parent(); genes = G.mutate(a.genes, rng, 0.3); parents = [a.id]; }
+  // Played out through its life; the best day of it, seen from a few angles.
+  const life = G.lifespan(genes);
+  let best = null;
+  for (let k = 0; k < GROWER_LIB.days; k++) {
+    const age = life * (0.1 + 0.85 * (k + rng()) / GROWER_LIB.days);
+    const yaw = rng() * Math.PI * 2, pitch = 0.1 + rng() * 0.25;
+    const entry = G.grow(genes, { age, yaw, pitch });
+    const judged = G.judge(entry);
+    if (!best || judged.score > best.judge) best = { age, yaw, pitch, entry, judge: judged.score, reasons: judged.reasons };
+  }
+  growing.steps++;
+  const outcome = {
+    id: kind[0] + shelf.next++, genes, parents, gen: shelf.gen++, born: Date.now(),
+    age: +best.age.toFixed(3), yaw: +best.yaw.toFixed(4), pitch: +best.pitch.toFixed(4),
+    judge: +best.judge.toFixed(4), taste: +growerTaste(best.entry).toFixed(4),
+    aspect: +best.entry.aspect.toFixed(4), size: best.entry.size, kept: 0, rejected: 0, used: 0, paintN: 0, paintSum: 0,
+  };
+  // A near copy of a kept one takes its place only if better.
+  const twin = kept.find((o) => G.distance(o.genes, genes) < GROWER_LIB.duplicate);
+  const rank = growerRank(outcome);
+  if (twin) {
+    if (rank <= growerRank(twin) || twin.kept > twin.rejected) { saveGrowerLibrary(); return null; }
+    kept.splice(kept.indexOf(twin), 1);
+    growerDrawings.delete(twin.id);
+  } else if (kept.length >= GROWER_LIB.cap) {
+    // The weakest goes - never one you kept more than rejected.
+    const weakest = kept.filter((o) => !(o.kept > o.rejected)).sort((a, b) => growerRank(a) - growerRank(b))[0];
+    if (!weakest || growerRank(weakest) >= rank) { saveGrowerLibrary(); return null; }
+    kept.splice(kept.indexOf(weakest), 1);
+    growerDrawings.delete(weakest.id);
+  }
+  outcome.snap = growerThumb(best.entry);
+  growerDrawings.set(outcome.id, best.entry);
+  kept.push(outcome);
+  saveGrowerLibrary();
+  return outcome;
+}
+/* In the background, a step every few seconds while the page is seen, each
+ * kind in turn - the shelves fill and improve while the studio paints. */
+function scheduleGrowerBreeding(delay = GROWER_LIB.everyMs) {
+  if (typeof window === "undefined" || growing.timer) return;
+  growing.timer = setTimeout(() => {
+    growing.timer = null;
+    if (!growing.running) return;
+    const kinds = Object.keys(globalThis.HexfieldGrowers?.GROWERS || {});
+    const step = () => {
+      if (!document.hidden && kinds.length) {
+        try { breedGrower(kinds[growing.steps % kinds.length]); } catch (error) { console.warn("grower step skipped", error); }
+      }
+      scheduleGrowerBreeding();
+    };
+    if (typeof requestIdleCallback === "function") requestIdleCallback(step, { timeout: 2000 }); else step();
+  }, delay);
+}
+/* The kept outcomes a painting uses for a kind: as many as it has copies,
+ * different ones, the better ranked likelier (and the least used, so the
+ * same fern is not every fern). A shelf too bare is filled first, there
+ * and then. */
+function pickGrowerOutcomes(kind, n, rng) {
+  const shelf = growerShelf(kind);
+  for (let i = 0; shelf.outcomes.length < 3 && i < 8; i++) breedGrower(kind, mulberry32((Math.floor(rng() * 4294967296) ^ i) >>> 0));
+  const pool = shelf.outcomes.slice();
+  const picked = [];
+  while (picked.length < n && pool.length) {
+    const weights = pool.map((o) => Math.exp((growerRank(o) - 0.1 * Math.min(5, o.used || 0)) * 6));
+    let r = rng() * weights.reduce((a, b) => a + b, 0), k = 0;
+    while (k < pool.length - 1 && (r -= weights[k]) > 0) k++;
+    picked.push(pool.splice(k, 1)[0]);
+  }
+  // More copies than kept outcomes: around again.
+  for (let i = 0; picked.length < n && picked.length; i++) picked.push(picked[i]);
+  return picked;
+}
+/* The words name a grown kind: its subject takes kept outcomes - one per
+ * copy - instead of a drawn idea. */
+function growSceneSubjects(read, rng) {
+  const G = globalThis.HexfieldGrowers;
+  if (!G) return null;
+  const used = [];
+  for (const s of read.subjects) {
+    const kind = s.entry?.grower;
+    if (!kind) continue;
+    const picked = pickGrowerOutcomes(kind, Math.max(1, s.count), rng);
+    if (!picked.length) continue;
+    s.variants = picked.map((o) => ({ ...growerDrawing(o), outcome: o.id }));
+    s.entry = s.variants[0];
+    for (const o of picked) { o.used = (o.used || 0) + 1; if (!used.some((u) => u.id === o.id)) used.push({ kind, id: o.id }); }
+  }
+  if (used.length) saveGrowerLibrary();
+  return used.length ? used : null;
+}
+/* What a painting says about the grown things in it. */
+function growerOutcomes(used, { taste = null, vote = 0 }) {
+  if (!used?.length) return;
+  for (const { kind, id } of used) {
+    const o = growerShelf(kind).outcomes.find((x) => x.id === id);
+    if (!o) continue;
+    if (Number.isFinite(taste)) { o.paintN = (o.paintN || 0) + 1; o.paintSum = (o.paintSum || 0) + taste; }
+    if (vote > 0) o.kept = (o.kept || 0) + 1;
+    if (vote < 0) o.rejected = (o.rejected || 0) + 1;
+  }
+  saveGrowerLibrary();
+}
+/* Each word a grower names reads as its kind, drawn from its best kept
+ * outcome (the painting swaps in its own picks, growSceneSubjects). */
+function registerGrowerWords() {
+  const G = globalThis.HexfieldGrowers, Visual = globalThis.HexfieldVisual;
+  if (!G || !Visual?.grows) return;
+  for (const [word, kind] of Object.entries(G.WORDS)) {
+    Visual.grows(word, kind, () => {
+      const best = growerShelf(kind).outcomes.slice().sort((a, b) => growerRank(b) - growerRank(a))[0]
+        || breedGrower(kind, mulberry32(0x6fe2));
+      return best ? growerDrawing(best) : null;
+    });
+  }
+}
+if (typeof window !== "undefined") {
+  registerGrowerWords();
+  scheduleGrowerBreeding(GROWER_LIB.firstMs);
+}
+
+/* The shelves (?morphs, "growers"): every kept outcome by kind with its
+ * snapshot, what its rules and your taste made of it, and your say. */
+function renderGrowerShelves(panel, small) {
+  const G = globalThis.HexfieldGrowers;
+  if (!G) return;
+  for (const kind of Object.keys(G.GROWERS)) {
+    const shelf = growerShelf(kind);
+    const row = document.createElement("div");
+    row.style.cssText = "margin:10px 0;padding:8px;background:#f7f3ea;border-radius:8px";
+    const t = document.createElement("div");
+    t.textContent = `${kind} · ${shelf.outcomes.length} kept of ${shelf.gen} grown · best first`;
+    t.style.fontWeight = "bold";
+    row.appendChild(t);
+    const breed = document.createElement("button");
+    breed.textContent = "grow 10 more"; breed.style.cssText = small;
+    breed.onclick = () => { for (let i = 0; i < 10; i++) breedGrower(kind); showMorphsPanel("growers"); };
+    row.appendChild(breed);
+    const strip = document.createElement("div");
+    strip.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px";
+    for (const o of shelf.outcomes.slice().sort((a, b) => growerRank(b) - growerRank(a))) {
+      const cell = document.createElement("div");
+      cell.style.cssText = "width:120px;text-align:center;font-size:11px";
+      const c = document.createElement("canvas"); c.width = 120; c.height = 110;
+      c.style.cssText = "background:#efe9dc;border-radius:6px;width:120px;height:110px";
+      const entry = growerDrawing(o), ctx = c.getContext("2d");
+      const h = 100, w = Math.min(114, h * entry.aspect), hh = w / entry.aspect;
+      globalThis.HexfieldVisual.paint(ctx, 120, 110, [{ key: kind, entry, box: { x: (120 - w) / 2, y: 106 - hh, w, h: hh }, alpha: 1 }], mulberry32(0x9e1));
+      cell.appendChild(c);
+      const line = document.createElement("div");
+      line.textContent = `${o.id} · day ${o.age.toFixed(0)} · rules ${o.judge.toFixed(2)} · taste ${Number(o.taste).toFixed(2)} · kept ${o.kept || 0}/${o.rejected || 0} · used ${o.used || 0}`;
+      cell.appendChild(line);
+      for (const [label, vote] of [["keep", 1], ["reject", -1]]) {
+        const b = document.createElement("button");
+        b.textContent = label; b.style.cssText = small + ";margin:2px";
+        b.onclick = () => { growerOutcomes([{ kind, id: o.id }], { vote }); showMorphsPanel("growers"); };
+        cell.appendChild(b);
+      }
+      strip.appendChild(cell);
+    }
+    row.appendChild(strip);
+    panel.appendChild(row);
+  }
+}
 
 /* What a painting says about the body in it. */
 function morphOutcome(morph, { taste = null, vote = 0 }) {
@@ -33359,6 +33618,8 @@ function planScene(params, width, height, fx, drawSeed, ref = null, blobs = null
     for (const s of hostless) s.attach = { blob: 0, spot: blobSpot(s) };
   }
   const rng = mulberry32(((Number(drawSeed) || 0) ^ 0x5ce4e) >>> 0);
+  // Things grown from rules take kept outcomes, one per copy (Growers).
+  const growers = growSceneSubjects(read, rng);
   // Each named thing is painted a little differently each time, around what
   // votes have taught that word so far (see "Words learn their look").
   const variations = {};
@@ -33387,7 +33648,7 @@ function planScene(params, width, height, fx, drawSeed, ref = null, blobs = null
     variations, votes: { kept: false, rejected: false },
     strength: Math.min(0.95, SCENE_STRENGTH * (1 + 0.15 * literal)),
     lettering: null, sharp: null,
-    perspective: persp, view: laid.view || null, forms,
+    perspective: persp, view: laid.view || null, forms, growers,
   };
   if (letters) planLettering(scene, letters, params, read, laid, rng);
   return scene;
@@ -40186,6 +40447,7 @@ function recordStyleOutcome(plan, source) {
   styleOutcomeQueue.push(row);
   pushStyleOutcomes();
   if (plan.morph) morphOutcome(plan.morph, { taste });
+  if (plan.scene?.growers) growerOutcomes(plan.scene.growers, { taste });
   try { considerSelfReference(plan, taste); } catch (error) { console.warn("self reference skipped", error); }
   return row;
 }
@@ -40239,8 +40501,11 @@ function computeStyleOutcomeStats() {
     (Number.isFinite(Number(row.taste)) || row.source === "kept" || row.source === "rejected"));
   const scored = styleOutcomeScores(rows);
   const stats = { rows: rows.length, pairs: new Map(), tunes: {} };
+  // Your own paintings in full; everyone else's lightly (Owner's taste).
+  const own = new Set(styleOutcomes.map((row) => row.id));
   for (const row of rows) {
-    const { score, weight } = scored.get(row) || { score: 0, weight: 0 };
+    const { score, weight: given } = scored.get(row) || { score: 0, weight: 0 };
+    const weight = own.has(row.id) || !OWNER_TASTE.on ? given : given * OWNER_TASTE.crowd;
     if (!weight) continue;
     // A look's tuned value, weighted toward its better paintings.
     const tv = Number(row.chain?.tune?.v);
@@ -40364,6 +40629,7 @@ function recordStyleVote(plan, liked) {
   styleOutcomeQueue.push(row);
   pushStyleOutcomes();
   if (plan.morph) morphOutcome(plan.morph, { vote: liked ? 1 : -1 });
+  if (plan.scene?.growers) growerOutcomes(plan.scene.growers, { vote: liked ? 1 : -1 });
   return row;
 }
 
