@@ -3849,10 +3849,13 @@
     const out = [];
     for (const item of items) {
       if (item.entry.kind !== "subject") continue;
-      const [h, sat, l] = item.colour || Object.values(item.entry.colours)[0];
-      const a = (sat / 100) * Math.min(l / 100, 1 - l / 100);
-      const f = (n) => { const k = (n + h / 30) % 12; return Math.round(255 * (l / 100 - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)))); };
-      out.push([f(0), f(8), f(4)]);
+      // Its main colour, and any it says it cannot lose (a face's ink and eyes).
+      const keep = [item.colour || Object.values(item.entry.colours)[0], ...(item.entry.keepColours || []).map((k) => item.entry.colours[k]).filter(Boolean)];
+      for (const [h, sat, l] of keep) {
+        const a = (sat / 100) * Math.min(l / 100, 1 - l / 100);
+        const f = (n) => { const k = (n + h / 30) % 12; return Math.round(255 * (l / 100 - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)))); };
+        out.push([f(0), f(8), f(4)]);
+      }
     }
     return out;
   }

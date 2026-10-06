@@ -33262,7 +33262,7 @@ function scheduleGrowerBreeding(delay = GROWER_LIB.everyMs * (isMobileBrowser() 
 /* Kinds cheap enough to grow there and then when a painting needs one and
  * the shelf is bare; the others are painted from their written drawing
  * until the background has grown some. */
-const GROWER_SYNC = { fern: 3 };
+const GROWER_SYNC = { fern: 3, face: 3 };
 function pickGrowerOutcomes(kind, n, rng, traits = null) {
   const shelf = growerShelf(kind);
   for (let i = 0; shelf.outcomes.length < (GROWER_SYNC[kind] || 0) && i < 8; i++) breedGrower(kind, mulberry32((Math.floor(rng() * 4294967296) ^ i) >>> 0));
@@ -33295,6 +33295,11 @@ function growerDrawingFor(o, traits, rng) {
   if (!entry) {
     const G = globalThis.HexfieldGrowers, genes = { ...o.genes, ...traits.set };
     for (const [gene, options] of Object.entries(traits.match)) if (!options.includes(genes[gene])) genes[gene] = options[Math.floor(rng() * options.length)];
+    // A face given another head takes that head's usual parts, then what the words ask.
+    if (genes.kind === "face" && genes.head !== o.genes.head && G.FACE_DEFAULTS?.[genes.head]) {
+      Object.assign(genes, G.FACE_DEFAULTS[genes.head]);
+      for (const [gene, options] of Object.entries(traits.match)) if (gene !== "head" && !options.includes(genes[gene])) genes[gene] = options[Math.floor(rng() * options.length)];
+    }
     // An age is of its growing up: years for a cat, a share of its years for a tree.
     const age = traits.age == null ? o.age : genes.kind === "cat" ? traits.age : traits.age * (genes.years || 1);
     entry = G.grow(genes, { age, yaw: o.yaw, pitch: o.pitch });
@@ -33308,6 +33313,15 @@ function growSceneSubjects(read, rng, text = "") {
   const G = globalThis.HexfieldGrowers;
   if (!G) return null;
   const used = [];
+  /* "A cat face" is one face with a cat's head, not a cat and a face; "an
+   * old man portrait" one face, not a face and a man. */
+  const said = String(text).toLowerCase();
+  if (read.subjects.some((s) => s.entry?.grower === "face")) {
+    const drop = new Set();
+    if (/\b(cat|kitty|kitten)'?s?\s+(face|portrait|head)\b/.test(said)) drop.add("cat");
+    if (/\b(portrait|face|head)\b/.test(said) && /\b(man|woman|person|boy|girl|lady|guy|child|old)\b/.test(said)) drop.add("person");
+    for (let i = read.subjects.length - 1; i >= 0; i--) if (drop.has(read.subjects[i].key) && !read.subjects[i].attach) read.subjects.splice(i, 1);
+  }
   for (const s of read.subjects) {
     const kind = s.entry?.grower || s.growKind;
     if (!kind || !G.GROWERS[kind]) continue;
@@ -38920,7 +38934,8 @@ function drawnBoxes(plan, vx, horizon, width, height) {
   if (!Visual?.frameOf) return [];
   const out = [];
   for (const item of plan.scene?.items || []) {
-    if (item.entry?.kind !== "subject" || item.lettering || !item.box || item.entry.anchor === "sky" || item.attach) continue;
+    // (Things standing on the ground: not the sky's, not a portrait's centred head.)
+    if (item.entry?.kind !== "subject" || item.lettering || !item.box || item.entry.anchor !== "ground" || item.attach) continue;
     if (item.box.w < width * 0.03 || item.box.h < height * 0.03) continue;
     const frame = Visual.frameOf(item, { vanish: [vx, horizon] });
     out.push({ item, frame, boxy: Boolean(Visual.isBoxy?.(item)) });
@@ -39154,11 +39169,14 @@ function applyHatchShade(pixels, width, height, plan, amount = 1) {
   const dir = Math.cos(plan.lightAngle || 0) >= 0 ? 1 : -1;
   // (Never over the lettering. Where it is hatched is kept for the ink pass.)
   const letterAt = plan.scene?.lettering ? letteringContains(plan.scene.lettering) : null;
+  // (Nor over a face: its eyes are dark, not in shade.)
+  const bare = (plan.scene?.items || []).filter((it) => it.entry?.noHatch && it.box).map((it) => it.box);
+  const unhatched = (x, y) => bare.some((b) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
   const mask = new Uint8Array(width * height);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const o = (y * width + x) * 4, l = lum(o);
-      if (l >= shade || (letterAt && letterAt(x, y))) continue;
+      if (l >= shade || (letterAt && letterAt(x, y)) || (bare.length && unhatched(x, y))) continue;
       mask[y * width + x] = l < deep ? 2 : 1;
       const a = ((x * dir + y) % gap + gap) % gap < line, b = l < deep && ((x * -dir + y) % gap + gap) % gap < line;
       if (!a && !b) continue;
@@ -39252,7 +39270,7 @@ function* finishPlanReferenceSteps(composed, width, height, plan) {
     for (const colour of plan.scene ? globalThis.HexfieldVisual.subjectColours(plan.scene.items) : []) {
       const near = nearestPaletteColour(plan.palette, colour[0], colour[1], colour[2]);
       const d = Math.hypot(near[0] - colour[0], near[1] - colour[1], near[2] - colour[2]);
-      if (d > 40 && plan.palette.length < planPaletteSize(plan) + 4) plan.palette.push(colour);
+      if (d > 40 && plan.palette.length < planPaletteSize(plan) + 9) plan.palette.push(colour);
     }
     // ...and under the light, their lit and shaded sides, so the palette can
     // still say where the light falls.

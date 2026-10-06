@@ -960,6 +960,219 @@
     return { score: Math.exp(s / w), reasons };
   }
 
+  /* ── Faces ────────────────────────────────────────────────────────────
+   * A face is a head and its parts, each part one of a few shapes, and any
+   * shape may go on any head - a cartoon eye is a frog's eye is a cat's eye.
+   * Heads: the angular cat (wide at the top, ears out, cheeks in jagged
+   * tufts), the dome (a half round on its flat), the long face with a hood
+   * of hair, the loaf. Parts: eyes (almond with a slit pupil, round with a
+   * heavy lid and a glint, a dot, a ring, shut), brows (thick, cross,
+   * raised), noses (the cat's triangle, a contour line, a dot), mouths (a
+   * grin with fangs and tongue, open with teeth, a smile, a flat line, an
+   * O), ears (cat's triangles, a C-curve), cheeks (tufts, blush, whisker
+   * dots, jowl lines). A mood chooses parts the way a face does: sleepy
+   * shuts the eyes, cross pulls the brows down and the mouth flat,
+   * surprised rounds eyes and mouth, snarling bares the fangs. Drawn as a 2D
+   * line drawing: flat fills under an ink line. */
+  const FACE_HEADS = ["cat", "dome", "long", "loaf"];
+  const FACE = {
+    kind: "face",
+    numeric: [
+      ["width", 0.7, 1.15, 0.06],      // head width over height
+      ["eyeY", -0.25, 0.05, 0.04],     // eye line, from the head's middle
+      ["eyeGap", 0.2, 0.42, 0.03],     // eye centres apart (half)
+      ["eyeSize", 0.1, 0.24, 0.02],
+      ["noseY", 0.05, 0.3, 0.03],
+      ["noseSize", 0.06, 0.18, 0.02],
+      ["mouthY", 0.3, 0.6, 0.04],
+      ["mouthW", 0.22, 0.55, 0.04],
+      ["earSize", 0.22, 0.5, 0.04],
+      ["hue", 0, 360, 30, true], ["sat", 10, 70, 8, true], ["light", 30, 82, 8, true],
+      ["eyeHue", 30, 220, 25, true],
+    ],
+    choices: [
+      ["head", FACE_HEADS],
+      ["eyes", ["slit", "lidded", "dot", "ring", "shut"]],
+      ["brows", ["none", "thick", "cross", "raised"]],
+      ["nose", ["triangle", "contour", "dot", "none"]],
+      ["mouth", ["fangs", "teeth", "smile", "flat", "o"]],
+      ["ears", ["cat", "c", "none"]],
+      ["cheeks", ["tufts", "blush", "whiskers", "jowls", "none"]],
+      ["mood", ["happy", "sleepy", "cross", "surprised", "snarl", "plain"]],
+      ["hair", ["none", "hood", "tuft"]],
+    ],
+    lifespan: () => 1,
+    grow: growFace,
+    judge: judgeFace,
+  };
+  // What each head usually has, before breeding moves parts between them.
+  const FACE_DEFAULTS = {
+    cat: { eyes: "slit", nose: "triangle", mouth: "fangs", ears: "cat", cheeks: "tufts", hair: "none", brows: "none" },
+    dome: { eyes: "dot", nose: "none", mouth: "smile", ears: "cat", cheeks: "whiskers", hair: "none", brows: "none" },
+    long: { eyes: "lidded", nose: "contour", mouth: "teeth", ears: "c", cheeks: "jowls", hair: "hood", brows: "thick" },
+    loaf: { eyes: "dot", nose: "none", mouth: "smile", ears: "none", cheeks: "blush", hair: "none", brows: "none" },
+  };
+  // A mood's parts, over whatever the face has.
+  const FACE_MOODS = {
+    sleepy: { eyes: "shut", mouth: "smile" },
+    cross: { brows: "cross", mouth: "flat" },
+    surprised: { eyes: "ring", mouth: "o", brows: "raised" },
+    snarl: { mouth: "fangs", brows: "cross" },
+    happy: {},
+    plain: {},
+  };
+  function faceSeed(rng) {
+    const g = seedFrom(FACE, rng);
+    // A face starts as its head usually is; breeding moves parts about.
+    Object.assign(g, FACE_DEFAULTS[g.head]);
+    if (g.head === "long") { g.hue = 20 + Math.floor(rng() * 20); g.sat = 25 + Math.floor(rng() * 30); g.light = 40 + Math.floor(rng() * 40); }
+    return g;
+  }
+
+  function growFace(g) {
+    const parts = [];   // in face space: x across (-1..1), y down (-1..1)
+    const P = (shape, pts, colour, extra = {}) => parts.push({ shape, pts, colour, ...extra });
+    const L = (pts, width = 0.035, colour = "ink") => parts.push({ shape: "line", pts, width, colour });
+    const parts2 = { ...g, ...(FACE_MOODS[g.mood] || {}) };
+    const W = g.width, head = g.head;
+    const ell = (cx, cy, rx, ry, n = 24, a0 = 0, a1 = Math.PI * 2) => Array.from({ length: n + 1 }, (_, i) => { const a = a0 + (a1 - a0) * i / n; return [cx + Math.cos(a) * rx, cy + Math.sin(a) * ry]; });
+    // ── The hair or hood, behind the head.
+    if (parts2.hair === "hood" && head !== "cat") P("poly", [[-W * 0.95, 1.05], [-W * 0.75, -0.75], [-W * 0.3, -1.08], [W * 0.45, -1.02], [W * 0.82, -0.7], [W * 1.05, 1.05], [W * 0.6, 0.98], [W * 0.2, 1.08], [-W * 0.25, 1.0]], "hair");
+    // ── Ears, behind the head.
+    const es = g.earSize;
+    if (parts2.ears === "cat") {
+      for (const s of [-1, 1]) {
+        const base = head === "cat" ? [[s * W * 0.95, -0.55], [s * W * 0.45, -0.92]] : [[s * W * 0.7, -0.35], [s * W * 0.25, -0.88]];
+        const tip = [s * (W * 0.95 + es * 0.4), -1 - es * 1.3];
+        P("poly", [base[0], tip, base[1]], "skin");
+        P("poly", [[base[0][0] * 0.92 + tip[0] * 0.08, base[0][1] - 0.04], [tip[0] * 0.75 + base[1][0] * 0.25, tip[1] * 0.75 + base[1][1] * 0.25], [base[1][0], base[1][1] + 0.02]], "inner");
+      }
+    } else if (parts2.ears === "c") {
+      for (const s of [-1, 1]) P("poly", ell(s * W * 0.98, 0.05, es * 0.35, es * 0.6, 14, s > 0 ? -Math.PI / 2 : Math.PI / 2, s > 0 ? Math.PI / 2 : Math.PI * 1.5), "skin");
+    }
+    // ── The head.
+    let outline;
+    if (head === "cat") {
+      // Wide at the brow, jagged tufts at the cheeks, a round chin.
+      const tuft = parts2.cheeks === "tufts";
+      outline = [[-W, -0.6], [-W * 0.5, -0.92], [0, -0.85], [W * 0.5, -0.92], [W, -0.6], [W * 1.02, 0.1],
+        ...(tuft ? [[W * 1.12, 0.35], [W * 0.92, 0.38], [W * 1.05, 0.62], [W * 0.82, 0.6]] : [[W * 0.95, 0.5]]),
+        [W * 0.55, 0.92], [0, 1], [-W * 0.55, 0.92],
+        ...(tuft ? [[-W * 0.82, 0.6], [-W * 1.05, 0.62], [-W * 0.92, 0.38], [-W * 1.12, 0.35]] : [[-W * 0.95, 0.5]]), [-W * 1.02, 0.1]];
+    } else if (head === "dome") {
+      outline = [...ell(0, 0.55, W, 1.45, 28, Math.PI, Math.PI * 2), [W, 0.55], [-W, 0.55]];
+    } else if (head === "loaf") {
+      outline = [...ell(0, -0.3, W, 0.65, 20, Math.PI, Math.PI * 2), [W, 0.75], [W * 0.9, 0.9], [-W * 0.9, 0.9], [-W, 0.75]];
+    } else {
+      // A long face: brow, cheeks, a jaw a little heavy, a wavering chin.
+      outline = [[-W * 0.78, -0.75], [-W * 0.35, -0.98], [W * 0.35, -0.98], [W * 0.8, -0.72], [W * 0.92, -0.1], [W * 0.88, 0.45], [W * 0.62, 0.85], [W * 0.25, 1.0], [0, 0.97], [-W * 0.25, 1.02], [-W * 0.62, 0.86], [-W * 0.9, 0.45], [-W * 0.94, -0.1]];
+    }
+    P("poly", outline, "skin", { smooth: head !== "cat" });
+    L([...outline, outline[0]], 0.04);
+    // ── Cheeks.
+    if (parts2.cheeks === "blush") for (const s of [-1, 1]) P("ellipse", null, "blush", { box: [s * g.eyeGap * 1.3 - 0.13, g.mouthY - 0.18, 0.26, 0.14] });
+    if (parts2.cheeks === "whiskers") for (const s of [-1, 1]) for (let k = 0; k < 3; k++) P("ellipse", null, "ink", { box: [s * (g.eyeGap * 0.9 + k * 0.08) - 0.018, g.noseY + 0.12 + (k % 2) * 0.05 - 0.018, 0.036, 0.036] });
+    if (parts2.cheeks === "jowls") for (const s of [-1, 1]) L([[s * W * 0.5, 0.15], [s * W * 0.58, 0.45], [s * W * 0.42, 0.7]], 0.025);
+    // ── Eyes.
+    const er = g.eyeSize, ey = g.eyeY;
+    for (const s of [-1, 1]) {
+      const ex = s * g.eyeGap;
+      if (parts2.eyes === "slit") {
+        const almond = [...ell(ex, ey, er * 1.2, er * 0.7, 12, Math.PI, Math.PI * 2), ...ell(ex, ey, er * 1.2, er * 0.7, 12, 0, Math.PI)];
+        P("poly", almond, "eye");
+        P("poly", ell(ex, ey, er * 0.14, er * 0.65, 12), "pupil");
+        L([...almond, almond[0]], 0.028);
+        L([[ex - s * er * 1.5, ey - er * 0.35], [ex - s * er * 0.9, ey + er * 0.1]], 0.02);
+      } else if (parts2.eyes === "lidded") {
+        P("poly", ell(ex, ey, er, er * 0.95, 20), "white");
+        P("poly", ell(ex + s * er * 0.1, ey + er * 0.15, er * 0.32, er * 0.32, 12), "pupil");
+        P("poly", ell(ex + s * er * 0.2, ey + er * 0.02, er * 0.09, er * 0.09, 8), "white");
+        // The heavy lid, halfway down.
+        P("poly", [...ell(ex, ey, er * 1.02, er * 0.97, 12, Math.PI, Math.PI * 2), [ex + er, ey - er * 0.05], [ex - er, ey - er * 0.05]], "skin");
+        L(ell(ex, ey, er, er * 0.95, 20), 0.026);
+        L([[ex - er * 1.05, ey - er * 0.05], [ex + er * 1.05, ey - er * 0.05]], 0.03);
+      } else if (parts2.eyes === "dot") {
+        P("poly", ell(ex, ey, er * 0.38, er * 0.45, 12), "pupil");
+      } else if (parts2.eyes === "ring") {
+        P("poly", ell(ex, ey, er * 0.9, er * 0.9, 18), "white");
+        L(ell(ex, ey, er * 0.9, er * 0.9, 18), 0.028);
+        P("poly", ell(ex, ey, er * 0.3, er * 0.3, 10), "pupil");
+      } else {
+        L(ell(ex, ey - er * 0.1, er * 0.85, er * 0.45, 10, 0.15, Math.PI - 0.15), 0.035);
+      }
+      // ── Brows.
+      const by = ey - er * 1.6;
+      if (parts2.brows === "thick") P("poly", [[ex - er * 1.2, by + 0.02], [ex - er * 0.2, by - 0.05], [ex + er * 1.2, by - 0.02], [ex + er * 1.15, by + 0.06], [ex - er * 1.15, by + 0.09]], "hair");
+      else if (parts2.brows === "cross") L([[ex + s * er * 1.2, by - 0.08], [ex - s * er * 0.8, by + 0.08]], 0.05);
+      else if (parts2.brows === "raised") L(ell(ex, by + 0.02, er * 1.1, er * 0.5, 10, Math.PI * 1.1, Math.PI * 1.9), 0.035);
+    }
+    // ── Nose.
+    const ny = g.noseY, ns = g.noseSize;
+    if (parts2.nose === "triangle") {
+      const tri = [[-ns, ny - ns * 0.5], [ns, ny - ns * 0.5], [0, ny + ns * 0.6]];
+      P("poly", tri, "nose"); L([...tri, tri[0]], 0.03);
+      L([[0, ny + ns * 0.6], [0, ny + ns * 1.2]], 0.028);
+      // The line down from between the eyes, as the sketch has it.
+      L([[0, g.eyeY], [-ns * 0.9, ny - ns * 0.5]], 0.02); L([[0, g.eyeY], [ns * 0.9, ny - ns * 0.5]], 0.02);
+    } else if (parts2.nose === "contour") {
+      L([[-ns * 0.3, g.eyeY + 0.05], [-ns * 0.6, ny], [-ns * 1.2, ny + ns * 0.7], [-ns * 0.6, ny + ns * 1.1], [0, ny + ns * 0.9], [ns * 0.6, ny + ns * 1.1], [ns * 1.1, ny + ns * 0.6]], 0.03);
+    } else if (parts2.nose === "dot") {
+      P("poly", ell(0, ny, ns * 0.35, ns * 0.25, 10), "nose");
+    }
+    // ── Mouth.
+    const my = g.mouthY, mw = g.mouthW;
+    if (parts2.mouth === "fangs" || parts2.mouth === "teeth") {
+      const open = [...ell(0, my - 0.05, mw, 0.24, 16, 0.05, Math.PI - 0.05), [-mw, my - 0.07], [mw, my - 0.07]];
+      P("poly", open, "mouth");
+      if (parts2.mouth === "fangs") {
+        for (const s of [-1, 1]) P("poly", [[s * mw * 0.75, my - 0.06], [s * mw * 0.45, my - 0.06], [s * mw * 0.6, my + 0.12]], "white");
+        P("poly", ell(0, my + 0.12, mw * 0.4, 0.08, 12), "tongue");
+      } else {
+        P("poly", [[-mw * 0.7, my - 0.06], [mw * 0.7, my - 0.06], [mw * 0.6, my + 0.03], [-mw * 0.6, my + 0.03]], "white");
+      }
+      L([...open, open[0]], 0.035);
+    } else if (parts2.mouth === "smile") {
+      L(ell(0, my - 0.12, mw * 0.8, 0.16, 12, 0.3, Math.PI - 0.3), 0.035);
+    } else if (parts2.mouth === "flat") {
+      L([[-mw * 0.6, my], [mw * 0.6, my + 0.01]], 0.035);
+    } else {
+      P("poly", ell(0, my, mw * 0.25, mw * 0.3, 14), "mouth"); L(ell(0, my, mw * 0.25, mw * 0.3, 14), 0.03);
+    }
+    // ── Fitted to a unit box.
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of parts) {
+      if (p.pts) for (const [x, y] of p.pts) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+      else { const [bx, by, bw, bh] = p.box; x0 = Math.min(x0, bx); x1 = Math.max(x1, bx + bw); y0 = Math.min(y0, by); y1 = Math.max(y1, by + bh); }
+    }
+    const bw = x1 - x0, bh = y1 - y0, r4 = (v) => Math.round(v * 1e4) / 1e4;
+    const U = ([x, y]) => [r4((x - x0) / bw), r4((y - y0) / bh)];
+    const out = parts.map((p) => p.shape === "ellipse"
+      ? { shape: "ellipse", box: [r4((p.box[0] - x0) / bw), r4((p.box[1] - y0) / bh), r4(p.box[2] / bw), r4(p.box[3] / bh)], colour: p.colour }
+      : p.shape === "line" ? { shape: "line", pts: p.pts.map(U), width: r4(p.width / bw), colour: p.colour }
+      : { shape: "poly", pts: p.pts.map(U), colour: p.colour, ...(p.smooth ? { smooth: true } : {}) });
+    const skin = [g.hue, g.sat, g.light];
+    const facts = { aspect: bw / bh, eyes: parts2.eyes, mouth: parts2.mouth, head, mood: g.mood, gap: g.eyeGap / W, eyeSize: g.eyeSize };
+    return {
+      kind: "subject", anchor: "centre", size: 0.62, aspect: Math.max(0.5, Math.min(1.6, bw / bh)), centred: true,
+      colours: { skin, hair: [g.hue, Math.min(60, g.sat + 10), Math.max(10, g.light - 35)], ink: [0, 0, 10], eye: [g.eyeHue, 70, 60],
+        pupil: [0, 0, 6], white: [40, 20, 96], inner: [350, 50, 75], nose: [350, 40, 45], mouth: [355, 55, 22], tongue: [350, 70, 65],
+        blush: [350, 70, 72] },
+      parts: out, grown: true, grower: "face", head: { x: 0.5, y: r4((-1 - y0) / bh), w: r4(2 * W / bw) }, facts,
+      // Small and telling: kept on any palette the painting is squeezed to.
+      keepColours: ["ink", "white", "pupil", "mouth", "eye"], noHatch: true,
+    };
+  }
+  /* A face that reads: its eyes a face's distance apart and of a face's
+   * size, its mouth under them, nothing crowded off the head. */
+  function judgeFace(entry) {
+    const f = entry.facts || {};
+    const band = (v, lo, hi, soft) => v < lo ? Math.max(0, 1 - (lo - v) / soft) : v > hi ? Math.max(0, 1 - (v - hi) / soft) : 1;
+    const reasons = { gap: band(f.gap, 0.22, 0.42, 0.1), eyes: band(f.eyeSize, 0.11, 0.22, 0.06), shape: band(f.aspect, 0.65, 1.4, 0.3) };
+    let s = 0;
+    for (const k in reasons) s += Math.log(Math.max(0.05, reasons[k]));
+    return { score: Math.exp(s / 3), reasons };
+  }
+
   /* ── Patches: things grown together ──────────────────────────────────
    * A scene sim: a few founders on a plot of ground - each one of the
    * kind's kept outcomes (their rules) - grow side by side for weeks. A
@@ -1124,7 +1337,7 @@
   }
 
   /* ── The growers ───────────────────────────────────────────────────── */
-  const GROWERS = { fern: FERN, tree: TREE, cat: CAT };
+  const GROWERS = { fern: FERN, tree: TREE, cat: CAT, face: FACE };
   // The words that name a grower's thing.
   // (Plurals are read as plurals by the dictionary: "ferns" is a few.)
   const WORDS = {
@@ -1132,6 +1345,7 @@
     tree: "tree", oak: "tree", willow: "tree", birch: "tree", maple: "tree", elm: "tree", poplar: "tree", cypress: "tree",
     aspen: "tree", beech: "tree", ash: "tree", sapling: "tree", grove: "tree", copse: "tree",
     cat: "cat", kitten: "cat", kitty: "cat", moggy: "cat", tabby: "cat",
+    face: "face", portrait: "face", grin: "face", smiley: "face", character: "face", critter: "face", mascot: "face", bun: "face",
   };
   // Words that say which of a kind: a shape it keeps (matched on the shelf),
   // or a setting of its rules, or an age (a share of its growing up).
@@ -1151,6 +1365,13 @@
       walking: { pose: "walk" }, prowling: { pose: "walk" }, stalking: { pose: "walk" }, standing: { pose: "stand" },
       lying: { pose: "loaf" }, loaf: { pose: "loaf" }, resting: { pose: ["loaf", "curl"] },
     },
+    face: {
+      cat: { head: ["cat", "dome"] }, kitty: { head: "dome" }, man: { head: "long" }, woman: { head: "long" }, old: { head: "long" },
+      person: { head: "long" }, bun: { head: "loaf" }, bread: { head: "loaf" }, blob: { head: ["loaf", "dome"] }, critter: { head: ["dome", "loaf"] },
+      happy: { mood: "happy", mouth: ["smile", "teeth"] }, smiling: { mood: "happy", mouth: ["smile", "teeth"] }, grinning: { mood: "happy", mouth: ["teeth", "fangs"] },
+      laughing: { mood: "happy", mouth: "teeth" }, sleepy: { mood: "sleepy" }, tired: { mood: "sleepy" }, angry: { mood: "cross" }, cross: { mood: "cross" },
+      grumpy: { mood: "cross" }, surprised: { mood: "surprised" }, shocked: { mood: "surprised" }, snarling: { mood: "snarl" }, fierce: { mood: "snarl" }, wild: { mood: "snarl" },
+    },
   };
   // What the words ask of a kind: { match: {gene: [options]}, set: {gene: value}, age }.
   function traitsOf(kind, text) {
@@ -1169,7 +1390,7 @@
     return out;
   }
 
-  function seed(kind, rng) { return seedFrom(GROWERS[kind], rng); }
+  function seed(kind, rng) { return kind === "face" ? faceSeed(rng) : seedFrom(GROWERS[kind], rng); }
   function mutate(genes, rng, rate) { return mutateBy(GROWERS[genes.kind], genes, rng, rate); }
   function crossover(a, b, rng) { return crossBy(GROWERS[a.kind], a, b, rng); }
   function distance(a, b) { return a.kind === b.kind ? distanceBy(GROWERS[a.kind], a, b) : 1; }
@@ -1192,5 +1413,5 @@
 
   // Kinds that grow together in patches (plants; a crowd of cats is another matter).
   FERN.patches = true; TREE.patches = true;
-  global.HexfieldGrowers = { GROWERS, WORDS, MASS, TRAITS, traitsOf, kindOfWord, seed, mutate, crossover, distance, grow, growAt, judge, lifespan, patches };
+  global.HexfieldGrowers = { GROWERS, WORDS, MASS, TRAITS, FACE_DEFAULTS, traitsOf, kindOfWord, seed, mutate, crossover, distance, grow, growAt, judge, lifespan, patches };
 })(typeof window !== "undefined" ? window : globalThis);
