@@ -111,7 +111,9 @@ def run_one(url, scene, config_js, seed, manner, cap_seconds):
         # Nor do the growers' shelves fill in the background (a bare shelf
         # paints the written drawing, the same every run).
         setup = ("if (typeof headlessSim !== 'undefined') { headlessSim.running = false; clearTimeout(headlessSim.timer); }; "
-                 "if (typeof growing !== 'undefined') { growing.running = false; clearTimeout(growing.timer); }; " + (config_js or ""))
+                 "if (typeof growing !== 'undefined') { growing.running = false; clearTimeout(growing.timer); }; "
+                 # Every run begins the same way (a config may set another opening).
+                 "if (typeof OPENING !== 'undefined') OPENING.force = 'copy'; " + (config_js or ""))
         if manner:
             setup += "; choosePlanManner = () => HexfieldCraft.manner(%s);" % json.dumps(manner)
         if setup.strip():

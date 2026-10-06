@@ -31689,12 +31689,12 @@ function wrapDirection(x, y, dx, dy, strength) {
   return [ox / ol, oy / ol];
 }
 
-function makePaintingPlan(ref, width, height, drawSeed, params = null) {
+function makePaintingPlan(ref, width, height, drawSeed, params = null, opening = null) {
   let { fx, fy } = strokeReferenceGradient(ref, width, height).focus;
   // Toward the thirds along the long side, toward the middle across it.
   const toThird = (v) => v + ((Math.abs(v - 1 / 3) < Math.abs(v - 2 / 3) ? 1 / 3 : 2 / 3) - v) * 0.6;
   if (width >= height) { fx = toThird(fx); fy += (0.45 - fy) * 0.4; } else { fy = toThird(fy); fx += (0.5 - fx) * 0.4; }
-  const plan = { fx, fy, lightOnDark: true, palette: null, drawSeed, style: paintingBrushStyle(params), scene: null };
+  const plan = { fx, fy, lightOnDark: true, palette: null, drawSeed, style: paintingBrushStyle(params), scene: null, opening };
   // Where the painting's focus goes - chosen, learned, and not the same as
   // the last few paintings (choosePlanComposition).
   plan.comp = choosePlanComposition(plan, ref, width, height, params);
@@ -31709,8 +31709,11 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
   /* Things the words name (visual dictionary, words/hexfield-visual.js): the
    * first one takes the focus, and the painting is built around it. */
   plan.blobs = findPaintingBlobs(ref, width, height);
-  plan.morph = chooseMorph(plan, ref, width, height, params);
-  const scene = planScene(params, width, height, fx, drawSeed, ref, plan.blobs, plan.comp ? fy : null, plan.morph);
+  // (An opening that shows things of its own needs no grown body.)
+  const seesThings = opening?.read && !globalThis.HexfieldVisual?.read(params?.__hexfieldWords?.text || "").subjects.length &&
+    opening.read.masses.some((m) => interpretMass(m, opening.read));
+  plan.morph = seesThings ? null : chooseMorph(plan, ref, width, height, params);
+  const scene = planScene(params, width, height, fx, drawSeed, ref, plan.blobs, plan.comp ? fy : null, plan.morph, opening);
   if (scene?.focus) { plan.fx = scene.focus.fx; plan.fy = scene.focus.fy; }
   plan.scene = scene;
   // Rain, snow, storm or fog in the words (Weather).
@@ -33826,12 +33829,14 @@ function orientGrownItems(laid, width, height, rng) {
   }
 }
 
-function planScene(params, width, height, fx, drawSeed, ref = null, blobs = null, fy = null, morph = null) {
+function planScene(params, width, height, fx, drawSeed, ref = null, blobs = null, fy = null, morph = null, opening = null) {
   const Visual = globalThis.HexfieldVisual;
   const text = params?.__hexfieldWords?.text || "";
   const letters = seedText().replace(/\s+/g, " ").slice(0, 24);
-  if (!Visual || (!text && !letters && !morph)) return null;
+  if (!Visual || (!text && !letters && !morph && !opening?.read)) return null;
   const read = Visual.read(text);
+  // On a sprayed or blobbed canvas, things go where its masses are (Openings).
+  if (opening?.read) placeOnMasses(read, opening, width, height, Visual);
   // A thing grown, not named (Morphology): the painting's subject when the
   // words name none.
   // (The garden's pick stands with the named things, too.)
@@ -33870,6 +33875,11 @@ function planScene(params, width, height, fx, drawSeed, ref = null, blobs = null
   const laid = layoutFor(persp?.settings || null);
   // Grown bodies turned to the scene's perspective (Seen from an angle).
   orientGrownItems(laid, width, height, mulberry32(((Number(drawSeed) || 0) ^ 0x0a6e) >>> 0));
+  // ...and into the masses they were given.
+  if (fitItemsToMasses(laid, width, height)) {
+    const main = laid.items.find((it) => it.main) || laid.items.find((it) => it.atMass);
+    if (main?.box) laid.focus = { fx: (main.box.x + main.box.w / 2) / width, fy: (main.box.y + main.box.h / 2) / height };
+  }
   const literal = Object.values(variations).reduce((sum, v) => sum + v.literal, 0) / Math.max(1, Object.keys(variations).length);
   const scene = {
     words: read.words, items: laid.items, focus: laid.focus, width, height, layer: null,
@@ -34349,6 +34359,7 @@ function recordVisualVote(liked) {
   if (plan?.abstraction) variations[abstractionVoteWord(plan.abstraction.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.turn) variations[turnVoteWord(plan.turn.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.application) variations[applyVoteWord(plan.application.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  if (plan?.opening) variations[openingVoteWord(plan.opening.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.anatomy) variations[anatomyVoteWord(plan.anatomy.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.figure) variations[figureVoteWord(plan.figure.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.refColour) variations["refcolour" + plan.refColour.key] = { size: 0, hue: 0, light: 0, literal: 0 };
@@ -34388,6 +34399,7 @@ function paintingChoices(plan) {
   if (plan.abstraction) add(plan.abstraction.name, abstractionVoteWord(plan.abstraction.key));
   if (plan.turn) add("turned " + plan.turn.name, turnVoteWord(plan.turn.key));
   if (plan.application) add(plan.application.name, applyVoteWord(plan.application.key));
+  if (plan.opening) add("began " + plan.opening.name + (plan.opening.seen?.length ? " (saw " + plan.opening.seen.join(", ") + ")" : ""), openingVoteWord(plan.opening.key));
   if (plan.light) add(plan.light.name || plan.light.key, lightVoteWord(plan.light.key));
   if (plan.weather) add(plan.weather.kinds.join(" + ") + " · " + plan.weather.key, weatherVoteWord(plan.weather.key));
   if (plan.water) add(plan.water.name, waterVoteWord(plan.water.key));
@@ -35429,6 +35441,7 @@ function lightAt(plan, x, y, width, height) {
 /* Paint the scene into a composed reference, in place. */
 function applyPlanScene(pixels, width, height, plan, only = null) {
   const lit = applyPlanLight(applySceneLayer(pixels, width, height, plan, only), width, height, plan, only);
+  if (!only) styleThingsLikeOpening(lit, width, height, plan);
   return applyDepthAir(applyWaterReflection(lit, width, height, plan, only), width, height, plan, only);
 }
 
@@ -38913,13 +38926,37 @@ function choosePlanManner(plan, composed, width, height, params) {
  * task. The same steps in the same order as prepareStrokeReference with a
  * fresh plan, so the painting is the same; `alive` stops it as soon as a newer
  * painting has begun. Resolves { plan, reference }, or null if superseded. */
-async function prepareNewPainting(result, raw, width, height, alive, onDraft = null) {
+async function prepareNewPainting(result, raw, width, height, alive, onDraft = null, opening = null) {
   const pause = () => new Promise((resolve) => setTimeout(resolve, 0));
   const step = async () => { await pause(); return alive(); };
   if (!await step()) return null;
+  /* An opening laid on the canvas (Openings): the canvas as it is now read,
+   * its rules applied again to what they made for a few generations (on the
+   * canvas, to be seen), and developed into what the painting paints toward. */
+  if (opening && opening.key !== "copy" && !opening.source) {
+    try {
+      let onCanvas = vctx.getImageData(0, 0, width, height).data;
+      opening.read = readOpening(onCanvas, width, height);
+      const generations = Math.round(opening.rule.genes.generations || 1);
+      for (let gen = 1; gen < generations; gen++) {
+        if (!await step()) return null;
+        respray(vctx, opening, opening.read, width, height, gen);
+        onCanvas = vctx.getImageData(0, 0, width, height).data;
+        if (!await step()) return null;
+        opening.read = readOpening(onCanvas, width, height);
+      }
+      if (!await step()) return null;
+      opening.source = raw = developOpening(onCanvas, opening.read, width, height, opening);
+      onDraft?.(raw);
+    } catch (error) {
+      console.warn("opening skipped", error);
+      opening.key = "copy"; opening.name = OPENING_NAMES.copy; opening.read = opening.source = null;
+    }
+    if (!await step()) return null;
+  }
   const enhanced = enhanceStrokeReference(raw);
   if (!await step()) return null;
-  const plan = makePaintingPlan(enhanced, width, height, result?.drawSeed, result?.params);
+  const plan = makePaintingPlan(enhanced, width, height, result?.drawSeed, result?.params, opening);
   if (!await step()) return null;
   const ground = composeStrokeReference(enhanced, width, height, plan);
   // (Each stage, as it is reached, is what the first sketch paints toward.)
@@ -38955,6 +38992,9 @@ async function prepareNewPainting(result, raw, width, height, alive, onDraft = n
   if (!await step()) return null;
   // applyPlanScene, with the air (Brushwork in depth) a step of its own.
   const composed = applyPlanLight(applySceneLayer(ground, width, height, plan), width, height, plan);
+  if (!await step()) return null;
+  // Its things in the opening's own marks (Openings).
+  styleThingsLikeOpening(composed, width, height, plan);
   if (!await step()) return null;
   applyWaterReflection(composed, width, height, plan);
   if (!await step()) return null;
@@ -39003,7 +39043,10 @@ function mannerDraft(pixels, width, height, plan) {
   return out;
 }
 
-function prepareStrokeReference(ref, width, height, enhanced = enhanceStrokeReference(ref)) {
+function prepareStrokeReference(ref, width, height, enhanced = null) {
+  // A painting begun from its own canvas (Openings) is rebuilt from that.
+  if (strokePainter.plan?.opening?.source?.length === ref.length) ref = strokePainter.plan.opening.source;
+  enhanced = enhanced || enhanceStrokeReference(ref);
   let fresh = false;
   if (!strokePainter.plan) {
     const source = bestRun?.params ? bestRun : current;
@@ -39047,6 +39090,8 @@ function scheduleStrokeReference(ref, width, height, refKey) {
   if (strokeReferenceJob?.refKey === refKey) return;
   const job = strokeReferenceJob = { refKey };
   const plan = strokePainter.plan;
+  // A painting begun from its own canvas (Openings) is rebuilt from that.
+  if (plan?.opening?.source?.length === ref.length) ref = plan.opening.source;
   const stillWanted = () => strokeReferenceJob === job && strokePainter.plan === plan;
   const pause = () => new Promise((resolve) => setTimeout(resolve, 0));
   (async () => {
@@ -39069,6 +39114,9 @@ function scheduleStrokeReference(ref, width, height, refKey) {
       if (!stillWanted()) return;
     } while (!depthSteps.next().done);
     const composed = applyPlanLight(applySceneLayer(ground, width, height, plan), width, height, plan);
+    await pause();
+    if (!stillWanted()) return;
+    styleThingsLikeOpening(composed, width, height, plan);
     await pause();
     if (!stillWanted()) return;
     applyWaterReflection(composed, width, height, plan);
@@ -39237,6 +39285,604 @@ const ORDER = { on: true, spillSteps: 2, landBands: 10, landStep: 1.5, cell: 4 }
  * Glazed or opaque is chosen and learned like the other choices
  * ("applyglazed"); `APPLY` holds the double-loading rule. */
 // (Double-loading is off: on the benchmark it left the outlines rougher - see tools/paint_bench.py.)
+/* ── Openings: how a painting begins ───────────────────────────────────
+ * A painting can begin three ways. Copied: the master picture is blocked in
+ * and refined (the studio's way so far). Sprayed: the canvas is sprayed by a
+ * rule - blots, splats, drips and sweeps in the master's colours, gathered
+ * round a few points or scattered, leaning one way - and the painter works
+ * with what it got. Primal blobs: three to six big masses of value laid by
+ * a composition rule (thirds, an S, an L, a steelyard, radiating) over a
+ * two-band ground. Either way the painter then reads the canvas - which
+ * marks group into masses, where they part strongly, which way things run -
+ * decides what it is becoming (a tall dark mass a tree, a long low one a
+ * hill, a light patch up top a cloud; or, given words, the named things go
+ * where masses suit them), and develops the canvas into its reference:
+ * masses kept, strong partings sharpened, weak ones lost, smoothed along
+ * the flow, the accidents left showing through. The rules drift a little
+ * each painting from the best kept ones, and which opening and which rules
+ * make paintings worth keeping is learned like any other choice. */
+const OPENING = { force: null, poolCap: 6, keep: { spray: 0.3, blobs: 0.15 } };
+try { const f = new URLSearchParams(location.search).get("opening"); if (f) OPENING.force = f; } catch { /* no address */ }
+const OPENING_KEYS = ["copy", "spray", "blobs"];
+const OPENING_NAMES = { copy: "copied", spray: "sprayed", blobs: "primal blobs" };
+const openingVoteWord = (key) => "opening" + String(key).replace(/[^a-z]/g, "");
+const OPENING_RULES_KEY = "hexfield.openingRules.v1";
+// Each opening's rules: [gene, low, high, step].
+const OPENING_GENES = {
+  spray: [["marks", 60, 320, 30], ["size", 0.03, 0.14, 0.012], ["spread", 0.2, 1, 0.1], ["cluster", 0, 1, 0.12],
+    ["groups", 2, 6, 1], ["blot", 0, 1, 0.15], ["splat", 0, 1, 0.15], ["drip", 0, 1, 0.15], ["sweep", 0, 1, 0.15],
+    ["angle", -1.6, 1.6, 0.25], ["pull", 0, 1, 0.15], ["dark", 0, 1, 0.12], ["generations", 1, 4, 0.6]],
+  blobs: [["masses", 3, 6, 1], ["template", 0, 4.99, 0.8], ["horizon", 0.35, 0.72, 0.05], ["skyLight", 0, 1, 0.2],
+    ["size", 0.18, 0.42, 0.04], ["wobble", 0.05, 0.35, 0.05], ["contrast", 0.3, 1, 0.1], ["mirror", 0, 1, 0.5], ["generations", 1, 3, 0.6]],
+};
+let openingRules = null;
+function openingRulePool(key) {
+  if (!openingRules) {
+    try { openingRules = JSON.parse(localStorage.getItem(OPENING_RULES_KEY) || "null"); } catch { openingRules = null; }
+    if (!openingRules || typeof openingRules !== "object") openingRules = {};
+  }
+  return (openingRules[key] ||= []);
+}
+function saveOpeningRules() {
+  try { localStorage.setItem(OPENING_RULES_KEY, JSON.stringify(openingRules || {})); } catch { /* memory only */ }
+}
+const openingRuleMean = (r) => (r.sum || 0) / ((r.n || 0) + 1);
+/* This painting's rules: until a few have been judged, any; then the better
+ * of a few kept ones, every rule nudged a little - the rule drifts. */
+function chooseOpeningRule(key, rng) {
+  const genes = OPENING_GENES[key], pool = openingRulePool(key);
+  const fresh = () => Object.fromEntries(genes.map(([g, lo, hi]) => [g, lo + rng() * (hi - lo)]));
+  if (pool.length < 3 || rng() < 0.15) return { genes: fresh(), parent: null };
+  let best = null;
+  for (let i = 0; i < 3; i++) { const r = pool[Math.floor(rng() * pool.length)]; if (!best || openingRuleMean(r) > openingRuleMean(best)) best = r; }
+  const out = {};
+  for (const [g, lo, hi, step] of genes) {
+    const v = Number(best.genes[g]);
+    out[g] = Math.max(lo, Math.min(hi, (Number.isFinite(v) ? v : (lo + hi) / 2) + (rng() < 0.5 ? (rng() + rng() - 1) * step : 0)));
+  }
+  return { genes: out, parent: best.id || null };
+}
+/* What a painting said about the rules it began from. */
+function openingRuleOutcome(opening, { taste = null, vote = 0 }) {
+  if (!opening?.rule || opening.key === "copy") return;
+  const pool = openingRulePool(opening.key);
+  let r = opening.rule.id ? pool.find((x) => x.id === opening.rule.id) : null;
+  if (!r) {
+    r = { id: opening.key[0] + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36), genes: opening.rule.genes, n: 0, sum: 0, at: Date.now() };
+    opening.rule.id = r.id;
+    pool.push(r);
+  }
+  if (Number.isFinite(taste)) { r.n++; r.sum += Math.max(-1, Math.min(1, (taste - 0.5) * 4)); }
+  if (vote) { r.n++; r.sum += vote; }
+  // The weakest goes past the cap (never one kept more than not).
+  while (pool.length > OPENING.poolCap) {
+    const weakest = pool.filter((x) => !(x.sum > 0 && x.n > 2)).sort((a, b) => openingRuleMean(a) - openingRuleMean(b))[0] || pool[0];
+    pool.splice(pool.indexOf(weakest), 1);
+  }
+  saveOpeningRules();
+}
+
+function chooseOpening(drawSeed, params) {
+  const rng = mulberry32(((Number(drawSeed) || 0) ^ 0x0be7) >>> 0);
+  let scores = null, key;
+  if (OPENING.force && OPENING_KEYS.includes(OPENING.force)) key = OPENING.force;
+  else {
+    scores = chooseByTaste(OPENING_KEYS, {
+      rng, tasted: 0, axis: "opening", given: null,
+      lean: (k) => (k === "copy" ? 0.1 : 0), learned: (k) => visualLearnedChoice(openingVoteWord(k)), taste: () => null,
+    });
+    key = scores[0].key;
+  }
+  const opening = { key, name: OPENING_NAMES[key], scores: scores ? summariseChoice(scores) : null };
+  if (key !== "copy") { opening.rule = chooseOpeningRule(key, rng); opening.seed = Math.floor(rng() * 4294967296) >>> 0; }
+  return opening;
+}
+
+/* A few colours of a picture, dark to light. */
+function paletteOf(pixels, width, height, k = 5) {
+  const { pixels: small, sw, sh } = smallCopy(pixels, width, height, 64);
+  const n = sw * sh, lum = (o) => small[o] * 0.299 + small[o + 1] * 0.587 + small[o + 2] * 0.114;
+  const sample = [];
+  for (let i = 0; i < n; i += 2) sample.push(i * 4);
+  sample.sort((a, b) => lum(a) - lum(b));
+  let centres = Array.from({ length: k }, (_, c) => { const o = sample[Math.floor(((c + 0.5) / k) * sample.length)]; return [small[o], small[o + 1], small[o + 2]]; });
+  for (let round = 0; round < 4; round++) {
+    const sums = centres.map(() => [0, 0, 0, 0]);
+    for (const o of sample) {
+      let best = 0, bd = Infinity;
+      for (let c = 0; c < k; c++) { const d = (small[o] - centres[c][0]) ** 2 + (small[o + 1] - centres[c][1]) ** 2 + (small[o + 2] - centres[c][2]) ** 2; if (d < bd) { bd = d; best = c; } }
+      sums[best][0] += small[o]; sums[best][1] += small[o + 1]; sums[best][2] += small[o + 2]; sums[best][3]++;
+    }
+    centres = centres.map((c, i) => sums[i][3] ? [sums[i][0] / sums[i][3], sums[i][1] / sums[i][3], sums[i][2] / sums[i][3]] : c);
+  }
+  return centres.map((c) => c.map(Math.round)).sort((a, b) => (a[0] * 0.299 + a[1] * 0.587 + a[2] * 0.114) - (b[0] * 0.299 + b[1] * 0.587 + b[2] * 0.114));
+}
+
+/* The palette's hues kept but its values spread dark to light, so the
+ * opening always has light and dark to group (a red master gave five reds
+ * nobody could tell apart). */
+function valueSpread(pal) {
+  const targets = [0.16, 0.34, 0.52, 0.7, 0.88];
+  return pal.map((c, i) => {
+    const { h, s: sat } = rgbToHsl(c[0], c[1], c[2]);
+    const t = targets[Math.round((i / Math.max(1, pal.length - 1)) * (targets.length - 1))];
+    return hslToRgb(h / 360, Math.min(0.85, sat * 0.9 + 0.08), t);
+  });
+}
+
+const openingCss = (c, j, rng) => `rgb(${c.map((v) => Math.max(0, Math.min(255, Math.round(v + (rng() - 0.5) * j)))).join(",")})`;
+// An irregular blot: a circle pushed in and out by a few waves round it.
+function openingBlobPath(rng, cx, cy, r, stretch, angle, wobble) {
+  const path = new Path2D(), n = 18, ph = [rng() * 6, rng() * 6, rng() * 6];
+  for (let i = 0; i <= n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    const k = 1 + wobble * (Math.sin(2 * a + ph[0]) * 0.5 + Math.sin(3 * a + ph[1]) * 0.35 + Math.sin(5 * a + ph[2]) * 0.2);
+    const x = Math.cos(a) * r * k * stretch, y = Math.sin(a) * r * k;
+    const px = cx + x * Math.cos(angle) - y * Math.sin(angle), py = cy + x * Math.sin(angle) + y * Math.cos(angle);
+    if (i) path.lineTo(px, py); else path.moveTo(px, py);
+  }
+  path.closePath();
+  return path;
+}
+// Which mark, by the rule's mix of them.
+function sprayKind(g, rng) {
+  const kinds = [["blot", g.blot ?? 1], ["splat", g.splat ?? 0], ["drip", g.drip ?? 0], ["sweep", g.sweep ?? 0]];
+  let pick = rng() * (kinds.reduce((s, [, w]) => s + w, 0) || 1);
+  for (const [name, w] of kinds) if ((pick -= w) <= 0) return name;
+  return "blot";
+}
+/* One mark of the spray, in the context's fill colour: a blot (drawn out
+ * along the rule's lean), a splat (a blot with flung drops), a drip (a blot
+ * running down), a sweep (a bent stroke). */
+function sprayMark(ctx, rng, kind, x, y, r, angle, g) {
+  const pull = g.pull ?? 0.3;
+  if (kind === "blot") ctx.fill(openingBlobPath(rng, x, y, r, 1 + pull * 1.2, angle, 0.25));
+  else if (kind === "splat") {
+    ctx.fill(openingBlobPath(rng, x, y, r * 0.55, 1.1, angle, 0.3));
+    const dots = 6 + Math.floor(rng() * 10);
+    for (let d = 0; d < dots; d++) {
+      const a = angle + (rng() - 0.5) * Math.PI * 2 * (1 - 0.6 * pull), dist = r * (0.7 + rng() * 1.6), dr = r * (0.05 + rng() * 0.15);
+      ctx.beginPath(); ctx.arc(x + Math.cos(a) * dist, y + Math.sin(a) * dist, dr, 0, Math.PI * 2); ctx.fill();
+    }
+  } else if (kind === "drip") {
+    ctx.fill(openingBlobPath(rng, x, y, r * 0.5, 1, angle, 0.2));
+    const len = r * (1 + rng() * 3), w = r * (0.12 + rng() * 0.15), lean = Math.sin(angle) * 0.15;
+    ctx.beginPath(); ctx.moveTo(x - w, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w * 0.7 + len * lean, y + len); ctx.lineTo(x - w * 0.7 + len * lean, y + len); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + len * lean, y + len, w * 1.1, 0, Math.PI * 2); ctx.fill();
+  } else {
+    ctx.strokeStyle = ctx.fillStyle; ctx.lineCap = "round"; ctx.lineWidth = r * (0.3 + rng() * 0.4);
+    const len = r * (2 + rng() * 3), bend = (rng() - 0.5) * len * 0.8;
+    const dx = Math.cos(angle) * len / 2, dy = Math.sin(angle) * len / 2;
+    ctx.beginPath(); ctx.moveTo(x - dx, y - dy);
+    ctx.quadraticCurveTo(x - Math.sin(angle) * bend, y + Math.cos(angle) * bend, x + dx, y + dy); ctx.stroke();
+  }
+}
+
+/* The rules applied to what they made: the canvas sprayed again from its
+ * own reading - the masses it found are the new gathering points (the
+ * bigger, the more marks), their colours the new paint, the way things run
+ * the new lean - each generation finer than the last. On the canvas. */
+function respray(ctx, opening, read, width, height, generation) {
+  const rng = mulberry32((opening.seed ^ Math.imul(generation + 1, 0x9e3779b1)) >>> 0);
+  const g = opening.rule.genes, unit = Math.sqrt(width * height);
+  const masses = read.masses.filter((m) => m.area > 0.01);
+  if (!masses.length) return;
+  const total = masses.reduce((sum, m) => sum + m.area, 0);
+  const marks = Math.round((g.marks || 120) * 0.45 * Math.min(1.4, Math.max(0.6, unit / 800)));
+  const fine = Math.pow(0.65, generation);
+  const rule = { ...g, angle: read.flow.coherence > 0.15 ? read.flow.angle : (g.angle ?? 0), blot: g.blot ?? 1 };
+  for (let k = 0; k < marks; k++) {
+    let pick = rng() * total, m = masses[0];
+    for (const x of masses) if ((pick -= x.area) <= 0) { m = x; break; }
+    // Within the mass's box, toward its middle.
+    const x = m.cx + (rng() + rng() - 1) * m.box.w * 0.5, y = m.cy + (rng() + rng() - 1) * m.box.h * 0.5;
+    const r = (g.size || 0.06) * unit * fine * (0.35 + rng() * 1.1);
+    ctx.globalAlpha = 0.55 + rng() * 0.35;
+    ctx.fillStyle = openingCss(m.rgb, 26, rng);
+    sprayMark(ctx, rng, opening.key === "blobs" ? "blot" : sprayKind(rule, rng), x, y, r, rule.angle + (rng() - 0.5) * (1.2 - (g.pull ?? 0.3)), rule);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* A thing in the painting made over in the opening's own marks, so it
+ * belongs to the picture it is in: the opening's kinds of mark at a finer
+ * size (blots alone, broad, for primal blobs), each in the thing's own
+ * colour where it falls, kept to the thing's shape (a little spill). In
+ * place; the same marks every time the picture is rebuilt. */
+function styleThingsLikeOpening(pixels, width, height, plan) {
+  const o = plan?.opening, scene = plan?.scene, cover = scene?.layer?.cover;
+  if (!o || o.key === "copy" || !o.rule || cover?.length !== width * height || pixels?.length !== width * height * 4) return pixels;
+  const things = (scene.items || []).filter((it) => it.entry?.kind === "subject" && !it.lettering && it.box);
+  if (!things.length) return pixels;
+  const rng = mulberry32((o.seed ^ 0x57a1 ^ Math.imul((o.generation || 0) + 1, 7919)) >>> 0);
+  const g = o.rule.genes, unit = Math.sqrt(width * height);
+  const blobs = o.key === "blobs";
+  const base = paintBuffer(width, height), bctx = base.getContext("2d", { willReadFrequently: true });
+  bctx.putImageData(new ImageData(new Uint8ClampedArray(pixels), width, height), 0, 0);
+  const marks = paintBuffer(width, height), mctx = marks.getContext("2d");
+  const at = (x, y) => { const o4 = ((Math.min(height - 1, Math.max(0, y | 0))) * width + Math.min(width - 1, Math.max(0, x | 0))) * 4; return [pixels[o4], pixels[o4 + 1], pixels[o4 + 2]]; };
+  for (const it of things) {
+    const b = it.box, area = Math.max(1, b.w * b.h);
+    const r0 = blobs ? Math.max(4, Math.min(b.w, b.h) * 0.12) : Math.max(3, Math.min((g.size || 0.06) * unit * 0.3, Math.min(b.w, b.h) * 0.09));
+    const n = Math.min(900, Math.round(area / (r0 * r0) * (blobs ? 1.4 : 2.2)));
+    for (let k = 0; k < n; k++) {
+      const x = b.x + rng() * b.w, y = b.y + rng() * b.h;
+      const i = (Math.min(height - 1, Math.max(0, y | 0))) * width + Math.min(width - 1, Math.max(0, x | 0));
+      if (cover[i] < 128) continue;
+      mctx.globalAlpha = 0.85;
+      mctx.fillStyle = openingCss(at(x, y), 10, rng);
+      const r = r0 * (0.6 + rng() * 0.8);
+      sprayMark(mctx, rng, blobs ? "blot" : sprayKind(g, rng), x, y, r, (g.angle ?? 0) + (rng() - 0.5) * 1.2, { ...g, pull: (g.pull ?? 0.3) * 0.6 });
+    }
+  }
+  // Kept to the things' shapes, softly.
+  const mask = paintBuffer(width, height), mk = mask.getContext("2d"), img = mk.createImageData(width, height);
+  for (let i = 0; i < cover.length; i++) img.data[i * 4 + 3] = cover[i];
+  mk.putImageData(img, 0, 0);
+  mctx.globalAlpha = 1;
+  mctx.globalCompositeOperation = "destination-in";
+  mctx.filter = "blur(" + Math.max(1, Math.round(unit * 0.004)) + "px)";
+  mctx.drawImage(mask, 0, 0);
+  mctx.filter = "none";
+  bctx.globalAlpha = blobs ? 0.9 : 0.8;
+  bctx.drawImage(marks, 0, 0);
+  pixels.set(bctx.getImageData(0, 0, width, height).data);
+  base.width = 0; marks.width = 0; mask.width = 0;
+  return pixels;
+}
+
+/* While it paints, the rules go on being applied to what is there: when
+ * the brush steps down a size, the canvas as painted so far is read and
+ * developed again, and folded into what the painting paints toward - a
+ * few times a painting. */
+const OPENING_FEEDBACK = { times: 3, share: 0.4 };
+function feedOpeningBack(plan) {
+  const o = plan?.opening;
+  if (!o?.source || o.key === "copy" || (o.generation || 0) >= OPENING_FEEDBACK.times || o.feeding) return;
+  o.feeding = true;
+  setTimeout(() => {
+    try {
+      if (strokePainter.plan !== plan || !view?.width) return;
+      const W = view.width, H = view.height;
+      if (o.source.length !== W * H * 4) return;
+      const canvasNow = vctx.getImageData(0, 0, W, H).data;
+      const read = readOpening(canvasNow, W, H);
+      const dev = developOpening(canvasNow, read, W, H, o);
+      const k = OPENING_FEEDBACK.share;
+      for (let i = 0; i < dev.length; i += 4) {
+        o.source[i] = o.source[i] * (1 - k) + dev[i] * k;
+        o.source[i + 1] = o.source[i + 1] * (1 - k) + dev[i + 1] * k;
+        o.source[i + 2] = o.source[i + 2] * (1 - k) + dev[i + 2] * k;
+      }
+      o.read = read;
+      o.generation = (o.generation || 0) + 1;
+      // The reference is rebuilt from it on the next pass.
+      strokePainter.enhancedKey = null;
+    } catch (error) { console.warn("opening feedback skipped", error); }
+    finally { o.feeding = false; }
+  }, 0);
+}
+
+/* Lay the opening down: the canvas sprayed, or primal blobs, by this
+ * painting's rules, in the master's own colours (the studio's colour work
+ * is kept; only the picture is not). Returns the pixels. */
+function layOpening(opening, raw, width, height) {
+  const rng = mulberry32(opening.seed >>> 0);
+  const g = opening.rule.genes, pal = valueSpread(paletteOf(raw, width, height, 5)), tone = toneOf(raw);
+  const canvas = paintBuffer(width, height), ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const unit = Math.sqrt(width * height);
+  const css = (c, j = 0) => openingCss(c, j, rng);
+  const blobPath = (cx, cy, r, stretch, angle, wobble) => openingBlobPath(rng, cx, cy, r, stretch, angle, wobble);
+  ctx.fillStyle = css(tone);
+  ctx.fillRect(0, 0, width, height);
+  if (opening.key === "spray") {
+    // A few gathering points, each with a colour of its own, so groups can
+    // form; the rest scattered.
+    const groups = Array.from({ length: Math.round(g.groups) }, () => ({
+      x: (0.12 + rng() * 0.76) * width, y: (0.12 + rng() * 0.76) * height,
+      colour: Math.min(pal.length - 1, Math.floor(Math.pow(rng(), 0.5 + g.dark * 1.5) * pal.length)),
+    }));
+    const marks = Math.round(g.marks * Math.min(1.4, Math.max(0.6, unit / 800)));
+    for (let m = 0; m < marks; m++) {
+      const group = groups[Math.floor(rng() * groups.length)];
+      let x, y;
+      if (rng() < g.cluster) {
+        const sd = g.spread * 0.22 * unit, gx = (rng() + rng() + rng() - 1.5) * sd, gy = (rng() + rng() + rng() - 1.5) * sd;
+        x = group.x + gx; y = group.y + gy;
+      } else { x = rng() * width; y = rng() * height; }
+      const colour = pal[rng() < 0.7 ? group.colour : Math.min(pal.length - 1, Math.floor(Math.pow(rng(), 0.5 + g.dark * 1.5) * pal.length))];
+      const r = g.size * unit * (0.35 + rng() * rng() * 1.6), angle = g.angle + (rng() - 0.5) * (1.2 - g.pull);
+      ctx.globalAlpha = 0.72 + rng() * 0.25;
+      ctx.fillStyle = css(colour, 18);
+      sprayMark(ctx, rng, sprayKind(g, rng), x, y, r, angle, g);
+    }
+  } else {
+    /* Primal blobs: a two-band ground (sky over land, at the rule's
+     * horizon), then masses where the composition rule puts them, each a
+     * value against the band it sits in. */
+    const horizon = g.horizon * height, light = pal[pal.length - 1], dark = pal[0], mid = pal[2] || pal[1];
+    const sky = g.skyLight > 0.5 ? light : mid, land = g.skyLight > 0.5 ? (pal[1] || dark) : light;
+    const grad = ctx.createLinearGradient(0, horizon - height * 0.04, 0, horizon + height * 0.04);
+    grad.addColorStop(0, css(sky)); grad.addColorStop(1, css(land));
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = css(sky); ctx.fillRect(0, 0, width, horizon);
+    ctx.fillStyle = grad; ctx.fillRect(0, horizon - height * 0.04, width, height * 0.08);
+    ctx.fillStyle = css(land); ctx.fillRect(0, horizon + height * 0.04, width, height);
+    const flip = g.mirror > 0.5 ? -1 : 1, X = (u) => (flip > 0 ? u : 1 - u) * width;
+    const n = Math.round(g.masses), template = Math.floor(g.template) % 5;
+    const spots = [];
+    for (let i = 0; i < n; i++) {
+      const t = n > 1 ? i / (n - 1) : 0.5, s = g.size * (1 - 0.5 * t) * (0.85 + rng() * 0.3);
+      let u, v, stretch = 1;
+      if (template === 0) { u = [1 / 3, 2 / 3][i % 2] + (rng() - 0.5) * 0.1; v = g.horizon + (i < 2 ? 0.05 : -0.15) + (rng() - 0.5) * 0.1; }
+      else if (template === 1) { u = 0.15 + 0.7 * t; v = g.horizon + 0.25 * Math.sin(t * Math.PI * 2) * 0.6 + 0.1 - 0.2 * t; }
+      else if (template === 2) { if (i === 0) { u = 0.18; v = 0.45; stretch = 0.45; } else { u = 0.25 + 0.6 * t; v = Math.min(0.9, g.horizon + 0.15); stretch = 2.2; } }
+      else if (template === 3) { u = i === 0 ? 0.3 : 0.7 + (rng() - 0.5) * 0.2; v = i === 0 ? g.horizon : g.horizon - 0.05 - 0.1 * rng(); }
+      else { const a = (i / n) * Math.PI * 2 + rng(); u = 0.5 + Math.cos(a) * (0.12 + 0.2 * t); v = 0.5 + Math.sin(a) * (0.12 + 0.2 * t); }
+      spots.push({ u, v, s, stretch: stretch * (0.8 + rng() * 0.5) });
+    }
+    for (const sp of spots) {
+      const y = sp.v * height, onSky = y < horizon;
+      // A value against its band: dark on a light band, light on a dark one, by the rule's contrast.
+      const against = onSky ? sky : land, lumA = against[0] * 0.299 + against[1] * 0.587 + against[2] * 0.114;
+      const target = lumA > 128 ? dark : light;
+      const colour = against.map((c, j) => c + (target[j] - c) * g.contrast);
+      ctx.fillStyle = css(colour, 12);
+      ctx.globalAlpha = 0.95;
+      const r = sp.s * Math.min(width, height) * 0.5;
+      ctx.fill(blobPath(X(sp.u), y, r, sp.stretch, (rng() - 0.5) * 0.5, g.wobble));
+    }
+  }
+  ctx.globalAlpha = 1;
+  const out = ctx.getImageData(0, 0, width, height).data;
+  canvas.width = 0;
+  return out;
+}
+
+/* Read what is on the canvas: a small copy blurred at the scale of the
+ * marks (what is near and alike reads as one), a few colours, cleaned of
+ * specks; each connected region a mass with its box, size, colour, lean;
+ * how strongly each pair of touching masses parts; and which way things
+ * run (the structure of the light and dark). */
+function readOpening(pixels, width, height) {
+  const { pixels: small, sw, sh } = smallCopy(pixels, width, height, 96);
+  const n = sw * sh;
+  const blur = (src) => {
+    const out = new Float32Array(n * 3);
+    for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+      let r = 0, g = 0, b = 0, c = 0;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        const xx = x + dx, yy = y + dy;
+        if (xx < 0 || yy < 0 || xx >= sw || yy >= sh) continue;
+        const o = (yy * sw + xx) * (src.length === n * 4 ? 4 : 3);
+        r += src[o]; g += src[o + 1]; b += src[o + 2]; c++;
+      }
+      const o = (y * sw + x) * 3; out[o] = r / c; out[o + 1] = g / c; out[o + 2] = b / c;
+    }
+    return out;
+  };
+  const soft = blur(blur(small));
+  const lum = (o) => soft[o] * 0.299 + soft[o + 1] * 0.587 + soft[o + 2] * 0.114;
+  // A few colours (k-means, seeded through the values).
+  const k = 4, order = Array.from({ length: n }, (_, i) => i * 3).sort((a, b) => lum(a) - lum(b));
+  let centres = Array.from({ length: k }, (_, c) => { const o = order[Math.floor(((c + 0.5) / k) * n)]; return [soft[o], soft[o + 1], soft[o + 2]]; });
+  const nearest = (o) => { let best = 0, bd = Infinity; for (let c = 0; c < k; c++) { const d = (soft[o] - centres[c][0]) ** 2 + (soft[o + 1] - centres[c][1]) ** 2 + (soft[o + 2] - centres[c][2]) ** 2; if (d < bd) { bd = d; best = c; } } return best; };
+  for (let round = 0; round < 5; round++) {
+    const sums = centres.map(() => [0, 0, 0, 0]);
+    for (let i = 0; i < n; i += 2) { const o = i * 3, c = nearest(o); sums[c][0] += soft[o]; sums[c][1] += soft[o + 1]; sums[c][2] += soft[o + 2]; sums[c][3]++; }
+    centres = centres.map((c, i) => sums[i][3] ? [sums[i][0] / sums[i][3], sums[i][1] / sums[i][3], sums[i][2] / sums[i][3]] : c);
+  }
+  let label = new Uint8Array(n);
+  for (let i = 0; i < n; i++) label[i] = nearest(i * 3);
+  // Specks cleaned: each pixel takes its neighbourhood's commonest colour.
+  for (let pass = 0; pass < 2; pass++) {
+    const next = new Uint8Array(n), votes = new Uint8Array(k);
+    for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+      votes.fill(0);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx >= 0 && yy >= 0 && xx < sw && yy < sh) votes[label[yy * sw + xx]]++; }
+      let best = label[y * sw + x];
+      for (let c = 0; c < k; c++) if (votes[c] > votes[best]) best = c;
+      next[y * sw + x] = best;
+    }
+    label = next;
+  }
+  // Masses: connected regions.
+  const comp = new Int32Array(n).fill(-1), stack = new Int32Array(n), masses = [];
+  for (let s = 0; s < n; s++) {
+    if (comp[s] >= 0) continue;
+    const id = masses.length, c = label[s];
+    let top = 0, count = 0, x0 = sw, y0 = sh, x1 = 0, y1 = 0, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, r = 0, gg = 0, b = 0;
+    stack[top++] = s; comp[s] = id;
+    while (top) {
+      const i = stack[--top], x = i % sw, y = (i / sw) | 0, o = i * 3;
+      count++; sx += x; sy += y; sxx += x * x; syy += y * y; sxy += x * y; r += soft[o]; gg += soft[o + 1]; b += soft[o + 2];
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      const nb = [x > 0 ? i - 1 : -1, x < sw - 1 ? i + 1 : -1, y > 0 ? i - sw : -1, y < sh - 1 ? i + sw : -1];
+      for (const j of nb) if (j >= 0 && comp[j] < 0 && label[j] === c) { comp[j] = id; stack[top++] = j; }
+    }
+    const mx = sx / count, my = sy / count, cxx = sxx / count - mx * mx, cyy = syy / count - my * my, cxy = sxy / count - mx * my;
+    const spread = Math.sqrt(Math.max(0, (cxx - cyy) ** 2 / 4 + cxy * cxy)), l1 = (cxx + cyy) / 2 + spread, l2 = Math.max(1e-6, (cxx + cyy) / 2 - spread);
+    const kx = width / sw, ky = height / sh;
+    const rgb = [r / count, gg / count, b / count];
+    masses.push({
+      id, colour: c, area: count / n, rgb, lum: rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114,
+      box: { x: x0 * kx, y: y0 * ky, w: (x1 - x0 + 1) * kx, h: (y1 - y0 + 1) * ky }, cx: (mx + 0.5) * kx, cy: (my + 0.5) * ky,
+      elong: Math.sqrt(l1 / l2), angle: 0.5 * Math.atan2(2 * cxy * kx * ky, cxx * kx * kx - cyy * ky * ky),
+      edges: (x0 === 0) + (x1 === sw - 1) + (y0 === 0) + (y1 === sh - 1),
+    });
+  }
+  // How strongly touching masses part: their colours' difference, along how
+  // long a border.
+  const borders = new Map();
+  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+    const a = comp[y * sw + x];
+    for (const j of [x < sw - 1 ? y * sw + x + 1 : -1, y < sh - 1 ? (y + 1) * sw + x : -1]) {
+      if (j < 0) continue;
+      const b = comp[j];
+      if (a === b) continue;
+      const key = a < b ? a * 65536 + b : b * 65536 + a;
+      borders.set(key, (borders.get(key) || 0) + 1);
+    }
+  }
+  const separations = [];
+  for (const [key, length] of borders) {
+    const a = masses[Math.floor(key / 65536)], b = masses[key % 65536];
+    const diff = Math.hypot(a.rgb[0] - b.rgb[0], a.rgb[1] - b.rgb[1], a.rgb[2] - b.rgb[2]);
+    separations.push({ a: a.id, b: b.id, length, strength: Math.min(1, diff / 140) });
+  }
+  // Which way things run: the light and dark's prevailing grain.
+  let jxx = 0, jyy = 0, jxy = 0;
+  for (let y = 1; y < sh - 1; y++) for (let x = 1; x < sw - 1; x++) {
+    const o = (y * sw + x) * 3;
+    const gx = lum(o + 3) - lum(o - 3), gy = lum(o + sw * 3) - lum(o - sw * 3);
+    jxx += gx * gx; jyy += gy * gy; jxy += gx * gy;
+  }
+  const flowAngle = 0.5 * Math.atan2(2 * jxy, jxx - jyy) + Math.PI / 2;
+  const coherence = Math.sqrt((jxx - jyy) ** 2 + 4 * jxy * jxy) / Math.max(1e-6, jxx + jyy);
+  const meanLum = masses.reduce((s, m) => s + m.lum * m.area, 0);
+  return { sw, sh, comp, masses, separations, flow: { angle: flowAngle, coherence }, meanLum, width, height };
+}
+
+/* Develop the canvas into the painting's reference: each mass flattened to
+ * its colour, its strong partings kept sharp and its weak ones softened
+ * away, smoothed along the way things run, and the opening's own marks left
+ * showing through - the accidents survive. */
+function developOpening(pixels, read, width, height, opening) {
+  const { sw, sh, comp, masses, separations, flow } = read, n = sw * sh;
+  const strength = new Map(separations.map((s) => [s.a < s.b ? s.a * 65536 + s.b : s.b * 65536 + s.a, s.strength]));
+  const flat = new Float32Array(n * 3), edge = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const m = masses[comp[i]], o = i * 3;
+    flat[o] = m.rgb[0]; flat[o + 1] = m.rgb[1]; flat[o + 2] = m.rgb[2];
+    const x = i % sw;
+    for (const j of [x > 0 ? i - 1 : -1, x < sw - 1 ? i + 1 : -1, i >= sw ? i - sw : -1, i + sw < n ? i + sw : -1]) {
+      if (j < 0 || comp[j] === comp[i]) continue;
+      const a = comp[i], b = comp[j], s = strength.get(a < b ? a * 65536 + b : b * 65536 + a) || 0;
+      if (s > edge[i]) edge[i] = s;
+    }
+  }
+  // Weak partings lost: softened across where the colours hardly differ.
+  const soft = new Float32Array(n * 3);
+  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+    let r = 0, g = 0, b = 0, c = 0;
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+      const xx = x + dx, yy = y + dy;
+      if (xx < 0 || yy < 0 || xx >= sw || yy >= sh) continue;
+      const o = (yy * sw + xx) * 3; r += flat[o]; g += flat[o + 1]; b += flat[o + 2]; c++;
+    }
+    const o = (y * sw + x) * 3; soft[o] = r / c; soft[o + 1] = g / c; soft[o + 2] = b / c;
+  }
+  const dev = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    // Strong partings (past half strength) stay sharp; weaker ones go soft.
+    const keep = edge[i] ? Math.min(1, Math.max(0, (edge[i] - 0.25) / 0.35)) : 1;
+    for (let j = 0; j < 3; j++) dev[i * 3 + j] = flat[i * 3 + j] * keep + soft[i * 3 + j] * (1 - keep);
+  }
+  // Smoothed along the way things run, as much as they run one way.
+  const along = new Float32Array(n * 3), ca = Math.cos(flow.angle), sa = Math.sin(flow.angle), w = Math.min(1, flow.coherence * 2);
+  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+    let r = 0, g = 0, b = 0, c = 0;
+    for (let t = -3; t <= 3; t++) {
+      const xx = Math.round(x + ca * t), yy = Math.round(y + sa * t);
+      if (xx < 0 || yy < 0 || xx >= sw || yy >= sh) continue;
+      const o = (yy * sw + xx) * 3; r += dev[o]; g += dev[o + 1]; b += dev[o + 2]; c++;
+    }
+    const o = (y * sw + x) * 3;
+    along[o] = dev[o] * (1 - w) + (r / c) * w; along[o + 1] = dev[o + 1] * (1 - w) + (g / c) * w; along[o + 2] = dev[o + 2] * (1 - w) + (b / c) * w;
+  }
+  const small = paintBuffer(sw, sh), img = small.getContext("2d").createImageData(sw, sh);
+  for (let i = 0; i < n; i++) { img.data[i * 4] = along[i * 3]; img.data[i * 4 + 1] = along[i * 3 + 1]; img.data[i * 4 + 2] = along[i * 3 + 2]; img.data[i * 4 + 3] = 255; }
+  small.getContext("2d").putImageData(img, 0, 0);
+  const full = paintBuffer(width, height), fctx = full.getContext("2d", { willReadFrequently: true });
+  fctx.imageSmoothingEnabled = true; fctx.imageSmoothingQuality = "high";
+  fctx.drawImage(small, 0, 0, width, height);
+  const out = fctx.getImageData(0, 0, width, height).data;
+  small.width = 0; full.width = 0;
+  // The opening's own marks showing through.
+  const keep = OPENING.keep[opening.key] ?? 0.2;
+  for (let o = 0; o < out.length; o += 4) {
+    out[o] = out[o] * (1 - keep) + pixels[o] * keep; out[o + 1] = out[o + 1] * (1 - keep) + pixels[o + 1] * keep; out[o + 2] = out[o + 2] * (1 - keep) + pixels[o + 2] * keep;
+  }
+  return out;
+}
+
+/* What a mass looks like, by its shape, size and place: a tall upright
+ * mass standing low is a tree; a long low one, a hill (or bracken if it is
+ * thin); a compact one on the ground, a stone; a light patch up top, a
+ * cloud; a small round bright one up top, the sun. With a score for how
+ * much it looks it. */
+function interpretMass(m, read) {
+  const W = read.width, H = read.height, b = m.box, aspect = b.w / Math.max(1, b.h);
+  const bottom = (b.y + b.h) / H, top = b.y / H, upper = m.cy / H < 0.42, light = m.lum > read.meanLum + 12;
+  // (A mass is one thing only at a thing's size: not a whole side of the picture.)
+  if (m.area < 0.012 || m.area > 0.22 || m.edges >= 3 || b.h > H * 0.8 || b.w > W * 0.6) return null;
+  const out = [];
+  if (aspect < 0.75 && bottom > 0.55 && b.h > H * 0.25) out.push({ word: "tree", score: 0.6 + Math.min(0.4, (0.75 - aspect)) });
+  if (aspect > 2 && top > 0.3 && bottom > 0.6) out.push(b.h > H * 0.12 ? { word: "mountain", score: 0.5 + Math.min(0.4, (aspect - 2) * 0.1) } : { word: "bracken", score: 0.55 });
+  if (aspect > 0.7 && aspect < 1.9 && bottom > 0.62 && m.area < 0.08) out.push({ word: "stone", score: 0.45 });
+  if (upper && light && aspect > 1.2) out.push({ word: "cloud", score: 0.5 + Math.min(0.3, (aspect - 1.2) * 0.15) });
+  if (upper && aspect > 0.7 && aspect < 1.4 && m.area < 0.03 && m.lum > read.meanLum + 30) out.push({ word: read.meanLum < 90 ? "moon" : "sun", score: 0.6 });
+  out.sort((a, c) => c.score - a.score);
+  return out[0] ? { ...out[0], mass: m } : null;
+}
+
+/* Things placed on the opening's masses (planScene): with no words, what
+ * the strongest masses look like (two at most); with words, each named
+ * thing to the free mass that suits it best - its proportions, where it
+ * stands (on the ground or up in the sky), its size. Marks the subjects
+ * with the box they are to fill (atMass). */
+function placeOnMasses(read, opening, width, height, Visual) {
+  const masses = (opening?.read?.masses || []).filter((m) => m.area >= 0.012 && m.area <= 0.4 && m.edges < 3)
+    .sort((a, b) => b.area - a.area).slice(0, 8);
+  if (!masses.length) return;
+  if (!read.subjects.length) {
+    const seen = new Set(), picks = [];
+    for (const m of masses) {
+      const guess = interpretMass(m, opening.read);
+      if (!guess || seen.has(guess.word)) continue;
+      seen.add(guess.word); picks.push(guess);
+    }
+    picks.sort((a, b) => b.score * b.mass.area - a.score * a.mass.area);
+    for (const p of picks.slice(0, 2)) {
+      const found = Visual.read(p.word).subjects[0];
+      if (found) read.subjects.push({ ...found, count: 1, atMass: p.mass.box, seenIn: p.word });
+    }
+    opening.seen = picks.slice(0, 2).map((p) => p.word);
+    return;
+  }
+  const free = masses.slice();
+  for (const s of read.subjects.filter((x) => !x.attach && x.count <= 1)) {
+    const e = s.entry, ea = Math.max(0.2, Number(e.aspect) || 1), sky = e.anchor === "sky";
+    let best = null, bestScore = 0.45;
+    for (const m of free) {
+      const ma = m.box.w / Math.max(1, m.box.h), place = sky ? (m.cy / height < 0.45 ? 1 : 0) : ((m.box.y + m.box.h) / height > 0.5 ? 1 : 0.2);
+      const shape = Math.exp(-Math.abs(Math.log(ma / ea)) * 1.2), size = Math.exp(-Math.abs(Math.log((m.box.h / height) / Math.max(0.1, Number(e.size) || 0.4))));
+      const score = 0.45 * shape + 0.3 * place + 0.25 * size;
+      if (score > bestScore) { bestScore = score; best = m; }
+    }
+    if (best) { s.atMass = best.box; free.splice(free.indexOf(best), 1); }
+  }
+}
+/* A laid-out thing moved into the mass it was given: as tall as the mass
+ * (or as wide, if that fits it better), standing on its foot - or, in the
+ * sky, at its middle. */
+function fitItemsToMasses(laid, width, height) {
+  let moved = false;
+  for (const item of laid?.items || []) {
+    const m = item.atMass, b = item.box;
+    if (!m || !b || item.entry?.kind !== "subject") continue;
+    const aspect = b.w / Math.max(1, b.h);
+    let h = Math.min(m.h * 1.05, height * 0.72), w = h * aspect;
+    if (w > m.w * 1.35) { w = m.w * 1.35; h = w / aspect; }
+    if (w > width * 0.7) { w = width * 0.7; h = w / aspect; }
+    const cx = m.x + m.w / 2, sky = item.entry.anchor === "sky";
+    const bottom = sky ? m.y + m.h / 2 + h / 2 : Math.min(height, m.y + m.h);
+    item.box = { x: cx - w / 2, y: bottom - h, w, h };
+    moved = true;
+  }
+  return moved;
+}
+
 const APPLY = { double: false, doubleMin: 16, doubleWidth: 8 };
 const APPLICATIONS = {
   opaque: { key: "opaque", name: "opaque", glaze: 0 },
@@ -40641,6 +41287,7 @@ function planStyleChain(plan) {
     abstraction: plan?.abstraction?.key || null,
     turn: plan?.turn?.key || null,
     application: plan?.application?.key || null,
+    opening: plan?.opening?.key || null,
     anatomy: plan?.anatomy?.key || null,
     figure: plan?.figure?.key || null,
     edges: plan?.edgeStyle?.key || null,
@@ -40676,6 +41323,7 @@ function recordStyleOutcome(plan, source) {
   pushStyleOutcomes();
   if (plan.morph) morphOutcome(plan.morph, { taste });
   if (plan.scene?.growers) growerOutcomes(plan.scene.growers, { taste });
+  if (plan.opening) openingRuleOutcome(plan.opening, { taste });
   try { considerSelfReference(plan, taste); } catch (error) { console.warn("self reference skipped", error); }
   return row;
 }
@@ -40766,7 +41414,7 @@ function computeStyleOutcomeStats() {
 /* A chain's choices as small numbers (axis and option), worked out once per
  * row: counting every pair of hundreds of chains by name cost a phone tens
  * of milliseconds. */
-const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form", "look", "light", "combo", "finish2", "look2", "comp", "morph", "depth", "anatomy", "figure", "edges"];
+const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form", "look", "light", "combo", "finish2", "look2", "comp", "morph", "depth", "anatomy", "figure", "edges", "opening"];
 function compactTune(finish) {
   const v = tuneValue(finish.key, finish.settings || {});
   const layer = finish.layers?.[0];
@@ -40858,6 +41506,7 @@ function recordStyleVote(plan, liked) {
   pushStyleOutcomes();
   if (plan.morph) morphOutcome(plan.morph, { vote: liked ? 1 : -1 });
   if (plan.scene?.growers) growerOutcomes(plan.scene.growers, { vote: liked ? 1 : -1 });
+  if (plan.opening) openingRuleOutcome(plan.opening, { vote: liked ? 1 : -1 });
   return row;
 }
 
@@ -41420,6 +42069,8 @@ function strokesTowardReference(result, ref, width, height, { layer, limit, refK
         strokePainter.layer < finestLayer) {
       strokePainter.layer++;
       strokePainter.layerBatches = 0;
+      // The opening's rules applied again to the canvas so far (Openings).
+      feedOpeningBack(strokePainter.plan);
     }
   }
   current = null;
@@ -42143,6 +42794,24 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
     strokePainter.enhancedPlan = null;
     hideFinishLayer();
     const quickTone = paintTonedGround(raw, width, height);
+    /* How it begins (Openings): copied from the master, or sprayed / blobbed
+     * by a rule onto the canvas now - and then the canvas, as it is, is read
+     * and developed into what the painting paints toward. */
+    const opening = chooseOpening(result?.drawSeed, result?.params);
+    let source = raw;
+    if (opening.key !== "copy") {
+      // Laid down now; read, sprayed again and developed in the preparation's
+      // steps (prepareNewPainting), the page free between them.
+      try {
+        source = layOpening(opening, raw, width, height);
+        vctx.putImageData(new ImageData(source, width, height), 0, 0);
+      } catch (error) {
+        console.warn("opening skipped", error);
+        paintTonedGround(raw, width, height);
+        opening.key = "copy"; opening.name = OPENING_NAMES.copy; opening.read = opening.source = null;
+        source = raw;
+      }
+    }
     // The time-lapse starts again from this ground.
     strokeLog.newPainting = true;
     strokeLog.history = [];
@@ -42161,7 +42830,7 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
     // A few small batches, each toward the latest stage the preparation has
     // reached (the picture as it came, then composed to the plan, then with
     // its scene, light and air), so the sketch moves toward the painting.
-    let draft = raw;
+    let draft = source;
     (async () => {
       for (let batch = 0; batch < SKETCH_BATCHES && alive(); batch++) {
         await new Promise((resolve) => setTimeout(resolve, batch ? SKETCH_GAP : 0));
@@ -42170,7 +42839,7 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
           { layer: 0, limit: SKETCH_STROKES, prepared: true });
       }
     })().catch(() => {});
-    visiblePaintCompletion = prepareNewPainting(result, raw, width, height, alive, (pixels) => { draft = pixels; }).then((ready) => {
+    visiblePaintCompletion = prepareNewPainting(result, source, width, height, alive, (pixels) => { draft = pixels; }, opening).then((ready) => {
       if (!ready || !alive()) return false;
       strokePainter.preparing = null;
       strokePainter.plan = ready.plan;
@@ -42183,7 +42852,7 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
       // off - unless the sketch is already down: its strokes are corrected,
       // not wiped.
       const tone = toneOf(ready.reference);
-      if (!(strokePainter.strokes > 0) && Math.hypot(tone[0] - quickTone[0], tone[1] - quickTone[1], tone[2] - quickTone[2]) > 10) {
+      if (opening.key === "copy" && !(strokePainter.strokes > 0) && Math.hypot(tone[0] - quickTone[0], tone[1] - quickTone[1], tone[2] - quickTone[2]) > 10) {
         paintTonedGround(ready.reference, width, height);
       }
       updateWordPaints();
