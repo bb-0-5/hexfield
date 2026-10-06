@@ -34,6 +34,12 @@
  *   lightHold    0..1: how much of the painting's light the brushwork puts
  *                back after the palette flattens it (lit warm and loaded,
  *                shade cool and thin)
+ *   planes       0..1: the picture laid out as perspective planes - sky
+ *                bands, a ground cut by lines to the vanishing point (or a
+ *                room's back wall, floor, ceiling and walls) - each region
+ *                one flat colour, inked along its edges (app.js, Drawn)
+ *   hatchShade   0..1: shade told by parallel hatching, cross-hatched in
+ *                the darkest, instead of by gradients
  *
  * brush - how each stroke is laid
  *   alpha        opacity of a stroke (low = glazes that build up slowly)
@@ -141,11 +147,28 @@
     },
   };
 
+  /* Drawn: a 2D illustration's way of thinking - the scene as boxes in
+   * point perspective, regions bounded by straight lines that converge, a
+   * flat colour to each, ink on the edges, shade hatched. */
+  MANNERS.drawn = {
+    name: "drawn",
+    principles: [
+      "the scene thought of in point perspective, as rectangles that each enclose a region",
+      "one flat colour to each region, so colour goes on cleanly",
+      "ink on the edges, converging to the vanishing point",
+      "shade hatched in parallel lines, cross-hatched where it is darkest",
+    ],
+    reference: { planes: 1, hatchShade: 1, saturation: 1.15, keys: [22, 246], palette: 7, snap: 0.85, contour: 0.6, flatGround: 0.3, lightHold: 0.3 },
+    brush: { alpha: 1, bristle: false, round: true, jitter: 4, length: 1.3, evenDetail: 0.7, edgeStop: 26 },
+    leans: { bnd: 0.4, pot: 0.3, con: 0.2 },
+    words: ["drawing", "drawn", "sketch", "doodle", "illustration", "2d", "lineart", "storybook", "street", "room", "kitchen", "town", "house"],
+  };
+
   /* A manner's full settings: every field present, the painterly defaults
    * where the manner says nothing. */
   const REFERENCE_DEFAULTS = {
     saturation: 1, warmth: 0, keys: [0, 255], groundDark: 0, light: 0, blur: 0,
-    palette: 0, snap: -1, contour: 0, twoTone: 0, flatGround: 0, chroma: 0, lightHold: 0.5,
+    palette: 0, snap: -1, contour: 0, twoTone: 0, flatGround: 0, chroma: 0, lightHold: 0.5, planes: 0, hatchShade: 0,
   };
   // `tips`: which brush tips the manner paints with (app.js, BRUSH_TIPS);
   // null leaves it to the painting's own kit.

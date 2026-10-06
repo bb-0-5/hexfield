@@ -31694,7 +31694,8 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null, opening =
   // Toward the thirds along the long side, toward the middle across it.
   const toThird = (v) => v + ((Math.abs(v - 1 / 3) < Math.abs(v - 2 / 3) ? 1 / 3 : 2 / 3) - v) * 0.6;
   if (width >= height) { fx = toThird(fx); fy += (0.45 - fy) * 0.4; } else { fy = toThird(fy); fx += (0.5 - fx) * 0.4; }
-  const plan = { fx, fy, lightOnDark: true, palette: null, drawSeed, style: paintingBrushStyle(params), scene: null, opening };
+  const plan = { fx, fy, lightOnDark: true, palette: null, drawSeed, style: paintingBrushStyle(params), scene: null, opening,
+    sceneText: String(params?.__hexfieldWords?.text || "") };
   // Where the painting's focus goes - chosen, learned, and not the same as
   // the last few paintings (choosePlanComposition).
   plan.comp = choosePlanComposition(plan, ref, width, height, params);
@@ -38490,6 +38491,8 @@ function paintContourInk(result, plan) {
     colour: info.ink.map((c) => Math.max(0, Math.min(255, c + Math.round((rng() - 0.5) * 6)))),
     bristle: rng(), alpha: 1, plain: true, round: true,
   }));
+  // A drawn painting's perspective lines and hatching, inked with it.
+  if (plan.drawn) strokes.push(...drawnInkStrokes(plan, W, H, rng));
   result.paintStrokeLayer = strokePainter.layer;
   result.paintStrokeCount = strokes.length;
   result.paintBrush = {
@@ -38788,6 +38791,446 @@ function finishPlanReference(composed, width, height, plan) {
   return step.value;
 }
 
+/* ── Drawn: the picture in perspective planes ──────────────────────────
+ * A 2D illustrator thinks of a scene in point perspective, as rectangles
+ * that each enclose a region: outdoors, bands of sky over a ground cut by
+ * lines running to the vanishing point and by depth lines that close up
+ * toward the horizon; indoors, a back wall facing you with the floor,
+ * ceiling and side walls opening out from its corners, each cut the same
+ * way. Every region takes one flat colour (its own average, so the picture
+ * underneath still decides it) and ink runs along the edges; the named
+ * things keep their own drawing. Then shade is hatched, not graded. */
+const DRAWN_INDOOR = /\b(room|kitchen|bedroom|hall|interior|indoors?|inside|corridor|office|studio|cellar|attic|library|classroom)\b/;
+function perspectiveRegions(width, height, plan) {
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x2d2d) >>> 0);
+  const view = plan.scene?.view;
+  const horizon = Number.isFinite(view?.horizon) ? Math.max(height * 0.18, Math.min(height * 0.8, view.horizon)) : height * (0.38 + 0.2 * (plan.fy ?? 0.5));
+  const vx = Array.isArray(view?.vanish) ? Math.max(width * 0.1, Math.min(width * 0.9, view.vanish[0])) : width * (0.3 + 0.4 * (plan.fx ?? 0.5));
+  const text = String(plan.scene?.words?.join(" ") || "") + " " + String(plan.sceneText || "");
+  const indoor = DRAWN_INDOOR.test(text) || (plan.scene?.items || []).some((it) => it.key === "room");
+  const ids = new Int32Array(width * height);
+  const strips = 3 + Math.floor(rng() * 4), bands = 2 + Math.floor(rng() * 3), skyBands = 1 + Math.floor(rng() * 3);
+  // Lines from the vanishing point to the foot of the picture, spread a little past its sides.
+  const slopes = Array.from({ length: strips - 1 }, (_, i) => ((-0.4 + 1.8 * (i + 1) / strips) * width - vx) / Math.max(1, height - horizon));
+  const depthAt = (t) => Math.pow(t, 1.8);   // depth lines close up toward the horizon
+  /* Each thing on the ground in its own box, in this perspective: its back
+   * corners run to the vanishing point, so where it stands sets which of
+   * its sides shows and how its top tilts. Its footprint's outer corners
+   * send lines of their own out from the vanishing point, and its front
+   * edge a depth line across: the planes are cut round it. */
+  const boxes = drawnBoxes(plan, vx, horizon, width, height);
+  for (const b of boxes) {
+    for (const p of [b.frame.front.bl, b.frame.front.br]) if (p[1] > horizon + 2) slopes.push((p[0] - vx) / (p[1] - horizon));
+  }
+  slopes.sort((a, b) => a - b);
+  const extraDepth = boxes.map((b) => b.frame.front.bl[1]).filter((y) => y > horizon + 4 && y < height - 4);
+  const band = (f, n) => { let k = 0; while (k < n - 1 && f > depthAt((k + 1) / n)) k++; return k; };
+  const strip = (s) => { let k = 0; while (k < slopes.length && s > slopes[k]) k++; return k; };
+  // Bands of the ground, the things' front edges among them.
+  const groundBand = (y) => {
+    const f = (y - horizon) / Math.max(1, height - horizon);
+    return band(f, bands) * 8 + extraDepth.filter((e) => y > e).length;
+  };
+  if (!indoor) {
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        let id;
+        if (y < horizon) id = 1 + Math.min(skyBands - 1, Math.floor(Math.pow(y / horizon, 1.3) * skyBands));
+        else {
+          const s = (x - vx) / Math.max(1, y - horizon);
+          id = 100 + groundBand(y) * 32 + strip(s);
+        }
+        ids[y * width + x] = id;
+      }
+    }
+    // The same edges as lines, for the ink.
+    const lines = [[0, horizon, width, horizon]];
+    for (let j = 1; j < skyBands; j++) { const y = horizon * Math.pow(j / skyBands, 1 / 1.3); lines.push([0, y, width, y]); }
+    for (let k = 1; k < bands; k++) { const y = horizon + (height - horizon) * depthAt(k / bands); lines.push([0, y, width, y]); }
+    for (const y of extraDepth) lines.push([0, y, width, y]);
+    for (const sl of slopes) lines.push([vx, horizon, vx + sl * (height - horizon), height]);
+    boxFaces(ids, lines, boxes, width, height);
+    return { ids, horizon, vx, indoor, lines, boxes };
+  }
+  // A room: the back wall a rectangle round the vanishing point.
+  const rw = width * (0.32 + rng() * 0.2), rh = height * (0.3 + rng() * 0.16);
+  const x0 = vx - rw / 2, x1 = vx + rw / 2, y0 = horizon - rh * 0.55, y1 = horizon + rh * 0.45;
+  const cx = vx, cy = (y0 + y1) / 2;
+  const wallLines = 2 + Math.floor(rng() * 3);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let id;
+      if (x >= x0 && x <= x1 && y >= y0 && y <= y1) id = 1 + (y > horizon + rh * 0.3 ? 1 : 0);   // the back wall, with its skirting
+      else {
+        const px = (x - cx) / (rw / 2), py = (y - cy) / (rh / 2);
+        if (Math.abs(px) > Math.abs(py)) {
+          // A side wall: cut by upright lines that close up toward the back.
+          const f = px < 0 ? (x0 - x) / Math.max(1, x0) : (x - x1) / Math.max(1, width - x1);
+          id = (px < 0 ? 20 : 40) + band(Math.max(0, f), wallLines);
+        } else if (py < 0) {
+          const f = (y0 - y) / Math.max(1, y0);
+          id = 60 + band(Math.max(0, f), 2);
+        } else {
+          // The floor: boards to the vanishing point, depth lines across.
+          const f = (y - y1) / Math.max(1, height - y1), s = (x - vx) / Math.max(1, y - horizon);
+          id = 100 + (band(Math.max(0, f), bands) * 8 + extraDepth.filter((e) => y > e).length) * 32 + strip(s);
+        }
+      }
+      ids[y * width + x] = id;
+    }
+  }
+  // Its edges as lines: the back wall, the corners running out to the
+  // picture's edge, the floorboards, the depth lines on floor and walls.
+  const lines = [[x0, y0, x1, y0], [x1, y0, x1, y1], [x1, y1, x0, y1], [x0, y1, x0, y0], [x0, horizon + rh * 0.3, x1, horizon + rh * 0.3]];
+  const out = (px, py) => {
+    const dx = px - cx, dy = py - cy;
+    let t = Infinity;
+    if (dx) t = Math.min(t, ((dx > 0 ? width : 0) - px) / dx);
+    if (dy) t = Math.min(t, ((dy > 0 ? height : 0) - py) / dy);
+    return [px + dx * t, py + dy * t];
+  };
+  for (const [px, py] of [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]) lines.push([px, py, ...out(px, py)]);
+  const along = (cornerX, cornerY, atX = null, atY = null) => {
+    // A point on the corner line from (cornerX, cornerY) outward, at a given x or y.
+    const dx = cornerX - cx, dy = cornerY - cy;
+    return atX !== null ? [atX, cornerY + (atX - cornerX) * dy / dx] : [cornerX + (atY - cornerY) * dx / dy, atY];
+  };
+  for (const sl of slopes) {
+    const xa = vx + sl * (y1 - horizon), xb = vx + sl * (height - horizon);
+    if (xa > x0 && xa < x1) lines.push([xa, y1, xb, height]);
+  }
+  for (let k = 1; k < bands; k++) {
+    const y = y1 + (height - y1) * depthAt(k / bands);
+    lines.push([...along(x0, y1, null, y), ...along(x1, y1, null, y)]);
+  }
+  for (let k = 1; k < wallLines; k++) {
+    const xl = x0 - x0 * depthAt(k / wallLines), xr = x1 + (width - x1) * depthAt(k / wallLines);
+    lines.push([...along(x0, y0, xl), ...along(x0, y1, xl)], [...along(x1, y0, xr), ...along(x1, y1, xr)]);
+  }
+  { const y = y0 - y0 * depthAt(1 / 2); lines.push([...along(x0, y0, null, y), ...along(x1, y0, null, y)]); }
+  for (const y of extraDepth) if (y > y1) lines.push([...along(x0, y1, null, y), ...along(x1, y1, null, y)]);
+  boxFaces(ids, lines, boxes, width, height);
+  return { ids, horizon, vx, indoor, lines, boxes };
+}
+
+/* The things standing on the ground, each with its box in the drawn
+ * perspective (hexfield-visual.js frameOf, toward this vanishing point). */
+function drawnBoxes(plan, vx, horizon, width, height) {
+  const Visual = globalThis.HexfieldVisual;
+  if (!Visual?.frameOf) return [];
+  const out = [];
+  for (const item of plan.scene?.items || []) {
+    if (item.entry?.kind !== "subject" || item.lettering || !item.box || item.entry.anchor === "sky" || item.attach) continue;
+    if (item.box.w < width * 0.03 || item.box.h < height * 0.03) continue;
+    const frame = Visual.frameOf(item, { vanish: [vx, horizon] });
+    out.push({ item, frame, boxy: Boolean(Visual.isBoxy?.(item)) });
+  }
+  return out;
+}
+/* A box's visible faces as regions of their own (over the planes behind
+ * it), and its edges as lines: inked for a block of a thing, dashed (the
+ * construction left showing) round anything else. The far things first. */
+function boxFaces(ids, lines, boxes, width, height) {
+  if (!boxes.length) return;
+  const sorted = boxes.slice().sort((a, b) => a.frame.front.bl[1] - b.frame.front.bl[1]);
+  const canvas = paintBuffer(width, height), ctx = canvas.getContext("2d", { willReadFrequently: true });
+  sorted.forEach((b, k) => {
+    const { front: f, back: bk } = b.frame;
+    // Which side shows: the one toward the vanishing point; the top shows
+    // when the box stands below the eye.
+    const right = bk.tr[0] > f.tr[0], top = bk.tl[1] < f.tl[1];
+    const side = right ? [f.tr, bk.tr, bk.br, f.br] : [f.tl, bk.tl, bk.bl, f.bl];
+    const lid = [f.tl, f.tr, bk.tr, bk.tl];
+    const faces = [["side", side, 1], ...(top ? [["top", lid, 2]] : []), ["front", [f.tl, f.tr, f.br, f.bl], 3]];
+    b.faces = {};
+    for (const [name, poly, code] of faces) {
+      // Only a block of a thing's faces are regions of their own.
+      if (b.boxy) {
+        const id = 1000 + k * 8 + code;
+        b.faces[name] = id;
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = "#000"; ctx.beginPath();
+        poly.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.closePath(); ctx.fill();
+        const m = ctx.getImageData(0, 0, width, height).data;
+        for (let i = 0; i < ids.length; i++) if (m[i * 4 + 3] > 128) ids[i] = id;
+      }
+      const kind = b.boxy ? "box" : "dash";
+      for (let i = 0; i < poly.length; i++) { const p = poly[i], q = poly[(i + 1) % poly.length]; lines.push([p[0], p[1], q[0], q[1], kind]); }
+    }
+  });
+  canvas.width = 0;
+}
+
+function* applyPerspectivePlanesSteps(pixels, width, height, plan, amount = 1) {
+  if (!(amount > 0) || pixels.length !== width * height * 4) return pixels;
+  const { ids, indoor, lines, boxes } = perspectiveRegions(width, height, plan);
+  plan.drawn = { indoor, lines, ids, width, height, boxes };
+  yield;
+  const cover = plan.scene?.layer?.cover?.length === width * height ? plan.scene.layer.cover : null;
+  const sums = new Map();
+  for (let i = 0, o = 0; i < ids.length; i++, o += 4) {
+    if (cover && cover[i] > 128) continue;
+    let s = sums.get(ids[i]);
+    if (!s) sums.set(ids[i], s = [0, 0, 0, 0]);
+    s[0] += pixels[o]; s[1] += pixels[o + 1]; s[2] += pixels[o + 2]; s[3]++;
+  }
+  yield;
+  // One flat colour to each region (the things keep theirs).
+  const flat = new Map([...sums].map(([id, s]) => [id, s[3] ? [s[0] / s[3], s[1] / s[3], s[2] / s[3]] : null]));
+  /* A block of a thing's faces in its own colour - the side turned from
+   * the light darker, the top lighter; any other thing's box is only
+   * construction, so its faces keep the planes' colours behind them. */
+  for (const b of boxes || []) {
+    const bx = b.item.box;
+    let r = 0, g = 0, bl = 0, n = 0;
+    for (let y = Math.max(0, bx.y | 0); y < Math.min(height, bx.y + bx.h); y += 2) for (let x = Math.max(0, bx.x | 0); x < Math.min(width, bx.x + bx.w); x += 2) {
+      const i = y * width + x;
+      if (cover && cover[i] <= 128) continue;
+      r += pixels[i * 4]; g += pixels[i * 4 + 1]; bl += pixels[i * 4 + 2]; n++;
+    }
+    const base = n ? [r / n, g / n, bl / n] : null;
+    for (const [name, id] of Object.entries(b.faces || {})) {
+      if (!base) continue;
+      const k = name === "side" ? 0.68 : name === "top" ? 1.18 : 1;
+      flat.set(id, base.map((v) => Math.min(255, v * k)));
+    }
+  }
+  for (let i = 0, o = 0; i < ids.length; i++, o += 4) {
+    const c = flat.get(ids[i]);
+    if (!c || (cover && cover[i] > 128)) continue;
+    pixels[o] += (c[0] - pixels[o]) * amount; pixels[o + 1] += (c[1] - pixels[o + 1]) * amount; pixels[o + 2] += (c[2] - pixels[o + 2]) * amount;
+  }
+  yield;
+  // The ink: the darkest region's colour, darker. (Its lines are drawn once
+  // the picture is outlined, tidyDrawnPlanes.)
+  let darkest = [30, 28, 34], dl = Infinity;
+  for (const c of flat.values()) if (c) { const l = c[0] * 0.299 + c[1] * 0.587 + c[2] * 0.114; if (l < dl) { dl = l; darkest = c; } }
+  const ink = darkest.map((v) => v * 0.35);
+  const w = Math.max(1.5, Math.sqrt(width * height) / 300);
+  plan.drawnInk = ink;
+  plan.drawn.ink = ink; plan.drawn.lineWidth = w;
+  return pixels;
+}
+
+/* After the outline: the planes flat again (the general outline belongs to
+ * the things, not to the ground and sky), and the perspective lines drawn
+ * once, where the ink pass will lay them. In place. */
+function tidyDrawnPlanes(pixels, width, height, plan) {
+  const d = plan.drawn;
+  if (!d?.ids || d.width !== width || d.height !== height || pixels.length !== width * height * 4) return pixels;
+  const cover = plan.scene?.layer?.cover?.length === width * height ? plan.scene.layer.cover : null;
+  const letterAt = plan.scene?.lettering ? letteringContains(plan.scene.lettering) : null;
+  const sums = new Map();
+  for (let i = 0, o = 0; i < d.ids.length; i++, o += 4) {
+    if (cover && cover[i] > 128) continue;
+    let sm = sums.get(d.ids[i]);
+    if (!sm) sums.set(d.ids[i], sm = new Map());
+    // The region's commonest colour (after the palette, one of a few).
+    const key = (pixels[o] << 16) | (pixels[o + 1] << 8) | pixels[o + 2];
+    sm.set(key, (sm.get(key) || 0) + 1);
+  }
+  const flat = new Map();
+  for (const [id, sm] of sums) { let best = 0, bn = -1; for (const [k, n] of sm) if (n > bn) { bn = n; best = k; } flat.set(id, [best >> 16 & 255, best >> 8 & 255, best & 255]); }
+  for (let i = 0, o = 0; i < d.ids.length; i++, o += 4) {
+    if ((cover && cover[i] > 128) || (letterAt && letterAt(i % width, (i / width) | 0))) continue;
+    const c = flat.get(d.ids[i]);
+    if (c) { pixels[o] = c[0]; pixels[o + 1] = c[1]; pixels[o + 2] = c[2]; }
+  }
+  // The lines, drawn where the ink strokes go (off the things and letters).
+  const canvas = paintBuffer(width, height), ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.lineCap = "round";
+  const lw = d.lineWidth || 2;
+  // Plane lines, then the boxes' edges (a block's inked, construction dashed and light).
+  for (const [x0, y0, x1, y1, kind] of d.lines || []) {
+    if (kind) continue;
+    ctx.strokeStyle = "#000"; ctx.lineWidth = lw; ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+  }
+  // (Hidden behind a block's faces.)
+  ctx.globalCompositeOperation = "destination-out";
+  const faceImg = ctx.createImageData(width, height);
+  for (let i = 0; i < d.ids.length; i++) if (d.ids[i] >= 1000) faceImg.data[i * 4 + 3] = 255;
+  const faceCanvas = paintBuffer(width, height);
+  faceCanvas.getContext("2d").putImageData(faceImg, 0, 0);
+  ctx.drawImage(faceCanvas, 0, 0);
+  faceCanvas.width = 0;
+  ctx.globalCompositeOperation = "source-over";
+  for (const [x0, y0, x1, y1, kind] of d.lines || []) {
+    if (!kind) continue;
+    ctx.strokeStyle = kind === "box" ? "#000" : "rgba(0,0,0,0.45)";
+    ctx.lineWidth = kind === "box" ? lw : Math.max(1, lw * 0.6);
+    ctx.setLineDash(kind === "dash" ? [lw * 3, lw * 3] : []);
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  const lines = ctx.getImageData(0, 0, width, height).data;
+  canvas.width = 0;
+  const ink = d.ink || [30, 28, 34];
+  for (let i = 0, o = 0; i < d.ids.length; i++, o += 4) {
+    const a = lines[o + 3] / 255;
+    if (!a || (cover && cover[i] > 128) || (letterAt && letterAt(i % width, (i / width) | 0))) continue;
+    pixels[o] += (ink[0] - pixels[o]) * a; pixels[o + 1] += (ink[1] - pixels[o + 1]) * a; pixels[o + 2] += (ink[2] - pixels[o + 2]) * a;
+  }
+  return pixels;
+}
+
+/* A drawn painting's colour goes on cleanly: each region of its plan laid
+ * flat onto the canvas, the sky first and on toward the viewer, a region at
+ * a time (the brush then works on its things, and the ink comes last). */
+async function laydrawnFlats(plan, reference, width, height, alive) {
+  const d = plan.drawn;
+  if (!d?.ids || d.width !== width || d.height !== height || reference?.length !== width * height * 4) return;
+  if (d.laying) return;
+  d.laying = true;
+  try { await layFlatsNow(plan, d, reference, width, height, alive); } finally { d.laying = false; }
+}
+async function layFlatsNow(plan, d, reference, width, height, alive) {
+  const cover = plan.scene?.layer?.cover?.length === width * height ? plan.scene.layer.cover : null;
+  // Far to near: the sky and back wall first (small ids), the ground last,
+  // its far bands before its near ones; then the things, flat in their
+  // colours, for the ink to go over.
+  const order = [...new Set(d.ids)].sort((a, b) => a - b);
+  // (A sketch stroke still being laid stops here.)
+  activePaintAnimation++;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const img = vctx.getImageData(0, 0, width, height), px = img.data;
+  const pause = () => new Promise((resolve) => setTimeout(resolve, 40));
+  for (const id of order) {
+    if (!alive()) return;
+    for (let i = 0, o = 0; i < d.ids.length; i++, o += 4) {
+      if (d.ids[i] !== id || (cover && cover[i] > 128)) continue;
+      px[o] = reference[o]; px[o + 1] = reference[o + 1]; px[o + 2] = reference[o + 2];
+    }
+    vctx.putImageData(img, 0, 0);
+    await pause();
+  }
+  if (cover && alive()) {
+    for (let i = 0, o = 0; i < cover.length; i++, o += 4) {
+      if (cover[i] <= 128) continue;
+      px[o] = reference[o]; px[o + 1] = reference[o + 1]; px[o + 2] = reference[o + 2];
+    }
+    vctx.putImageData(img, 0, 0);
+  }
+  if (!alive()) return;
+  // Laid: from here the brush stands down, and the ink (which waits for
+  // the big brush to have blocked in) may begin.
+  d.flatsLaid = reference;
+  strokePainter.layer = Math.max(strokePainter.layer, maxStrokeLayer(plan));
+}
+/* A drawn painting's general pass: no brush - its flats laid again if its
+ * picture was re-made, and nothing else to do. */
+function drawnPass(result, plan, reference, width, height, refKey = null) {
+  markPaintTimingStarted(result);
+  result.paintStrokeCount = 0;
+  const d = plan.drawn;
+  // A changed master is prepared again (as the brush's pass would), so the
+  // ink, which waits for a prepared picture, has one.
+  const usable = strokePainter.enhancedPlan === plan && strokePainter.enhanced?.length === reference?.length;
+  if (usable && refKey && strokePainter.enhancedKey !== refKey) scheduleStrokeReference(reference, width, height, refKey);
+  const ref = strokePainter.enhancedPlan === plan && strokePainter.enhanced?.length === width * height * 4 ? strokePainter.enhanced : null;
+  if (ref && d.flatsLaid && d.flatsLaid !== ref && !d.laying) {
+    laydrawnFlats(plan, ref, width, height, () => strokePainter.plan === plan).catch(() => {});
+  }
+  markPaintTimingCompleted(result);
+  return Promise.resolve(false);
+}
+
+/* Shade hatched: in the darker part of the picture, parallel diagonal ink
+ * lines (against the light, the way a hand hatches), and across them a
+ * second set where it is darkest. In place. */
+function applyHatchShade(pixels, width, height, plan, amount = 1) {
+  if (!(amount > 0) || pixels.length !== width * height * 4) return pixels;
+  const lum = (o) => pixels[o] * 0.299 + pixels[o + 1] * 0.587 + pixels[o + 2] * 0.114;
+  const hist = new Uint32Array(256);
+  for (let o = 0; o < pixels.length; o += 4 * 7) hist[Math.round(lum(o))]++;
+  const total = hist.reduce((a, b) => a + b, 0), q = (f) => { let acc = 0; for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= total * f) return v; } return 255; };
+  /* Shade is what is clearly darker than the picture's middle - not
+   * simply its darkest fifth, which in a night picture is the whole sky. */
+  const mid = q(0.5), shade = Math.min(q(0.2) - 4, mid - 30), deep = Math.min(q(0.06) - 4, mid - 60);
+  const ink = plan.drawnInk || plan.contourInk || [28, 26, 32];
+  const unit = Math.sqrt(width * height), gap = Math.max(5, Math.round(unit / 75)), line = Math.max(1, Math.round(gap / 5));
+  // Hatched one way or the other, by the side the light comes from.
+  const dir = Math.cos(plan.lightAngle || 0) >= 0 ? 1 : -1;
+  // (Never over the lettering. Where it is hatched is kept for the ink pass.)
+  const letterAt = plan.scene?.lettering ? letteringContains(plan.scene.lettering) : null;
+  const mask = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const o = (y * width + x) * 4, l = lum(o);
+      if (l >= shade || (letterAt && letterAt(x, y))) continue;
+      mask[y * width + x] = l < deep ? 2 : 1;
+      const a = ((x * dir + y) % gap + gap) % gap < line, b = l < deep && ((x * -dir + y) % gap + gap) % gap < line;
+      if (!a && !b) continue;
+      const k = 0.75 * amount;
+      pixels[o] += (ink[0] - pixels[o]) * k; pixels[o + 1] += (ink[1] - pixels[o + 1]) * k; pixels[o + 2] += (ink[2] - pixels[o + 2]) * k;
+    }
+  }
+  if (plan.drawn) plan.drawn.hatch = { mask, gap, line, dir, width, height, ink };
+  return pixels;
+}
+
+/* The drawn manner's ink as strokes, so it stays crisp on the canvas: its
+ * perspective lines (broken where a thing or a letter stands in front) and
+ * its hatching, as runs along each diagonal through the shade. */
+function drawnInkStrokes(plan, W, H, rng) {
+  const d = plan.drawn;
+  if (!d) return [];
+  const cover = plan.scene?.layer?.cover?.length === W * H ? plan.scene.layer.cover : null;
+  const letterAt = plan.scene?.lettering ? letteringContains(plan.scene.lettering) : null;
+  const clear = (x, y) => x >= 0 && y >= 0 && x < W && y < H && !(cover && cover[(y | 0) * W + (x | 0)] > 128) && !(letterAt && letterAt(x, y));
+  const behindBlock = (x, y) => d.ids?.length === W * H && d.ids[(y | 0) * W + (x | 0)] >= 1000;
+  const ink = (d.ink || [30, 28, 34]).map((c) => Math.max(0, Math.min(255, c + Math.round((rng() - 0.5) * 6))));
+  const strokes = [];
+  // `dash`: a run of this long, then a gap as long.
+  const runs = (x0, y0, x1, y1, width, minLen, { occlude = true, dash = 0, alpha = 1 } = {}) => {
+    const len = Math.hypot(x1 - x0, y1 - y0), n = Math.max(2, Math.ceil(len / 2));
+    let start = null;
+    for (let i = 0; i <= n; i++) {
+      const t = i / n, x = x0 + (x1 - x0) * t, y = y0 + (y1 - y0) * t;
+      const ok = clear(x, y) && !(occlude && behindBlock(x, y)) && !(dash && Math.floor(t * len / dash) % 2);
+      if (ok && !start) start = [x, y];
+      if ((!ok || i === n) && start) {
+        const end = [x, y];
+        if (Math.hypot(end[0] - start[0], end[1] - start[1]) >= minLen) strokes.push({ points: [start, end], width, colour: ink, alpha, plain: true, round: true, bristle: rng() });
+        start = null;
+      }
+    }
+  };
+  if (W && H && d.lines) {
+    const lw = Math.max(1.5, d.lineWidth || 2);
+    for (const [x0, y0, x1, y1, kind] of d.lines) {
+      if (!kind) runs(x0, y0, x1, y1, lw * (0.9 + rng() * 0.25), 6);
+      else if (kind === "box") runs(x0, y0, x1, y1, lw * (0.95 + rng() * 0.2), 3, { occlude: false });
+      else runs(x0, y0, x1, y1, Math.max(1, lw * 0.6), 2, { occlude: false, dash: lw * 3, alpha: 0.45 });
+    }
+  }
+  const h = d.hatch;
+  if (h && h.width === W && h.height === H) {
+    const hw = Math.max(1, h.line * 0.9);
+    // Each diagonal through the picture; a stroke along each run of shade.
+    const pass = (dir, level) => {
+      for (let c = -H; c < W + H; c += h.gap) {
+        let start = null, last = null;
+        for (let y = 0; y <= H; y += 2) {
+          const x = dir > 0 ? c - y : c + y - H;
+          const i = (y | 0) * W + (x | 0);
+          const on = y < H && x >= 0 && x < W && h.mask[i] >= level;
+          if (on && !start) start = [x, y];
+          if (on) last = [x, y];
+          if (!on && start) {
+            if (Math.hypot(last[0] - start[0], last[1] - start[1]) >= h.gap) strokes.push({ points: [start, last], width: hw, colour: ink, alpha: 0.85, plain: true, round: true, bristle: rng() });
+            start = null;
+          }
+        }
+      }
+    };
+    pass(-h.dir, 1);
+    pass(h.dir, 2);
+  }
+  return strokes;
+}
+
 /* The same, a step at a time (values and colour; the palette; the outline;
  * adoptions), for a new painting prepared with the page free in between. */
 function* finishPlanReferenceSteps(composed, width, height, plan) {
@@ -38800,6 +39243,8 @@ function* finishPlanReferenceSteps(composed, width, height, plan) {
   yield;
   // Simplified as far as the painting's abstraction goes.
   pixels = yield* applyAbstractionSteps(pixels, width, height, plan);
+  // Drawn: laid out as perspective planes, a flat colour to each.
+  if (manner.reference?.planes) pixels = yield* applyPerspectivePlanesSteps(pixels, width, height, plan, manner.reference.planes);
   if (!plan.palette) {
     plan.palette = paletteFromPixels(pixels, planPaletteSize(plan),
       mulberry32(((Number(plan.drawSeed) || 0) ^ 0x51f15e) >>> 0), width * height < 12000 ? 600 : 3000);
@@ -38827,6 +39272,9 @@ function* finishPlanReferenceSteps(composed, width, height, plan) {
   if (applyWeatherTouch(pixels, width, height, plan, manner, before)) yield;
   pixels = yield* applyMannerContourSteps(pixels, width, height, plan, manner);
   yield;
+  // Drawn: the planes tidied and lined, then its shade hatched.
+  if (manner.reference?.planes) { tidyDrawnPlanes(pixels, width, height, plan); yield; }
+  if (manner.reference?.hatchShade) { applyHatchShade(pixels, width, height, plan, manner.reference.hatchShade); yield; }
   if (plan.contourInk && !plan.palette.some((p) => Math.hypot(p[0] - plan.contourInk[0], p[1] - plan.contourInk[1], p[2] - plan.contourInk[2]) < 30)) {
     plan.palette.push(plan.contourInk.slice());
   }
@@ -42638,7 +43086,8 @@ function continueMasterDetail(result) {
   // After a lettering change, once the reference has caught up, this pass is
   // the letter brush's.
   const letters = strokePainter.plan?.scene?.lettering;
-  const letterTurn = Boolean(letters && letters.stage !== "block" && letters.painted !== letters.version &&
+  // (A drawn painting's letters are laid crisp with its flats: no letter brush.)
+  const letterTurn = Boolean(letters && !strokePainter.plan?.drawn && letters.stage !== "block" && letters.painted !== letters.version &&
     letters.painting !== letters.version && strokePainter.enhancedKey && strokePainter.enhancedPlan === strokePainter.plan);
   // A manner with an outline inks it once the big brush has blocked in, and again
   // whenever the reference (and so its outline) is re-made.
@@ -42670,7 +43119,8 @@ function continueMasterDetail(result) {
     if (!things.masksReady) buildThingMasks(scene, width, height);
     if (!things.started && things.item === undefined) things.item = firstThing(0);
     // The landscape gets the two big brushes to itself first.
-    thingTurn = things.masksReady && !things.painting && !things.done && things.item >= 0 && strokePainter.layer >= 2;
+    // (A drawn painting lays its things flat with its planes: no brush passes.)
+    thingTurn = !plan.drawn && things.masksReady && !things.painting && !things.done && things.item >= 0 && strokePainter.layer >= 2;
     if (thingTurn) things.started = true;
   }
   /* The weather falls last: once the finest brush is at work and every
@@ -42683,6 +43133,8 @@ function continueMasterDetail(result) {
     : thingTurn ? paintThingStrokes(detailResult, scene, scene.thing.pass)
     : inkTurn ? paintContourInk(detailResult, plan)
     : weatherTurn ? paintWeatherStrokes(detailResult, plan)
+    // A drawn painting is flats and ink: once its flats are down, no brush.
+    : plan?.drawn ? drawnPass(detailResult, plan, reference, width, height, source.params)
     : paintTowardReference(detailResult, reference, width, height, { refKey: source.params, enhance: true });
   if (thingTurn) {
     const things = scene.thing;
@@ -42834,6 +43286,13 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
     updatePainterStatus(result);
     return false;
   }
+  // A drawn painting is flats and ink: a change in the studio's picture is
+  // not brushed in (its flats follow its plan; Drawn).
+  if (refinement && strokePainter.plan?.drawn && !strokePainter.preparing) {
+    if (continueMasterDetail(result)) return false;
+    updatePainterStatus(result);
+    return false;
+  }
 
   if (decision.commit === "stroke") {
     /* Painted, not pasted: strokes toward the accepted deposit, one layer
@@ -42927,7 +43386,7 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
     // reached (the picture as it came, then composed to the plan, then with
     // its scene, light and air), so the sketch moves toward the painting.
     let draft = source;
-    (async () => {
+    const sketching = (async () => {
       for (let batch = 0; batch < SKETCH_BATCHES && alive(); batch++) {
         await new Promise((resolve) => setTimeout(resolve, batch ? SKETCH_GAP : 0));
         if (!alive()) return;
@@ -42952,8 +43411,12 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
         paintTonedGround(ready.reference, width, height);
       }
       updateWordPaints();
-      return paintTowardReference(result, ready.reference, width, height,
-        { layer: 0, limit: STROKE_BATCH * 2, prepared: true })
+      // A drawn painting's flat colour laid region by region first (Drawn).
+      // (After the sketch's last batch: none of it lands on the flats.)
+      const flats = ready.plan.drawn ? sketching.then(() => laydrawnFlats(ready.plan, ready.reference, width, height, () => strokePainter.plan === ready.plan)) : Promise.resolve();
+      // (A drawn painting has no brush to follow its flats: the ink comes next.)
+      return flats.then(() => ready.plan.drawn ? true : paintTowardReference(result, ready.reference, width, height,
+        { layer: 0, limit: STROKE_BATCH * 2, prepared: true }))
         .then(() => { paintVisibleGlyphOverlay(result); return true; });
     }).catch((error) => { console.warn("preparing a new painting failed", error); if (alive()) strokePainter.preparing = null; return false; });
   }
