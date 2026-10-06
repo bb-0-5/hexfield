@@ -3127,17 +3127,44 @@
   /* A boxy thing turned by `item.turn` (radians; the sign, which side shows):
    * its front narrowed toward its far edge, and round the corner its side
    * wall - and its roof's slope - stepping back toward the horizon. */
+  // A pyramid or a tent: one big gable over a level base, no box under it.
+  function pyramidOf(parts) {
+    let best = null;
+    for (const part of parts) {
+      if (part.shape !== "poly" || part.pts?.length !== 3 || solidOfPart(part)?.solid !== "prism") continue;
+      const b = bounds(part.pts);
+      if (b.w * b.h * 0.5 >= 0.3 && (!best || b.w * b.h > bounds(best.pts).w * bounds(best.pts).h)) best = part;
+    }
+    return best;
+  }
   function turnedGeometry(item, parts) {
+    if (!item.turn) return null;
     const boxy = boxyOf(parts);
-    if (!boxy || !item.turn) return null;
+    if (!boxy) {
+      // A pyramid turned: its front face narrowed and, round its edge, the
+      // next face going back from the base corner to the apex.
+      const tri = pyramidOf(parts);
+      if (!tri) return null;
+      const box = item.box, t = Math.min(1.1, Math.abs(item.turn)), dir = item.turn > 0 ? 1 : -1;
+      const c = Math.max(0.5, Math.cos(t)), pivot = dir > 0 ? box.x : box.x + box.w;
+      const X = (u) => pivot + (box.x + u * box.w - pivot) * c, Y = (v) => box.y + v * box.h;
+      const hz = Number.isFinite(item.turnHorizon) ? item.turnHorizon : box.y - box.h * 0.2;
+      const k = 1 - 0.22 * Math.sin(t), sideW = box.w * 0.32 * Math.sin(t);
+      const apex = tri.pts.reduce((a, p) => (p[1] < a[1] ? p : a));
+      const corner = tri.pts.filter((p) => p !== apex).reduce((a, p) => (dir > 0 ? (p[0] > a[0] ? p : a) : (p[0] < a[0] ? p : a)));
+      const A = [X(apex[0]), Y(apex[1])], E = [X(corner[0]), Y(corner[1])];
+      const B = [E[0] + dir * sideW, E[1] + Math.max(-box.h * 0.06, Math.min(box.h * 0.06, (hz - E[1]) * (1 - k)))];
+      return { pyramid: tri, dir, c, pivot, side: [A, B, E], slope: null, t };
+    }
     const box = item.box, t = Math.min(1.1, Math.abs(item.turn)), dir = item.turn > 0 ? 1 : -1;
     const c = Math.max(0.45, Math.cos(t));
     const sideW = box.w * (item.entry.depth ?? 0.6) * Math.sin(t) * 0.9;
     const pivot = dir > 0 ? box.x : box.x + box.w;
     const X = (u) => pivot + (box.x + u * box.w - pivot) * c, Y = (v) => box.y + v * box.h;
     const hz = Number.isFinite(item.turnHorizon) ? item.turnHorizon : box.y - box.h * 0.2;
-    const k = 1 - 0.22 * Math.sin(t);
-    const back = ([x, y]) => [x + dir * sideW, hz + (y - hz) * k];
+    const k = 1 - 0.22 * Math.sin(t), reach = box.h * 0.12;
+    // Toward the horizon as it goes back - gently, however high the eye.
+    const back = ([x, y]) => [x + dir * sideW, y + Math.max(-reach, Math.min(reach, (hz - y) * (1 - k)))];
     const [bx, by, bw, bh] = boxy.body.box;
     const edge = dir > 0 ? bx + bw : bx;
     const top = [X(edge), Y(by)], bot = [X(edge), Y(by + bh)];
@@ -3166,6 +3193,17 @@
   };
   const quadBounds = (q) => bounds(q);
   function paintTurned(ctx, item, rng, parts, geo) {
+    if (geo.pyramid) {
+      const colour = colourOf(item, geo.pyramid), path = quadPath(geo.side);
+      ctx.fillStyle = hsl(colour, -0.13);
+      ctx.fill(path);
+      if (geo.pyramid.texture && !masking) texture(ctx, path, geo.pyramid.texture, quadBounds(geo.side), colour, rng);
+      ctx.save();
+      ctx.translate(geo.pivot, 0); ctx.scale(geo.c, 1); ctx.translate(-geo.pivot, 0);
+      drawParts(ctx, item, rng, parts);
+      ctx.restore();
+      return;
+    }
     const { boxy, side, slope } = geo;
     const wall = colourOf(item, boxy.body);
     // The side wall, turned a little from the light: a shade darker.
@@ -3200,22 +3238,56 @@
     drawParts(ctx, item, rng, parts);
     ctx.restore();
   }
-  // Whether a thing is boxy (a box body, perhaps a prism roof): it can be turned.
+  // Whether a thing is boxy (a box body, perhaps a prism roof) or a pyramid: it can be turned.
   function isBoxy(item) {
-    return Boolean(item?.entry?.parts && boxyOf(rimParts(formParts(item), item)));
+    if (!item?.entry?.parts) return false;
+    // A soft, wobbly or cartoon form is drawn round: its straight sides would not meet it.
+    if (item.form && FORM_STYLES[item.form.style]?.smooth || item.form?.style === "wobbly") return false;
+    const parts = rimParts(formParts(item), item);
+    return Boolean(boxyOf(parts) || pyramidOf(parts));
   }
   // The faces of a turned thing, for the brushes to follow (null if it is not turned).
   function turnedFaces(item) {
     if (!item?.turn || !item.box) return null;
     const geo = turnedGeometry(item, rimParts(formParts(item), item));
-    return geo ? { side: geo.side, slope: geo.slope, dir: geo.dir } : null;
+    return geo ? { side: geo.side, slope: geo.slope, dir: geo.dir, c: geo.c, pivot: geo.pivot } : null;
   }
 
   function paintItem(ctx, item, rng) {
     const parts = rimParts(formParts(item), item);
     const geo = item.turn ? turnedGeometry(item, parts) : null;
-    if (geo) { paintTurned(ctx, item, rng, parts, geo); return; }
-    drawParts(ctx, item, rng, parts);
+    if (geo) paintTurned(ctx, item, rng, parts, geo);
+    else drawParts(ctx, item, rng, parts);
+    if (item.solidShade && !masking) shadeSolid(ctx, item);
+  }
+  /* A round thing shaded as the solid it is: a cylinder lit down the side
+   * toward the light and dark down the other, a sphere with its light spot
+   * toward the light and its shade round the far side. Over its own paint
+   * only. */
+  function shadeSolid(ctx, item) {
+    const b = item.box, a = Number.isFinite(item.solidLight) ? item.solidLight : -2.3;
+    const lx = Math.cos(a), ly = Math.sin(a);
+    ctx.save();
+    ctx.globalCompositeOperation = "source-atop";
+    let g;
+    if (item.solidShade === "sphere") {
+      const r = Math.max(b.w, b.h) / 2, cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+      g = ctx.createRadialGradient(cx + lx * r * 0.45, cy + ly * r * 0.45, r * 0.05, cx, cy, r * 1.05);
+      g.addColorStop(0, "rgba(255, 250, 238, 0.42)");
+      g.addColorStop(0.45, "rgba(255, 250, 238, 0)");
+      g.addColorStop(0.75, "rgba(10, 12, 30, 0.12)");
+      g.addColorStop(1, "rgba(10, 12, 30, 0.45)");
+    } else {
+      const lit = lx >= 0 ? 1 : -1;
+      g = ctx.createLinearGradient(b.x, 0, b.x + b.w, 0);
+      const stops = [[0, 0.4], [0.3, -0.25], [0.55, 0], [1, 0.45]];
+      for (const [t, v] of lit > 0 ? stops.map(([t, v]) => [1 - t, v]).reverse() : stops) {
+        g.addColorStop(t, v < 0 ? `rgba(255, 250, 238, ${-v})` : `rgba(10, 12, 30, ${v})`);
+      }
+    }
+    ctx.fillStyle = g;
+    ctx.fillRect(b.x - b.w, b.y - b.h, b.w * 3, b.h * 3);
+    ctx.restore();
   }
   function drawParts(ctx, item, rng, parts) {
     const box = item.box;
@@ -3686,6 +3758,7 @@
         if (pick !== null && index !== pick) continue;
         lctx.clearRect(0, 0, W, H);
         if (item.turn) item.turnHorizon = view && Number.isFinite(view.horizon) ? view.horizon : H * 0.45;
+        if (item.solidShade) item.solidLight = Number.isFinite(dims?.light) ? dims.light : -2.3;
         paintItem(lctx, item, seededRandom(seeds[index]));
         if (mono) {
           if (item.entry.kind !== "subject" || item.lettering) continue;
@@ -3709,6 +3782,13 @@
         ctx.globalAlpha = item.alpha ?? 1;
         // Leaning in the wind, from its foot.
         if (item.lean) { const foot = item.box.y + item.box.h; ctx.transform(1, 0, -item.lean, 1, item.lean * foot, 0); }
+        // On a face round a turned thing's corner: its box carried onto that
+        // face's plane (top-left, top-right and bottom-left to the face's).
+        if (item.faceQuad) {
+          const b = item.box, [tl, tr, , bl] = item.faceQuad;
+          const a = (tr[0] - tl[0]) / b.w, bb = (tr[1] - tl[1]) / b.w, c = (bl[0] - tl[0]) / b.h, d = (bl[1] - tl[1]) / b.h;
+          ctx.transform(a, bb, c, d, tl[0] - a * b.x - c * b.y, tl[1] - bb * b.x - d * b.y);
+        }
         if (item.keystone && item.keystone !== 1) drawKeystoned(ctx, layer, item.box, item.keystone, W);
         else ctx.drawImage(layer, 0, 0);
         ctx.restore();

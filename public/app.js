@@ -38059,7 +38059,8 @@ function choosePlanTurn(plan, params) {
   const Visual = globalThis.HexfieldVisual;
   const boxy = (plan.scene?.items || []).filter((item) => item.entry?.kind === "subject" && !item.lettering && !item.morph &&
     item.entry.anchor !== "sky" && Visual?.isBoxy?.(item));
-  if (!boxy.length) return null;
+  const round = (plan.scene?.items || []).some((item) => ROUND_SOLIDS.cylinder.has(item.key) || ROUND_SOLIDS.sphere.has(item.key));
+  if (!boxy.length && !round) return null;
   const text = String(params?.__hexfieldWords?.text || "").toLowerCase();
   const sideWords = TURN_SIDE_WORDS.test(text), frontWords = TURN_FRONT_WORDS.test(text);
   const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x7a2e) >>> 0);
@@ -38071,16 +38072,51 @@ function choosePlanTurn(plan, params) {
   });
   plan.turnScores = summariseChoice(scores);
   const turn = TURNS[scores[0].key];
-  const vanish = plan.scene.view?.vanish;
+  const scene = plan.scene, vanish = scene.view?.vanish;
+  const horizon = Number.isFinite(scene.view?.horizon) ? scene.view.horizon : scene.height * 0.45;
   for (const item of boxy) {
     if (!turn.angle) { item.turn = 0; continue; }
     // The side toward the vanishing point is the one that shows.
     const cx = item.box.x + item.box.w / 2;
     const dir = Array.isArray(vanish) ? (vanish[0] >= cx ? 1 : -1) : rng() < 0.5 ? 1 : -1;
     item.turn = dir * turn.angle * (0.9 + rng() * 0.2);
+    item.turnHorizon = horizon;
+    // What is fixed to its front goes with it: narrowed with the front - or,
+    // turned well round, now and then onto the side wall's plane.
+    const faces = Visual.turnedFaces(item);
+    if (!faces) continue;
+    for (const other of scene.items) {
+      if (other.attachedTo !== item.key || other.turn) continue;
+      const front = !other.spot || other.spot === "front";
+      if (front && faces.side.length === 4 && turn.angle >= 0.7 && rng() < 0.5) {
+        const b = other.box, hb = item.box, v0 = Math.max(0, (b.y - hb.y) / hb.h), v1 = Math.min(1, (b.y + b.h - hb.y) / hb.h);
+        const at = (u, v) => {
+          const q = faces.side, t = [q[0][0] + (q[1][0] - q[0][0]) * u, q[0][1] + (q[1][1] - q[0][1]) * u];
+          const d = [q[3][0] + (q[2][0] - q[3][0]) * u, q[3][1] + (q[2][1] - q[3][1]) * u];
+          const top = q[0][1], bottom = q[3][1], f = (hb.y + v * hb.h - top) / Math.max(1, bottom - top);
+          return [t[0] + (d[0] - t[0]) * f, t[1] + (d[1] - t[1]) * f];
+        };
+        other.faceQuad = [at(0.25, v0), at(0.75, v0), at(0.75, v1), at(0.25, v1)];
+      } else {
+        const x0 = faces.pivot + (other.box.x - faces.pivot) * faces.c;
+        other.box = { ...other.box, x: x0, w: other.box.w * faces.c };
+      }
+    }
+  }
+  // Round things shaded as the solids they are, when things are seen in the round.
+  if (turn.angle) {
+    for (const item of scene.items) {
+      if (item.entry?.kind !== "subject" || item.lettering || item.morph) continue;
+      if (ROUND_SOLIDS.cylinder.has(item.key)) item.solidShade = "cylinder";
+      else if (ROUND_SOLIDS.sphere.has(item.key)) item.solidShade = "sphere";
+    }
   }
   return turn;
 }
+const ROUND_SOLIDS = {
+  cylinder: new Set(["lighthouse", "candle", "bottle", "vase", "cup", "chimney", "cactus"]),
+  sphere: new Set(["ball", "apple", "balloon", "moon", "planet", "egg", "sun"]),
+};
 
 // The finest brush the painting goes down to.
 function maxStrokeLayer(plan = strokePainter.plan) {
@@ -38153,7 +38189,7 @@ function* applyAbstractionSteps(pixels, width, height, plan) {
   }
   // Each facet in its own mean colour, a little apart from its neighbours'
   // values (light against dark), over a breath of the picture underneath.
-  const sum = new Float64Array(seeds.length * 4);
+  const sum = new Float64Array(seeds.length * 4), at = new Float64Array(seeds.length * 2);
   for (let y = 0, i = 0; y < height; y++) {
     const row = ((y / S) | 0) * lw;
     for (let x = 0; x < width; x++, i++) {
@@ -38161,15 +38197,32 @@ function* applyAbstractionSteps(pixels, width, height, plan) {
       if (k < 0) continue;
       const o = i * 4;
       sum[k * 4] += pixels[o]; sum[k * 4 + 1] += pixels[o + 1]; sum[k * 4 + 2] += pixels[o + 2]; sum[k * 4 + 3]++;
+      at[k * 2] += x; at[k * 2 + 1] += y;
     }
   }
+  /* Each facet a face of a solid (Solids): turned the way it lies on the
+   * thing it belongs to - out from that thing's middle, toward the viewer -
+   * or, on the ground and sky, a little out from the picture's own middle;
+   * lit as far as it faces the painting's light. */
+  const things = (plan.scene?.items || []).filter((item) => item.entry?.kind === "subject" && !item.lettering && item.box);
+  const la = Number.isFinite(plan.lightAngle) ? plan.lightAngle : -2.2;
+  const L = [Math.cos(la) * 0.7, Math.sin(la) * 0.7, 0.7];
+  const facing = (cx, cy, k) => {
+    const host = seedSide[k] ? things.find((t) => cx >= t.box.x && cx <= t.box.x + t.box.w && cy >= t.box.y && cy <= t.box.y + t.box.h) : null;
+    const ox = host ? host.box.x + host.box.w / 2 : width / 2, oy = host ? host.box.y + host.box.h / 2 : height / 2;
+    const rx = host ? host.box.w / 2 : width, ry = host ? host.box.h / 2 : height;
+    const n = [(cx - ox) / rx, (cy - oy) / ry, host ? 0.9 : 2.2], m = Math.hypot(...n) || 1;
+    const lit = (n[0] * L[0] + n[1] * L[1] + n[2] * L[2]) / m / Math.hypot(...L);
+    return 0.82 + 0.38 * Math.max(0, lit) - 0.3 * Math.max(0, -lit);
+  };
   let mean = 0, n = 0;
   for (let k = 0; k < seeds.length; k++) if (sum[k * 4 + 3]) { mean += (sum[k * 4] + sum[k * 4 + 1] + sum[k * 4 + 2]) / 3 / sum[k * 4 + 3]; n++; }
   mean /= Math.max(1, n);
   const colour = seeds.map((_, k) => {
     const c = sum[k * 4 + 3] || 1, rgb = [sum[k * 4] / c, sum[k * 4 + 1] / c, sum[k * 4 + 2] / c];
     const l = (rgb[0] + rgb[1] + rgb[2]) / 3, push = (l - mean) * 0.25;
-    return rgb.map((v) => v + push);
+    const lit = facing(at[k * 2] / c, at[k * 2 + 1] / c, k);
+    return rgb.map((v) => (v + push) * lit);
   });
   yield;
   for (let y = 0, i = 0; y < height; y++) {
