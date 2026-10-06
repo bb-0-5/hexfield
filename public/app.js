@@ -31712,6 +31712,8 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null) {
   if (scene) scene.weather = plan.weather;
   // How closely it follows its picture (Abstraction).
   plan.abstraction = choosePlanAbstraction(plan, params);
+  // How far its boxy things are turned (Solids).
+  plan.turn = choosePlanTurn(plan, params);
   // Water, and how still it lies (Reflections).
   plan.water = choosePlanWater(plan, params);
   if (scene) scene.water = plan.water;
@@ -33854,6 +33856,7 @@ function recordVisualVote(liked) {
   if (plan?.weather) variations[weatherVoteWord(plan.weather.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.water) variations[waterVoteWord(plan.water.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.abstraction) variations[abstractionVoteWord(plan.abstraction.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  if (plan?.turn) variations[turnVoteWord(plan.turn.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.anatomy) variations[anatomyVoteWord(plan.anatomy.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.figure) variations[figureVoteWord(plan.figure.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.refColour) variations["refcolour" + plan.refColour.key] = { size: 0, hue: 0, light: 0, literal: 0 };
@@ -33891,6 +33894,7 @@ function paintingChoices(plan) {
   const add = (label, word) => { if (label && /^[a-z]{1,24}$/.test(word)) out.push({ label, word }); };
   if (plan.manner) add(plan.manner.name || plan.manner.key, mannerVoteWord(plan.manner.key));
   if (plan.abstraction) add(plan.abstraction.name, abstractionVoteWord(plan.abstraction.key));
+  if (plan.turn) add("turned " + plan.turn.name, turnVoteWord(plan.turn.key));
   if (plan.light) add(plan.light.name || plan.light.key, lightVoteWord(plan.light.key));
   if (plan.weather) add(plan.weather.kinds.join(" + ") + " · " + plan.weather.key, weatherVoteWord(plan.weather.key));
   if (plan.water) add(plan.water.name, waterVoteWord(plan.water.key));
@@ -36382,6 +36386,27 @@ function buildPlaneMap(plan, width, height) {
     for (let gy = Math.max(0, Math.floor(item.box.y / H * gh)); gy < Math.min(gh, Math.ceil((item.box.y + item.box.h) / H * gh)); gy++) {
       angle.fill(NaN, gy * gw + Math.max(0, Math.floor(item.box.x / W * gw)), gy * gw + Math.min(gw, Math.ceil((item.box.x + item.box.w) / W * gw)));
     }
+    // A turned thing's side wall and roof slope: brushed along the way they
+    // go back, so the strokes turn at the corner (Solids).
+    const faces = item.turn ? globalThis.HexfieldVisual?.turnedFaces?.(item) : null;
+    for (const quad of faces ? [faces.side, faces.slope].filter(Boolean) : []) {
+      const a = Math.atan2(quad[1][1] - quad[0][1], quad[1][0] - quad[0][0]);
+      const inside = (x, y) => {
+        let sign = 0;
+        for (let i = 0; i < quad.length; i++) {
+          const [x0, y0] = quad[i], [x1, y1] = quad[(i + 1) % quad.length];
+          const cross = (x1 - x0) * (y - y0) - (y1 - y0) * (x - x0);
+          if (cross !== 0) { if (sign && Math.sign(cross) !== sign) return false; sign = Math.sign(cross); }
+        }
+        return true;
+      };
+      const b = { x0: Math.min(...quad.map((p) => p[0])), x1: Math.max(...quad.map((p) => p[0])), y0: Math.min(...quad.map((p) => p[1])), y1: Math.max(...quad.map((p) => p[1])) };
+      for (let gy = Math.max(0, Math.floor(b.y0 / H * gh)); gy < Math.min(gh, Math.ceil(b.y1 / H * gh)); gy++) {
+        for (let gx = Math.max(0, Math.floor(b.x0 / W * gw)); gx < Math.min(gw, Math.ceil(b.x1 / W * gw)); gx++) {
+          if (inside((gx + 0.5) / gw * W, (gy + 0.5) / gh * H)) angle[gy * gw + gx] = a;
+        }
+      }
+    }
   }
   return { gw, gh, angle };
 }
@@ -38012,6 +38037,49 @@ function choosePlanAbstraction(plan, params) {
   });
   plan.abstractionScores = summariseChoice(scores);
   return ABSTRACTIONS[scores[0].key];
+}
+
+/* ── Turned things (Solids) ─────────────────────────────────────────────
+ * A boxy thing - a house, a tower, a shop - is a box with, often, a prism
+ * for a roof (hexfield-visual.js, solidOfPart). Turned, it shows its front
+ * narrowed and, round the corner, its side wall and its roof's slope going
+ * back toward the horizon, with windows on the side as on the front; the
+ * brushes follow each face. How far it is turned - front on, three-quarter,
+ * corner on - is chosen and learned like the other choices ("turnthree"),
+ * and it turns to show the side that faces the vanishing point. */
+const TURNS = {
+  front: { key: "front", name: "front on", angle: 0 },
+  three: { key: "three", name: "three-quarter", angle: 0.5 },
+  corner: { key: "corner", name: "corner on", angle: 0.85 },
+};
+const TURN_SIDE_WORDS = /\b(corner|angled?|side|sideways|three.quarter|turned|perspective)\b/;
+const TURN_FRONT_WORDS = /\b(front|facade|fa\u00e7ade|flat|straight)\b/;
+const turnVoteWord = (key) => "turn" + String(key).replace(/[^a-z]/g, "");
+function choosePlanTurn(plan, params) {
+  const Visual = globalThis.HexfieldVisual;
+  const boxy = (plan.scene?.items || []).filter((item) => item.entry?.kind === "subject" && !item.lettering && !item.morph &&
+    item.entry.anchor !== "sky" && Visual?.isBoxy?.(item));
+  if (!boxy.length) return null;
+  const text = String(params?.__hexfieldWords?.text || "").toLowerCase();
+  const sideWords = TURN_SIDE_WORDS.test(text), frontWords = TURN_FRONT_WORDS.test(text);
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x7a2e) >>> 0);
+  const scores = chooseByTaste(Object.keys(TURNS), {
+    rng, tasted: 0, axis: "turn", given: planStyleChain(plan),
+    lean: (key) => key === "front" ? 0.1 + (frontWords ? 1 : 0) - (sideWords ? 0.6 : 0)
+      : (key === "three" ? 0.25 : 0) + (sideWords ? 0.9 : 0) - (frontWords ? 0.6 : 0),
+    learned: (key) => visualLearnedChoice(turnVoteWord(key)), taste: () => null,
+  });
+  plan.turnScores = summariseChoice(scores);
+  const turn = TURNS[scores[0].key];
+  const vanish = plan.scene.view?.vanish;
+  for (const item of boxy) {
+    if (!turn.angle) { item.turn = 0; continue; }
+    // The side toward the vanishing point is the one that shows.
+    const cx = item.box.x + item.box.w / 2;
+    const dir = Array.isArray(vanish) ? (vanish[0] >= cx ? 1 : -1) : rng() < 0.5 ? 1 : -1;
+    item.turn = dir * turn.angle * (0.9 + rng() * 0.2);
+  }
+  return turn;
 }
 
 // The finest brush the painting goes down to.
@@ -39869,6 +39937,7 @@ function planStyleChain(plan) {
     look2: plan?.finish?.layers?.[0]?.look || null,
     depth: plan?.depthStyle?.key || null,
     abstraction: plan?.abstraction?.key || null,
+    turn: plan?.turn?.key || null,
     anatomy: plan?.anatomy?.key || null,
     figure: plan?.figure?.key || null,
     edges: plan?.edgeStyle?.key || null,

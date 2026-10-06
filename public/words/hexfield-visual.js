@@ -3054,9 +3054,172 @@
     });
   }
 
+  /* ── Solids ─────────────────────────────────────────────────────────────
+   * A drawn part is a face of a solid: a square is the face of a cube, an
+   * oblong of a box, a triangle the end of a prism (a roof) or the face of a
+   * pyramid or tetrahedron, a circle the end of a cylinder or a sphere seen
+   * whole, a pentagon a face of a dodecahedron, a hexagon the end of a hex
+   * prism. Knowing which, the painter can turn the thing and show the faces
+   * round its corners, put things on those faces, and brush along them.
+   * Each solid with the faces it is made of. */
+  const SOLIDS = {
+    cube: { faces: 6, sides: 4, platonic: true },
+    tetrahedron: { faces: 4, sides: 3, platonic: true },
+    octahedron: { faces: 8, sides: 3, platonic: true },
+    dodecahedron: { faces: 12, sides: 5, platonic: true },
+    icosahedron: { faces: 20, sides: 3, platonic: true },
+    box: { faces: 6, sides: 4 },
+    prism: { faces: 5, sides: [3, 4] },
+    pyramid: { faces: 5, sides: [3, 4] },
+    hexprism: { faces: 8, sides: [6, 4] },
+    cylinder: { faces: 3, sides: 0 },
+    cone: { faces: 2, sides: 0 },
+    sphere: { faces: 1, sides: 0 },
+  };
+  // Which solid a part is a face of, and which face.
+  function solidOfPart(part) {
+    if (!part || part.cut) return null;
+    if (part.shape === "rect" && part.box) {
+      const [, , w, h] = part.box;
+      return { solid: Math.abs(w / Math.max(1e-6, h) - 1) < 0.15 ? "cube" : "box", face: "front" };
+    }
+    if (part.shape === "poly" && part.pts) {
+      const n = part.pts.length, ys = part.pts.map((p) => p[1]);
+      if (n === 3) {
+        // Apex up over a level base: a roof's gable, the end of a prism.
+        const base = ys.filter((y) => Math.abs(y - Math.max(...ys)) < 0.03).length;
+        return base === 2 ? { solid: "prism", face: "end" } : { solid: "tetrahedron", face: "face" };
+      }
+      if (n === 4) return { solid: "box", face: "front" };
+      if (n === 5) return { solid: "dodecahedron", face: "face" };
+      if (n === 6) return { solid: "hexprism", face: "end" };
+      return null;
+    }
+    if (part.shape === "ellipse" || part.shape === "circle") {
+      const b = part.box || [0, 0, 1, 1];
+      return { solid: Math.abs(b[2] / Math.max(1e-6, b[3]) - 1) < 0.15 ? "sphere" : "cylinder", face: "end" };
+    }
+    if (part.shape === "dome") return { solid: "sphere", face: "half" };
+    return null;
+  }
+  function solidsOf(item) {
+    return formParts(item).map((part, index) => ({ index, colour: part.colour, ...(solidOfPart(part) || {}) })).filter((s) => s.solid);
+  }
+  /* A boxy thing: its body a box (the largest oblong part), its roof - if it
+   * has a gable over the body - a prism along it. Null otherwise. */
+  function boxyOf(parts) {
+    let body = null;
+    for (const part of parts) {
+      if (part.shape !== "rect" || !part.box || part.cut) continue;
+      const a = part.box[2] * part.box[3];
+      if (a >= 0.25 && (!body || a > body.box[2] * body.box[3])) body = part;
+    }
+    if (!body) return null;
+    const [bx, by, bw] = body.box;
+    let roof = null;
+    for (const part of parts) {
+      if (part.shape !== "poly" || part.pts?.length !== 3 || solidOfPart(part)?.solid !== "prism") continue;
+      const xs = part.pts.map((p) => p[0]), base = Math.max(...part.pts.map((p) => p[1]));
+      if (Math.abs(base - by) < 0.12 && Math.min(...xs) <= bx + 0.06 && Math.max(...xs) >= bx + bw - 0.06) { roof = part; break; }
+    }
+    return { body, roof };
+  }
+  /* A boxy thing turned by `item.turn` (radians; the sign, which side shows):
+   * its front narrowed toward its far edge, and round the corner its side
+   * wall - and its roof's slope - stepping back toward the horizon. */
+  function turnedGeometry(item, parts) {
+    const boxy = boxyOf(parts);
+    if (!boxy || !item.turn) return null;
+    const box = item.box, t = Math.min(1.1, Math.abs(item.turn)), dir = item.turn > 0 ? 1 : -1;
+    const c = Math.max(0.45, Math.cos(t));
+    const sideW = box.w * (item.entry.depth ?? 0.6) * Math.sin(t) * 0.9;
+    const pivot = dir > 0 ? box.x : box.x + box.w;
+    const X = (u) => pivot + (box.x + u * box.w - pivot) * c, Y = (v) => box.y + v * box.h;
+    const hz = Number.isFinite(item.turnHorizon) ? item.turnHorizon : box.y - box.h * 0.2;
+    const k = 1 - 0.22 * Math.sin(t);
+    const back = ([x, y]) => [x + dir * sideW, hz + (y - hz) * k];
+    const [bx, by, bw, bh] = boxy.body.box;
+    const edge = dir > 0 ? bx + bw : bx;
+    const top = [X(edge), Y(by)], bot = [X(edge), Y(by + bh)];
+    const side = [top, back(top), back(bot), bot];
+    let slope = null;
+    if (boxy.roof) {
+      const pts = boxy.roof.pts, apex = pts.reduce((a, p) => (p[1] < a[1] ? p : a));
+      const eave = pts.filter((p) => p !== apex).reduce((a, p) => (dir > 0 ? (p[0] > a[0] ? p : a) : (p[0] < a[0] ? p : a)));
+      const A = [X(apex[0]), Y(apex[1])], E = [X(eave[0]), Y(eave[1])];
+      slope = [A, E, back(E), back(A)];
+    }
+    return { boxy, dir, c, pivot, side, slope, t };
+  }
+  function quadPath(q) {
+    const path = new Path2D();
+    path.moveTo(q[0][0], q[0][1]);
+    for (let i = 1; i < q.length; i++) path.lineTo(q[i][0], q[i][1]);
+    path.closePath();
+    return path;
+  }
+  const quadPoint = (q, u, v) => {
+    // q: front-top, back-top, back-bottom, front-bottom; u back along it, v down.
+    const t = [q[0][0] + (q[1][0] - q[0][0]) * u, q[0][1] + (q[1][1] - q[0][1]) * u];
+    const b = [q[3][0] + (q[2][0] - q[3][0]) * u, q[3][1] + (q[2][1] - q[3][1]) * u];
+    return [t[0] + (b[0] - t[0]) * v, t[1] + (b[1] - t[1]) * v];
+  };
+  const quadBounds = (q) => bounds(q);
+  function paintTurned(ctx, item, rng, parts, geo) {
+    const { boxy, side, slope } = geo;
+    const wall = colourOf(item, boxy.body);
+    // The side wall, turned a little from the light: a shade darker.
+    const sidePath = quadPath(side);
+    ctx.fillStyle = hsl(wall, -0.12);
+    ctx.fill(sidePath);
+    if (boxy.body.texture && !masking) texture(ctx, sidePath, boxy.body.texture, quadBounds(side), wall, rng);
+    // Its windows, as many as the front has, spaced along it.
+    const [bx, by, bw, bh] = boxy.body.box;
+    const windows = parts.filter((p) => p.shape === "rect" && p.box && p.colour === "window" &&
+      p.box[0] >= bx - 0.02 && p.box[0] + p.box[2] <= bx + bw + 0.02 && p.box[1] >= by - 0.02);
+    windows.forEach((p, i) => {
+      const [, py, pw, ph] = p.box;
+      const u0 = 0.18 + 0.64 * i / Math.max(1, windows.length), u1 = u0 + Math.min(0.5, 0.64 * pw / bw);
+      const v0 = (py - by) / bh, v1 = (py + ph - by) / bh;
+      const q = [quadPoint(side, u0, v0), quadPoint(side, u1, v0), quadPoint(side, u1, v1), quadPoint(side, u0, v1)];
+      ctx.fillStyle = hsl(colourOf(item, p), -0.06);
+      ctx.fill(quadPath(q));
+    });
+    // The roof's slope round the corner.
+    if (slope) {
+      const roof = colourOf(item, boxy.roof), path = quadPath(slope);
+      ctx.fillStyle = hsl(roof, 0.03);
+      ctx.fill(path);
+      if (boxy.roof.texture && !masking) texture(ctx, path, boxy.roof.texture, quadBounds(slope), roof, rng);
+    }
+    // The front, narrowed toward its far edge.
+    ctx.save();
+    ctx.translate(geo.pivot, 0);
+    ctx.scale(geo.c, 1);
+    ctx.translate(-geo.pivot, 0);
+    drawParts(ctx, item, rng, parts);
+    ctx.restore();
+  }
+  // Whether a thing is boxy (a box body, perhaps a prism roof): it can be turned.
+  function isBoxy(item) {
+    return Boolean(item?.entry?.parts && boxyOf(rimParts(formParts(item), item)));
+  }
+  // The faces of a turned thing, for the brushes to follow (null if it is not turned).
+  function turnedFaces(item) {
+    if (!item?.turn || !item.box) return null;
+    const geo = turnedGeometry(item, rimParts(formParts(item), item));
+    return geo ? { side: geo.side, slope: geo.slope, dir: geo.dir } : null;
+  }
+
   function paintItem(ctx, item, rng) {
+    const parts = rimParts(formParts(item), item);
+    const geo = item.turn ? turnedGeometry(item, parts) : null;
+    if (geo) { paintTurned(ctx, item, rng, parts, geo); return; }
+    drawParts(ctx, item, rng, parts);
+  }
+  function drawParts(ctx, item, rng, parts) {
     const box = item.box;
-    for (const part of rimParts(formParts(item), item)) {
+    for (const part of parts) {
       if (part.cut) {
         const path = shapePath(part, box);
         if (!path) continue;
@@ -3284,7 +3447,8 @@
      * goes; isometric, along the fixed 30-degree depth axis; otherwise up and
      * away from the light. With a light, the sides it shows (the top, and the
      * side it steps toward) are lit as far as they turn to the light. */
-    if (dims.depth > 0 && anchor !== "sky") {
+    // (A turned thing shows its own sides.)
+    if (dims.depth > 0 && anchor !== "sky" && !item.turn) {
       let ex, ey;
       if (dims.vanish && !dims.iso) { ex = Math.sign(dims.vanish[0] - (b.x + b.w / 2)) || 1; ey = Math.sign(dims.vanish[1] - (b.y + b.h / 2)) || -1; }
       else { ex = dims.iso ? 0.87 * (dims.isoDir || 1) : -Math.sign(sx || 1) * 0.72; ey = dims.iso ? -0.5 : -0.62; }
@@ -3521,6 +3685,7 @@
         if (only && item.entry.kind !== only) continue;
         if (pick !== null && index !== pick) continue;
         lctx.clearRect(0, 0, W, H);
+        if (item.turn) item.turnHorizon = view && Number.isFinite(view.horizon) ? view.horizon : H * 0.45;
         paintItem(lctx, item, seededRandom(seeds[index]));
         if (mono) {
           if (item.entry.kind !== "subject" || item.lettering) continue;
@@ -3572,5 +3737,5 @@
 
   global.HexfieldVisual = { ENTRIES, FAMILIES, COLOUR_WORDS, RELATIONS, LEARNED, lookup, read, layout, paint, subjectColours,
     FORM_STYLES, FORM_KEYS: Object.keys(FORM_STYLES), sampleForm, entryVariant, poseFor, learn,
-    frameOf, framePoint, drawFrames };
+    frameOf, framePoint, drawFrames, SOLIDS, solidOfPart, solidsOf, turnedFaces, isBoxy };
 })(typeof globalThis !== "undefined" ? globalThis : this);
