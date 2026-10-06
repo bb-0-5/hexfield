@@ -373,6 +373,7 @@
     grow: growTree,
     judge: judgeTree,
     manyAtOnce: true,
+    rooms: true,
   };
 
   // Inside the crown's room? (x, z across, y up from the crown's foot; 0..1 of its height.)
@@ -391,13 +392,33 @@
   /* (With `at`, a list of { age, yaw, pitch } in rising age, one run of
    * the years gives the tree at each of them - the same as growing it to
    * each age alone.) */
-  function growTree(g, { age = null, yaw = 0, pitch = 0.08, at = null } = {}) {
+  /* (With `room` - a mask of the shape it is to grow into, { mask, mw, mh,
+   * aspect }, row 0 at the top, as tall as the tree - the open air is found
+   * only inside that shape, and the trunk rises from its foot: the tree
+   * takes the shape it was given, a mass on a sprayed canvas say.) */
+  function roomOf(room) {
+    const { mask, mw, mh } = room, widths = new Float32Array(mh), cells = [];
+    let widest = 0, footU = 0, footN = 0;
+    for (let v = 0; v < mh; v++) {
+      let n = 0;
+      for (let u = 0; u < mw; u++) if (mask[v * mw + u]) { n++; cells.push([u, v]); if (v >= mh * 0.85) { footU += u; footN++; } }
+      widths[v] = n / mw; widest = Math.max(widest, widths[v]);
+    }
+    // The crown's foot: the lowest row still a good share of the widest.
+    let foot = mh - 1;
+    while (foot > 0 && widths[foot] < widest * 0.4) foot--;
+    return { cells, widths, root: footN ? (footU / footN + 0.5) / mw : 0.5, base: Math.max(0.12, Math.min(0.6, 1 - (foot + 1) / mh)) };
+  }
+  function growTree(g, { age = null, yaw = 0, pitch = 0.08, at = null, room = null } = {}) {
     const rng = seeded(g.seed ^ 0x7ee5);
     const views = at || [{ age: Number.isFinite(age) ? age : g.years, yaw, pitch }];
     const years = Math.max(...views.map((v) => v.age));
     const seen = [];
     let next = 0;
-    const nodes = [{ p: [0, 0, 0], parent: -1, kids: 0, born: 0 }];
+    const R = room?.mask && room.mw && room.mh ? { ...room, ...roomOf(room) } : null;
+    if (R && !R.cells.length) return growTree(g, { age, yaw, pitch, at });
+    const rootX = R ? (R.root - 0.5) * R.aspect : 0;
+    const nodes = [{ p: [rootX, 0, 0], parent: -1, kids: 0, born: 0 }];
     let air = [];
     const H = 1;
     let top = 0;
@@ -412,8 +433,8 @@
     let budget = 1100;
     for (let year = 1; year <= Math.ceil(years) && budget > 0; year++) {
       const grown = smooth(year / g.years);
-      const h = H * (0.12 + 0.88 * grown);
-      const base = h * g.clear * (0.3 + 0.7 * grown);           // the crown's foot rises as it grows
+      const h = R ? H : H * (0.12 + 0.88 * grown);
+      const base = R ? R.base : h * g.clear * (0.3 + 0.7 * grown);           // the crown's foot rises as it grows
       const crownH = h - base, crownW = crownH * g.width * (g.crown === "spread" ? 1.4 : 1);
       // The leader climbs to the crown.
       while (top < nodes.length && -nodes[top].p[1] < base + crownH * 0.25 && budget > 0) {
@@ -424,6 +445,15 @@
       // Open air in this year's room.
       const want = Math.round(g.air * (0.25 + 0.75 * grown));
       for (let tries = 0; air.length < want && tries < want * 8; tries++) {
+        if (R) {
+          // Inside the shape it was given, above its foot; as deep as it is wide there.
+          const [u, v] = R.cells[Math.floor(rng() * R.cells.length)];
+          const up = 1 - (v + rng()) / R.mh;
+          if (up < base * 0.9) continue;
+          const half = R.widths[Math.min(R.mh - 1, v)] * R.aspect / 2;
+          air.push([((u + rng()) / R.mw - 0.5) * R.aspect, -up, (rng() * 2 - 1) * half * 0.6]);
+          continue;
+        }
         const x = (rng() * 2 - 1) * crownW / 2, y = rng() * 1.3 - 0.3, z = (rng() * 2 - 1) * crownW / 2;
         if (inCrown(g.crown, x, y, z, crownW)) air.push([x + lean[0] * (base + y * crownH), -(base + y * crownH), z]);
       }

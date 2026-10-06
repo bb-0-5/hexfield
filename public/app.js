@@ -33308,9 +33308,33 @@ function growSceneSubjects(read, rng, text = "") {
   if (!G) return null;
   const used = [];
   for (const s of read.subjects) {
-    const kind = s.entry?.grower;
-    if (!kind) continue;
+    const kind = s.entry?.grower || s.growKind;
+    if (!kind || !G.GROWERS[kind]) continue;
     const traits = G.traitsOf ? G.traitsOf(kind, text) : null;
+    /* Given a mass on the canvas (Openings): grown into it - a tree's crown
+     * the mass's own shape, a cat in the pose its shape suggests - from a
+     * kept outcome's rules, or fresh ones while the shelf is bare. */
+    if (s.room && s.atMass && (G.GROWERS[kind].rooms || kind === "cat")) {
+      const [o] = growerShelf(kind).outcomes.length ? pickGrowerOutcomes(kind, 1, rng, traits) : [];
+      const genes = o ? { ...o.genes, ...(traits?.set || {}) } : G.seed(kind, rng);
+      let entry = null;
+      try {
+        if (G.GROWERS[kind].rooms) entry = G.grow(genes, { age: (genes.years || 10) * 1.2, yaw: o?.yaw ?? rng() * Math.PI * 2, pitch: o?.pitch ?? 0.12, room: s.room });
+        else {
+          const fits = poseForMass(s.room.aspect), asked = traits?.match?.pose || [];
+          genes.pose = asked.find((p) => fits.includes(p)) || asked[0] || fits[Math.floor(rng() * fits.length)];
+          if (traits?.match?.coat) genes.coat = traits.match.coat[0];
+          entry = G.grow(genes, { age: traits?.age ?? o?.age ?? genes.years });
+        }
+      } catch (error) { console.warn("growing into a mass failed", error); }
+      if (entry) {
+        s.entry = { ...entry, outcome: o?.id || null, grower: kind };
+        s.variants = null;
+        if (o) { o.used = (o.used || 0) + 1; if (!used.some((u) => u.id === o.id)) used.push({ kind, id: o.id }); }
+        continue;
+      }
+    }
+    if (!s.entry?.grower) continue;
     /* Many of them with no number - "ferns", "trees", "bracken" - are a
      * patch grown together, dropped in whole; a number is that many
      * separate ones. */
@@ -39709,6 +39733,7 @@ function readOpening(pixels, width, height) {
       box: { x: x0 * kx, y: y0 * ky, w: (x1 - x0 + 1) * kx, h: (y1 - y0 + 1) * ky }, cx: (mx + 0.5) * kx, cy: (my + 0.5) * ky,
       elong: Math.sqrt(l1 / l2), angle: 0.5 * Math.atan2(2 * cxy * kx * ky, cxx * kx * kx - cyy * ky * ky),
       edges: (x0 === 0) + (x1 === sw - 1) + (y0 === 0) + (y1 === sh - 1),
+      cells: { x0, y0, x1, y1, mx, my },
     });
   }
   // How strongly touching masses part: their colours' difference, along how
@@ -39826,6 +39851,67 @@ function interpretMass(m, read) {
   return out[0] ? { ...out[0], mass: m } : null;
 }
 
+/* A mass's shape, for growing into: its mask in the small copy's cells,
+ * cropped to its box, and its proportions in the picture. */
+function massRoom(read, m) {
+  const { x0, y0, x1, y1 } = m.cells, mw = x1 - x0 + 1, mh = y1 - y0 + 1, mask = new Uint8Array(mw * mh);
+  for (let v = 0; v < mh; v++) for (let u = 0; u < mw; u++) mask[v * mw + u] = read.comp[(y0 + v) * read.sw + x0 + u] === m.id ? 1 : 0;
+  return { mask, mw, mh, aspect: m.box.w / Math.max(1, m.box.h), id: m.id };
+}
+// Its outline: from its middle, the farthest of it along each of a few rays, in its box's units.
+function massOutline(read, m, rays = 32) {
+  const { x0, y0, x1, y1, mx, my } = m.cells, mw = x1 - x0 + 1, mh = y1 - y0 + 1, reach = Math.hypot(mw, mh), pts = [];
+  for (let r = 0; r < rays; r++) {
+    const a = (r / rays) * Math.PI * 2, dx = Math.cos(a), dy = Math.sin(a);
+    let far = 0.5;
+    for (let t = 0; t <= reach; t += 0.5) {
+      const x = Math.round(mx + dx * t), y = Math.round(my + dy * t);
+      if (x < x0 || y < y0 || x > x1 || y > y1) break;
+      if (read.comp[y * read.sw + x] === m.id) far = t;
+    }
+    pts.push([Math.max(0, Math.min(1, (mx + dx * (far + 0.5) - x0) / mw)), Math.max(0, Math.min(1, (my + dy * (far + 0.5) - y0) / mh))]);
+  }
+  return pts;
+}
+/* A shapeless kind of thing given the mass's own silhouette - a mountain,
+ * a stone, a cloud as the accident drew it - with what such a thing has: a
+ * mountain snow on its upper slopes and a shaded flank, a stone a lit top,
+ * a cloud lighter billows up top. Others keep their drawing. */
+const MASS_SHAPED = new Set(["mountain", "stone", "cloud"]);
+function shapedFromMass(key, entry, outline, aspect) {
+  if (!MASS_SHAPED.has(key) || !entry || !outline?.length) return null;
+  const ys = outline.map((p) => p[1]), top = Math.min(...ys), bottom = Math.max(...ys);
+  const cx = outline.reduce((a, p) => a + p[0], 0) / outline.length, cy = outline.reduce((a, p) => a + p[1], 0) / outline.length;
+  const below = (cut) => outline.map(([x, y]) => [x, Math.min(y, cut)]);
+  const shrink = (k, ox = 0, oy = 0) => outline.map(([x, y]) => [cx + (x - cx) * k + ox, cy + (y - cy) * k + oy]);
+  const names = Object.keys(entry.colours), main = names[0], second = names[1] || main;
+  let parts;
+  if (key === "mountain") {
+    parts = [
+      { shape: "poly", pts: outline, colour: main, texture: "grain-d" },
+      { shape: "poly", pts: outline.map(([x, y]) => [Math.max(x, cx), y]), colour: main, tone: -0.12 },
+      { shape: "poly", pts: below(top + (bottom - top) * 0.24), colour: second },
+    ];
+  } else if (key === "stone") {
+    parts = [
+      { shape: "poly", smooth: true, pts: outline, colour: main, texture: "speckle" },
+      { shape: "poly", smooth: true, pts: shrink(0.55, -0.05, -0.12), colour: main, tone: 0.12 },
+    ];
+  } else {
+    // A cloud: its shade under it, its white above.
+    parts = [
+      { shape: "poly", smooth: true, pts: outline, colour: second },
+      { shape: "poly", smooth: true, pts: below(cy + (bottom - cy) * 0.3).map(([x, y]) => [x, y - (bottom - top) * 0.04]), colour: main },
+      { shape: "poly", smooth: true, pts: shrink(0.55, 0, -0.12), colour: main, tone: 0.05 },
+    ];
+  }
+  return { ...entry, aspect, parts, variants: undefined, fromMass: true };
+}
+// A cat in a mass takes the pose its shape suggests.
+function poseForMass(aspect) {
+  return aspect < 0.85 ? ["front", "sit"] : aspect < 1.35 ? ["sit", "loaf", "curl"] : aspect < 2.1 ? ["loaf", "curl", "stand"] : ["walk", "stand"];
+}
+
 /* Things placed on the opening's masses (planScene): with no words, what
  * the strongest masses look like (two at most); with words, each named
  * thing to the free mass that suits it best - its proportions, where it
@@ -39845,7 +39931,12 @@ function placeOnMasses(read, opening, width, height, Visual) {
     picks.sort((a, b) => b.score * b.mass.area - a.score * a.mass.area);
     for (const p of picks.slice(0, 2)) {
       const found = Visual.read(p.word).subjects[0];
-      if (found) read.subjects.push({ ...found, count: 1, atMass: p.mass.box, seenIn: p.word });
+      if (!found) continue;
+      const room = massRoom(opening.read, p.mass), outline = massOutline(opening.read, p.mass);
+      // Grown into the mass, or given its silhouette (Openings).
+      const shaped = found.entry?.grower ? null : shapedFromMass(found.key, found.entry, outline, room.aspect);
+      read.subjects.push({ ...found, ...(shaped ? { entry: shaped } : {}), count: 1, atMass: p.mass.box, seenIn: p.word, room,
+        growKind: found.key === "tree" ? "tree" : null });
     }
     opening.seen = picks.slice(0, 2).map((p) => p.word);
     return;
@@ -39860,7 +39951,12 @@ function placeOnMasses(read, opening, width, height, Visual) {
       const score = 0.45 * shape + 0.3 * place + 0.25 * size;
       if (score > bestScore) { bestScore = score; best = m; }
     }
-    if (best) { s.atMass = best.box; free.splice(free.indexOf(best), 1); }
+    if (best) {
+      s.atMass = best.box; s.room = massRoom(opening.read, best);
+      // A named tree is grown into its mass even before the shelf has any.
+      if (s.key === "tree") s.growKind = "tree";
+      free.splice(free.indexOf(best), 1);
+    }
   }
 }
 /* A laid-out thing moved into the mass it was given: as tall as the mass
