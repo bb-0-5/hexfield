@@ -38609,6 +38609,66 @@ function paintContourInk(result, plan) {
   return animateLoggedStrokes(result, strokes, animation);
 }
 
+/* A face's features, inked: once the brush has blocked a face in (its
+ * features are small, and a broad brush loses them), its ink lines - lids,
+ * brows, nose, mouth, whiskers, its outline - are laid as ink strokes, and
+ * its small filled parts - eyes, pupils, glints, teeth, tongue, nose - as
+ * tight dabs in their own colours, from the face's own drawing. */
+const FACE_FEATURES = new Set(["eye", "pupil", "white", "mouth", "tongue", "nose", "blush"]);
+function faceInkStrokes(plan) {
+  const strokes = [];
+  const rgbOf = (hsl) => hslToRgb(((hsl?.[0] || 0) % 360) / 360, (hsl?.[1] || 0) / 100, (hsl?.[2] || 0) / 100);
+  for (const item of plan.scene?.items || []) {
+    const e = item.entry, b = item.box;
+    if (e?.grower !== "face" || !b || item.lettering) continue;
+    const at = ([u, v]) => [b.x + u * b.w, b.y + v * b.h];
+    for (const part of e.parts || []) {
+      const colour = rgbOf(e.colours?.[part.colour]);
+      if (part.shape === "line" && part.colour === "ink" && part.pts?.length > 1) {
+        strokes.push({ points: part.pts.map(at), width: Math.max(1.2, part.width * b.w), colour, alpha: 1, plain: true, round: true, bristle: 0.5 });
+      } else if (part.shape === "ellipse" && FACE_FEATURES.has(part.colour)) {
+        const [x, y] = at([part.box[0] + part.box[2] / 2, part.box[1] + part.box[3] / 2]);
+        strokes.push({ points: [[x, y]], width: Math.max(1.5, Math.min(part.box[2] * b.w, part.box[3] * b.h)), colour, alpha: 0.9, plain: true, round: true, bristle: 0.5 });
+      } else if (part.shape === "poly" && FACE_FEATURES.has(part.colour) && part.pts?.length > 2) {
+        // Filled by short level runs across it, a dab's width apart.
+        const pts = part.pts.map(at);
+        const ys = pts.map((p) => p[1]), y0 = Math.min(...ys), y1 = Math.max(...ys);
+        const step = Math.max(1.2, (y1 - y0) / 6);
+        for (let y = y0 + step / 2; y < y1; y += step) {
+          const xs = [];
+          for (let i = 0; i < pts.length; i++) {
+            const [ax, ay] = pts[i], [bx, by] = pts[(i + 1) % pts.length];
+            if ((ay <= y && by > y) || (by <= y && ay > y)) xs.push(ax + (y - ay) / (by - ay) * (bx - ax));
+          }
+          xs.sort((a, c) => a - c);
+          for (let i = 0; i + 1 < xs.length; i += 2) strokes.push({ points: [[xs[i], y], [xs[i + 1], y]], width: step * 1.35, colour, alpha: 0.95, plain: true, round: true, bristle: 0.5 });
+        }
+      }
+    }
+  }
+  return strokes;
+}
+function paintFaceInk(result, plan) {
+  const W = view.width, H = view.height;
+  markPaintTimingStarted(result);
+  const animation = ++activePaintAnimation;
+  const strokes = faceInkStrokes(plan);
+  result.paintStrokeLayer = strokePainter.layer;
+  result.paintStrokeCount = strokes.length;
+  result.paintBrush = {
+    families: ["ink"], textures: ["flat"], signatures: [], lineageObjects: [], source: "face-ink", lifts: 0, smudges: 0,
+    minSize: 1, maxSize: 8, nonRedundancy: 0.5, count: (Number(result.paintBrush?.count) || 0) + strokes.length,
+    wordHand: (plan.manner?.name || "") + " · features",
+  };
+  if (!strokes.length) {
+    if (activePaintAnimation === animation) activePaintAnimation = 0;
+    markPaintTimingCompleted(result);
+    return Promise.resolve(false);
+  }
+  strokeLogBegin(vctx.getImageData(0, 0, W, H).data, W, H);
+  return animateLoggedStrokes(result, strokes, animation);
+}
+
 /* A deposit is the canvas with a change in it. Only the changed pixels are
  * new and not yet in the manner; the rest already is, and treating it again
  * would darken, saturate or split it twice. Values and colour only - the
@@ -43233,11 +43293,20 @@ function continueMasterDetail(result) {
   const weather = plan?.weather;
   const weatherTurn = Boolean(!letterTurn && !thingTurn && !inkTurn && weather?.brush && !weather.painted && !weather.painting &&
     refReady && strokePainter.layer >= maxStrokeLayer(plan) && (!planHasThings(plan) || scene?.thing?.done));
+  /* A face's features inked once the brush is down to its finer sizes and
+   * its things are painted - and gone over again every dozen passes after (the brush
+   * keeps working round them) and whenever its picture is re-made. */
+  if (plan) plan.facePasses = (plan.facePasses || 0) + 1;
+  const faceTurn = Boolean(!letterTurn && !thingTurn && !inkTurn && !weatherTurn && !plan?.drawn && refReady &&
+    strokePainter.layer >= Math.min(2, maxStrokeLayer(plan)) && (!planHasThings(plan) || scene?.thing?.done) &&
+    scene?.items?.some((it) => it.entry?.grower === "face") && !plan.faceInking &&
+    (plan.faceInked !== strokePainter.enhancedKey || plan.facePasses >= 12));
   const completion = letterTurn
     ? paintLetteringStrokes(detailResult, strokePainter.plan.scene)
     : thingTurn ? paintThingStrokes(detailResult, scene, scene.thing.pass)
     : inkTurn ? paintContourInk(detailResult, plan)
     : weatherTurn ? paintWeatherStrokes(detailResult, plan)
+    : faceTurn ? paintFaceInk(detailResult, plan)
     // A drawn painting is flats and ink: once its flats are down, no brush.
     : plan?.drawn ? drawnPass(detailResult, plan, reference, width, height, source.params)
     : paintTowardReference(detailResult, reference, width, height, { refKey: source.params, enhance: true });
@@ -43267,6 +43336,11 @@ function continueMasterDetail(result) {
         }
       }
     });
+  }
+  if (faceTurn) {
+    const key = strokePainter.enhancedKey;
+    plan.faceInking = true;
+    completion.then((landed) => { plan.faceInking = false; if (landed || !detailResult.paintStrokeCount) { plan.faceInked = key; plan.facePasses = 0; } });
   }
   if (weatherTurn) {
     weather.painting = true;
