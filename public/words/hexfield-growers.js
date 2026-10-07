@@ -790,6 +790,8 @@
       tailPts = tailChain([girth * 1.3, -0.04], Math.PI * 0.95, 3, -0.15, true);
       headAt = [0, chest[1] - head * 1.2];
       bones.push([chest, headAt]);
+      // The neck: the head sits on the body (one outline round both).
+      push(1, { poly: capsule(chest, headAt, girth * 0.95, head * 0.62), colour: "fur", tone: 0 });
     } else if (P === "loaf") {
       hip = [-body * 0.42, -girth * 1.1]; chest = [body * 0.32, -girth * 1.15];
       bones.push([hip, chest]);
@@ -906,6 +908,99 @@
     }
   }
 
+  /* The outline round a set of shapes as one line: the shapes (polygons,
+   * and lines as thick strokes) drawn small into a grid, the edge of all of
+   * them traced round, the cells' stairs smoothed away. In the shapes' own
+   * units: a loop for each piece, the biggest (the thing itself) first. */
+  function outlineOf(polys, lines, x0, y0, bw, bh, N = 200) {
+    const GW = Math.max(16, Math.round(bw >= bh ? N : N * bw / bh)), GH = Math.max(16, Math.round(bh >= bw ? N : N * bh / bw));
+    const cx = bw / GW, cy = bh / GH, pad = 2, W2 = GW + pad * 2, H2 = GH + pad * 2;
+    const mask = new Uint8Array(W2 * H2);
+    const gx = (x) => (x - x0) / cx + pad, gy = (y) => (y - y0) / cy + pad;
+    for (const pts of polys) {
+      const P = pts.map(([x, y]) => [gx(x), gy(y)]);
+      let ymin = Infinity, ymax = -Infinity;
+      for (const [, y] of P) { ymin = Math.min(ymin, y); ymax = Math.max(ymax, y); }
+      for (let j = Math.max(0, Math.floor(ymin)); j <= Math.min(H2 - 1, Math.ceil(ymax)); j++) {
+        const yc = j + 0.5, xs = [];
+        for (let i = 0; i < P.length; i++) {
+          const [ax, ay] = P[i], [bx, by] = P[(i + 1) % P.length];
+          if ((ay <= yc && by > yc) || (by <= yc && ay > yc)) xs.push(ax + (yc - ay) / (by - ay) * (bx - ax));
+        }
+        xs.sort((a, b) => a - b);
+        for (let k = 0; k + 1 < xs.length; k += 2) for (let i = Math.max(0, Math.ceil(xs[k] - 0.5)); i <= Math.min(W2 - 1, Math.floor(xs[k + 1] - 0.5)); i++) mask[j * W2 + i] = 1;
+      }
+    }
+    for (const { pts, width } of lines) {
+      const r = width / 2 / cx;
+      for (let n = 0; n + 1 < pts.length; n++) {
+        const a = [gx(pts[n][0]), gy(pts[n][1])], b = [gx(pts[n + 1][0]), gy(pts[n + 1][1])], steps = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1])));
+        for (let t = 0; t <= steps; t++) {
+          const px = a[0] + (b[0] - a[0]) * t / steps, py = a[1] + (b[1] - a[1]) * t / steps;
+          for (let j = Math.max(0, Math.floor(py - r)); j <= Math.min(H2 - 1, Math.ceil(py + r)); j++) for (let i = Math.max(0, Math.floor(px - r)); i <= Math.min(W2 - 1, Math.ceil(px + r)); i++) {
+            if ((i + 0.5 - px) ** 2 + (j + 0.5 - py) ** 2 <= r * r) mask[j * W2 + i] = 1;
+          }
+        }
+      }
+    }
+    const inside = (i, j) => i >= 0 && j >= 0 && i < W2 && j < H2 && mask[j * W2 + i] === 1;
+    const next = new Map(), K = (x, y) => y * (W2 + 1) + x;
+    const add = (xa, ya, xb, yb) => { const k = K(xa, ya), v = next.get(k); if (v) v.push(K(xb, yb)); else next.set(k, [K(xb, yb)]); };
+    for (let j = 0; j < H2; j++) for (let i = 0; i < W2; i++) {
+      if (!inside(i, j)) continue;
+      if (!inside(i, j - 1)) add(i, j, i + 1, j);
+      if (!inside(i + 1, j)) add(i + 1, j, i + 1, j + 1);
+      if (!inside(i, j + 1)) add(i + 1, j + 1, i, j + 1);
+      if (!inside(i - 1, j)) add(i, j + 1, i, j);
+    }
+    const loops = [];
+    while (next.size) {
+      const [k0] = next.keys(), loop = [];
+      let cur = k0, prev = null;
+      for (let guard = 0; guard < 200000; guard++) {
+        loop.push(cur);
+        const list = next.get(cur);
+        if (!list) break;
+        let pick = 0;
+        if (list.length > 1 && prev != null) {
+          const ux = cur % (W2 + 1), uy = (cur - ux) / (W2 + 1), px = prev % (W2 + 1), py = (prev - px) / (W2 + 1);
+          let bt = -Infinity;
+          list.forEach((e, n) => { const ex = e % (W2 + 1), ey = (e - ex) / (W2 + 1), t = (ux - px) * (ey - uy) - (uy - py) * (ex - ux); if (t > bt) { bt = t; pick = n; } });
+        }
+        const nk = list.splice(pick, 1)[0];
+        if (!list.length) next.delete(cur);
+        prev = cur; cur = nk;
+        if (cur === k0) break;
+      }
+      const pts = loop.map((k) => { const x = k % (W2 + 1); return [x, (k - x) / (W2 + 1)]; });
+      let area = 0;
+      for (let n = 0; n < pts.length; n++) { const a = pts[n], b = pts[(n + 1) % pts.length]; area += a[0] * b[1] - b[0] * a[1]; }
+      if (area > 0) loops.push({ pts, area });
+    }
+    if (!loops.length) return null;
+    const biggest = Math.max(...loops.map((l) => l.area));
+    // Each piece its own loop (a stray ear tip too small to matter left out), the biggest first.
+    return loops.filter((l) => l.area >= biggest * 0.04).sort((a, b) => b.area - a.area).map(({ pts }) => {
+      for (let it = 0; it < 3; it++) pts = pts.map((p, n) => { const a = pts[(n - 1 + pts.length) % pts.length], b = pts[(n + 1) % pts.length]; return [(a[0] + 2 * p[0] + b[0]) / 4, (a[1] + 2 * p[1] + b[1]) / 4]; });
+      pts = pts.map(([x, y]) => [x0 + (x - pad) * cx, y0 + (y - pad) * cy]);
+      const far = pts.reduce((m, p, n) => Math.hypot(p[0] - pts[0][0], p[1] - pts[0][1]) > Math.hypot(pts[m][0] - pts[0][0], pts[m][1] - pts[0][1]) ? n : m, 0);
+      const eps = Math.min(cx, cy) * 0.4;
+      return [...simplifyLine(pts.slice(0, far + 1), eps), ...simplifyLine([...pts.slice(far), pts[0]], eps).slice(1, -1)];
+    });
+  }
+
+  // The parts of a cat that make its outline (its markings and face lie inside it).
+  const CAT_BODY = new Set(["fur", "face", "tail", "ear", "paw", "muzzle"]);
+  const MARKINGS = new Set(["dark", "white", "patchA", "patchB"]);
+  function insidePoly([x, y], pts) {
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const [xi, yi] = pts[i], [xj, yj] = pts[j];
+      if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+
   function seenCat(g, parts, bones, { facing, age, facts, headAt, head, ears, tailPts }) {
     // Facing left is the cat mirrored.
     const fx = (p) => [p[0] * facing, p[1]];
@@ -916,9 +1011,76 @@
     const bw = Math.max(1e-3, x1 - x0), bh = Math.max(1e-3, y1 - y0);
     const r4 = (v) => Math.round(v * 1e4) / 1e4;
     const U = (q) => { const [x, y] = fx(q); return [r4((x - x0) / bw), r4((y - y0) / bh)]; };
-    const out = ordered.map((part) => part.line
-      ? { shape: "line", pts: part.line.map(U), width: r4(part.width / bw), colour: part.colour, tone: part.tone || 0 }
-      : { shape: "poly", smooth: true, pts: part.poly.map(U), colour: part.colour, tone: part.tone || 0 });
+    /* Drawn as the sketches draw a cat: one line all the way round it -
+     * ears, head, back, tail, legs - over one flat of its fur, its markings
+     * inside; crescents in the ears, almond eyes with a dot for a pupil,
+     * whiskers as three short dashes, little loops for its toes. */
+    const line = 0.016, out = [];
+    const body = ordered.filter((p) => CAT_BODY.has(p.colour));
+    const outline = outlineOf(body.filter((p) => p.poly).map((p) => p.poly.map(fx)), body.filter((p) => p.line).map((p) => ({ pts: p.line.map(fx), width: p.width })), x0, y0, bw, bh);
+    const toUnit = ([x, y]) => [r4((x - x0) / bw), r4((y - y0) / bh)];
+    for (const loop of outline || []) out.push({ shape: "poly", smooth: true, pts: loop.map(toUnit), colour: "fur", tone: 0 });
+    for (const part of ordered) {
+      const c = part.colour;
+      if (CAT_BODY.has(c) && !(c === "muzzle" && g.coat === "tuxedo")) continue;
+      if (c === "inner") {
+        // The ear's crescent: a curve inside it, from one side of its base up and round.
+        const [a, tip, b] = part.poly;
+        const mid = lerp2(a, b, 0.5), bulge = lerp2(mid, tip, 0.55);
+        out.push({ shape: "line", pts: [a, lerp2(a, bulge, 0.6), bulge, lerp2(bulge, tip, 0.5)].map(U), width: r4(line * 0.8), colour: "line", tone: 0 });
+        continue;
+      }
+      if (c === "whisker") {
+        // Three short dashes off the cheek instead of long whiskers.
+        const [o, e] = part.line;
+        out.push({ shape: "line", pts: [lerp2(o, e, 0.25), lerp2(o, e, 0.55)].map(U), width: r4(line * 0.8), colour: "line", tone: 0 });
+        continue;
+      }
+      if (c === "pupil") {
+        // A dot, not a slit.
+        let sx = 0, sy = 0, ymin = Infinity, ymax = -Infinity;
+        for (const [x, y] of part.poly) { sx += x; sy += y; ymin = Math.min(ymin, y); ymax = Math.max(ymax, y); }
+        const n = part.poly.length, r = (ymax - ymin) * 0.36;
+        out.push({ shape: "poly", pts: ellipsePts(sx / n, sy / n, r, r).map(U), colour: "pupil", tone: 0 });
+        continue;
+      }
+      if (c === "glint") continue;
+      // Markings stay inside the line round it.
+      if (MARKINGS.has(c) && outline) {
+        const within = (q) => outline.some((loop) => insidePoly(fx(q), loop));
+        if (part.line) {
+          let run = [];
+          const flush = () => { if (run.length > 1) out.push({ shape: "line", pts: run.map(U), width: r4(part.width / bw), colour: c, tone: part.tone || 0 }); run = []; };
+          for (let n = 0; n < part.line.length; n++) {
+            const a = part.line[n], b = part.line[n + 1] || a;
+            for (let k = 0; k < (n + 1 < part.line.length ? 4 : 1); k++) { const q = lerp2(a, b, k / 4); if (within(q)) run.push(q); else flush(); }
+          }
+          flush();
+        } else {
+          const kept = part.poly.filter(within);
+          if (kept.length > 2) out.push({ shape: "poly", smooth: true, pts: kept.map(U), colour: c, tone: part.tone || 0 });
+        }
+        continue;
+      }
+      if (part.line) { out.push({ shape: "line", pts: part.line.map(U), width: r4(part.width / bw), colour: c, tone: part.tone || 0 }); continue; }
+      out.push({ shape: "poly", smooth: true, pts: part.poly.map(U), colour: c, tone: part.tone || 0 });
+      // An almond eye is inked round.
+      if (c === "eye") out.push({ shape: "line", pts: [...part.poly, part.poly[0]].map(U), width: r4(line * 0.8), colour: "line", tone: 0 });
+    }
+    // The one line round it all.
+    for (const loop of outline || []) out.push({ shape: "line", pts: [...loop, loop[0]].map(toUnit), width: line, colour: "line", tone: 0 });
+    // Toes: two small loops at the front of each paw on the ground.
+    for (const part of ordered) {
+      if (part.colour !== "paw" || !part.poly) continue;
+      let px0 = Infinity, px1 = -Infinity, py1 = -Infinity;
+      for (const q of part.poly) { const [x, y] = fx(q); px0 = Math.min(px0, x); px1 = Math.max(px1, x); py1 = Math.max(py1, y); }
+      if (py1 < -0.06) continue;
+      const w = (px1 - px0), lead = facing > 0 ? px1 : px0, dir = facing > 0 ? -1 : 1;
+      for (let k = 0; k < 2; k++) {
+        const cxp = lead + dir * w * (0.18 + 0.24 * k), r = w * 0.11;
+        out.push({ shape: "line", pts: Array.from({ length: 7 }, (_, i) => { const a = Math.PI * (1 + i / 6); return toUnit([cxp + Math.cos(a) * r, py1 - r * 0.2 + Math.sin(a) * r * 1.2]); }), width: r4(line * 0.7), colour: "line", tone: 0 });
+      }
+    }
     // Coat colours: the main one ("fur") first, so a painting's colour for
     // the word recolours the cat; the rest follow the coat.
     const base = [g.hue, g.coat === "point" ? Math.min(20, g.sat) : g.sat, g.coat === "point" ? Math.max(70, g.light) : g.coat === "calico" ? 90 : g.light];
@@ -938,7 +1100,7 @@
     facts.tailOut = tailPts ? Math.hypot(tailPts[tailPts.length - 1][0] - tailPts[0][0], tailPts[tailPts.length - 1][1] - tailPts[0][1]) / bw : 0;
     return {
       kind: "subject", anchor: "ground", size: clamp(0.22 + 0.14 * (1 - facts.kit * 0.5) * (facts.pose === "curl" || facts.pose === "loaf" ? 0.8 : 1), 0.18, 0.4),
-      aspect: clamp(bw / bh, 0.4, 3), depth: 0.5, colours, parts: out, grown: true, anatomy, grower: g.kind, age: r4(age),
+      aspect: clamp(bw / bh, 0.4, 3), depth: 0.5, colours, parts: out, grown: true, anatomy, grower: g.kind, age: r4(age), drawn: 2,
       head: { x: hd[0], y: r4(hd[1] - head / bh), w: r4(head * 1.6 / bw) }, facts, pose: facts.pose,
     };
   }
@@ -1951,6 +2113,6 @@
   const partName = (gene, value) => PART_WORDS[gene]?.[value] || `${value} ${gene === "eyeShape" ? "eyes" : gene === "pose" ? "pose" : gene}`;
 
   // A kind's drawings are of this make: one stored from an older make is drawn again.
-  const DRAWN = { face: 2 };
+  const DRAWN = { face: 2, cat: 2 };
   global.HexfieldGrowers = { GROWERS, WORDS, MASS, TRAITS, FACE_DEFAULTS, DRAWN, PART_GENES, partsOf, partName, traitsOf, kindOfWord, seed, mutate, crossover, distance, grow, growAt, judge, lifespan, patches };
 })(typeof window !== "undefined" ? window : globalThis);

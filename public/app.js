@@ -39051,6 +39051,7 @@ function paintContourInk(result, plan) {
  * tight dabs in their own colours, from the face's own drawing. */
 // (And its solid blacks - black hair, a cap's band - filled, as your hand fills them.)
 const FACE_FEATURES = new Set(["eye", "pupil", "white", "mouth", "tongue", "nose", "blush", "ink"]);
+const CAT_FEATURES = new Set(["eye", "pupil", "nose"]);
 function faceInkStrokes(plan) {
   const strokes = [];
   // A drawn painting's face in one weight of line, the painting's own.
@@ -39074,17 +39075,19 @@ function faceInkStrokes(plan) {
   const rgbOf = (hsl) => hslToRgb(((hsl?.[0] || 0) % 360) / 360, (hsl?.[1] || 0) / 100, (hsl?.[2] || 0) / 100);
   for (const item of plan.scene?.items || []) {
     const e = item.entry, b = item.box;
-    if (e?.grower !== "face" || !b || item.lettering) continue;
+    // A face's, or a cat's (its one line round, its eyes and nose).
+    if ((e?.grower !== "face" && e?.grower !== "cat") || !b || item.lettering) continue;
+    const cat = e.grower === "cat";
     const at = ([u, v]) => [b.x + u * b.w, b.y + v * b.h];
     for (const part of e.parts || []) {
       const colour = rgbOf(e.colours?.[part.colour]);
-      if (part.shape === "line" && part.colour === "ink" && part.pts?.length > 1) {
+      if (part.shape === "line" && (part.colour === "ink" || part.colour === "line") && part.pts?.length > 1) {
         for (const run of letterAt ? runsOff(part.pts.map(at)) : [part.pts.map(at)]) strokes.push({ points: run, width: oneWeight || Math.max(1.2, part.width * b.w), colour, alpha: 1, plain: true, round: true, bristle: 0.5 });
       } else if (part.shape === "ellipse" && FACE_FEATURES.has(part.colour)) {
         const [x, y] = at([part.box[0] + part.box[2] / 2, part.box[1] + part.box[3] / 2]);
         if (!clear([x, y])) continue;
         strokes.push({ points: [[x, y]], width: Math.max(1.5, Math.min(part.box[2] * b.w, part.box[3] * b.h)), colour, alpha: 0.9, plain: true, round: true, bristle: 0.5 });
-      } else if (part.shape === "poly" && FACE_FEATURES.has(part.colour) && part.pts?.length > 2) {
+      } else if (part.shape === "poly" && (cat ? CAT_FEATURES.has(part.colour) : FACE_FEATURES.has(part.colour)) && part.pts?.length > 2) {
         // Filled by short level runs across it, a dab's width apart.
         const pts = part.pts.map(at);
         const ys = pts.map((p) => p[1]), y0 = Math.min(...ys), y1 = Math.max(...ys);
@@ -43763,7 +43766,7 @@ function continueMasterDetail(result) {
   // (A drawn painting's face, once its flats are down: the face's own lines are crisper than its traced ones.)
   const faceTurn = Boolean(!letterTurn && !thingTurn && !inkTurn && !weatherTurn && (!plan?.drawn || (plan.drawn.flatsLaid && !plan.drawn.laying)) && refReady &&
     strokePainter.layer >= Math.min(2, maxStrokeLayer(plan)) && (!planHasThings(plan) || scene?.thing?.done || plan?.drawn) &&
-    scene?.items?.some((it) => it.entry?.grower === "face") && !plan.faceInking &&
+    scene?.items?.some((it) => it.entry?.grower === "face" || it.entry?.grower === "cat") && !plan.faceInking &&
     (plan.faceInked !== strokePainter.enhancedKey || plan.facePasses >= 12));
   const completion = letterTurn
     ? paintLetteringStrokes(detailResult, strokePainter.plan.scene)
