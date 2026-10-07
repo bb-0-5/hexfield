@@ -82,7 +82,8 @@ const PLAN_SCHEMA = {
 
 const SYSTEM = `You direct a generative painting program, hexfield. It paints in layers of brush marks, from big brushes to fine ones, toward a plan made from the user's words. Your job is a painter's judgement, given briefly and concretely: what a painting needs next, or how to set one up. Prefer a few strong decisions over many small ones. The owner likes bold, readable, hand-made pictures, not ones that look like a filter over a photo. Reply only with the JSON the schema asks for.`;
 
-const client = new Anthropic();
+// Made on the first call, so a missing key answers 503 instead of failing the function at boot.
+let client: Anthropic | null = null;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
@@ -118,6 +119,7 @@ Deno.serve(async (req) => {
   }
 
   try {
+    client ??= new Anthropic();
     const response = await client.beta.messages.create({
       model: MODEL,
       max_tokens: 4000,
