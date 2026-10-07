@@ -37680,6 +37680,8 @@ function choosePlanAnatomy(plan, params) {
     learned: (key) => visualLearnedChoice(anatomyVoteWord(key)), taste: () => null,
   });
   plan.anatomyScores = summariseChoice(scores);
+  // A thing grown from a line of action is always painted along it.
+  if (scores[0].key === "loose" && items.some((item) => item.entry?.gesture)) return ANATOMY_STYLES.guided;
   return ANATOMY_STYLES[scores[0].key];
 }
 
@@ -38686,6 +38688,24 @@ function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0, to = 
         }
       }
       return;
+    }
+    /* A thing grown from a line of action is begun with it: before any mass,
+     * the stroke from its head down its back to its tail bone, then its
+     * legs and tail - each one sure stroke, a shade darker than the body -
+     * and the masses after keep to it (Brushwork that follows anatomy). */
+    const g = item.entry.gesture;
+    if (pass === 0 && g?.line?.length > 1) {
+      const B = item.box, P = ([u, v]) => [B.x + u * B.w, B.y + v * B.h];
+      const trunk = (item.entry.anatomy || []).find((s) => s.k === "trunk");
+      const thick = Math.max(2, (trunk?.r || 0.06) * B.w * 0.9);
+      const lay = (pts, width) => {
+        if (pts.length < 2) return;
+        const pp = pts.map(P), mid = pp[Math.floor(pp.length / 2)];
+        strokes.push(finish({ points: pp, width, colour: at(ref, mid[0], mid[1]).map((c) => Math.max(0, Math.round(c * 0.72))), bristle: rng() }));
+      };
+      lay(g.line, thick);
+      for (const leg of g.legs || []) lay(leg, thick * 0.45);
+      lay(g.tail || [], thick * 0.4);
     }
     const radius = Math.max(1.5, short * THING_PASSES[pass]);
     const cell = Math.max(2, Math.round(radius));

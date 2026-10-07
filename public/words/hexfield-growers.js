@@ -1142,7 +1142,14 @@
       head: { x: hd[0], y: r4(hd[1] - hr / bh), w: r4(head * 1.6 / bw) }, facts, pose: P,
       // The line of action as seen, its stations on it: for a brush to follow.
       gesture: { line: line.pts.map((p) => U(proj(p))), tail: tail.pts.map((p) => U(proj(p))), legs: legLines.map((l) => l.map((p) => U(proj(p)))) },
-      anatomy: [...line.pts.slice(1).map((p, i) => ({ k: "bone", a: U(proj(line.pts[i])), b: U(proj(p)), r: r4(0.04 / bw) }))],
+      // Its body as the brush should go over it: the line of action (the
+      // trunk, and the neck at its head end), the head, the tail, the legs.
+      anatomy: [
+        ...line.pts.slice(1).map((p, i) => ({ k: i < line.pts.length * 0.15 ? "neck" : "trunk", a: U(proj(line.pts[i])), b: U(proj(p)), r: r4(girth * (i < line.pts.length * 0.15 ? 0.75 : 1.05) / bw) })),
+        { k: "head", a: U(proj(headC)), b: U(proj(muzzleC)), r: r4(head * 0.8 / bw) },
+        ...tail.pts.slice(1).map((p, i) => ({ k: "tail", a: U(proj(tail.pts[i])), b: U(proj(p)), r: r4(tw / bw) })),
+        ...legLines.flatMap((l, n) => l.slice(1).map((p, i) => ({ k: L.legs === "four" && n < 2 ? "far" : L.legs !== "front" && n % 2 === 0 ? "far" : "leg", a: U(proj(l[i])), b: U(proj(p)), r: r4(legW / bw) }))),
+      ],
     };
   }
 
