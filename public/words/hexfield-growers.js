@@ -1018,6 +1018,8 @@
       ["mood", ["happy", "sleepy", "cross", "surprised", "snarl", "silly", "plain"]],
       ["hair", ["none", "hood", "tuft", "black"]],
       ["hat", ["none", "none", "cap", "peaked"]],
+      // Three dashes off the head, the way a startled face is drawn.
+      ["marks", ["none", "none", "dashes"]],
       // Bred mostly turned a little: a face at three-quarters reads as drawn.
       ["view", ["front", "front", "three", "three", "three", "profile", "above"]],
     ],
@@ -1629,6 +1631,18 @@
       lineRuns(q3, l.width, "ink");
     }
 
+    // ── Marks: three short dashes flying off the top of the head on the
+    // side it faces (a surprised face always has them).
+    if (parts2.marks === "dashes" || g.mood === "surprised") {
+      let mx0 = Infinity, mx1 = -Infinity, my0 = Infinity, my1 = -Infinity;
+      for (let i = 0; i < headVerts; i++) { const [x, y] = pv[i]; mx0 = Math.min(mx0, x); mx1 = Math.max(mx1, x); my0 = Math.min(my0, y); my1 = Math.max(my1, y); }
+      const toward = yaw === 0 ? side : Math.sign(yaw), cx = (mx0 + mx1) / 2, cyM = (my0 + my1) / 2, rx = (mx1 - mx0) / 2, ry = (my1 - my0) / 2;
+      for (const a of [-0.95, -0.62, -0.3]) {
+        const ux = Math.cos(a) * toward, uy = Math.sin(a) * 1.15;
+        const r0 = 1.12, r1 = 1.34;
+        parts.push({ shape: "line", pts: [[cx + ux * rx * r0, cyM + uy * ry * r0], [cx + ux * rx * r1, cyM + uy * ry * r1]], width: 0.04, colour: "ink" });
+      }
+    }
     // ── Fitted to a unit box.
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const p of parts) for (const [x, y] of p.pts) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
@@ -1642,7 +1656,8 @@
     const facts = { aspect: bw / bh, eyes: parts2.eyes, mouth: parts2.mouth, head, mood: g.mood, gap: g.eyeGap / W, eyeSize: g.eyeSize,
       view: g.view, turn: +yaw.toFixed(3), seen: +seen.toFixed(3) };
     return {
-      kind: "subject", anchor: "centre", size: 0.62, aspect: Math.max(0.5, Math.min(1.6, bw / bh)), centred: true,
+      // (Room left round a face for what it says.)
+      kind: "subject", anchor: "centre", size: 0.54, aspect: Math.max(0.5, Math.min(1.6, bw / bh)), centred: true,
       colours: { skin, hair: [g.hue, Math.min(60, g.sat + 10), Math.max(10, g.light - 35)], ink: [0, 0, 10], eye: [g.eyeHue, 70, 60],
         pupil: [0, 0, 6], white: [40, 20, 96], inner: [350, 50, 75], nose: [350, 40, 45], mouth: [355, 55, 22], tongue: [350, 70, 65],
         blush: [350, 70, 72], hat: [g.hatHue, 55, 45] },
@@ -1918,7 +1933,7 @@
    * mood puts its own eyes and mouth in) - and what each is called, for
    * your votes on them. The few that tell, per kind. */
   const PART_GENES = {
-    face: ["head", "eyes", "nose", "mouth", "hat", "hair", "view", "mood", "ears", "cheeks"],
+    face: ["head", "eyes", "nose", "mouth", "hat", "hair", "view", "mood", "ears", "cheeks", "marks"],
     cat: ["pose", "coat", "eyeShape"], tree: ["crown"], fern: ["set"],
   };
   function partsOf(genes) {
@@ -1931,7 +1946,7 @@
     view: { front: "from the front", three: "three-quarter view", profile: "profile", above: "from above", back: "from behind" },
     nose: { none: "no nose" }, hat: { none: "no hat", cap: "cap", peaked: "peaked cap" }, hair: { none: "no hair", black: "black hair", hood: "hood", tuft: "tuft of hair" },
     ears: { none: "no ears", cat: "cat ears", c: "round ears" }, cheeks: { none: "plain cheeks", tufts: "cheek tufts", rolls: "chin rolls" },
-    crown: { weep: "weeping crown" }, set: { alternate: "alternate fronds", opposite: "opposite fronds" },
+    crown: { weep: "weeping crown" }, marks: { none: "no marks", dashes: "dash marks" }, set: { alternate: "alternate fronds", opposite: "opposite fronds" },
   };
   const partName = (gene, value) => PART_WORDS[gene]?.[value] || `${value} ${gene === "eyeShape" ? "eyes" : gene === "pose" ? "pose" : gene}`;
 

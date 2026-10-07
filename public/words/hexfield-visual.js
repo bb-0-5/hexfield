@@ -3562,7 +3562,8 @@
      * away from the light. With a light, the sides it shows (the top, and the
      * side it steps toward) are lit as far as they turn to the light. */
     // (A turned thing shows its own sides.)
-    if (dims.depth > 0 && anchor !== "sky" && !item.turn) {
+    // (Not a grown thing: it is already drawn in the round, turned to its view.)
+    if (dims.depth > 0 && anchor !== "sky" && !item.turn && !item.entry.grown) {
       let ex, ey;
       if (dims.vanish && !dims.iso) { ex = Math.sign(dims.vanish[0] - (b.x + b.w / 2)) || 1; ey = Math.sign(dims.vanish[1] - (b.y + b.h / 2)) || -1; }
       else { ex = dims.iso ? 0.87 * (dims.isoDir || 1) : -Math.sign(sx || 1) * 0.72; ey = dims.iso ? -0.5 : -0.62; }

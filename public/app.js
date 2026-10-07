@@ -34333,16 +34333,54 @@ function stackLetterPlace(text, W, H, k, laid, rng) {
   return { key: "stack", box, screen: box, glyphs };
 }
 
+/* A face's speech bubble: beside its head on the side with more room, a
+ * little above it, the tail to its mouth. Only when the painting has a face. */
+function speechLetterPlace(text, W, H, laid, rng) {
+  const face = (laid.items || []).find((it) => it.entry?.grower === "face" && it.box && !it.lettering);
+  const chars = String(text || "").trim();
+  if (!face || !chars || chars.length > 14) return null;
+  const f = face.box, e = face.entry;
+  // The mouth: the middle of its drawn mouth, or low in the face.
+  let mx = 0.5, my = 0.72, n = 0, sx = 0, sy = 0;
+  for (const part of e.parts || []) if (part.colour === "mouth" && part.pts) for (const [u, v] of part.pts) { sx += u; sy += v; n++; }
+  if (n) { mx = sx / n; my = sy / n; }
+  const mouth = [f.x + mx * f.w, f.y + my * f.h];
+  const unit = Math.min(W, H);
+  const th = Math.min(unit * 0.13, W * 0.62 / Math.max(2, chars.length * 0.62)), tw = Math.max(th * 1.4, chars.length * th * 0.62);
+  const w = Math.min(W * 0.62, tw * 1.25 + th * 0.9), h = th * 2.1;
+  const roomRight = W - (f.x + f.w * 0.7), roomLeft = f.x + f.w * 0.3;
+  const right = roomRight > roomLeft || (roomRight === roomLeft && rng() < 0.5);
+  // Above the head and out to its side, clear of its crown; pushed further
+  // out where the picture's top leaves no room above.
+  const margin = unit * 0.03;
+  let x = right ? f.x + f.w * 0.62 : f.x + f.w * 0.38 - w, y = f.y - h * 0.95;
+  if (y < margin) { y = margin; x = right ? Math.max(x, f.x + f.w * 0.88) : Math.min(x, f.x + f.w * 0.12 - w); }
+  x = Math.max(margin, Math.min(W - w - margin, x));
+  y = Math.max(margin, Math.min(H - h - margin, y));
+  const box = { x, y, w, h };
+  // Not over much of the face: then the words go elsewhere.
+  const ox = Math.max(0, Math.min(x + w, f.x + f.w) - Math.max(x, f.x)), oy = Math.max(0, Math.min(y + h, f.y + f.h) - Math.max(y, f.y));
+  if (ox * oy > 0.12 * f.w * f.h) return null;
+  return { key: "speech", box, screen: box, tail: mouth };
+}
+
 /* How the letters are dressed (axis "letterDress"): plain; bubble - fat and
  * rounded, a dark ink rim round them and a white shine inside; or blocks -
  * each letter printed on the front of a cube, the cube in perspective with
  * a lit top, a shaded side and inked edges, like a child's alphabet blocks. */
-const LETTER_DRESSES = ["plain", "bubble", "blocks"];
-function chooseLetterDress(params, rng) {
-  const text = String(params?.__hexfieldWords?.text || "").toLowerCase();
+/* burst - in a spiky burst with an offset shadow, as a shout is drawn
+ * (likelier for "!", "pow", "wow", a surprised face); speech - in a face's
+ * speech bubble (the place "speech" decides it). */
+const LETTER_DRESSES = ["plain", "bubble", "blocks", "burst"];
+const SHOUT_WORDS = /!|\b(pow|wow|bang|boom|zap|bam|whoa|yes|no|hey|oi|shout|loud|crash|kapow|wham)\b/;
+function chooseLetterDress(params, rng, laid = null, place = null) {
+  const text = String(params?.__hexfieldWords?.text || "").toLowerCase(), said = text + " " + seedText().toLowerCase();
+  const startled = (laid?.items || []).some((it) => it.entry?.grower === "face" && it.entry.facts?.mood === "surprised");
   const scores = chooseByTaste(LETTER_DRESSES, {
     rng, tasted: 0, axis: "letterDress", given: null,
     lean: (key) => key === "plain" ? 0.1 : key === "bubble" ? (/\b(bubble|balloon|graffiti|puffy|cartoon)\b/.test(text) ? 1 : 0)
+      // (Not round letters set one by one about the picture: a burst holds a word together.)
+      : key === "burst" ? (place?.glyphs ? -9 : (SHOUT_WORDS.test(said) ? 1.1 : 0) + (startled ? 0.6 : 0) - 0.15)
       : (/\b(blocks?|cubes?|toys?|alphabet|abc)\b/.test(text) ? 1 : 0),
     learned: (key) => visualLearnedChoice("letterdress" + key), taste: () => null,
   });
@@ -34375,6 +34413,55 @@ function drawLetterBlock(ctx, lettering, program) {
   const inset = s * 0.16;
   letterInBox(ctx, { x: fx + inset, y: fy + inset, w: s - inset * 2, h: s - inset * 2 }, text, { ...program, lightness: 0.16, outlineMode: "none", outlineWidth: 0, depth3d: 0 });
 }
+/* The words inside their bubble or burst (an inner box: the backing is
+ * the lettering's box). */
+function backedLetterBox(lettering) {
+  const b = (!lettering.warp && lettering.backBox) || lettering.box, burst = lettering.dress === "burst";
+  const ix = b.w * (burst ? 0.22 : 0.12), iy = b.h * (burst ? 0.26 : 0.2);
+  return { x: b.x + ix, y: b.y + iy, w: b.w - ix * 2, h: b.h - iy * 2 };
+}
+/* A speech bubble (a soft oval, its tail to the speaker's mouth) or a burst
+ * (a ring of uneven spikes): filled light, one ink line all round, and
+ * behind it the same shape solid and offset down - a drawn shadow, not a
+ * blur. */
+function drawLetterBacking(ctx, lettering) {
+  const b = (!lettering.warp && lettering.backBox) || lettering.box, cx = b.x + b.w / 2, cy = b.y + b.h / 2, rx = b.w / 2, ry = b.h / 2;
+  const rng = mulberry32((Number(lettering.backSeed) || 1) >>> 0);
+  const path = new Path2D();
+  if (lettering.dress === "burst") {
+    const n = 14 + Math.floor(rng() * 6);
+    for (let i = 0; i < n * 2; i++) {
+      const a = -Math.PI / 2 + i * Math.PI / n, r = i % 2 ? 0.72 + rng() * 0.08 : 0.98 + rng() * 0.16;
+      const x = cx + Math.cos(a) * rx * r, y = cy + Math.sin(a) * ry * r;
+      if (i) path.lineTo(x, y); else path.moveTo(x, y);
+    }
+    path.closePath();
+  } else {
+    // The oval, opened where the tail leaves it.
+    const [tx, ty] = lettering.tail || [cx - rx * 0.5, b.y + b.h * 1.6];
+    const at = Math.atan2((ty - cy) / ry, (tx - cx) / rx), gap = 0.22, steps = 48;
+    for (let i = 0; i <= steps; i++) {
+      const a = at + gap + (Math.PI * 2 - gap * 2) * i / steps;
+      const x = cx + Math.cos(a) * rx, y = cy + Math.sin(a) * ry;
+      if (i) path.lineTo(x, y); else path.moveTo(x, y);
+    }
+    // The tail: pointing at the mouth, a short way out of the bubble - not across the face.
+    const edge = Math.hypot(Math.cos(at) * rx, Math.sin(at) * ry), toMouth = Math.hypot(tx - cx, ty - cy);
+    const reach = Math.min(edge + Math.min(b.w, b.h) * 0.55, Math.max(edge * 1.2, toMouth * 0.55));
+    path.lineTo(cx + (tx - cx) / (toMouth || 1) * reach, cy + (ty - cy) / (toMouth || 1) * reach);
+    path.closePath();
+  }
+  const ink = strokePainter.plan?.drawn?.ink || [24, 22, 28], inkCss = `rgb(${ink[0]},${ink[1]},${ink[2]})`;
+  const line = Math.max(1.5, Math.min(b.w, b.h) * 0.045), off = Math.max(2, Math.min(b.w, b.h) * 0.07);
+  const hue = Number(lettering.program?.primaryHue) || 50;
+  const fill = lettering.dress === "burst" ? hslToRgb(((hue + 180) % 360) / 360, 0.85, 0.66) : [250, 248, 240];
+  ctx.save();
+  ctx.lineJoin = "round"; ctx.lineCap = "round";
+  ctx.translate(off, off); ctx.fillStyle = inkCss; ctx.fill(path); ctx.translate(-off, -off);
+  ctx.fillStyle = `rgb(${fill[0]},${fill[1]},${fill[2]})`; ctx.fill(path);
+  ctx.strokeStyle = inkCss; ctx.lineWidth = line; ctx.stroke(path);
+  ctx.restore();
+}
 /* Bubble letters: an ink rim, the fat letter, a shine inside. */
 function drawBubbleLetters(ctx, box, text, program) {
   const pen = Number(program.penWeight) || 1;
@@ -34394,9 +34481,12 @@ function letteringContains(lettering, screen = false) {
   const box = screen ? lettering?.screenBox || lettering?.box : lettering?.box;
   if (!box) return null;
   const inBox = (b, x, y) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
+  // A speech bubble or burst is the lettering's too, all of it.
+  const back = !lettering.warp && lettering.backBox;
   const glyphs = lettering.glyphs;
-  if (!glyphs?.length) return (x, y) => inBox(box, x, y);
+  if (!glyphs?.length) return back ? (x, y) => inBox(back, x, y) || inBox(box, x, y) : (x, y) => inBox(box, x, y);
   return (x, y) => {
+    if (back && inBox(back, x, y)) return true;
     if (!inBox(box, x, y)) return false;
     for (const g of glyphs) if (inBox(g.box, x, y)) return true;
     return false;
@@ -34416,6 +34506,8 @@ function letterPlaceLean(place, W, H, main, laid) {
     lean -= 3 * (ox * oy) / Math.max(1, m.w * m.h);
   }
   if (place.key === "beside") lean += 0.3;
+  // A face in the painting says the words.
+  if (place.key === "speech") lean += 2;
   if (place.key === "ground") lean += 0.25 + (place.surfaceWord ? 0.6 : 0);
   if (place.key === "sky") lean += 0.1;
   if (place.key === "centre") lean += main ? -1 : 0.2;
@@ -34459,12 +34551,16 @@ function planLettering(scene, letters, params, read, laid, rng) {
   if (flow) offered.push(flow);
   const stack = stackLetterPlace(letters, W, H, k, laid, rng);
   if (stack) offered.push(stack);
+  const speech = speechLetterPlace(letters, W, H, laid, rng);
+  if (speech) offered.push(speech);
   const surfaceWord = (params?.__hexfieldWords?.text || "").toLowerCase().match(/[a-z]+/g)?.some((w) => GROUND_WORDS.has(w)) || false;
   for (const place of offered) if (place.key === "ground") place.surfaceWord = surfaceWord;
   const places = offered.some((place) => !hides(place)) ? offered.filter((place) => !hides(place)) : offered;
+  // A shout is held together in one place (to be burst), not set letter by letter.
+  const shout = SHOUT_WORDS.test(((params?.__hexfieldWords?.text || "") + " " + letters).toLowerCase());
   const scores = chooseByTaste(places.map((p) => p.key), {
     rng, tasted: 0, axis: "letterPlace", given: null,
-    lean: (key) => letterPlaceLean(places.find((p) => p.key === key), W, H, where, laid),
+    lean: (key) => { const p = places.find((x) => x.key === key); return letterPlaceLean(p, W, H, where, laid) - (shout && p.glyphs ? 1.2 : 0); },
     learned: (key) => visualLearnedChoice("letterplace" + key), taste: () => null,
   });
   const place = places.find((p) => p.key === scores[0].key) || places[0];
@@ -34489,8 +34585,12 @@ function planLettering(scene, letters, params, read, laid, rng) {
     place: place.key, warp: place.warp || null, screenBox: place.screen || box, namedColour: colourWord || null,
     stage: "block", passes: 0, rounds: 0, round: null, changed: false,
     mode: family === "wildstyle" ? "wildstyle" : "throwup",
-    dress: chooseLetterDress(params, rng),
+    // Words said by a face are in its speech bubble.
+    dress: place.key === "speech" ? "speech" : chooseLetterDress(params, rng, laid, place),
+    tail: place.tail || null, backSeed: Math.floor(rng() * 1e9),
   };
+  // Where its bubble or burst goes, kept as placed (the letters' own box is refitted later).
+  if (scene.lettering.dress === "speech" || scene.lettering.dress === "burst") scene.lettering.backBox = { ...box };
   scene.variations["letterdress" + scene.lettering.dress] = { size: 0, hue: 0, light: 0, literal: 0 };
   scene.letterPlaceScores = summariseChoice(scores);
   const seen = place.screen || box;
@@ -34937,6 +35037,14 @@ function drawSceneLettering(ctx, lettering, program = letteringStageProgram(lett
     ctx.transform(...letteringWarpMatrix(lettering.warp));
     lettering.warping = true;
     try { drawSceneLettering(ctx, lettering, program, { shadow, cushion }); } finally { lettering.warping = false; ctx.restore(); }
+    return;
+  }
+  // A speech bubble or burst behind the words, once, round all of them.
+  if ((lettering.dress === "speech" || lettering.dress === "burst") && !lettering.backed) {
+    if (lettering.stage !== "block") drawLetterBacking(ctx, lettering);
+    const inner = backedLetterBox(lettering);
+    drawSceneLettering(ctx, { ...lettering, backed: true, box: inner, glyphs: lettering.glyphs, dress: "plain" },
+      { ...program, lightness: 0.1, outlineMode: "none", outlineWidth: 0, depth3d: 0 }, { shadow: false, cushion: false });
     return;
   }
   // Blocks: a cube for each letter, even when the word was set as one.
@@ -38749,7 +38857,8 @@ function paintContourInk(result, plan) {
   const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ info?.version ^ 0x1c4) >>> 0);
   const width = Math.max(2, info ? info.t * 2 : 2);
   const strokes = lines.map((points) => ({
-    points, width: width * (0.9 + rng() * 0.2),
+    // (A drawn painting's line is one weight throughout, as your hand draws it.)
+    points, width: width * (plan.drawn ? 1 : 0.9 + rng() * 0.2),
     colour: info.ink.map((c) => Math.max(0, Math.min(255, c + Math.round((rng() - 0.5) * 6)))),
     bristle: rng(), alpha: 1, plain: true, round: true,
   }));
@@ -38781,6 +38890,24 @@ function paintContourInk(result, plan) {
 const FACE_FEATURES = new Set(["eye", "pupil", "white", "mouth", "tongue", "nose", "blush", "ink"]);
 function faceInkStrokes(plan) {
   const strokes = [];
+  // A drawn painting's face in one weight of line, the painting's own.
+  const oneWeight = plan.drawn ? Math.max(1.5, (plan.drawn.lineWidth || 2) * 1.1) : null;
+  // Never over the lettering (a speech bubble may lie over the head).
+  const letterAt = plan.scene?.lettering ? letteringContains(plan.scene.lettering) : null;
+  const clear = ([x, y]) => !(letterAt && letterAt(x, y));
+  const runsOff = (pts) => {
+    const out = [];
+    let run = [];
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[i + 1] || a, n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 3));
+      for (let k = 0; k < (i + 1 < pts.length ? n : 1); k++) {
+        const p = [a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n];
+        if (clear(p)) run.push(p); else { if (run.length > 1) out.push(run); run = []; }
+      }
+    }
+    if (run.length > 1) out.push(run);
+    return out;
+  };
   const rgbOf = (hsl) => hslToRgb(((hsl?.[0] || 0) % 360) / 360, (hsl?.[1] || 0) / 100, (hsl?.[2] || 0) / 100);
   for (const item of plan.scene?.items || []) {
     const e = item.entry, b = item.box;
@@ -38789,9 +38916,10 @@ function faceInkStrokes(plan) {
     for (const part of e.parts || []) {
       const colour = rgbOf(e.colours?.[part.colour]);
       if (part.shape === "line" && part.colour === "ink" && part.pts?.length > 1) {
-        strokes.push({ points: part.pts.map(at), width: Math.max(1.2, part.width * b.w), colour, alpha: 1, plain: true, round: true, bristle: 0.5 });
+        for (const run of letterAt ? runsOff(part.pts.map(at)) : [part.pts.map(at)]) strokes.push({ points: run, width: oneWeight || Math.max(1.2, part.width * b.w), colour, alpha: 1, plain: true, round: true, bristle: 0.5 });
       } else if (part.shape === "ellipse" && FACE_FEATURES.has(part.colour)) {
         const [x, y] = at([part.box[0] + part.box[2] / 2, part.box[1] + part.box[3] / 2]);
+        if (!clear([x, y])) continue;
         strokes.push({ points: [[x, y]], width: Math.max(1.5, Math.min(part.box[2] * b.w, part.box[3] * b.h)), colour, alpha: 0.9, plain: true, round: true, bristle: 0.5 });
       } else if (part.shape === "poly" && FACE_FEATURES.has(part.colour) && part.pts?.length > 2) {
         // Filled by short level runs across it, a dab's width apart.
@@ -38805,7 +38933,9 @@ function faceInkStrokes(plan) {
             if ((ay <= y && by > y) || (by <= y && ay > y)) xs.push(ax + (y - ay) / (by - ay) * (bx - ax));
           }
           xs.sort((a, c) => a - c);
-          for (let i = 0; i + 1 < xs.length; i += 2) strokes.push({ points: [[xs[i], y], [xs[i + 1], y]], width: step * 1.35, colour, alpha: 0.95, plain: true, round: true, bristle: 0.5 });
+          for (let i = 0; i + 1 < xs.length; i += 2) {
+            for (const run of letterAt ? runsOff([[xs[i], y], [xs[i + 1], y]]) : [[[xs[i], y], [xs[i + 1], y]]]) strokes.push({ points: run, width: step * 1.35, colour, alpha: 0.95, plain: true, round: true, bristle: 0.5 });
+          }
         }
       }
     }
@@ -39292,9 +39422,12 @@ function* applyPerspectivePlanesSteps(pixels, width, height, plan, amount = 1) {
   plan.drawn = { indoor, lines, ids, width, height, boxes, vx };
   yield;
   const cover = plan.scene?.layer?.cover?.length === width * height ? plan.scene.layer.cover : null;
+  // (Not the lettering - nor its bubble or burst: it keeps its own colours.)
+  const letterAt = plan.scene?.lettering ? letteringContains(plan.scene.lettering) : null;
+  const lettered = (i) => letterAt && letterAt(i % width, (i / width) | 0);
   const sums = new Map();
   for (let i = 0, o = 0; i < ids.length; i++, o += 4) {
-    if (cover && cover[i] > 128) continue;
+    if ((cover && cover[i] > 128) || lettered(i)) continue;
     let s = sums.get(ids[i]);
     if (!s) sums.set(ids[i], s = [0, 0, 0, 0]);
     s[0] += pixels[o]; s[1] += pixels[o + 1]; s[2] += pixels[o + 2]; s[3]++;
@@ -39322,7 +39455,7 @@ function* applyPerspectivePlanesSteps(pixels, width, height, plan, amount = 1) {
   }
   for (let i = 0, o = 0; i < ids.length; i++, o += 4) {
     const c = flat.get(ids[i]);
-    if (!c || (cover && cover[i] > 128)) continue;
+    if (!c || (cover && cover[i] > 128) || lettered(i)) continue;
     pixels[o] += (c[0] - pixels[o]) * amount; pixels[o + 1] += (c[1] - pixels[o + 1]) * amount; pixels[o + 2] += (c[2] - pixels[o + 2]) * amount;
   }
   yield;
@@ -39524,7 +39657,7 @@ function drawnInkStrokes(plan, W, H, rng) {
   if (W && H && d.lines) {
     const lw = Math.max(1.5, d.lineWidth || 2);
     // (A block's edges only: the perspective's own lines are never drawn.)
-    for (const [x0, y0, x1, y1, kind] of d.lines) if (kind === "box") runs(x0, y0, x1, y1, lw * (0.95 + rng() * 0.2), 3, { occlude: false });
+    for (const [x0, y0, x1, y1, kind] of d.lines) if (kind === "box") runs(x0, y0, x1, y1, lw, 3, { occlude: false });
   }
   const h = d.hatch;
   if (h && h.width === W && h.height === H) {
@@ -39763,6 +39896,8 @@ async function prepareNewPainting(result, raw, width, height, alive, onDraft = n
   plan.manner = choosePlanManner(plan, ground, width, height, source?.params);
   // A drawn painting letters crisp from the start (it has no brush to block in with).
   if (plan.manner?.reference?.planes && plan.scene?.lettering) plan.scene.lettering.stage = "detail";
+  // ...and lays its things on opaque: a drawing's shapes are not see-through.
+  if (plan.manner?.reference?.planes && plan.scene) plan.scene.strength = 1;
   if (onDraft) onDraft(mannerDraft(ground, width, height, plan));
   if (!await step()) return null;
   refreshPlanShapes(plan, ground, width, height);
