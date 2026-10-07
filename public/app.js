@@ -33388,11 +33388,16 @@ function growSceneSubjects(read, rng, text = "") {
     if (!picked.length) continue;
     s.variants = picked.map((o) => ({ ...growerDrawingFor(o, traits, rng), outcome: o.id }));
     s.entry = s.variants[0];
+    growerPins.set(kind, s.entry);
     for (const o of picked) { o.used = (o.used || 0) + 1; if (!used.some((u) => u.id === o.id)) used.push({ kind, id: o.id }); }
   }
   if (used.length) saveGrowerLibrary();
   return used.length ? used : null;
 }
+/* The painting's own pick of each kind: what the words draw as anywhere
+ * else in it too (its master picture), so one painting has one face, not
+ * the shelf's best under the one it chose. */
+const growerPins = new Map();
 /* What a painting says about the grown things in it. */
 function growerOutcomes(used, { taste = null, vote = 0 }) {
   if (!used?.length) return;
@@ -33412,6 +33417,7 @@ function registerGrowerWords() {
   if (!G || !Visual?.grows) return;
   for (const [word, kind] of Object.entries(G.WORDS)) {
     Visual.grows(word, kind, () => {
+      if (growerPins.has(kind)) return growerPins.get(kind);
       // (A bare shelf: grown there and then if the kind is quick to grow,
       // otherwise the written drawing stands in until some are grown.)
       const best = growerShelf(kind).outcomes.slice().sort((a, b) => growerRank(b) - growerRank(a))[0]
@@ -39206,8 +39212,17 @@ function tidyDrawnPlanes(pixels, width, height, plan) {
     const key = (pixels[o] << 16) | (pixels[o + 1] << 8) | pixels[o + 2];
     sm.set(key, (sm.get(key) || 0) + 1);
   }
-  const flat = new Map();
-  for (const [id, sm] of sums) { let best = 0, bn = -1; for (const [k, n] of sm) if (n > bn) { bn = n; best = k; } flat.set(id, [best >> 16 & 255, best >> 8 & 255, best & 255]); }
+  const flat = new Map(), kept = [];
+  for (const [id, sm] of sums) {
+    let best = 0, bn = -1;
+    for (const [k, n] of sm) if (n > bn) { bn = n; best = k; }
+    let c = [best >> 16 & 255, best >> 8 & 255, best & 255];
+    /* Planes of nearly one colour are one flat: the perspective cuts the
+     * colour where it changes, and is not itself seen as stripes. */
+    const near = kept.find((k) => Math.hypot(k[0] - c[0], k[1] - c[1], k[2] - c[2]) < 30);
+    if (near) c = near; else kept.push(c);
+    flat.set(id, c);
+  }
   for (let i = 0, o = 0; i < d.ids.length; i++, o += 4) {
     if ((cover && cover[i] > 128) || (letterAt && letterAt(i % width, (i / width) | 0))) continue;
     const c = flat.get(d.ids[i]);
@@ -39217,26 +39232,12 @@ function tidyDrawnPlanes(pixels, width, height, plan) {
   const canvas = paintBuffer(width, height), ctx = canvas.getContext("2d", { willReadFrequently: true });
   ctx.lineCap = "round";
   const lw = d.lineWidth || 2;
-  // Plane lines, then the boxes' edges (a block's inked, construction dashed and light).
+  /* Only a block's own edges are inked. The perspective's lines - the
+   * horizon, the lines to the vanishing point, the depth lines, a box's
+   * construction - are how the planes were found, not part of the picture. */
   for (const [x0, y0, x1, y1, kind] of d.lines || []) {
-    if (kind) continue;
-    ctx.strokeStyle = "#000"; ctx.lineWidth = lw; ctx.setLineDash([]);
-    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
-  }
-  // (Hidden behind a block's faces.)
-  ctx.globalCompositeOperation = "destination-out";
-  const faceImg = ctx.createImageData(width, height);
-  for (let i = 0; i < d.ids.length; i++) if (d.ids[i] >= 1000) faceImg.data[i * 4 + 3] = 255;
-  const faceCanvas = paintBuffer(width, height);
-  faceCanvas.getContext("2d").putImageData(faceImg, 0, 0);
-  ctx.drawImage(faceCanvas, 0, 0);
-  faceCanvas.width = 0;
-  ctx.globalCompositeOperation = "source-over";
-  for (const [x0, y0, x1, y1, kind] of d.lines || []) {
-    if (!kind) continue;
-    ctx.strokeStyle = kind === "box" ? "#000" : "rgba(0,0,0,0.45)";
-    ctx.lineWidth = kind === "box" ? lw : Math.max(1, lw * 0.6);
-    ctx.setLineDash(kind === "dash" ? [lw * 3, lw * 3] : []);
+    if (kind !== "box") continue;
+    ctx.strokeStyle = "#000"; ctx.lineWidth = lw;
     ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
   }
   ctx.setLineDash([]);
@@ -39294,8 +39295,8 @@ async function layFlatsNow(plan, d, reference, width, height, alive) {
   d.flatsLaid = reference;
   strokePainter.layer = Math.max(strokePainter.layer, maxStrokeLayer(plan));
 }
-/* A drawn painting's general pass: no brush - its flats laid again if its
- * picture was re-made, and nothing else to do. */
+/* A drawn painting's general pass: no brush - its flats laid (again, if its
+ * picture was re-made), and nothing else to do. */
 function drawnPass(result, plan, reference, width, height, refKey = null) {
   markPaintTimingStarted(result);
   result.paintStrokeCount = 0;
@@ -39305,7 +39306,9 @@ function drawnPass(result, plan, reference, width, height, refKey = null) {
   const usable = strokePainter.enhancedPlan === plan && strokePainter.enhanced?.length === reference?.length;
   if (usable && refKey && strokePainter.enhancedKey !== refKey) scheduleStrokeReference(reference, width, height, refKey);
   const ref = strokePainter.enhancedPlan === plan && strokePainter.enhanced?.length === width * height * 4 ? strokePainter.enhanced : null;
-  if (ref && d.flatsLaid && d.flatsLaid !== ref && !d.laying) {
+  /* Laid again for a re-made picture - or laid at all: a plan that took
+   * over while the first one's flats were going down has never had its own. */
+  if (ref && d.flatsLaid !== ref && !d.laying) {
     laydrawnFlats(plan, ref, width, height, () => strokePainter.plan === plan).catch(() => {});
   }
   markPaintTimingCompleted(result);
@@ -39378,11 +39381,8 @@ function drawnInkStrokes(plan, W, H, rng) {
   };
   if (W && H && d.lines) {
     const lw = Math.max(1.5, d.lineWidth || 2);
-    for (const [x0, y0, x1, y1, kind] of d.lines) {
-      if (!kind) runs(x0, y0, x1, y1, lw * (0.9 + rng() * 0.25), 6);
-      else if (kind === "box") runs(x0, y0, x1, y1, lw * (0.95 + rng() * 0.2), 3, { occlude: false });
-      else runs(x0, y0, x1, y1, Math.max(1, lw * 0.6), 2, { occlude: false, dash: lw * 3, alpha: 0.45 });
-    }
+    // (A block's edges only: the perspective's own lines are never drawn.)
+    for (const [x0, y0, x1, y1, kind] of d.lines) if (kind === "box") runs(x0, y0, x1, y1, lw * (0.95 + rng() * 0.2), 3, { occlude: false });
   }
   const h = d.hatch;
   if (h && h.width === W && h.height === H) {
@@ -43315,7 +43315,7 @@ function continueMasterDetail(result) {
   if (plan) plan.facePasses = (plan.facePasses || 0) + 1;
   // (A drawn painting's face, once its flats are down: the face's own lines are crisper than its traced ones.)
   const faceTurn = Boolean(!letterTurn && !thingTurn && !inkTurn && !weatherTurn && (!plan?.drawn || (plan.drawn.flatsLaid && !plan.drawn.laying)) && refReady &&
-    strokePainter.layer >= Math.min(2, maxStrokeLayer(plan)) && (!planHasThings(plan) || scene?.thing?.done) &&
+    strokePainter.layer >= Math.min(2, maxStrokeLayer(plan)) && (!planHasThings(plan) || scene?.thing?.done || plan?.drawn) &&
     scene?.items?.some((it) => it.entry?.grower === "face") && !plan.faceInking &&
     (plan.faceInked !== strokePainter.enhancedKey || plan.facePasses >= 12));
   const completion = letterTurn
