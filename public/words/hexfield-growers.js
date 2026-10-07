@@ -918,9 +918,11 @@
     const mood = P === "curl" ? "sleepy" : g.mood;
     const body = g.body * (0.72 + 0.28 * grown), girth = g.girth * (0.9 + 0.1 * grown) * (1 - 0.12 * old) * (1 + 0.25 * g.fluff);
     const legs = g.legs * (0.78 + 0.22 * grown), head = g.head * (1 + 0.45 * kit), ears = g.ears * (1 + 0.5 * kit);
-    const tailLen = g.tail * (0.65 + 0.35 * grown), legW = girth * 0.3 * (1 + 0.2 * g.fluff);
+    const tailLen = g.tail * (0.65 + 0.35 * grown) * 0.8, legW = girth * 0.3 * (1 + 0.2 * g.fluff);
     const hk = legs / 0.52;
-    const place = ([x, y, z]) => [x * body, y * hk, z * body];
+    // (Standing, a cat's back is short for its legs: it is not a stoat.)
+    const upright = P === "stand" || P === "walk" ? 0.8 : 1;
+    const place = ([x, y, z]) => [x * body * upright, y * hk, z * body];
     // ── The line of action.
     const line = growStroke(place(L.head), place(L.tail), rng, { force: L.force || null, bow: L.bow || 0.3 });
     const blobs = [];     // { c, axes: [[dir, r] x3], part, far, colour }
@@ -969,11 +971,11 @@
     for (const s of [-1, 1]) {
       const sideW = v3.norm(v3.cross([0, -1, 0], fwd));
       const base = v3.add(v3.add(v3.add(headC, [0, -1, 0], head * 0.55), sideW, s * head * (0.3 + 0.25 * g.earSet)), fwd, -head * 0.08);
-      const tip = v3.add(v3.add(base, [0, -1, 0], ears * (2 - 0.35 * g.earSet)), sideW, s * ears * 0.5 * g.earSet);
+      const tip = v3.add(v3.add(base, [0, -1, 0], ears * (2.3 - 0.35 * g.earSet)), sideW, s * ears * 0.5 * g.earSet);
       earStrokes.push({ base, tip, s });
       for (let k = 0; k <= 4; k++) {
         const t = k / 4, p = [base[0] + (tip[0] - base[0]) * t, base[1] + (tip[1] - base[1]) * t, base[2] + (tip[2] - base[2]) * t];
-        const r = ears * 1.05 * (1 - t * 0.9);
+        const r = ears * 1.25 * (1 - t * 0.9);
         blob(p, v3.add(tip, base, -1), r * 0.55, r, r * 0.5, "ear", { far: s < 0 });
       }
     }
@@ -1045,11 +1047,27 @@
     const bw = x1 - x0, bh = y1 - y0, r4 = (v) => Math.round(v * 1e4) / 1e4;
     const U = ([x, y]) => [r4((x - x0) / bw), r4((y - y0) / bh)];
     const lw = 0.016, parts = [];
+    /* Through depth: a line is thicker where it comes toward you and
+     * thinner where it goes back - each point's width from how near the
+     * mass it lies on is (the nearest of those it is over). */
+    let zmin = Infinity, zmax = -Infinity;
+    for (const sh of shapes) { zmin = Math.min(zmin, sh.z); zmax = Math.max(zmax, sh.z); }
+    const zk = (z) => r4(0.55 + 0.75 * clamp((z - zmin) / ((zmax - zmin) || 1), 0, 1));
+    const depthAt = (q) => {
+      let best = -Infinity, near = null, nd = Infinity;
+      for (const sh of shapes) {
+        const c = proj(sh.c), d = Math.hypot(q[0] - c[0], q[1] - c[1]);
+        if (d < nd) { nd = d; near = sh; }
+        if (sh.z > best && insidePoly(q, sh.pts.map(([x, y]) => [c[0] + (x - c[0]) * 1.12, c[1] + (y - c[1]) * 1.12]))) best = sh.z;
+      }
+      return Number.isFinite(best) ? best : near ? near.z : zmin;
+    };
+    const loopK = (loop) => [...loop, loop[0]].map((q) => zk(depthAt(q)));
     // One flat of the coat, the far legs and ear a shade darker, the near on top.
     const outline = outlineOf(shapes.map((s) => s.pts), [], x0, y0, bw, bh, 220) || [];
     for (const loop of outline) parts.push({ shape: "poly", smooth: true, pts: loop.map(U), colour: "fur", tone: 0 });
     const coat = g.coat, isPoint = coat === "point", whiteFeet = coat === "tuxedo" || coat === "calico";
-    for (const s of shapes.filter((s) => s.far)) parts.push({ shape: "poly", smooth: true, pts: s.pts.map(U), colour: isPoint && (s.part === "paw" || s.part === "ear") ? "dark" : whiteFeet && s.part === "paw" ? "white" : "fur", tone: -0.14 });
+    for (const s of shapes.filter((s) => s.far)) parts.push({ shape: "poly", smooth: true, pts: s.pts.map(U), colour: isPoint && (s.part === "paw" || s.part === "ear") ? "dark" : whiteFeet && s.part === "paw" ? "white" : "fur", tone: s.part === "ear" ? -0.05 : -0.14 });
     // The near side over the far: its own flat, and a lighter line where it crosses the far legs.
     const near = shapes.some((s) => s.far) ? outlineOf(shapes.filter((s) => !s.far).map((s) => s.pts), [], x0, y0, bw, bh, 220) || [] : [];
     for (const loop of near) parts.push({ shape: "poly", smooth: true, pts: loop.map(U), colour: "fur", tone: 0 });
@@ -1115,8 +1133,8 @@
       parts.push({ shape: "line", pts: [[b[0] - ears * 0.18, b[1]], [mid[0] - ears * 0.05, mid[1]], [t[0], t[1] + ears * 0.2]].map(U), width: r4(lw * 0.8), colour: "line", tone: 0 });
     }
     // The one line round it (and the near side's, lighter, where it lies over the far).
-    for (const loop of near) parts.push({ shape: "line", pts: [...loop, loop[0]].map(U), width: r4(lw * 0.65), colour: "line", tone: 0 });
-    for (const loop of outline) parts.push({ shape: "line", pts: [...loop, loop[0]].map(U), width: lw, colour: "line", tone: 0 });
+    for (const loop of near) parts.push({ shape: "line", pts: [...loop, loop[0]].map(U), wk: loopK(loop), width: r4(lw * 0.65), colour: "line", tone: 0 });
+    for (const loop of outline) parts.push({ shape: "line", pts: [...loop, loop[0]].map(U), wk: loopK(loop), width: lw, colour: "line", tone: 0 });
     // Toe loops on the near paws on the ground.
     for (const s of shapes) {
       if (s.part !== "paw" || s.far) continue;
@@ -1141,7 +1159,9 @@
       aspect: clamp(bw / bh, 0.4, 3), depth: 0.5, colours, parts, grown: true, grower: g.kind, age: r4(years), drawn: 3,
       head: { x: hd[0], y: r4(hd[1] - hr / bh), w: r4(head * 1.6 / bw) }, facts, pose: P,
       // The line of action as seen, its stations on it: for a brush to follow.
-      gesture: { line: line.pts.map((p) => U(proj(p))), tail: tail.pts.map((p) => U(proj(p))), legs: legLines.map((l) => l.map((p) => U(proj(p)))) },
+      gesture: { line: line.pts.map((p) => U(proj(p))), tail: tail.pts.map((p) => U(proj(p))), legs: legLines.map((l) => l.map((p) => U(proj(p)))),
+        // ...and how near each point of them is, for their widths.
+        lineK: line.pts.map((p) => zk(proj(p)[2])), tailK: tail.pts.map((p) => zk(proj(p)[2])), legsK: legLines.map((l) => l.map((p) => zk(proj(p)[2]))) },
       // Its body as the brush should go over it: the line of action (the
       // trunk, and the neck at its head end), the head, the tail, the legs.
       anatomy: [
@@ -1649,10 +1669,12 @@
         }
         return any && mark;
       });
+      // How near each corner is (for the line's width through depth).
+      const zc = best.pts.map(([x, y]) => { let zi = -Infinity; for (const [i, j] of [[x - 1, y - 1], [x, y - 1], [x - 1, y], [x, y]]) zi = Math.max(zi, zr(i, j)); return zi; });
       // Softened (the cells' stairs smoothed away), back in face units.
       let pts = best.pts;
       for (let it = 0; it < 3; it++) pts = pts.map((p, n) => { const a = pts[(n - 1 + pts.length) % pts.length], b = pts[(n + 1) % pts.length]; return [(a[0] + 2 * p[0] + b[0]) / 4, (a[1] + 2 * p[1] + b[1]) / 4]; });
-      pts = pts.map(toFace);
+      pts = pts.map((p, n) => [...toFace(p), zc[n]]);
       const far = pts.reduce((m, p, n) => Math.hypot(p[0] - pts[0][0], p[1] - pts[0][1]) > Math.hypot(pts[m][0] - pts[0][0], pts[m][1] - pts[0][1]) ? n : m, 0);
       const eps = cell * 0.35;
       const shape = [...simplifyLine(pts.slice(0, far + 1), eps), ...simplifyLine([...pts.slice(far), pts[0]], eps).slice(1, -1)];
@@ -1673,7 +1695,12 @@
     // Far regions first, so a nearer one lies over a farther.
     out.sort((a, b) => a.z - b.z);
     const parts = out.map((o) => o.part);
-    for (const l of inks) parts.push({ shape: "line", pts: l.pts, width: l.width, colour: "ink" });
+    /* Through depth: a line is thicker where the form comes toward you,
+     * thinner where it turns away - by how near each point of it is. */
+    let zlo = Infinity, zhi = -Infinity;
+    for (let k = 0; k < zb.length; k++) if (zb[k] > -Infinity) { zlo = Math.min(zlo, zb[k]); zhi = Math.max(zhi, zb[k]); }
+    const zk = (z) => Math.round((0.55 + 0.75 * clamp((z - zlo) / ((zhi - zlo) || 1), 0, 1)) * 1e3) / 1e3;
+    for (const l of inks) parts.push({ shape: "line", pts: l.pts.map(([x, y]) => [x, y]), wk: l.pts.map((p) => zk(p[2])), width: l.width, colour: "ink" });
 
     // ── The face's parts, drawn on the face as seen from the front and
     // carried onto the form - a part on a turned surface foreshortens, and
@@ -1782,8 +1809,8 @@
     const eyeSeen = { [-1]: 0, 1: 0 }, eyeAll = { [-1]: 0, 1: 0 };
     const lineRuns = (q3, width, colour) => {
       let run = [];
-      const flush = () => { if (run.length >= 2) parts.push({ shape: "line", pts: simplifyLine(run, 0.004), width, colour }); run = []; };
-      for (const q of q3) { if (q && seenAt(q)) run.push([q[0], q[1]]); else flush(); }
+      const flush = () => { if (run.length >= 2) { const kept = simplifyLine(run, 0.004); parts.push({ shape: "line", pts: kept.map(([x, y]) => [x, y]), wk: kept.map((q) => zk(q[2])), width, colour }); } run = []; };
+      for (const q of q3) { if (q && seenAt(q)) run.push([q[0], q[1], q[2]]); else flush(); }
       flush();
     };
     decals.forEach((d, n) => {
@@ -1841,7 +1868,7 @@
     for (const p of parts) for (const [x, y] of p.pts) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
     const bw = x1 - x0, bh = y1 - y0, r4 = (v) => Math.round(v * 1e4) / 1e4;
     const U = ([x, y]) => [r4((x - x0) / bw), r4((y - y0) / bh)];
-    const outParts = parts.map((p) => p.shape === "line" ? { shape: "line", pts: p.pts.map(U), width: r4(p.width / bw), colour: p.colour } : { shape: "poly", pts: p.pts.map(U), colour: p.colour });
+    const outParts = parts.map((p) => p.shape === "line" ? { shape: "line", pts: p.pts.map(U), ...(p.wk ? { wk: p.wk } : {}), width: r4(p.width / bw), colour: p.colour } : { shape: "poly", pts: p.pts.map(U), colour: p.colour });
     // Where the head itself is (for a hat or what sits on it).
     let hx0 = Infinity, hx1 = -Infinity, hy0 = Infinity, hxTop = 0;
     for (let i = 0; i < headVerts; i++) { const [x, y] = pv[i]; hx0 = Math.min(hx0, x); hx1 = Math.max(hx1, x); if (y < hy0) { hy0 = y; hxTop = x; } }

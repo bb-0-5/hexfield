@@ -38698,14 +38698,15 @@ function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0, to = 
       const B = item.box, P = ([u, v]) => [B.x + u * B.w, B.y + v * B.h];
       const trunk = (item.entry.anatomy || []).find((s) => s.k === "trunk");
       const thick = Math.max(2, (trunk?.r || 0.06) * B.w * 0.9);
-      const lay = (pts, width) => {
+      // (Thinner where the stroke goes back, thicker where it comes toward you.)
+      const lay = (pts, width, wk) => {
         if (pts.length < 2) return;
         const pp = pts.map(P), mid = pp[Math.floor(pp.length / 2)];
-        strokes.push(finish({ points: pp, width, colour: at(ref, mid[0], mid[1]).map((c) => Math.max(0, Math.round(c * 0.72))), bristle: rng() }));
+        strokes.push(finish({ points: pp, width, wk: wk?.length === pp.length ? wk : undefined, colour: at(ref, mid[0], mid[1]).map((c) => Math.max(0, Math.round(c * 0.72))), bristle: rng() }));
       };
-      lay(g.line, thick);
-      for (const leg of g.legs || []) lay(leg, thick * 0.45);
-      lay(g.tail || [], thick * 0.4);
+      lay(g.line, thick, g.lineK);
+      (g.legs || []).forEach((leg, n) => lay(leg, thick * 0.45, g.legsK?.[n]));
+      lay(g.tail || [], thick * 0.4, g.tailK);
     }
     const radius = Math.max(1.5, short * THING_PASSES[pass]);
     const cell = Math.max(2, Math.round(radius));
@@ -39082,18 +39083,23 @@ function faceInkStrokes(plan) {
   // Never over the lettering (a speech bubble may lie over the head).
   const letterAt = plan.scene?.lettering ? letteringContains(plan.scene.lettering) : null;
   const clear = ([x, y]) => !(letterAt && letterAt(x, y));
+  // (Points may carry a third number, their width through depth.)
   const runsOff = (pts) => {
     const out = [];
     let run = [];
     for (let i = 0; i < pts.length; i++) {
       const a = pts[i], b = pts[i + 1] || a, n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 3));
       for (let k = 0; k < (i + 1 < pts.length ? n : 1); k++) {
-        const p = [a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n];
+        const t = k / n, p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, (a[2] ?? 1) + ((b[2] ?? 1) - (a[2] ?? 1)) * t];
         if (clear(p)) run.push(p); else { if (run.length > 1) out.push(run); run = []; }
       }
     }
     if (run.length > 1) out.push(run);
     return out;
+  };
+  const inked = (run, width, colour) => {
+    const deep = run.some((p) => p[2] != null && p[2] !== 1);
+    return { points: run.map((p) => [p[0], p[1]]), wk: deep ? run.map((p) => p[2] ?? 1) : undefined, width, colour, alpha: 1, plain: true, round: true, bristle: 0.5 };
   };
   const rgbOf = (hsl) => hslToRgb(((hsl?.[0] || 0) % 360) / 360, (hsl?.[1] || 0) / 100, (hsl?.[2] || 0) / 100);
   for (const item of plan.scene?.items || []) {
@@ -39105,7 +39111,8 @@ function faceInkStrokes(plan) {
     for (const part of e.parts || []) {
       const colour = rgbOf(e.colours?.[part.colour]);
       if (part.shape === "line" && (part.colour === "ink" || part.colour === "line") && part.pts?.length > 1) {
-        for (const run of letterAt ? runsOff(part.pts.map(at)) : [part.pts.map(at)]) strokes.push({ points: run, width: oneWeight || Math.max(1.2, part.width * b.w), colour, alpha: 1, plain: true, round: true, bristle: 0.5 });
+        const pts = part.pts.map((q, n) => [...at(q), part.wk?.[n] ?? 1]);
+        for (const run of letterAt ? runsOff(pts) : [pts]) strokes.push(inked(run, oneWeight || Math.max(1.2, part.width * b.w), colour));
       } else if (part.shape === "ellipse" && FACE_FEATURES.has(part.colour)) {
         const [x, y] = at([part.box[0] + part.box[2] / 2, part.box[1] + part.box[3] / 2]);
         if (!clear([x, y])) continue;
@@ -42845,6 +42852,19 @@ function drawPaintStroke(ctx, stroke) {
   // A glaze is thin paint: what is under it shows through (Application).
   const glaze = Number(stroke.glaze) || 0;
   const alpha = (stroke.alpha ? Math.min(1, stroke.alpha * (0.94 + stroke.bristle * 0.06)) : 0.82 + stroke.bristle * 0.14) * (1 - 0.5 * glaze);
+  // A line through depth (`wk`, a width for each point): thinner where it goes back.
+  const wk = Array.isArray(stroke.wk) && stroke.wk.length === pts.length ? stroke.wk : null;
+  if (wk && (tip === "ink" || stroke.width < 2.5)) {
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = `rgb(${r},${g},${b})`;
+    for (let i = 1; i < pts.length; i++) {
+      ctx.lineWidth = Math.max(0.6, stroke.width * (wk[i - 1] + wk[i]) / 2);
+      ctx.beginPath(); ctx.moveTo(pts[i - 1][0], pts[i - 1][1]); ctx.lineTo(pts[i][0], pts[i][1]); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    return;
+  }
   if (tip === "ink" || stroke.width < 2.5) {
     // Lines and the finest touches: one even mark.
     ctx.beginPath();
@@ -42889,6 +42909,11 @@ function drawPaintStroke(ctx, stroke) {
       f = s < radius ? Math.sqrt(Math.max(0, 1 - (1 - s / radius) ** 2)) : 1;
     }
     f *= 1 + swell * crisp * Math.sin(phase + (cumulative[i] / w) * 1.3);
+    // Through depth: the width the stroke's own points ask for here.
+    if (wk) {
+      const q = t * (wk.length - 1), k = Math.min(wk.length - 2, Math.floor(q));
+      f *= wk[k] + (wk[k + 1] - wk[k]) * (q - k);
+    }
     return Math.max(0.15, f) * w / 2;
   });
   const ragged = (tip === "dry" ? 0.14 : 0.05) * crisp;

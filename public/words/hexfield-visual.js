@@ -2765,6 +2765,16 @@
         ctx.lineWidth = Math.max(1, (part.width || 0.05) * box.w);
         ctx.lineCap = "round"; ctx.lineJoin = "round";
         if (part.dash) ctx.setLineDash([s * 0.08, s * 0.08]);
+        // A line through depth (`wk`, a width for each point): thinner where it goes back.
+        if (Array.isArray(part.wk) && part.wk.length === part.pts.length && !part.dash) {
+          const base = Math.max(1, (part.width || 0.05) * box.w);
+          for (let i = 1; i < part.pts.length; i++) {
+            const [ax, ay] = P(box, part.pts[i - 1]), [bx, by] = P(box, part.pts[i]);
+            ctx.lineWidth = Math.max(0.6, base * (part.wk[i - 1] + part.wk[i]) / 2);
+            ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+          }
+          return true;
+        }
         ctx.beginPath();
         part.pts.forEach((pt, i) => { const [px, py] = P(box, pt); if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); });
         ctx.stroke();
