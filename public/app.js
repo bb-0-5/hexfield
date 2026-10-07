@@ -33468,6 +33468,16 @@ function growSceneSubjects(read, rng, text = "") {
         continue;
       }
     }
+    // A face may be one of your characters, drawn again (its other copies from the shelf).
+    const member = kind === "face" ? castMemberFor(text, traits, rng) : null;
+    if (member) {
+      const entry = drawCastMember(member, traits, rng);
+      const more = s.count > 1 ? pickGrowerOutcomes(kind, s.count - 1, rng, traits) : [];
+      s.variants = [entry, ...more.map((o) => { const e = growerDrawingFor(o, traits, rng); return { ...e, outcome: o.id, genes: e?.genes || o.genes }; })];
+      s.entry = entry;
+      growerPins.set(kind, entry);
+      continue;
+    }
     const picked = pickGrowerOutcomes(kind, Math.max(1, s.count), rng, traits);
     if (!picked.length) continue;
     s.variants = picked.map((o) => { const e = growerDrawingFor(o, traits, rng); return { ...e, outcome: o.id, genes: e?.genes || o.genes }; });
@@ -33478,6 +33488,120 @@ function growSceneSubjects(read, rng, text = "") {
   if (used.length) saveGrowerLibrary();
   return used.length ? used : null;
 }
+/* ── Characters that carry on ──────────────────────────────────────────
+ * A face you keep becomes a character with a name, and the painter brings
+ * it back: the same head and the same parts, seen from another side and in
+ * another mood - front, three-quarters, profile, from above, turned the
+ * other way - the way a character is drawn again and again in a sketchbook.
+ * Its name in the words asks for it ("bobo asleep"), and so does "again";
+ * otherwise a face is one of the cast about half the time. Paintings it is
+ * in vote on it, and one you go on rejecting leaves the cast. */
+const CAST_KEY = "hexfield.cast.v1";
+const CAST = { cap: 8, chance: 0.5, near: 0.08 };
+const CAST_VIEWS = ["front", "three", "profile", "three", "above"];
+const CAST_MOODS = ["happy", "sleepy", "cross", "surprised", "silly", "plain"];
+const CAST_SYLLABLES = ["bo", "ka", "mi", "lu", "to", "ze", "pi", "ro", "fa", "nu", "gu", "wa", "di", "se", "po", "ji"];
+let castBook = null;
+function cast() {
+  if (castBook) return castBook;
+  try { castBook = JSON.parse(localStorage.getItem(CAST_KEY) || "null"); } catch { castBook = null; }
+  if (!Array.isArray(castBook?.members)) castBook = { members: [], next: 1 };
+  return castBook;
+}
+function saveCast() {
+  try { localStorage.setItem(CAST_KEY, JSON.stringify(cast())); } catch { /* full storage: this visit only */ }
+}
+function castName(rng) {
+  const taken = new Set(cast().members.map((m) => m.name));
+  for (let i = 0; i < 40; i++) {
+    const pick = () => CAST_SYLLABLES[Math.floor(rng() * CAST_SYLLABLES.length)];
+    const name = pick() + pick();
+    if (!taken.has(name) && !globalThis.HexfieldGrowers?.WORDS?.[name]) return name;
+  }
+  return "kid" + cast().next;
+}
+// A kept face joins the cast (or, if it is one already, counts for it).
+function joinCast(genes, rng = Math.random) {
+  const G = globalThis.HexfieldGrowers;
+  if (!G || genes?.kind !== "face") return null;
+  const book = cast();
+  const twin = book.members.find((m) => G.distance(m.genes, genes) < CAST.near);
+  if (twin) { twin.kept++; saveCast(); return twin; }
+  const member = { id: "c" + book.next++, name: castName(rng), genes: { ...genes }, kept: 1, rejected: 0, shown: 0, lastMood: genes.mood, born: Date.now() };
+  book.members.push(member);
+  if (book.members.length > CAST.cap) {
+    const weakest = book.members.slice().sort((a, b) => (a.kept - a.rejected) - (b.kept - b.rejected) || a.born - b.born)[0];
+    book.members.splice(book.members.indexOf(weakest), 1);
+  }
+  saveCast();
+  registerCastWords();
+  return member;
+}
+function castVote(id, liked, weight = 1) {
+  const book = cast(), m = book.members.find((x) => x.id === id);
+  if (!m) return null;
+  if (liked) m.kept += weight; else m.rejected += weight;
+  // Rejected more than kept, twice over: no longer one of the cast.
+  if (m.rejected >= m.kept + 2) book.members.splice(book.members.indexOf(m), 1);
+  saveCast();
+  return m;
+}
+// The cast member a face in these words is, if any.
+function castMemberFor(text, traits, rng) {
+  const members = cast().members;
+  if (!members.length) return null;
+  const words = String(text || "").toLowerCase().match(/[a-z]+/g) || [];
+  const named = members.find((m) => words.includes(m.name));
+  if (named) return named;
+  const heads = traits?.match?.head;
+  const pool = members.filter((m) => !heads || heads.includes(m.genes.head));
+  if (!pool.length) return null;
+  if (!words.some((w) => /^(again|same|back)$/.test(w)) && rng() > CAST.chance) return null;
+  const weights = pool.map((m) => Math.max(0.2, 1 + m.kept - m.rejected) / (1 + 0.15 * Math.min(10, m.shown)));
+  let r = rng() * weights.reduce((a, b) => a + b, 0), k = 0;
+  while (k < pool.length - 1 && (r -= weights[k]) > 0) k++;
+  return pool[k];
+}
+// The character drawn again: its own rules, its next view, a new mood - or what the words ask.
+// (One painting prepared again draws it the same: by its own chance, remembered.)
+const castDrawn = new Map();
+function drawCastMember(member, traits, rng) {
+  const G = globalThis.HexfieldGrowers;
+  const token = member.id + "|" + (traits?.key || "") + "|" + Math.floor(rng() * 1e9);
+  if (castDrawn.has(token)) return castDrawn.get(token);
+  const genes = { ...member.genes, ...(traits?.set || {}) };
+  for (const [gene, options] of Object.entries(traits?.match || {})) if (gene !== "head" && !options.includes(genes[gene])) genes[gene] = options[Math.floor(rng() * options.length)];
+  // Not as it was last seen (a painting is prepared more than once: the last two).
+  const recentViews = member.views || [], recentMoods = member.moods || (member.lastMood ? [member.lastMood] : []);
+  if (!traits?.match?.view) {
+    for (let k = 0; k < CAST_VIEWS.length; k++) { genes.view = CAST_VIEWS[(member.shown + k) % CAST_VIEWS.length]; if (!recentViews.includes(genes.view)) break; }
+  }
+  if (!traits?.match?.mood) { const moods = CAST_MOODS.filter((m) => !recentMoods.includes(m)); genes.mood = moods[Math.floor(rng() * moods.length)] || genes.mood; }
+  const entry = G.grow(genes, { yaw: rng() * Math.PI * 2 });
+  member.shown++; member.lastMood = genes.mood; member.lastShown = Date.now();
+  member.views = [...recentViews, genes.view].slice(-2); member.moods = [...recentMoods, genes.mood].slice(-2);
+  saveCast();
+  // Known by its colours too: kept through any painting's palette.
+  const drawn = { ...entry, genes, cast: member.id, castName: member.name, keepColours: [...new Set([...(entry.keepColours || []), "skin", "hair", "hat"])] };
+  if (castDrawn.size > 40) castDrawn.clear();
+  castDrawn.set(token, drawn);
+  return drawn;
+}
+// Each character's name reads as a face (it is drawn as the painting's pick of it).
+function registerCastWords() {
+  const Visual = globalThis.HexfieldVisual;
+  if (!Visual?.grows) return;
+  for (const m of cast().members) {
+    Visual.grows(m.name, "face", () => FACE_PLACE, false);
+  }
+}
+
+/* A face in the words, for anything but the plan: a place for one, drawn
+ * as nothing. The picture under the plan is made before the plan picks its
+ * face (and a character is drawn anew each time), so a face drawn there was
+ * always another one - ears and a cap sticking out round the plan's face.
+ * The plan replaces it with its pick. */
+const FACE_PLACE = Object.freeze({ kind: "subject", anchor: "centre", size: 0.54, aspect: 0.85, centred: true, parts: [], colours: {}, grown: true, grower: "face", placeholder: true });
 /* The painting's own pick of each kind: what the words draw as anywhere
  * else in it too (its master picture), so one painting has one face, not
  * the shelf's best under the one it chose. */
@@ -33501,6 +33625,8 @@ function registerGrowerWords() {
   if (!G || !Visual?.grows) return;
   for (const [word, kind] of Object.entries(G.WORDS)) {
     Visual.grows(word, kind, () => {
+      // A face is drawn by the painting's plan alone (see FACE_PLACE).
+      if (kind === "face") return FACE_PLACE;
       if (growerPins.has(kind)) return growerPins.get(kind);
       // (A bare shelf: grown there and then if the kind is quick to grow,
       // otherwise the written drawing stands in until some are grown.)
@@ -33512,6 +33638,7 @@ function registerGrowerWords() {
 }
 if (typeof window !== "undefined") {
   registerGrowerWords();
+  registerCastWords();
   scheduleGrowerBreeding(GROWER_LIB.firstMs);
   setTimeout(() => loadGrowerDrawings().catch(() => {}), 1500);
 }
@@ -34754,6 +34881,13 @@ function sayWhatItLearned(plan, liked) {
   plan.partVoted[side] = true;
   const parts = [];
   for (const { kind, genes } of grownThingsOf(plan)) for (const name of creditParts(kind, genes, liked)) if (!parts.includes(name)) parts.push(name);
+  // Its characters: a kept face joins the cast; one of the cast is voted for or against.
+  for (const item of plan.scene?.items || []) {
+    const e = item.entry;
+    if (e?.grower !== "face" || item.lettering) continue;
+    if (e.cast) { const m = castVote(e.cast, liked); parts.unshift(m ? m.name + (liked ? " again" : " less") : e.castName + " left the cast"); }
+    else if (liked && e.genes) { const m = joinCast({ ...e.genes, kind: "face" }); if (m) parts.unshift(m.name + " joined the cast"); }
+  }
   const style = paintingChoices(plan).slice(0, 3).map((c) => c.label);
   const status = document.getElementById("localLearningStatus");
   if (status) status.textContent = (liked ? "\u2191 more: " : "\u2193 less: ") + [...parts.slice(0, 5), ...style].join(" \u00b7 ");
@@ -34783,6 +34917,33 @@ function renderChoiceCard(force = false) {
   if (!card || (!force && choiceCardFor === plan && card.childElementCount)) return;
   choiceCardFor = plan;
   card.textContent = "";
+  // A character of yours in it: to be kept on or let go.
+  for (const item of plan?.scene?.items || []) {
+    const e = item.entry;
+    if (!e?.cast) continue;
+    const key = "cast:" + e.cast, voted = plan.partVotes?.[key];
+    const chip = document.createElement("span");
+    chip.className = "choice part" + (voted === true ? " liked" : voted === false ? " disliked" : "");
+    chip.title = "one of your characters - keep drawing them, or not";
+    const label = document.createElement("span");
+    label.textContent = e.castName + " (yours)";
+    chip.appendChild(label);
+    for (const [liked, mark] of [[true, "+"], [false, "\u2212"]]) {
+      const button = document.createElement("button");
+      button.type = "button"; button.textContent = mark; button.disabled = voted !== undefined;
+      button.setAttribute("aria-label", (liked ? "more of " : "less of ") + e.castName);
+      button.addEventListener("click", () => {
+        (plan.partVotes ||= {})[key] = liked;
+        const m = castVote(e.cast, liked, 2);
+        renderChoiceCard(true);
+        const status = document.getElementById("localLearningStatus");
+        if (status) status.textContent = m ? `${e.castName} will be drawn ${liked ? "more" : "less"} - say "${e.castName}" to ask for them` : `${e.castName} has left the cast`;
+      });
+      chip.appendChild(button);
+    }
+    card.appendChild(chip);
+    break;
+  }
   // A grown thing's parts first, each to be liked or disliked by itself.
   const G = globalThis.HexfieldGrowers;
   for (const { kind, genes } of grownThingsOf(plan).slice(0, 2)) {
@@ -38163,6 +38324,8 @@ function* applyMannerReferenceSteps(pixels, width, height, plan, manner, only = 
   // The light map, by row and column, for the two-value split and full chroma.
   const lm = planLightMap(plan);
   const lmCol = lm ? new Int32Array(width) : null, lmRow = lm ? new Int32Array(height) : null;
+  // (The light map's cells are coarse: across lettering - a speech bubble - they show as boxes. Words are lit evenly.)
+  const unlitLetters = lm && plan.scene?.lettering?.backBox ? letteringContains(plan.scene.lettering) : null;
   if (lm) {
     for (let x = 0; x < width; x++) lmCol[x] = Math.min(lm.sw - 1, Math.floor(x / width * lm.sw));
     for (let y = 0; y < height; y++) lmRow[y] = Math.min(lm.sh - 1, Math.floor(y / height * lm.sh)) * lm.sw;
@@ -38203,7 +38366,7 @@ function* applyMannerReferenceSteps(pixels, width, height, plan, manner, only = 
     for (let x = 0; x < width; x++) {
       // `only`: the pixels the caller will keep (a deposit's changed ones).
       if (only && !only[y * width + x]) continue;
-      const lit = lm ? lm.map[lmRow[y] + lmCol[x]] : 0;
+      const lit = lm && !(unlitLetters && unlitLetters(x, y)) ? lm.map[lmRow[y] + lmCol[x]] : 0;
       const o = (y * width + x) * 4, dx = x - cx;
       const w = fx[x] * fy[y];
       if (flat) {
@@ -39565,6 +39728,13 @@ async function layFlatsNow(plan, d, reference, width, height, alive) {
     vctx.putImageData(img, 0, 0);
   }
   if (!alive()) return;
+  /* A speech bubble or burst, with its words, drawn crisp over the flats -
+   * a drawing's lettering is drawn, not laid from the picture (which a
+   * re-made reference can leave patched across it). */
+  const lettering = plan.scene?.lettering;
+  if (lettering && (lettering.dress === "speech" || lettering.dress === "burst") && plan.scene.width === width && plan.scene.height === height) {
+    try { drawSceneLettering(vctx, lettering, letteringStageProgram(lettering), { shadow: false, cushion: false }); } catch { /* left as laid */ }
+  }
   // Laid: from here the brush stands down, and the ink (which waits for
   // the big brush to have blocked in) may begin.
   d.flatsLaid = reference;
