@@ -41357,14 +41357,17 @@ function mutateRun(run, rng) {
  * counted for or against; a kept one's most used runs breed children, and
  * the catalogue keeps to its size by dropping the weakest it has tried. */
 function runOutcome(plan, vote) {
-  const used = plan?.runsUsed;
-  if (!used || !Object.keys(used).length) return;
+  const used = plan?.runsUsed || {};
+  // A kept painting painted by copying still gives the catalogue its marks.
+  if (!Object.keys(used).length) { if (vote > 0 && harvestRuns(2).length) saveRuns(); return; }
   const book = runCatalogue(), byId = new Map(book.runs.map((r) => [r.id, r]));
   for (const id of Object.keys(used)) { const r = byId.get(id); if (!r) continue; if (vote > 0) r.kept++; else r.rejected++; }
   if (vote > 0) {
     const rng = mulberry32((Date.now() ^ 0x52a7) >>> 0);
     const top = Object.entries(used).sort((a, b) => b[1] - a[1]).slice(0, RUNS.children).map(([id]) => byId.get(id)).filter(Boolean);
     for (const r of top) book.runs.push(mutateRun(r, rng));
+    // ...and marks of its own, lifted from what it laid.
+    harvestRuns(2);
   }
   while (book.runs.length > RUNS.cap) {
     const tried = book.runs.filter((r) => r.uses > 20 || r.kept + r.rejected > 0);
@@ -41373,6 +41376,77 @@ function runOutcome(plan, vote) {
   }
   saveRuns();
 }
+/* The picture as a brush of this size means it (Runs): what is there at
+ * the scale of a few brush widths - where the masses are, their colour and
+ * value - not each pixel of it. A painting in runs aims at this, so its
+ * marks are its own and not a copy of the reference's detail (the things
+ * and the lettering keep their own brushes). Made once per picture and size. */
+const intentCache = { source: null, maps: new Map() };
+function intentReference(ref, width, height, radius) {
+  if (typeof document === "undefined" || ref.length !== width * height * 4) return ref;
+  if (intentCache.source !== ref) { intentCache.source = ref; intentCache.maps.clear(); }
+  const k = Math.max(4, Math.round(Math.max(radius * 3, Math.min(width, height) / 40)));
+  let map = intentCache.maps.get(k);
+  if (map) return map;
+  const full = paintBuffer(width, height), fctx = full.getContext("2d", { willReadFrequently: true });
+  fctx.putImageData(new ImageData(new Uint8ClampedArray(ref), width, height), 0, 0);
+  const sw = Math.max(2, Math.round(width / k)), sh = Math.max(2, Math.round(height / k));
+  const small = paintBuffer(sw, sh), sctx = small.getContext("2d");
+  sctx.imageSmoothingEnabled = true; sctx.imageSmoothingQuality = "high";
+  sctx.drawImage(full, 0, 0, sw, sh);
+  fctx.imageSmoothingEnabled = true; fctx.imageSmoothingQuality = "high";
+  fctx.clearRect(0, 0, width, height);
+  fctx.drawImage(small, 0, 0, width, height);
+  map = fctx.getImageData(0, 0, width, height).data;
+  small.width = 0; full.width = 0;
+  intentCache.maps.set(k, map);
+  return map;
+}
+
+/* Runs from what you kept (Runs): a KEEP lifts a few small passages out of
+ * the painting's own strokes - a stroke and the ones laid round it just
+ * after - into the catalogue as runs, in their own frame (along the first
+ * stroke, in its widths) with their colours as offsets from their middle
+ * colour. The catalogue learns the marks of paintings you liked. */
+function harvestRuns(count = 2) {
+  const log = strokeLog.strokes || [];
+  if (log.length < 40) return [];
+  const book = runCatalogue(), rng = mulberry32((Date.now() ^ 0x4a3b) >>> 0), out = [];
+  const base = strokeBrushBase(view.width, view.height);
+  for (let tries = 0; out.length < count && tries < count * 8; tries++) {
+    const i = Math.floor(rng() * (log.length - 8)), seed = log[i];
+    if (!seed?.points?.length || seed.points.length < 2 || !(seed.width > 1.5)) continue;
+    const [x0, y0] = seed.points[0], [x1, y1] = seed.points[seed.points.length - 1];
+    const len = Math.hypot(x1 - x0, y1 - y0);
+    if (len < seed.width * 0.5) continue;
+    const dx = (x1 - x0) / len, dy = (y1 - y0) / len, unit = seed.width / 2;
+    const near = [seed];
+    for (let j = i + 1; j < Math.min(log.length, i + 12) && near.length < 6; j++) {
+      const s = log[j];
+      if (!s?.points?.length || s.points.length < 2) continue;
+      if (Math.hypot(s.points[0][0] - x0, s.points[0][1] - y0) < unit * 5) near.push(s);
+    }
+    if (near.length < 2) continue;
+    const mean = [0, 1, 2].map((c) => near.reduce((a, s) => a + s.colour[c], 0) / near.length);
+    const strokes = near.map((s) => {
+      const step = Math.max(1, Math.floor(s.points.length / 5));
+      const pts = s.points.filter((_, n) => n % step === 0 || n === s.points.length - 1).map(([x, y]) => {
+        const rx = (x - x0) / unit, ry = (y - y0) / unit;
+        return [+(rx * dx + ry * dy).toFixed(2), +(-rx * dy + ry * dx).toFixed(2)];
+      });
+      return { pts, w: +Math.max(0.2, Math.min(2.2, s.width / seed.width)).toFixed(2), dc: s.colour.map((c, n) => Math.round(Math.max(-40, Math.min(40, c - mean[n])))) };
+    }).filter((st) => st.pts.length >= 2);
+    if (strokes.length < 2) continue;
+    // The size of brush it was laid with.
+    let size = 0;
+    for (let l = 0; l < STROKE_LAYER_FRACTIONS.length; l++) if (seed.width / 2 <= strokeRadiusForLayer(l, base) * 1.3) size = l;
+    const run = { id: "r" + book.next++, name: "kept", size, strokes, kept: 1, rejected: 0, uses: 0, born: Date.now(), parent: null };
+    book.runs.push(run);
+    out.push(run);
+  }
+  return out;
+}
+
 // Whether this painting paints in runs or copies stroke by stroke.
 function choosePlanMarks(plan) {
   const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x3a71) >>> 0);
@@ -43070,13 +43144,16 @@ function strokesTowardReference(result, ref, width, height, { layer, limit, refK
   const tolerance = STROKE_ERROR_TOLERANCE * (1 - 0.3 * (Number(planStyle()?.detail) || 0)) * (strokePainter.plan?.abstraction?.tolerance || 1);
   const finestLayer = maxStrokeLayer();
   const toleranceFor = (l) => l === 0 ? tolerance * 0.35 : tolerance;
-  let plan = planStrokeBatch(current, ref, strokePainter.gradient, width, height,
+  // Painting in runs, the brush aims at the picture as its own size sees it (Runs).
+  const runs = strokePainter.plan?.marks?.key === "runs";
+  const aim = (l) => runs ? intentReference(ref, width, height, strokeRadiusForLayer(l, strokeBrushBase(width, height))) : ref;
+  let plan = planStrokeBatch(current, aim(useLayer), strokePainter.gradient, width, height,
     strokeRadiusForLayer(useLayer, strokeBrushBase(width, height)), rng, hand, limit, toleranceFor(useLayer), useLayer, palette);
   // A layer with (almost) nothing left to fix hands over to the next, finer one.
   if (useLayer > finestLayer) useLayer = finestLayer;
   while (plan.candidates < Math.max(3, plan.cells * 0.01) && useLayer < finestLayer) {
     useLayer++;
-    plan = planStrokeBatch(current, ref, strokePainter.gradient, width, height,
+    plan = planStrokeBatch(current, aim(useLayer), strokePainter.gradient, width, height,
       strokeRadiusForLayer(useLayer, strokeBrushBase(width, height)), rng, hand, limit, toleranceFor(useLayer), useLayer, palette);
   }
   if (layer == null) {
