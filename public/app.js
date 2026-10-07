@@ -32976,8 +32976,11 @@ function saveGrowerLibrary() {
   try { localStorage.setItem(GROWER_LIB_KEY, JSON.stringify(growerLibrary())); } catch { /* full storage: memory only */ }
 }
 const growerShelf = (kind) => (growerLibrary().kinds[kind] ||= { gen: 0, next: 1, outcomes: [] });
+// A drawing of an older make than its grower draws now (a flat face before faces turned).
+const staleGrowerDrawing = (entry) => (entry?.drawn || 1) < (globalThis.HexfieldGrowers?.DRAWN?.[entry?.grower] || 1);
 function growerDrawing(outcome) {
   let entry = growerDrawings.get(outcome.id);
+  if (staleGrowerDrawing(entry)) entry = null;
   if (!entry) {
     const G = globalThis.HexfieldGrowers;
     entry = outcome.patch ? G.patches.draw(outcome.patch, outcome.pool, outcome.genes)
@@ -33228,9 +33231,13 @@ async function loadGrowerDrawings() {
         req.onsuccess = () => resolve(req.result || null); req.onerror = () => resolve(null);
       } catch { resolve(null); }
     }) : null;
-    if (entry) { growerDrawings.set(o.id, entry); continue; }
+    if (entry && !staleGrowerDrawing(entry)) { growerDrawings.set(o.id, entry); continue; }
     const done = await growerWorkerCall({ op: "draw", outcome: { genes: o.genes, age: o.age, yaw: o.yaw, pitch: o.pitch, patch: o.patch, pool: o.pool } });
-    if (done?.entry && !growerDrawings.has(o.id)) { growerDrawings.set(o.id, done.entry); storeGrowerDrawing(o.id, done.entry); }
+    if (done?.entry && !growerDrawings.has(o.id)) {
+      growerDrawings.set(o.id, done.entry); storeGrowerDrawing(o.id, done.entry);
+      // Drawn anew: its thumbnail too.
+      if (entry) { o.snap = growerThumb(done.entry) || o.snap; o.aspect = +done.entry.aspect.toFixed(4); saveGrowerLibrary(); }
+    }
   }
 }
 /* In the background, a step every few seconds while the page is seen, each
@@ -33298,6 +33305,8 @@ function growerDrawingFor(o, traits, rng) {
     // A face given another head takes that head's usual parts, then what the words ask.
     if (genes.kind === "face" && genes.head !== o.genes.head && G.FACE_DEFAULTS?.[genes.head]) {
       Object.assign(genes, G.FACE_DEFAULTS[genes.head]);
+      // Seen as a new head is first drawn - from the front or a little turned - unless the words say.
+      genes.view = rng() < 0.5 ? "front" : "three";
       for (const [gene, options] of Object.entries(traits.match)) if (gene !== "head" && !options.includes(genes[gene])) genes[gene] = options[Math.floor(rng() * options.length)];
     }
     // An age is of its growing up: years for a cat, a share of its years for a tree.
@@ -33320,7 +33329,13 @@ function growSceneSubjects(read, rng, text = "") {
     const drop = new Set();
     if (/\b(cat|kitty|kitten)'?s?\s+(face|portrait|head)\b/.test(said)) drop.add("cat");
     if (/\b(portrait|face|head)\b/.test(said) && /\b(man|woman|person|boy|girl|lady|guy|child|old)\b/.test(said)) drop.add("person");
-    for (let i = read.subjects.length - 1; i >= 0; i--) if (drop.has(read.subjects[i].key) && !read.subjects[i].attach) read.subjects.splice(i, 1);
+    // "A robot face" is a face with a box for a head; "in a cap", the face's own cap.
+    for (const [, word] of said.matchAll(/\b(robot|cube|box|ball|pyramid|ghost|cloud)'?s?\s+(?:face|head)\b/g)) drop.add(word);
+    const capped = /\b(cap|capped|beanie)\b/.test(said);
+    for (let i = read.subjects.length - 1; i >= 0; i--) {
+      const key = read.subjects[i].key;
+      if ((drop.has(key) && !read.subjects[i].attach) || (capped && /^(hat|cap|beanie)$/.test(key))) read.subjects.splice(i, 1);
+    }
   }
   for (const s of read.subjects) {
     const kind = s.entry?.grower || s.growKind;
@@ -38614,7 +38629,8 @@ function paintContourInk(result, plan) {
  * brows, nose, mouth, whiskers, its outline - are laid as ink strokes, and
  * its small filled parts - eyes, pupils, glints, teeth, tongue, nose - as
  * tight dabs in their own colours, from the face's own drawing. */
-const FACE_FEATURES = new Set(["eye", "pupil", "white", "mouth", "tongue", "nose", "blush"]);
+// (And its solid blacks - black hair, a cap's band - filled, as your hand fills them.)
+const FACE_FEATURES = new Set(["eye", "pupil", "white", "mouth", "tongue", "nose", "blush", "ink"]);
 function faceInkStrokes(plan) {
   const strokes = [];
   const rgbOf = (hsl) => hslToRgb(((hsl?.[0] || 0) % 360) / 360, (hsl?.[1] || 0) / 100, (hsl?.[2] || 0) / 100);
@@ -43297,7 +43313,8 @@ function continueMasterDetail(result) {
    * its things are painted - and gone over again every dozen passes after (the brush
    * keeps working round them) and whenever its picture is re-made. */
   if (plan) plan.facePasses = (plan.facePasses || 0) + 1;
-  const faceTurn = Boolean(!letterTurn && !thingTurn && !inkTurn && !weatherTurn && !plan?.drawn && refReady &&
+  // (A drawn painting's face, once its flats are down: the face's own lines are crisper than its traced ones.)
+  const faceTurn = Boolean(!letterTurn && !thingTurn && !inkTurn && !weatherTurn && (!plan?.drawn || (plan.drawn.flatsLaid && !plan.drawn.laying)) && refReady &&
     strokePainter.layer >= Math.min(2, maxStrokeLayer(plan)) && (!planHasThings(plan) || scene?.thing?.done) &&
     scene?.items?.some((it) => it.entry?.grower === "face") && !plan.faceInking &&
     (plan.faceInked !== strokePainter.enhancedKey || plan.facePasses >= 12));
