@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- autodeploy-check: workers-builds-verify-8f2c1a -->
-<!-- hexfield build 278 (2026-10-07) -->
+<!-- hexfield build 279 (2026-10-07) -->
 <html lang="en">
 <head>
 <script>
@@ -545,6 +545,8 @@
                         white-space: nowrap; background: rgba(20,29,38,.6); }
   #choiceCard .choice.liked { border-color: #5f9c80; background: rgba(77,125,104,.32); }
   #choiceCard .choice.disliked { border-color: #a0606c; background: rgba(125,77,86,.32); }
+  /* A grown thing's own parts: told apart from the painting's choices. */
+  #choiceCard .choice.part:not(.liked):not(.disliked) { border-color: #8a74b8; }
   #choiceCard .choice button { width: 18px; height: 18px; min-height: 0 !important; padding: 0 !important; margin: 0;
                                border: none !important; border-radius: 9px; background: transparent !important;
                                font-size: 10px; line-height: 18px; color: #e8f4f8 !important; transform: none !important; }
@@ -785,7 +787,7 @@
     <div id="colourChoice">colour: choosing…</div>
     <div id="robBossMood" aria-live="polite">rob boss: waking up · show me 4–8 clear choices</div>
     <div id="painterStatus">seed held · preparing the first paint pass</div>
-    <div id="buildBadge">build 278</div>
+    <div id="buildBadge">build 279</div>
     <div id="bootErrors" style="display:none;color:#ff6b6b;font-size:10px;white-space:pre-wrap;margin-top:4px;"></div>
   </div>
   <div id="shopEssentials" aria-label="print controls"></div>

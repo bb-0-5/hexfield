@@ -1914,7 +1914,28 @@
   FACE.once = true;
   // Kinds that grow together in patches (plants; a crowd of cats is another matter).
   FERN.patches = true; TREE.patches = true;
+  /* The parts a grown thing shows - its rules' choices as drawn (a face's
+   * mood puts its own eyes and mouth in) - and what each is called, for
+   * your votes on them. The few that tell, per kind. */
+  const PART_GENES = {
+    face: ["head", "eyes", "nose", "mouth", "hat", "hair", "view", "mood", "ears", "cheeks"],
+    cat: ["pose", "coat", "eyeShape"], tree: ["crown"], fern: ["set"],
+  };
+  function partsOf(genes) {
+    const kind = genes?.kind, names = PART_GENES[kind];
+    if (!names) return [];
+    const g = kind === "face" ? { ...faceGenes(genes), ...(FACE_MOODS[faceGenes(genes).mood] || {}) } : genes;
+    return names.filter((gene) => g[gene] != null).map((gene) => ({ gene, value: String(g[gene]) }));
+  }
+  const PART_WORDS = {
+    view: { front: "from the front", three: "three-quarter view", profile: "profile", above: "from above", back: "from behind" },
+    nose: { none: "no nose" }, hat: { none: "no hat", cap: "cap", peaked: "peaked cap" }, hair: { none: "no hair", black: "black hair", hood: "hood", tuft: "tuft of hair" },
+    ears: { none: "no ears", cat: "cat ears", c: "round ears" }, cheeks: { none: "plain cheeks", tufts: "cheek tufts", rolls: "chin rolls" },
+    crown: { weep: "weeping crown" }, set: { alternate: "alternate fronds", opposite: "opposite fronds" },
+  };
+  const partName = (gene, value) => PART_WORDS[gene]?.[value] || `${value} ${gene === "eyeShape" ? "eyes" : gene === "pose" ? "pose" : gene}`;
+
   // A kind's drawings are of this make: one stored from an older make is drawn again.
   const DRAWN = { face: 2 };
-  global.HexfieldGrowers = { GROWERS, WORDS, MASS, TRAITS, FACE_DEFAULTS, DRAWN, traitsOf, kindOfWord, seed, mutate, crossover, distance, grow, growAt, judge, lifespan, patches };
+  global.HexfieldGrowers = { GROWERS, WORDS, MASS, TRAITS, FACE_DEFAULTS, DRAWN, PART_GENES, partsOf, partName, traitsOf, kindOfWord, seed, mutate, crossover, distance, grow, growAt, judge, lifespan, patches };
 })(typeof window !== "undefined" ? window : globalThis);

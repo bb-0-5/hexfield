@@ -14140,7 +14140,7 @@ const CROWD_PRIOR_VOTES = 40;
  * your votes and your taste steers, wherever the crowd agrees or not, and
  * what everyone else taught (the crowd's taste, their paintings' outcomes)
  * stays only as a light fallback for what you have not voted on yet. */
-const OWNER_TASTE = { on: true, crowd: 0.25, halfVotes: 4 };
+const OWNER_TASTE = { on: true, crowd: 0.25, halfVotes: 2 };
 // Your own votes at which you hold half of the say you can have on a feature.
 const PERSONAL_HALF_VOTES = 10;
 // The say this browser's own model keeps before any vote - the autonomous
@@ -32996,8 +32996,90 @@ function growerDrawing(outcome) {
 function growerRank(o) {
   const votes = (o.kept || 0) - 0.8 * (o.rejected || 0), said = (o.kept || 0) + (o.rejected || 0);
   const painted = o.paintN ? (o.paintSum / o.paintN - 0.5) * Math.min(1, o.paintN / 4) : 0;
-  return 0.6 * (o.judge || 0) + 0.4 * (Number.isFinite(o.taste) ? o.taste : 0.5) + 0.35 * votes / (said + 1) + 0.3 * painted;
+  return 0.6 * (o.judge || 0) + 0.4 * (Number.isFinite(o.taste) ? o.taste : 0.5) + 0.35 * votes / (said + 1) + 0.3 * painted +
+    0.6 * partLean(o.genes);
 }
+/* ── Your taste in parts ────────────────────────────────────────────────
+ * A vote on a painting with a grown thing in it is also a vote on each of
+ * its parts - its head, its eyes, its nose, its cap, the way it is turned;
+ * a cat's pose, a tree's crown - and a part can be liked or disliked by
+ * itself on the painting's choices. Kept outcomes with the parts you like
+ * rank higher (so they are the ones painted and bred from), and new rules
+ * are bred toward them: what you liked on one face comes back on faces it
+ * has not made yet. */
+const PART_TASTE_KEY = "hexfield.partTaste.v1";
+let partTasteBook = null;
+function partTaste() {
+  if (partTasteBook) return partTasteBook;
+  try { partTasteBook = JSON.parse(localStorage.getItem(PART_TASTE_KEY) || "null"); } catch { partTasteBook = null; }
+  if (!partTasteBook || typeof partTasteBook !== "object") partTasteBook = {};
+  return partTasteBook;
+}
+function savePartTaste() {
+  try { localStorage.setItem(PART_TASTE_KEY, JSON.stringify(partTaste())); } catch { /* full storage: this visit only */ }
+}
+function partSlot(kind, gene, value, make = false) {
+  const book = partTaste();
+  if (!make) return book[kind]?.[gene]?.[value] || null;
+  return (((book[kind] ||= {})[gene] ||= {})[value] ||= { up: 0, down: 0 });
+}
+// How much you like a part, -1..1 (a single vote counts for half).
+function partScore(kind, gene, value) {
+  const slot = partSlot(kind, gene, value);
+  return slot ? (slot.up - slot.down) / (slot.up + slot.down + 1) : 0;
+}
+function creditPart(kind, gene, value, liked, weight = 1) {
+  const slot = partSlot(kind, gene, String(value), true);
+  if (liked) slot.up += weight; else slot.down += weight;
+  savePartTaste();
+}
+// A vote on the whole thing: each of its parts, once. The names, for saying so.
+function creditParts(kind, genes, liked, weight = 1) {
+  const G = globalThis.HexfieldGrowers;
+  if (!G?.partsOf || !genes) return [];
+  const parts = G.partsOf({ ...genes, kind });
+  for (const { gene, value } of parts) creditPart(kind, gene, value, liked, weight);
+  return parts.map(({ gene, value }) => G.partName(gene, value));
+}
+// A kept outcome's parts, as you have liked them.
+function partLean(genes) {
+  const G = globalThis.HexfieldGrowers;
+  if (!G?.partsOf || !genes?.kind) return 0;
+  let sum = 0, n = 0;
+  for (const { gene, value } of G.partsOf(genes)) {
+    if (!partSlot(genes.kind, gene, value)) continue;
+    sum += partScore(genes.kind, gene, value); n++;
+  }
+  return n ? sum / Math.max(2, n) : 0;
+}
+// New rules leaning toward the parts you like (some of the time: it still tries others).
+function leanOnParts(kind, genes, rng) {
+  const G = globalThis.HexfieldGrowers, spec = G?.GROWERS?.[kind], names = G?.PART_GENES?.[kind], book = partTaste()[kind];
+  if (!spec || !names || !book) return genes;
+  for (const [gene, options] of spec.choices) {
+    if (!names.includes(gene) || !book[gene] || rng() > 0.45) continue;
+    const opts = [...new Set(options)];
+    const weights = opts.map((v) => Math.exp(2.5 * partScore(kind, gene, String(v))));
+    let r = rng() * weights.reduce((a, b) => a + b, 0), k = 0;
+    while (k < opts.length - 1 && (r -= weights[k]) > 0) k++;
+    genes[gene] = opts[k];
+  }
+  return genes;
+}
+// The grown things a painting has (each once), with the rules each was drawn by.
+function grownThingsOf(plan) {
+  const seen = new Set(), out = [];
+  for (const item of plan?.scene?.items || []) {
+    const e = item.entry;
+    if (!e?.grower || !e.genes || item.lettering) continue;
+    const key = e.grower + "|" + (e.outcome || JSON.stringify(e.genes));
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ kind: e.grower, genes: e.genes });
+  }
+  return out;
+}
+
 /* Your taste for a grown drawing, alone on a plain ground (small: the same
  * features the painting's taste reads). */
 function growerTaste(entry, size = 64) {
@@ -33042,6 +33124,7 @@ function growerCandidate(kind, rng) {
     const a = parent(); let b = parent(); if (b === a) b = kept[Math.floor(rng() * kept.length)];
     genes = G.mutate(G.crossover(a.genes, b.genes, rng), rng, 0.15); parents = [a.id, b.id];
   } else { const a = parent(); genes = G.mutate(a.genes, rng, 0.3); parents = [a.id]; }
+  genes = leanOnParts(kind, genes, rng);
   // Played out through its life; the best day of it, seen from a few angles.
   const life = G.lifespan(genes);
   const at = Array.from({ length: GROWER_LIB.days }, (_, k) => ({
@@ -33312,6 +33395,7 @@ function growerDrawingFor(o, traits, rng) {
     // An age is of its growing up: years for a cat, a share of its years for a tree.
     const age = traits.age == null ? o.age : genes.kind === "cat" ? traits.age : traits.age * (genes.years || 1);
     entry = G.grow(genes, { age, yaw: o.yaw, pitch: o.pitch });
+    if (entry) entry.genes = genes;
     growerDrawings.set(id, entry);
   }
   return entry;
@@ -33358,7 +33442,7 @@ function growSceneSubjects(read, rng, text = "") {
         }
       } catch (error) { console.warn("growing into a mass failed", error); }
       if (entry) {
-        s.entry = { ...entry, outcome: o?.id || null, grower: kind };
+        s.entry = { ...entry, outcome: o?.id || null, grower: kind, genes };
         s.variants = null;
         if (o) { o.used = (o.used || 0) + 1; if (!used.some((u) => u.id === o.id)) used.push({ kind, id: o.id }); }
         continue;
@@ -33386,7 +33470,7 @@ function growSceneSubjects(read, rng, text = "") {
     }
     const picked = pickGrowerOutcomes(kind, Math.max(1, s.count), rng, traits);
     if (!picked.length) continue;
-    s.variants = picked.map((o) => ({ ...growerDrawingFor(o, traits, rng), outcome: o.id }));
+    s.variants = picked.map((o) => { const e = growerDrawingFor(o, traits, rng); return { ...e, outcome: o.id, genes: e?.genes || o.genes }; });
     s.entry = s.variants[0];
     growerPins.set(kind, s.entry);
     for (const o of picked) { o.used = (o.used || 0) + 1; if (!used.some((u) => u.id === o.id)) used.push({ kind, id: o.id }); }
@@ -33695,7 +33779,14 @@ function chooseByTaste(keys, { lean, learned, rng, taste, tasted = 3, axis = nul
     outcome: styleOutcomeLean(axis, key), pair: stylePairLean(axis, key, given) }));
   // ...and one not tried lately gets a turn.
   const unused = (x) => recent.length >= 4 && !x.used ? 0.45 : 0;
-  for (const x of scores) x.prior = 0.8 * x.learned + x.lean + x.chance - 0.9 * x.used + unused(x) + x.outcome + x.pair;
+  /* What your votes say outweighs chance and a preview; and an option you
+   * like is not pushed aside for having been used lately (variety is for
+   * what you have not said anything about). */
+  const say = OWNER_TASTE.on ? 2.2 : 0.8;
+  for (const x of scores) {
+    const liked = Math.max(0, Math.min(0.85, x.learned * 1.5));
+    x.prior = say * x.learned + x.lean + x.chance - 0.9 * x.used * (1 - liked) + unused(x) + x.outcome + x.pair;
+  }
   const ranked = scores.slice().sort((a, b) => b.prior - a.prior);
   for (let i = 0; i < Math.min(tasted, ranked.length); i++) ranked[i].taste = taste(ranked[i].key);
   const scored = scores.filter((x) => x.taste !== null);
@@ -33977,6 +34068,8 @@ function visualLearnedChoice(word) {
   const stats = visualLexicon[word];
   if (!stats) return 0;
   const nl = Number(stats.nl) || 0, nr = Number(stats.nr) || 0;
+  // The owner's votes are the taste: a couple of them is enough to move it.
+  if (OWNER_TASTE.on) return (nl - 0.7 * nr) / (nl + nr + OWNER_VOTE_PRIOR);
   return (nl - 0.5 * nr) / (nl + nr + VISUAL_VOTE_PRIOR);
 }
 
@@ -34420,6 +34513,7 @@ const VISUAL_KEYS = ["size", "hue", "light", "literal"];
 const VISUAL_SPREAD = { size: 0.18, hue: 14, light: 7, literal: 0.3 };
 const VISUAL_LIMITS = { size: 1, hue: 60, light: 30, literal: 1 };
 const VISUAL_VOTE_PRIOR = 4;
+const OWNER_VOTE_PRIOR = 1.5;
 const VISUAL_PENDING_KEY = "hexfield.visualVotes.pending.v1";
 const VISUAL_PENDING_CAP = 200;
 let visualLexicon = {};
@@ -34482,6 +34576,7 @@ function recordVisualVote(liked) {
   const plan = strokePainter.plan;
   const scene = plan?.scene;
   recordStyleVote(plan, liked);
+  sayWhatItLearned(plan, liked);
   // The manner is voted on with every painting, words or none.
   const variations = { ...(scene?.variations || {}) };
   if (plan?.manner) variations[mannerVoteWord(plan.manner.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
@@ -34542,10 +34637,27 @@ function paintingChoices(plan) {
   if (plan.water) add(plan.water.name, waterVoteWord(plan.water.key));
   if (plan.finish && plan.finish.key !== "none") add("finish: " + (plan.finish.look ? plan.finish.look.replace(/^[a-z]+\./, "") : plan.finish.key), plan.finish.look ? lookVoteWord(plan.finish.look) : finishVoteWord(plan.finish.key));
   if (scene?.perspective) add(scene.perspective.name || scene.perspective.key, perspVoteWord(scene.perspective.key));
-  if (plan.depthStyle) add((plan.depthStyle.name || plan.depthStyle.key) + " depth", depthVoteWord(plan.depthStyle.key));
+  if (plan.depthStyle) { const name = plan.depthStyle.name || plan.depthStyle.key; add(/depth$/.test(name) ? name : name + " depth", depthVoteWord(plan.depthStyle.key)); }
   if (plan.dims) add(plan.dims.name || plan.dims.key, dimsVoteWord(plan.dims.key));
   if (plan.tips) add(plan.tips.key + " brushes", tipsVoteWord(plan.tips.key));
   return out;
+}
+
+/* What a KEEP or REJECT taught, said where you can see it: the painting's
+ * choices that will come up more (or less), and its grown things' parts -
+ * each credited here. Once per painting each way. */
+function sayWhatItLearned(plan, liked) {
+  if (!plan) return;
+  plan.partVoted ||= {};
+  const side = liked ? "kept" : "rejected";
+  if (plan.partVoted[side]) return;
+  plan.partVoted[side] = true;
+  const parts = [];
+  for (const { kind, genes } of grownThingsOf(plan)) for (const name of creditParts(kind, genes, liked)) if (!parts.includes(name)) parts.push(name);
+  const style = paintingChoices(plan).slice(0, 3).map((c) => c.label);
+  const status = document.getElementById("localLearningStatus");
+  if (status) status.textContent = (liked ? "\u2191 more: " : "\u2193 less: ") + [...parts.slice(0, 5), ...style].join(" \u00b7 ");
+  renderChoiceCard(true);
 }
 
 function recordChoiceVote(word, liked) {
@@ -34571,6 +34683,36 @@ function renderChoiceCard(force = false) {
   if (!card || (!force && choiceCardFor === plan && card.childElementCount)) return;
   choiceCardFor = plan;
   card.textContent = "";
+  // A grown thing's parts first, each to be liked or disliked by itself.
+  const G = globalThis.HexfieldGrowers;
+  for (const { kind, genes } of grownThingsOf(plan).slice(0, 2)) {
+    for (const { gene, value } of G?.partsOf ? G.partsOf({ ...genes, kind }) : []) {
+      const key = kind + ":" + gene + ":" + value, voted = plan.partVotes?.[key], slot = partSlot(kind, gene, value);
+      const chip = document.createElement("span");
+      chip.className = "choice part" + (voted === true ? " liked" : voted === false ? " disliked" : "");
+      chip.title = "like or dislike this part - it carries over to new " + kind + "s";
+      const label = document.createElement("span");
+      label.textContent = G.partName(gene, value) + (slot && (slot.up || slot.down) ? ` ${slot.up}/${slot.down}` : "");
+      chip.appendChild(label);
+      for (const [liked, mark, name] of [[true, "+", "like"], [false, "\u2212", "dislike"]]) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = mark;
+        button.setAttribute("aria-label", name + " " + G.partName(gene, value));
+        button.disabled = voted !== undefined;
+        button.addEventListener("click", () => {
+          (plan.partVotes ||= {})[key] = liked;
+          // Said of the part itself: worth two of a vote on the whole painting.
+          creditPart(kind, gene, value, liked, 2);
+          renderChoiceCard(true);
+          const status = document.getElementById("localLearningStatus");
+          if (status) status.textContent = (liked ? "liked " : "disliked ") + G.partName(gene, value) + " - new " + kind + "s will have it " + (liked ? "more" : "less") + " often";
+        });
+        chip.appendChild(button);
+      }
+      card.appendChild(chip);
+    }
+  }
   for (const choice of paintingChoices(plan)) {
     const voted = plan.choiceVotes?.[choice.word];
     const chip = document.createElement("span");
