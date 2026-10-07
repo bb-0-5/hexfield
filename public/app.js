@@ -33151,10 +33151,7 @@ function keepGrower(candidate, best) {
     height: best.entry.facts?.span?.[1] ?? null,
   };
   // A near copy of a kept one takes its place only if better.
-  // (A cat's line of action is never drawn twice: the same rules taken is a twin.)
-  const signature = best.entry?.facts?.signature;
-  if (signature) outcome.signature = signature;
-  const twin = kept.find((o) => G.distance(o.genes, genes) < GROWER_LIB.duplicate || (signature && o.signature === signature));
+  const twin = kept.find((o) => G.distance(o.genes, genes) < GROWER_LIB.duplicate);
   if (twin) {
     if (growerRank(outcome) <= growerRank(twin) || twin.kept > twin.rejected) { saveGrowerLibrary(); return null; }
     dropGrowerOutcome(kept, twin);
@@ -33355,7 +33352,7 @@ function scheduleGrowerBreeding(delay = GROWER_LIB.everyMs * (isMobileBrowser() 
 /* Kinds cheap enough to grow there and then when a painting needs one and
  * the shelf is bare; the others are painted from their written drawing
  * until the background has grown some. */
-const GROWER_SYNC = { fern: 3, face: 3, cat: 3 };
+const GROWER_SYNC = { fern: 3, face: 3 };
 function pickGrowerOutcomes(kind, n, rng, traits = null) {
   const shelf = growerShelf(kind);
   for (let i = 0; shelf.outcomes.length < (GROWER_SYNC[kind] || 0) && i < 8; i++) breedGrower(kind, mulberry32((Math.floor(rng() * 4294967296) ^ i) >>> 0));
@@ -33471,16 +33468,6 @@ function growSceneSubjects(read, rng, text = "") {
         continue;
       }
     }
-    // A face may be one of your characters, drawn again (its other copies from the shelf).
-    const member = kind === "face" ? castMemberFor(text, traits, rng) : null;
-    if (member) {
-      const entry = drawCastMember(member, traits, rng);
-      const more = s.count > 1 ? pickGrowerOutcomes(kind, s.count - 1, rng, traits) : [];
-      s.variants = [entry, ...more.map((o) => { const e = growerDrawingFor(o, traits, rng); return { ...e, outcome: o.id, genes: e?.genes || o.genes }; })];
-      s.entry = entry;
-      growerPins.set(kind, entry);
-      continue;
-    }
     const picked = pickGrowerOutcomes(kind, Math.max(1, s.count), rng, traits);
     if (!picked.length) continue;
     s.variants = picked.map((o) => { const e = growerDrawingFor(o, traits, rng); return { ...e, outcome: o.id, genes: e?.genes || o.genes }; });
@@ -33491,120 +33478,6 @@ function growSceneSubjects(read, rng, text = "") {
   if (used.length) saveGrowerLibrary();
   return used.length ? used : null;
 }
-/* ── Characters that carry on ──────────────────────────────────────────
- * A face you keep becomes a character with a name, and the painter brings
- * it back: the same head and the same parts, seen from another side and in
- * another mood - front, three-quarters, profile, from above, turned the
- * other way - the way a character is drawn again and again in a sketchbook.
- * Its name in the words asks for it ("bobo asleep"), and so does "again";
- * otherwise a face is one of the cast about half the time. Paintings it is
- * in vote on it, and one you go on rejecting leaves the cast. */
-const CAST_KEY = "hexfield.cast.v1";
-const CAST = { cap: 8, chance: 0.5, near: 0.08 };
-const CAST_VIEWS = ["front", "three", "profile", "three", "above"];
-const CAST_MOODS = ["happy", "sleepy", "cross", "surprised", "silly", "plain"];
-const CAST_SYLLABLES = ["bo", "ka", "mi", "lu", "to", "ze", "pi", "ro", "fa", "nu", "gu", "wa", "di", "se", "po", "ji"];
-let castBook = null;
-function cast() {
-  if (castBook) return castBook;
-  try { castBook = JSON.parse(localStorage.getItem(CAST_KEY) || "null"); } catch { castBook = null; }
-  if (!Array.isArray(castBook?.members)) castBook = { members: [], next: 1 };
-  return castBook;
-}
-function saveCast() {
-  try { localStorage.setItem(CAST_KEY, JSON.stringify(cast())); } catch { /* full storage: this visit only */ }
-}
-function castName(rng) {
-  const taken = new Set(cast().members.map((m) => m.name));
-  for (let i = 0; i < 40; i++) {
-    const pick = () => CAST_SYLLABLES[Math.floor(rng() * CAST_SYLLABLES.length)];
-    const name = pick() + pick();
-    if (!taken.has(name) && !globalThis.HexfieldGrowers?.WORDS?.[name]) return name;
-  }
-  return "kid" + cast().next;
-}
-// A kept face joins the cast (or, if it is one already, counts for it).
-function joinCast(genes, rng = Math.random) {
-  const G = globalThis.HexfieldGrowers;
-  if (!G || genes?.kind !== "face") return null;
-  const book = cast();
-  const twin = book.members.find((m) => G.distance(m.genes, genes) < CAST.near);
-  if (twin) { twin.kept++; saveCast(); return twin; }
-  const member = { id: "c" + book.next++, name: castName(rng), genes: { ...genes }, kept: 1, rejected: 0, shown: 0, lastMood: genes.mood, born: Date.now() };
-  book.members.push(member);
-  if (book.members.length > CAST.cap) {
-    const weakest = book.members.slice().sort((a, b) => (a.kept - a.rejected) - (b.kept - b.rejected) || a.born - b.born)[0];
-    book.members.splice(book.members.indexOf(weakest), 1);
-  }
-  saveCast();
-  registerCastWords();
-  return member;
-}
-function castVote(id, liked, weight = 1) {
-  const book = cast(), m = book.members.find((x) => x.id === id);
-  if (!m) return null;
-  if (liked) m.kept += weight; else m.rejected += weight;
-  // Rejected more than kept, twice over: no longer one of the cast.
-  if (m.rejected >= m.kept + 2) book.members.splice(book.members.indexOf(m), 1);
-  saveCast();
-  return m;
-}
-// The cast member a face in these words is, if any.
-function castMemberFor(text, traits, rng) {
-  const members = cast().members;
-  if (!members.length) return null;
-  const words = String(text || "").toLowerCase().match(/[a-z]+/g) || [];
-  const named = members.find((m) => words.includes(m.name));
-  if (named) return named;
-  const heads = traits?.match?.head;
-  const pool = members.filter((m) => !heads || heads.includes(m.genes.head));
-  if (!pool.length) return null;
-  if (!words.some((w) => /^(again|same|back)$/.test(w)) && rng() > CAST.chance) return null;
-  const weights = pool.map((m) => Math.max(0.2, 1 + m.kept - m.rejected) / (1 + 0.15 * Math.min(10, m.shown)));
-  let r = rng() * weights.reduce((a, b) => a + b, 0), k = 0;
-  while (k < pool.length - 1 && (r -= weights[k]) > 0) k++;
-  return pool[k];
-}
-// The character drawn again: its own rules, its next view, a new mood - or what the words ask.
-// (One painting prepared again draws it the same: by its own chance, remembered.)
-const castDrawn = new Map();
-function drawCastMember(member, traits, rng) {
-  const G = globalThis.HexfieldGrowers;
-  const token = member.id + "|" + (traits?.key || "") + "|" + Math.floor(rng() * 1e9);
-  if (castDrawn.has(token)) return castDrawn.get(token);
-  const genes = { ...member.genes, ...(traits?.set || {}) };
-  for (const [gene, options] of Object.entries(traits?.match || {})) if (gene !== "head" && !options.includes(genes[gene])) genes[gene] = options[Math.floor(rng() * options.length)];
-  // Not as it was last seen (a painting is prepared more than once: the last two).
-  const recentViews = member.views || [], recentMoods = member.moods || (member.lastMood ? [member.lastMood] : []);
-  if (!traits?.match?.view) {
-    for (let k = 0; k < CAST_VIEWS.length; k++) { genes.view = CAST_VIEWS[(member.shown + k) % CAST_VIEWS.length]; if (!recentViews.includes(genes.view)) break; }
-  }
-  if (!traits?.match?.mood) { const moods = CAST_MOODS.filter((m) => !recentMoods.includes(m)); genes.mood = moods[Math.floor(rng() * moods.length)] || genes.mood; }
-  const entry = G.grow(genes, { yaw: rng() * Math.PI * 2 });
-  member.shown++; member.lastMood = genes.mood; member.lastShown = Date.now();
-  member.views = [...recentViews, genes.view].slice(-2); member.moods = [...recentMoods, genes.mood].slice(-2);
-  saveCast();
-  // Known by its colours too: kept through any painting's palette.
-  const drawn = { ...entry, genes, cast: member.id, castName: member.name, keepColours: [...new Set([...(entry.keepColours || []), "skin", "hair", "hat"])] };
-  if (castDrawn.size > 40) castDrawn.clear();
-  castDrawn.set(token, drawn);
-  return drawn;
-}
-// Each character's name reads as a face (it is drawn as the painting's pick of it).
-function registerCastWords() {
-  const Visual = globalThis.HexfieldVisual;
-  if (!Visual?.grows) return;
-  for (const m of cast().members) {
-    Visual.grows(m.name, "face", () => FACE_PLACE, false);
-  }
-}
-
-/* A face in the words, for anything but the plan: a place for one, drawn
- * as nothing. The picture under the plan is made before the plan picks its
- * face (and a character is drawn anew each time), so a face drawn there was
- * always another one - ears and a cap sticking out round the plan's face.
- * The plan replaces it with its pick. */
-const FACE_PLACE = Object.freeze({ kind: "subject", anchor: "centre", size: 0.54, aspect: 0.85, centred: true, parts: [], colours: {}, grown: true, grower: "face", placeholder: true });
 /* The painting's own pick of each kind: what the words draw as anywhere
  * else in it too (its master picture), so one painting has one face, not
  * the shelf's best under the one it chose. */
@@ -33628,8 +33501,6 @@ function registerGrowerWords() {
   if (!G || !Visual?.grows) return;
   for (const [word, kind] of Object.entries(G.WORDS)) {
     Visual.grows(word, kind, () => {
-      // A face is drawn by the painting's plan alone (see FACE_PLACE).
-      if (kind === "face") return FACE_PLACE;
       if (growerPins.has(kind)) return growerPins.get(kind);
       // (A bare shelf: grown there and then if the kind is quick to grow,
       // otherwise the written drawing stands in until some are grown.)
@@ -33641,7 +33512,6 @@ function registerGrowerWords() {
 }
 if (typeof window !== "undefined") {
   registerGrowerWords();
-  registerCastWords();
   scheduleGrowerBreeding(GROWER_LIB.firstMs);
   setTimeout(() => loadGrowerDrawings().catch(() => {}), 1500);
 }
@@ -34463,54 +34333,16 @@ function stackLetterPlace(text, W, H, k, laid, rng) {
   return { key: "stack", box, screen: box, glyphs };
 }
 
-/* A face's speech bubble: beside its head on the side with more room, a
- * little above it, the tail to its mouth. Only when the painting has a face. */
-function speechLetterPlace(text, W, H, laid, rng) {
-  const face = (laid.items || []).find((it) => it.entry?.grower === "face" && it.box && !it.lettering);
-  const chars = String(text || "").trim();
-  if (!face || !chars || chars.length > 14) return null;
-  const f = face.box, e = face.entry;
-  // The mouth: the middle of its drawn mouth, or low in the face.
-  let mx = 0.5, my = 0.72, n = 0, sx = 0, sy = 0;
-  for (const part of e.parts || []) if (part.colour === "mouth" && part.pts) for (const [u, v] of part.pts) { sx += u; sy += v; n++; }
-  if (n) { mx = sx / n; my = sy / n; }
-  const mouth = [f.x + mx * f.w, f.y + my * f.h];
-  const unit = Math.min(W, H);
-  const th = Math.min(unit * 0.13, W * 0.62 / Math.max(2, chars.length * 0.62)), tw = Math.max(th * 1.4, chars.length * th * 0.62);
-  const w = Math.min(W * 0.62, tw * 1.25 + th * 0.9), h = th * 2.1;
-  const roomRight = W - (f.x + f.w * 0.7), roomLeft = f.x + f.w * 0.3;
-  const right = roomRight > roomLeft || (roomRight === roomLeft && rng() < 0.5);
-  // Above the head and out to its side, clear of its crown; pushed further
-  // out where the picture's top leaves no room above.
-  const margin = unit * 0.03;
-  let x = right ? f.x + f.w * 0.62 : f.x + f.w * 0.38 - w, y = f.y - h * 0.95;
-  if (y < margin) { y = margin; x = right ? Math.max(x, f.x + f.w * 0.88) : Math.min(x, f.x + f.w * 0.12 - w); }
-  x = Math.max(margin, Math.min(W - w - margin, x));
-  y = Math.max(margin, Math.min(H - h - margin, y));
-  const box = { x, y, w, h };
-  // Not over much of the face: then the words go elsewhere.
-  const ox = Math.max(0, Math.min(x + w, f.x + f.w) - Math.max(x, f.x)), oy = Math.max(0, Math.min(y + h, f.y + f.h) - Math.max(y, f.y));
-  if (ox * oy > 0.12 * f.w * f.h) return null;
-  return { key: "speech", box, screen: box, tail: mouth };
-}
-
 /* How the letters are dressed (axis "letterDress"): plain; bubble - fat and
  * rounded, a dark ink rim round them and a white shine inside; or blocks -
  * each letter printed on the front of a cube, the cube in perspective with
  * a lit top, a shaded side and inked edges, like a child's alphabet blocks. */
-/* burst - in a spiky burst with an offset shadow, as a shout is drawn
- * (likelier for "!", "pow", "wow", a surprised face); speech - in a face's
- * speech bubble (the place "speech" decides it). */
-const LETTER_DRESSES = ["plain", "bubble", "blocks", "burst"];
-const SHOUT_WORDS = /!|\b(pow|wow|bang|boom|zap|bam|whoa|yes|no|hey|oi|shout|loud|crash|kapow|wham)\b/;
-function chooseLetterDress(params, rng, laid = null, place = null) {
-  const text = String(params?.__hexfieldWords?.text || "").toLowerCase(), said = text + " " + seedText().toLowerCase();
-  const startled = (laid?.items || []).some((it) => it.entry?.grower === "face" && it.entry.facts?.mood === "surprised");
+const LETTER_DRESSES = ["plain", "bubble", "blocks"];
+function chooseLetterDress(params, rng) {
+  const text = String(params?.__hexfieldWords?.text || "").toLowerCase();
   const scores = chooseByTaste(LETTER_DRESSES, {
     rng, tasted: 0, axis: "letterDress", given: null,
     lean: (key) => key === "plain" ? 0.1 : key === "bubble" ? (/\b(bubble|balloon|graffiti|puffy|cartoon)\b/.test(text) ? 1 : 0)
-      // (Not round letters set one by one about the picture: a burst holds a word together.)
-      : key === "burst" ? (place?.glyphs ? -9 : (SHOUT_WORDS.test(said) ? 1.1 : 0) + (startled ? 0.6 : 0) - 0.15)
       : (/\b(blocks?|cubes?|toys?|alphabet|abc)\b/.test(text) ? 1 : 0),
     learned: (key) => visualLearnedChoice("letterdress" + key), taste: () => null,
   });
@@ -34543,55 +34375,6 @@ function drawLetterBlock(ctx, lettering, program) {
   const inset = s * 0.16;
   letterInBox(ctx, { x: fx + inset, y: fy + inset, w: s - inset * 2, h: s - inset * 2 }, text, { ...program, lightness: 0.16, outlineMode: "none", outlineWidth: 0, depth3d: 0 });
 }
-/* The words inside their bubble or burst (an inner box: the backing is
- * the lettering's box). */
-function backedLetterBox(lettering) {
-  const b = (!lettering.warp && lettering.backBox) || lettering.box, burst = lettering.dress === "burst";
-  const ix = b.w * (burst ? 0.22 : 0.12), iy = b.h * (burst ? 0.26 : 0.2);
-  return { x: b.x + ix, y: b.y + iy, w: b.w - ix * 2, h: b.h - iy * 2 };
-}
-/* A speech bubble (a soft oval, its tail to the speaker's mouth) or a burst
- * (a ring of uneven spikes): filled light, one ink line all round, and
- * behind it the same shape solid and offset down - a drawn shadow, not a
- * blur. */
-function drawLetterBacking(ctx, lettering) {
-  const b = (!lettering.warp && lettering.backBox) || lettering.box, cx = b.x + b.w / 2, cy = b.y + b.h / 2, rx = b.w / 2, ry = b.h / 2;
-  const rng = mulberry32((Number(lettering.backSeed) || 1) >>> 0);
-  const path = new Path2D();
-  if (lettering.dress === "burst") {
-    const n = 14 + Math.floor(rng() * 6);
-    for (let i = 0; i < n * 2; i++) {
-      const a = -Math.PI / 2 + i * Math.PI / n, r = i % 2 ? 0.72 + rng() * 0.08 : 0.98 + rng() * 0.16;
-      const x = cx + Math.cos(a) * rx * r, y = cy + Math.sin(a) * ry * r;
-      if (i) path.lineTo(x, y); else path.moveTo(x, y);
-    }
-    path.closePath();
-  } else {
-    // The oval, opened where the tail leaves it.
-    const [tx, ty] = lettering.tail || [cx - rx * 0.5, b.y + b.h * 1.6];
-    const at = Math.atan2((ty - cy) / ry, (tx - cx) / rx), gap = 0.22, steps = 48;
-    for (let i = 0; i <= steps; i++) {
-      const a = at + gap + (Math.PI * 2 - gap * 2) * i / steps;
-      const x = cx + Math.cos(a) * rx, y = cy + Math.sin(a) * ry;
-      if (i) path.lineTo(x, y); else path.moveTo(x, y);
-    }
-    // The tail: pointing at the mouth, a short way out of the bubble - not across the face.
-    const edge = Math.hypot(Math.cos(at) * rx, Math.sin(at) * ry), toMouth = Math.hypot(tx - cx, ty - cy);
-    const reach = Math.min(edge + Math.min(b.w, b.h) * 0.55, Math.max(edge * 1.2, toMouth * 0.55));
-    path.lineTo(cx + (tx - cx) / (toMouth || 1) * reach, cy + (ty - cy) / (toMouth || 1) * reach);
-    path.closePath();
-  }
-  const ink = strokePainter.plan?.drawn?.ink || [24, 22, 28], inkCss = `rgb(${ink[0]},${ink[1]},${ink[2]})`;
-  const line = Math.max(1.5, Math.min(b.w, b.h) * 0.045), off = Math.max(2, Math.min(b.w, b.h) * 0.07);
-  const hue = Number(lettering.program?.primaryHue) || 50;
-  const fill = lettering.dress === "burst" ? hslToRgb(((hue + 180) % 360) / 360, 0.85, 0.66) : [250, 248, 240];
-  ctx.save();
-  ctx.lineJoin = "round"; ctx.lineCap = "round";
-  ctx.translate(off, off); ctx.fillStyle = inkCss; ctx.fill(path); ctx.translate(-off, -off);
-  ctx.fillStyle = `rgb(${fill[0]},${fill[1]},${fill[2]})`; ctx.fill(path);
-  ctx.strokeStyle = inkCss; ctx.lineWidth = line; ctx.stroke(path);
-  ctx.restore();
-}
 /* Bubble letters: an ink rim, the fat letter, a shine inside. */
 function drawBubbleLetters(ctx, box, text, program) {
   const pen = Number(program.penWeight) || 1;
@@ -34611,12 +34394,9 @@ function letteringContains(lettering, screen = false) {
   const box = screen ? lettering?.screenBox || lettering?.box : lettering?.box;
   if (!box) return null;
   const inBox = (b, x, y) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
-  // A speech bubble or burst is the lettering's too, all of it.
-  const back = !lettering.warp && lettering.backBox;
   const glyphs = lettering.glyphs;
-  if (!glyphs?.length) return back ? (x, y) => inBox(back, x, y) || inBox(box, x, y) : (x, y) => inBox(box, x, y);
+  if (!glyphs?.length) return (x, y) => inBox(box, x, y);
   return (x, y) => {
-    if (back && inBox(back, x, y)) return true;
     if (!inBox(box, x, y)) return false;
     for (const g of glyphs) if (inBox(g.box, x, y)) return true;
     return false;
@@ -34636,8 +34416,6 @@ function letterPlaceLean(place, W, H, main, laid) {
     lean -= 3 * (ox * oy) / Math.max(1, m.w * m.h);
   }
   if (place.key === "beside") lean += 0.3;
-  // A face in the painting says the words.
-  if (place.key === "speech") lean += 2;
   if (place.key === "ground") lean += 0.25 + (place.surfaceWord ? 0.6 : 0);
   if (place.key === "sky") lean += 0.1;
   if (place.key === "centre") lean += main ? -1 : 0.2;
@@ -34681,16 +34459,12 @@ function planLettering(scene, letters, params, read, laid, rng) {
   if (flow) offered.push(flow);
   const stack = stackLetterPlace(letters, W, H, k, laid, rng);
   if (stack) offered.push(stack);
-  const speech = speechLetterPlace(letters, W, H, laid, rng);
-  if (speech) offered.push(speech);
   const surfaceWord = (params?.__hexfieldWords?.text || "").toLowerCase().match(/[a-z]+/g)?.some((w) => GROUND_WORDS.has(w)) || false;
   for (const place of offered) if (place.key === "ground") place.surfaceWord = surfaceWord;
   const places = offered.some((place) => !hides(place)) ? offered.filter((place) => !hides(place)) : offered;
-  // A shout is held together in one place (to be burst), not set letter by letter.
-  const shout = SHOUT_WORDS.test(((params?.__hexfieldWords?.text || "") + " " + letters).toLowerCase());
   const scores = chooseByTaste(places.map((p) => p.key), {
     rng, tasted: 0, axis: "letterPlace", given: null,
-    lean: (key) => { const p = places.find((x) => x.key === key); return letterPlaceLean(p, W, H, where, laid) - (shout && p.glyphs ? 1.2 : 0); },
+    lean: (key) => letterPlaceLean(places.find((p) => p.key === key), W, H, where, laid),
     learned: (key) => visualLearnedChoice("letterplace" + key), taste: () => null,
   });
   const place = places.find((p) => p.key === scores[0].key) || places[0];
@@ -34715,12 +34489,8 @@ function planLettering(scene, letters, params, read, laid, rng) {
     place: place.key, warp: place.warp || null, screenBox: place.screen || box, namedColour: colourWord || null,
     stage: "block", passes: 0, rounds: 0, round: null, changed: false,
     mode: family === "wildstyle" ? "wildstyle" : "throwup",
-    // Words said by a face are in its speech bubble.
-    dress: place.key === "speech" ? "speech" : chooseLetterDress(params, rng, laid, place),
-    tail: place.tail || null, backSeed: Math.floor(rng() * 1e9),
+    dress: chooseLetterDress(params, rng),
   };
-  // Where its bubble or burst goes, kept as placed (the letters' own box is refitted later).
-  if (scene.lettering.dress === "speech" || scene.lettering.dress === "burst") scene.lettering.backBox = { ...box };
   scene.variations["letterdress" + scene.lettering.dress] = { size: 0, hue: 0, light: 0, literal: 0 };
   scene.letterPlaceScores = summariseChoice(scores);
   const seen = place.screen || box;
@@ -34884,13 +34654,6 @@ function sayWhatItLearned(plan, liked) {
   plan.partVoted[side] = true;
   const parts = [];
   for (const { kind, genes } of grownThingsOf(plan)) for (const name of creditParts(kind, genes, liked)) if (!parts.includes(name)) parts.push(name);
-  // Its characters: a kept face joins the cast; one of the cast is voted for or against.
-  for (const item of plan.scene?.items || []) {
-    const e = item.entry;
-    if (e?.grower !== "face" || item.lettering) continue;
-    if (e.cast) { const m = castVote(e.cast, liked); parts.unshift(m ? m.name + (liked ? " again" : " less") : e.castName + " left the cast"); }
-    else if (liked && e.genes) { const m = joinCast({ ...e.genes, kind: "face" }); if (m) parts.unshift(m.name + " joined the cast"); }
-  }
   const style = paintingChoices(plan).slice(0, 3).map((c) => c.label);
   const status = document.getElementById("localLearningStatus");
   if (status) status.textContent = (liked ? "\u2191 more: " : "\u2193 less: ") + [...parts.slice(0, 5), ...style].join(" \u00b7 ");
@@ -34920,33 +34683,6 @@ function renderChoiceCard(force = false) {
   if (!card || (!force && choiceCardFor === plan && card.childElementCount)) return;
   choiceCardFor = plan;
   card.textContent = "";
-  // A character of yours in it: to be kept on or let go.
-  for (const item of plan?.scene?.items || []) {
-    const e = item.entry;
-    if (!e?.cast) continue;
-    const key = "cast:" + e.cast, voted = plan.partVotes?.[key];
-    const chip = document.createElement("span");
-    chip.className = "choice part" + (voted === true ? " liked" : voted === false ? " disliked" : "");
-    chip.title = "one of your characters - keep drawing them, or not";
-    const label = document.createElement("span");
-    label.textContent = e.castName + " (yours)";
-    chip.appendChild(label);
-    for (const [liked, mark] of [[true, "+"], [false, "\u2212"]]) {
-      const button = document.createElement("button");
-      button.type = "button"; button.textContent = mark; button.disabled = voted !== undefined;
-      button.setAttribute("aria-label", (liked ? "more of " : "less of ") + e.castName);
-      button.addEventListener("click", () => {
-        (plan.partVotes ||= {})[key] = liked;
-        const m = castVote(e.cast, liked, 2);
-        renderChoiceCard(true);
-        const status = document.getElementById("localLearningStatus");
-        if (status) status.textContent = m ? `${e.castName} will be drawn ${liked ? "more" : "less"} - say "${e.castName}" to ask for them` : `${e.castName} has left the cast`;
-      });
-      chip.appendChild(button);
-    }
-    card.appendChild(chip);
-    break;
-  }
   // A grown thing's parts first, each to be liked or disliked by itself.
   const G = globalThis.HexfieldGrowers;
   for (const { kind, genes } of grownThingsOf(plan).slice(0, 2)) {
@@ -35201,14 +34937,6 @@ function drawSceneLettering(ctx, lettering, program = letteringStageProgram(lett
     ctx.transform(...letteringWarpMatrix(lettering.warp));
     lettering.warping = true;
     try { drawSceneLettering(ctx, lettering, program, { shadow, cushion }); } finally { lettering.warping = false; ctx.restore(); }
-    return;
-  }
-  // A speech bubble or burst behind the words, once, round all of them.
-  if ((lettering.dress === "speech" || lettering.dress === "burst") && !lettering.backed) {
-    if (lettering.stage !== "block") drawLetterBacking(ctx, lettering);
-    const inner = backedLetterBox(lettering);
-    drawSceneLettering(ctx, { ...lettering, backed: true, box: inner, glyphs: lettering.glyphs, dress: "plain" },
-      { ...program, lightness: 0.1, outlineMode: "none", outlineWidth: 0, depth3d: 0 }, { shadow: false, cushion: false });
     return;
   }
   // Blocks: a cube for each letter, even when the word was set as one.
@@ -37680,8 +37408,6 @@ function choosePlanAnatomy(plan, params) {
     learned: (key) => visualLearnedChoice(anatomyVoteWord(key)), taste: () => null,
   });
   plan.anatomyScores = summariseChoice(scores);
-  // A thing grown from a line of action is always painted along it.
-  if (scores[0].key === "loose" && items.some((item) => item.entry?.gesture)) return ANATOMY_STYLES.guided;
   return ANATOMY_STYLES[scores[0].key];
 }
 
@@ -38329,8 +38055,6 @@ function* applyMannerReferenceSteps(pixels, width, height, plan, manner, only = 
   // The light map, by row and column, for the two-value split and full chroma.
   const lm = planLightMap(plan);
   const lmCol = lm ? new Int32Array(width) : null, lmRow = lm ? new Int32Array(height) : null;
-  // (The light map's cells are coarse: across lettering - a speech bubble - they show as boxes. Words are lit evenly.)
-  const unlitLetters = lm && plan.scene?.lettering?.backBox ? letteringContains(plan.scene.lettering) : null;
   if (lm) {
     for (let x = 0; x < width; x++) lmCol[x] = Math.min(lm.sw - 1, Math.floor(x / width * lm.sw));
     for (let y = 0; y < height; y++) lmRow[y] = Math.min(lm.sh - 1, Math.floor(y / height * lm.sh)) * lm.sw;
@@ -38371,7 +38095,7 @@ function* applyMannerReferenceSteps(pixels, width, height, plan, manner, only = 
     for (let x = 0; x < width; x++) {
       // `only`: the pixels the caller will keep (a deposit's changed ones).
       if (only && !only[y * width + x]) continue;
-      const lit = lm && !(unlitLetters && unlitLetters(x, y)) ? lm.map[lmRow[y] + lmCol[x]] : 0;
+      const lit = lm ? lm.map[lmRow[y] + lmCol[x]] : 0;
       const o = (y * width + x) * 4, dx = x - cx;
       const w = fx[x] * fy[y];
       if (flat) {
@@ -38688,25 +38412,6 @@ function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0, to = 
         }
       }
       return;
-    }
-    /* A thing grown from a line of action is begun with it: before any mass,
-     * the stroke from its head down its back to its tail bone, then its
-     * legs and tail - each one sure stroke, a shade darker than the body -
-     * and the masses after keep to it (Brushwork that follows anatomy). */
-    const g = item.entry.gesture;
-    if (pass === 0 && g?.line?.length > 1) {
-      const B = item.box, P = ([u, v]) => [B.x + u * B.w, B.y + v * B.h];
-      const trunk = (item.entry.anatomy || []).find((s) => s.k === "trunk");
-      const thick = Math.max(2, (trunk?.r || 0.06) * B.w * 0.9);
-      // (Thinner where the stroke goes back, thicker where it comes toward you.)
-      const lay = (pts, width, wk) => {
-        if (pts.length < 2) return;
-        const pp = pts.map(P), mid = pp[Math.floor(pp.length / 2)];
-        strokes.push(finish({ points: pp, width, wk: wk?.length === pp.length ? wk : undefined, colour: at(ref, mid[0], mid[1]).map((c) => Math.max(0, Math.round(c * 0.72))), bristle: rng() }));
-      };
-      lay(g.line, thick, g.lineK);
-      (g.legs || []).forEach((leg, n) => lay(leg, thick * 0.45, g.legsK?.[n]));
-      lay(g.tail || [], thick * 0.4, g.tailK);
     }
     const radius = Math.max(1.5, short * THING_PASSES[pass]);
     const cell = Math.max(2, Math.round(radius));
@@ -39044,8 +38749,7 @@ function paintContourInk(result, plan) {
   const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ info?.version ^ 0x1c4) >>> 0);
   const width = Math.max(2, info ? info.t * 2 : 2);
   const strokes = lines.map((points) => ({
-    // (A drawn painting's line is one weight throughout, as your hand draws it.)
-    points, width: width * (plan.drawn ? 1 : 0.9 + rng() * 0.2),
+    points, width: width * (0.9 + rng() * 0.2),
     colour: info.ink.map((c) => Math.max(0, Math.min(255, c + Math.round((rng() - 0.5) * 6)))),
     bristle: rng(), alpha: 1, plain: true, round: true,
   }));
@@ -39075,49 +38779,21 @@ function paintContourInk(result, plan) {
  * tight dabs in their own colours, from the face's own drawing. */
 // (And its solid blacks - black hair, a cap's band - filled, as your hand fills them.)
 const FACE_FEATURES = new Set(["eye", "pupil", "white", "mouth", "tongue", "nose", "blush", "ink"]);
-const CAT_FEATURES = new Set(["eye", "pupil", "nose"]);
 function faceInkStrokes(plan) {
   const strokes = [];
-  // A drawn painting's face in one weight of line, the painting's own.
-  const oneWeight = plan.drawn ? Math.max(1.5, (plan.drawn.lineWidth || 2) * 1.1) : null;
-  // Never over the lettering (a speech bubble may lie over the head).
-  const letterAt = plan.scene?.lettering ? letteringContains(plan.scene.lettering) : null;
-  const clear = ([x, y]) => !(letterAt && letterAt(x, y));
-  // (Points may carry a third number, their width through depth.)
-  const runsOff = (pts) => {
-    const out = [];
-    let run = [];
-    for (let i = 0; i < pts.length; i++) {
-      const a = pts[i], b = pts[i + 1] || a, n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 3));
-      for (let k = 0; k < (i + 1 < pts.length ? n : 1); k++) {
-        const t = k / n, p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, (a[2] ?? 1) + ((b[2] ?? 1) - (a[2] ?? 1)) * t];
-        if (clear(p)) run.push(p); else { if (run.length > 1) out.push(run); run = []; }
-      }
-    }
-    if (run.length > 1) out.push(run);
-    return out;
-  };
-  const inked = (run, width, colour) => {
-    const deep = run.some((p) => p[2] != null && p[2] !== 1);
-    return { points: run.map((p) => [p[0], p[1]]), wk: deep ? run.map((p) => p[2] ?? 1) : undefined, width, colour, alpha: 1, plain: true, round: true, bristle: 0.5 };
-  };
   const rgbOf = (hsl) => hslToRgb(((hsl?.[0] || 0) % 360) / 360, (hsl?.[1] || 0) / 100, (hsl?.[2] || 0) / 100);
   for (const item of plan.scene?.items || []) {
     const e = item.entry, b = item.box;
-    // A face's, or a cat's (its one line round, its eyes and nose).
-    if ((e?.grower !== "face" && e?.grower !== "cat") || !b || item.lettering) continue;
-    const cat = e.grower === "cat";
+    if (e?.grower !== "face" || !b || item.lettering) continue;
     const at = ([u, v]) => [b.x + u * b.w, b.y + v * b.h];
     for (const part of e.parts || []) {
       const colour = rgbOf(e.colours?.[part.colour]);
-      if (part.shape === "line" && (part.colour === "ink" || part.colour === "line") && part.pts?.length > 1) {
-        const pts = part.pts.map((q, n) => [...at(q), part.wk?.[n] ?? 1]);
-        for (const run of letterAt ? runsOff(pts) : [pts]) strokes.push(inked(run, oneWeight || Math.max(1.2, part.width * b.w), colour));
+      if (part.shape === "line" && part.colour === "ink" && part.pts?.length > 1) {
+        strokes.push({ points: part.pts.map(at), width: Math.max(1.2, part.width * b.w), colour, alpha: 1, plain: true, round: true, bristle: 0.5 });
       } else if (part.shape === "ellipse" && FACE_FEATURES.has(part.colour)) {
         const [x, y] = at([part.box[0] + part.box[2] / 2, part.box[1] + part.box[3] / 2]);
-        if (!clear([x, y])) continue;
         strokes.push({ points: [[x, y]], width: Math.max(1.5, Math.min(part.box[2] * b.w, part.box[3] * b.h)), colour, alpha: 0.9, plain: true, round: true, bristle: 0.5 });
-      } else if (part.shape === "poly" && (cat ? CAT_FEATURES.has(part.colour) : FACE_FEATURES.has(part.colour)) && part.pts?.length > 2) {
+      } else if (part.shape === "poly" && FACE_FEATURES.has(part.colour) && part.pts?.length > 2) {
         // Filled by short level runs across it, a dab's width apart.
         const pts = part.pts.map(at);
         const ys = pts.map((p) => p[1]), y0 = Math.min(...ys), y1 = Math.max(...ys);
@@ -39129,9 +38805,7 @@ function faceInkStrokes(plan) {
             if ((ay <= y && by > y) || (by <= y && ay > y)) xs.push(ax + (y - ay) / (by - ay) * (bx - ax));
           }
           xs.sort((a, c) => a - c);
-          for (let i = 0; i + 1 < xs.length; i += 2) {
-            for (const run of letterAt ? runsOff([[xs[i], y], [xs[i + 1], y]]) : [[[xs[i], y], [xs[i + 1], y]]]) strokes.push({ points: run, width: step * 1.35, colour, alpha: 0.95, plain: true, round: true, bristle: 0.5 });
-          }
+          for (let i = 0; i + 1 < xs.length; i += 2) strokes.push({ points: [[xs[i], y], [xs[i + 1], y]], width: step * 1.35, colour, alpha: 0.95, plain: true, round: true, bristle: 0.5 });
         }
       }
     }
@@ -39618,12 +39292,9 @@ function* applyPerspectivePlanesSteps(pixels, width, height, plan, amount = 1) {
   plan.drawn = { indoor, lines, ids, width, height, boxes, vx };
   yield;
   const cover = plan.scene?.layer?.cover?.length === width * height ? plan.scene.layer.cover : null;
-  // (Not the lettering - nor its bubble or burst: it keeps its own colours.)
-  const letterAt = plan.scene?.lettering ? letteringContains(plan.scene.lettering) : null;
-  const lettered = (i) => letterAt && letterAt(i % width, (i / width) | 0);
   const sums = new Map();
   for (let i = 0, o = 0; i < ids.length; i++, o += 4) {
-    if ((cover && cover[i] > 128) || lettered(i)) continue;
+    if (cover && cover[i] > 128) continue;
     let s = sums.get(ids[i]);
     if (!s) sums.set(ids[i], s = [0, 0, 0, 0]);
     s[0] += pixels[o]; s[1] += pixels[o + 1]; s[2] += pixels[o + 2]; s[3]++;
@@ -39651,7 +39322,7 @@ function* applyPerspectivePlanesSteps(pixels, width, height, plan, amount = 1) {
   }
   for (let i = 0, o = 0; i < ids.length; i++, o += 4) {
     const c = flat.get(ids[i]);
-    if (!c || (cover && cover[i] > 128) || lettered(i)) continue;
+    if (!c || (cover && cover[i] > 128)) continue;
     pixels[o] += (c[0] - pixels[o]) * amount; pixels[o + 1] += (c[1] - pixels[o + 1]) * amount; pixels[o + 2] += (c[2] - pixels[o + 2]) * amount;
   }
   yield;
@@ -39761,13 +39432,6 @@ async function layFlatsNow(plan, d, reference, width, height, alive) {
     vctx.putImageData(img, 0, 0);
   }
   if (!alive()) return;
-  /* A speech bubble or burst, with its words, drawn crisp over the flats -
-   * a drawing's lettering is drawn, not laid from the picture (which a
-   * re-made reference can leave patched across it). */
-  const lettering = plan.scene?.lettering;
-  if (lettering && (lettering.dress === "speech" || lettering.dress === "burst") && plan.scene.width === width && plan.scene.height === height) {
-    try { drawSceneLettering(vctx, lettering, letteringStageProgram(lettering), { shadow: false, cushion: false }); } catch { /* left as laid */ }
-  }
   // Laid: from here the brush stands down, and the ink (which waits for
   // the big brush to have blocked in) may begin.
   d.flatsLaid = reference;
@@ -39860,7 +39524,7 @@ function drawnInkStrokes(plan, W, H, rng) {
   if (W && H && d.lines) {
     const lw = Math.max(1.5, d.lineWidth || 2);
     // (A block's edges only: the perspective's own lines are never drawn.)
-    for (const [x0, y0, x1, y1, kind] of d.lines) if (kind === "box") runs(x0, y0, x1, y1, lw, 3, { occlude: false });
+    for (const [x0, y0, x1, y1, kind] of d.lines) if (kind === "box") runs(x0, y0, x1, y1, lw * (0.95 + rng() * 0.2), 3, { occlude: false });
   }
   const h = d.hatch;
   if (h && h.width === W && h.height === H) {
@@ -40099,8 +39763,6 @@ async function prepareNewPainting(result, raw, width, height, alive, onDraft = n
   plan.manner = choosePlanManner(plan, ground, width, height, source?.params);
   // A drawn painting letters crisp from the start (it has no brush to block in with).
   if (plan.manner?.reference?.planes && plan.scene?.lettering) plan.scene.lettering.stage = "detail";
-  // ...and lays its things on opaque: a drawing's shapes are not see-through.
-  if (plan.manner?.reference?.planes && plan.scene) plan.scene.strength = 1;
   if (onDraft) onDraft(mannerDraft(ground, width, height, plan));
   if (!await step()) return null;
   refreshPlanShapes(plan, ground, width, height);
@@ -42852,19 +42514,6 @@ function drawPaintStroke(ctx, stroke) {
   // A glaze is thin paint: what is under it shows through (Application).
   const glaze = Number(stroke.glaze) || 0;
   const alpha = (stroke.alpha ? Math.min(1, stroke.alpha * (0.94 + stroke.bristle * 0.06)) : 0.82 + stroke.bristle * 0.14) * (1 - 0.5 * glaze);
-  // A line through depth (`wk`, a width for each point): thinner where it goes back.
-  const wk = Array.isArray(stroke.wk) && stroke.wk.length === pts.length ? stroke.wk : null;
-  if (wk && (tip === "ink" || stroke.width < 2.5)) {
-    ctx.lineCap = "round"; ctx.lineJoin = "round";
-    ctx.globalAlpha = alpha;
-    ctx.strokeStyle = `rgb(${r},${g},${b})`;
-    for (let i = 1; i < pts.length; i++) {
-      ctx.lineWidth = Math.max(0.6, stroke.width * (wk[i - 1] + wk[i]) / 2);
-      ctx.beginPath(); ctx.moveTo(pts[i - 1][0], pts[i - 1][1]); ctx.lineTo(pts[i][0], pts[i][1]); ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
-    return;
-  }
   if (tip === "ink" || stroke.width < 2.5) {
     // Lines and the finest touches: one even mark.
     ctx.beginPath();
@@ -42909,11 +42558,6 @@ function drawPaintStroke(ctx, stroke) {
       f = s < radius ? Math.sqrt(Math.max(0, 1 - (1 - s / radius) ** 2)) : 1;
     }
     f *= 1 + swell * crisp * Math.sin(phase + (cumulative[i] / w) * 1.3);
-    // Through depth: the width the stroke's own points ask for here.
-    if (wk) {
-      const q = t * (wk.length - 1), k = Math.min(wk.length - 2, Math.floor(q));
-      f *= wk[k] + (wk[k + 1] - wk[k]) * (q - k);
-    }
     return Math.max(0.15, f) * w / 2;
   });
   const ragged = (tip === "dry" ? 0.14 : 0.05) * crisp;
@@ -43814,7 +43458,7 @@ function continueMasterDetail(result) {
   // (A drawn painting's face, once its flats are down: the face's own lines are crisper than its traced ones.)
   const faceTurn = Boolean(!letterTurn && !thingTurn && !inkTurn && !weatherTurn && (!plan?.drawn || (plan.drawn.flatsLaid && !plan.drawn.laying)) && refReady &&
     strokePainter.layer >= Math.min(2, maxStrokeLayer(plan)) && (!planHasThings(plan) || scene?.thing?.done || plan?.drawn) &&
-    scene?.items?.some((it) => it.entry?.grower === "face" || it.entry?.grower === "cat") && !plan.faceInking &&
+    scene?.items?.some((it) => it.entry?.grower === "face") && !plan.faceInking &&
     (plan.faceInked !== strokePainter.enhancedKey || plan.facePasses >= 12));
   const completion = letterTurn
     ? paintLetteringStrokes(detailResult, strokePainter.plan.scene)

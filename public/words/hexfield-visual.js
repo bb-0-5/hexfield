@@ -2765,16 +2765,6 @@
         ctx.lineWidth = Math.max(1, (part.width || 0.05) * box.w);
         ctx.lineCap = "round"; ctx.lineJoin = "round";
         if (part.dash) ctx.setLineDash([s * 0.08, s * 0.08]);
-        // A line through depth (`wk`, a width for each point): thinner where it goes back.
-        if (Array.isArray(part.wk) && part.wk.length === part.pts.length && !part.dash) {
-          const base = Math.max(1, (part.width || 0.05) * box.w);
-          for (let i = 1; i < part.pts.length; i++) {
-            const [ax, ay] = P(box, part.pts[i - 1]), [bx, by] = P(box, part.pts[i]);
-            ctx.lineWidth = Math.max(0.6, base * (part.wk[i - 1] + part.wk[i]) / 2);
-            ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
-          }
-          return true;
-        }
         ctx.beginPath();
         part.pts.forEach((pt, i) => { const [px, py] = P(box, pt); if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); });
         ctx.stroke();
@@ -3572,8 +3562,7 @@
      * away from the light. With a light, the sides it shows (the top, and the
      * side it steps toward) are lit as far as they turn to the light. */
     // (A turned thing shows its own sides.)
-    // (Not a grown thing: it is already drawn in the round, turned to its view.)
-    if (dims.depth > 0 && anchor !== "sky" && !item.turn && !item.entry.grown) {
+    if (dims.depth > 0 && anchor !== "sky" && !item.turn) {
       let ex, ey;
       if (dims.vanish && !dims.iso) { ex = Math.sign(dims.vanish[0] - (b.x + b.w / 2)) || 1; ey = Math.sign(dims.vanish[1] - (b.y + b.h / 2)) || -1; }
       else { ex = dims.iso ? 0.87 * (dims.isoDir || 1) : -Math.sign(sx || 1) * 0.72; ey = dims.iso ? -0.5 : -0.62; }
