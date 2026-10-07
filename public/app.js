@@ -31741,6 +31741,7 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null, opening =
   plan.tips = choosePlanTips(plan, params);
   // In runs from the catalogue, or copied stroke by stroke (Runs).
   plan.marks = choosePlanMarks(plan);
+  plan.critic = choosePlanCritic(plan);
   requestDirectorPlan(plan);
   plan.finish = choosePlanFinish(plan, params);
   const { Lf, Lb } = planLuminanceStats(ref, width, height, plan);
@@ -34587,6 +34588,7 @@ function recordVisualVote(liked) {
   if (plan?.dims) variations[dimsVoteWord(plan.dims.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.tips) variations[tipsVoteWord(plan.tips.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.marks) variations[marksVoteWord(plan.marks.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  if (plan?.critic) variations[criticVoteWord(plan.critic.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.finish) variations[finishVoteWord(plan.finish.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.finish?.look) variations[lookVoteWord(plan.finish.look)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.light) variations[lightVoteWord(plan.light.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
@@ -34646,6 +34648,7 @@ function paintingChoices(plan) {
   if (plan.dims) add(plan.dims.name || plan.dims.key, dimsVoteWord(plan.dims.key));
   if (plan.tips) add(plan.tips.key + " brushes", tipsVoteWord(plan.tips.key));
   if (plan.marks) add(plan.marks.name, marksVoteWord(plan.marks.key));
+  if (plan.critic) add(plan.critic.name, criticVoteWord(plan.critic.key));
   return out;
 }
 
@@ -41539,32 +41542,190 @@ function directorContext(plan) {
 }
 
 /* Critique: due every so often once the big brushes have laid the painting
- * in, a few times a painting at most, until it says the painting is done. */
+ * in, a few times a painting at most, until it says the painting is done.
+ * With the owner's key it is Claude's; without, the painter's own critic. */
 function maybeDirect(plan) {
-  if (!directorKey || !plan || directorBusy || !view?.width || Date.now() < directorQuietUntil) return;
+  if (!plan || !view?.width) return;
   const d = plan.direction || (plan.direction = { asked: 0, at: Date.now(), done: false });
   if (d.done || d.asked >= DIRECTOR.perPainting || strokePainter.layer < 1 || Date.now() - d.at < DIRECTOR.every) return;
+  if (!directorKey) {
+    if (plan.critic?.key !== "critic") return;
+    d.at = Date.now(); d.asked++;
+    applyDirective(plan, localCritique(plan), "critic");
+    return;
+  }
+  if (directorBusy || Date.now() < directorQuietUntil) return;
   d.at = Date.now(); d.asked++;
   const k = Math.min(1, DIRECTOR.thumb / Math.max(view.width, view.height));
   const thumb = paintBuffer(Math.max(8, Math.round(view.width * k)), Math.max(8, Math.round(view.height * k)));
   thumb.getContext("2d").drawImage(view, 0, 0, thumb.width, thumb.height);
   const image = thumb.toDataURL("image/jpeg", 0.72).split(",")[1];
   thumb.width = 0;
-  askDirector({ mode: "critique", image, ...directorContext(plan), pass: { layer: strokePainter.layer, critique: d.asked } }).then((result) => {
-    if (!result || strokePainter.plan !== plan) return;
-    d.done = result.done === true;
-    const unit = (v) => Math.max(0, Math.min(1, Number(v) || 0));
-    const regions = (Array.isArray(result.regions) ? result.regions : []).slice(0, 4)
-      .filter((r) => DIRECTOR_ACTIONS.includes(r?.action))
-      .map((r) => {
-        const x = unit(r.x), y = unit(r.y);
-        return { x0: x, y0: y, x1: Math.min(1, x + Math.max(0.03, unit(r.w))), y1: Math.min(1, y + Math.max(0.03, unit(r.h))), action: r.action, strength: unit(r.strength) || 0.5 };
-      });
-    const marks = (Array.isArray(result.marks) ? result.marks : []).map((m) => String(m).toLowerCase()).slice(0, 6);
-    strokePainter.directive = { plan, regions, marks };
-    (plan.directed ||= []).push({ note: String(result.note || ""), regions: regions.map((r) => r.action), marks, done: d.done });
-    directorSay("director: " + (result.note || regions.map((r) => r.action).join(" · ")));
+  askDirector({ mode: "critique", image, ...directorContext(plan), pass: { layer: strokePainter.layer, critique: d.asked } })
+    .then((result) => { if (result) applyDirective(plan, result, "director"); });
+}
+// A critique taken on: its places become the painting's directive (see directedReference, planStrokeBatch).
+function applyDirective(plan, result, who) {
+  if (!result || strokePainter.plan !== plan) return;
+  const d = plan.direction;
+  d.done = result.done === true;
+  const unit = (v) => Math.max(0, Math.min(1, Number(v) || 0));
+  const regions = (Array.isArray(result.regions) ? result.regions : []).slice(0, 4)
+    .filter((r) => DIRECTOR_ACTIONS.includes(r?.action))
+    .map((r) => {
+      const x = unit(r.x), y = unit(r.y);
+      return { x0: x, y0: y, x1: Math.min(1, x + Math.max(0.03, unit(r.w))), y1: Math.min(1, y + Math.max(0.03, unit(r.h))),
+        action: r.action, strength: unit(r.strength) || 0.5, rule: r.rule || null };
+    });
+  const marks = (Array.isArray(result.marks) ? result.marks : []).map((m) => String(m).toLowerCase()).slice(0, 6);
+  strokePainter.directive = { plan, regions, marks };
+  (plan.directed ||= []).push({ who, note: String(result.note || ""), regions: regions.map((r) => r.rule || r.action), marks, done: d.done });
+  for (const r of regions) if (r.rule) (plan.criticRules ||= {})[r.rule] = true;
+  if (result.note) directorSay(who + ": " + result.note);
+}
+
+/* ── The critic ─────────────────────────────────────────────────────────
+ * The painter's own critic, free and in the browser: it looks at the canvas
+ * the way a painter steps back from the easel, with a painter's rules of
+ * thumb, and says where to work and what to do there - the same kind of
+ * directive the director gives.
+ *   focus      - the focus is no sharper than the rest: more detail there.
+ *   separate   - the focus is the same value as its ground: lighter or darker.
+ *   quiet      - a place far from the focus is busier than the focus: simpler.
+ *   chroma     - a place far from the focus is more colourful than it: quieter.
+ *   masses     - the whole is one middling value: darker darks, lighter lights.
+ *   temperature- the shadows are as warm as a warm light (or a moonlit light
+ *                warm): cooler.
+ * Each rule is weighed by the paintings it worked on: kept, it is trusted
+ * more and pushes harder; rejected, less. Whether to have a critic at all
+ * is a choice like the others (critic / none), learned the same way. */
+const CRITIC = { key: "hexfield.critic.v1", cols: 9, block: 3, far: 0.38, keep: 3 };
+const criticVoteWord = (key) => "critic" + key;
+let criticStore = null;
+function criticBook() {
+  if (criticStore) return criticStore;
+  try { criticStore = JSON.parse(localStorage.getItem(CRITIC.key) || "{}") || {}; } catch { criticStore = {}; }
+  return criticStore;
+}
+const criticWeight = (rule) => { const r = criticBook()[rule]; return r ? Math.exp(1.2 * runRank(r)) : 1; };
+function criticOutcome(plan, vote) {
+  const rules = Object.keys(plan?.criticRules || {});
+  if (!rules.length) return;
+  const book = criticBook();
+  for (const rule of rules) { const r = (book[rule] ||= { kept: 0, rejected: 0 }); if (vote > 0) r.kept++; else r.rejected++; }
+  try { localStorage.setItem(CRITIC.key, JSON.stringify(book)); } catch { /* full storage: this visit only */ }
+}
+function choosePlanCritic(plan) {
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x6c21) >>> 0);
+  const scores = chooseByTaste(["critic", "none"], {
+    rng, tasted: 0, axis: "critic", given: planStyleChain(plan), lean: (key) => key === "critic" ? 0.5 : 0,
+    learned: (key) => visualLearnedChoice(criticVoteWord(key)), taste: () => null,
   });
+  plan.criticScores = summariseChoice(scores);
+  return { key: scores[0].key, name: scores[0].key === "critic" ? "a critic's eye" : "no critic" };
+}
+// Where a place is, in words.
+function criticWhere(b) {
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  const v = cy < 0.36 ? "top" : cy > 0.64 ? "bottom" : "", h = cx < 0.36 ? "left" : cx > 0.64 ? "right" : "";
+  return v && h ? v + " " + h : v || h || "middle";
+}
+function localCritique(plan) {
+  const cols = CRITIC.cols, rows = Math.max(4, Math.round(cols * view.height / view.width)), c = 8;
+  const w = cols * c, h = rows * c;
+  const small = paintBuffer(w, h), sctx = small.getContext("2d", { willReadFrequently: true });
+  sctx.drawImage(view, 0, 0, w, h);
+  const px = sctx.getImageData(0, 0, w, h).data;
+  small.width = 0;
+  const lum = (o) => 0.299 * px[o] + 0.587 * px[o + 1] + 0.114 * px[o + 2];
+  // Each cell: its value, how much it varies, its colourfulness, warmth and busyness.
+  const cells = [];
+  for (let cy = 0; cy < rows; cy++) {
+    for (let cx = 0; cx < cols; cx++) {
+      let sL = 0, sL2 = 0, sS = 0, sW = 0, edge = 0, n = 0;
+      for (let y = cy * c; y < cy * c + c; y++) {
+        for (let x = cx * c; x < cx * c + c; x++) {
+          const o = (y * w + x) * 4, L = lum(o);
+          sL += L; sL2 += L * L; n++;
+          sS += Math.max(px[o], px[o + 1], px[o + 2]) - Math.min(px[o], px[o + 1], px[o + 2]);
+          sW += px[o] - px[o + 2];
+          if (x + 1 < w) edge += Math.abs(L - lum(o + 4));
+          if (y + 1 < h) edge += Math.abs(L - lum(o + w * 4));
+        }
+      }
+      const L = sL / n;
+      cells.push({ L, v: Math.max(0, sL2 / n - L * L), sat: sS / n, warm: sW / n, edge: edge / n });
+    }
+  }
+  // Places a few cells across, each with how far it is from the focus.
+  const fx = Number.isFinite(plan.fx) ? plan.fx : 0.5, fy = Number.isFinite(plan.fy) ? plan.fy : 0.5, aspect = view.width / view.height;
+  const B = CRITIC.block, blocks = [];
+  for (let by = 0; by <= rows - B; by++) {
+    for (let bx = 0; bx <= cols - B; bx++) {
+      const cs = [];
+      for (let j = 0; j < B; j++) for (let i = 0; i < B; i++) cs.push(cells[(by + j) * cols + bx + i]);
+      const mean = (k) => cs.reduce((a, x) => a + x[k], 0) / cs.length;
+      const L = mean("L");
+      const b = { x: bx / cols, y: by / rows, w: B / cols, h: B / rows, L, sat: mean("sat"), warm: mean("warm"), edge: mean("edge"),
+        spread: Math.sqrt(cs.reduce((a, x) => a + x.v + (x.L - L) ** 2, 0) / cs.length) };
+      b.far = Math.hypot((b.x + b.w / 2 - fx) * aspect, b.y + b.h / 2 - fy);
+      blocks.push(b);
+    }
+  }
+  const meanL = cells.reduce((a, x) => a + x.L, 0) / cells.length;
+  const spread = Math.sqrt(cells.reduce((a, x) => a + x.v + (x.L - meanL) ** 2, 0) / cells.length) || 1;
+  const focus = blocks.reduce((a, b) => (b.far < a.far ? b : a));
+  const away = blocks.filter((b) => b.far > CRITIC.far);
+  const round = blocks.filter((b) => b.far > focus.far + 0.08 && b.far < focus.far + 0.4);
+  const clamp = (v) => Math.max(0, Math.min(1, v));
+  const most = (list, f) => list.reduce((a, b) => (!a || f(b) > f(a) ? b : a), null);
+  const found = [];
+  const say = (rule, block, action, need, note) => { if (block && need > 0) found.push({ rule, block, action, need, note }); };
+  // The focus should be where the most is going on.
+  say("focus", focus, "detail", clamp((1 - focus.spread / spread) / 0.4), "sharpen the focus");
+  // ...and stand apart from what is round it.
+  if (round.length) {
+    const ground = round.reduce((a, b) => a + b.L, 0) / round.length, diff = focus.L - ground;
+    say("separate", focus, diff >= 0 ? "lighten" : "darken", 0.8 * clamp(1 - Math.abs(diff) / 30), "set the focus apart from its ground");
+  }
+  // Nothing far from it busier...
+  const busy = most(away, (b) => b.edge);
+  if (busy) say("quiet", busy, "simplify", clamp((busy.edge / Math.max(1, focus.edge) - 1.1) / 0.8), "quieten the " + criticWhere(busy));
+  // ...or more colourful.
+  const loud = most(away, (b) => b.sat);
+  if (loud) say("chroma", loud, "mute", clamp((loud.sat / Math.max(1, focus.sat) - 1.05) / 0.6), "calm the colour at the " + criticWhere(loud));
+  // Big masses of value, not one middling grey.
+  const values = blocks.map((b) => b.L).sort((a, b) => a - b);
+  const range = values[Math.floor(values.length * 0.9)] - values[Math.floor(values.length * 0.1)];
+  const need = clamp((80 - range) / 50);
+  if (need > 0) {
+    say("masses", most(blocks, (b) => -b.L), "darken", need, "darker darks, lighter lights");
+    say("masses", most(blocks, (b) => b.L), "lighten", 0.8 * need, "darker darks, lighter lights");
+  }
+  // Warm light, cool shadows (and a moonlit picture cool in its lights).
+  const light = plan.light?.key || "";
+  if (["noon", "golden", "dusk", "dawn", "lamp", "backlit"].includes(light)) {
+    const shade = most(blocks, (b) => -b.L);
+    if (shade) say("temperature", shade, "cool", clamp(shade.warm / 25), "cool the shadows");
+  } else if (light === "moon") {
+    const lit = most(blocks, (b) => b.L);
+    if (lit) say("temperature", lit, "cool", clamp((lit.warm - 6) / 30), "cool the moonlit lights");
+  }
+  // The strongest few, each rule weighed by how its paintings have done.
+  for (const f of found) f.score = f.need * criticWeight(f.rule);
+  const chosen = [];
+  for (const f of found.filter((x) => x.score > 0.2).sort((a, b) => b.score - a.score)) {
+    if (chosen.length >= CRITIC.keep) break;
+    if (chosen.some((x) => x.block === f.block && x.action === f.action)) continue;
+    chosen.push(f);
+  }
+  if (!chosen.length) return { note: "it reads - leaving it be", regions: [], marks: [], done: true };
+  return {
+    note: [...new Set(chosen.map((f) => f.note))].join(" · "),
+    regions: chosen.map((f) => ({ x: f.block.x, y: f.block.y, w: f.block.w, h: f.block.h, action: f.action,
+      strength: Math.min(1, (0.35 + 0.5 * f.need) * Math.min(1.3, criticWeight(f.rule))), rule: f.rule })),
+    marks: [], done: false,
+  };
 }
 const activeDirective = () => {
   const dir = strokePainter.directive;
@@ -42587,6 +42748,7 @@ function planStyleChain(plan) {
     figure: plan?.figure?.key || null,
     edges: plan?.edgeStyle?.key || null,
     marks: plan?.marks?.key || null,
+    critic: plan?.critic?.key || null,
     // The tuned value of the first filter's look, and of a stack's strength.
     tune: plan?.finish ? compactTune(plan.finish) : null,
   };
@@ -42710,7 +42872,7 @@ function computeStyleOutcomeStats() {
 /* A chain's choices as small numbers (axis and option), worked out once per
  * row: counting every pair of hundreds of chains by name cost a phone tens
  * of milliseconds. */
-const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form", "look", "light", "combo", "finish2", "look2", "comp", "morph", "depth", "anatomy", "figure", "edges", "opening", "marks"];
+const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form", "look", "light", "combo", "finish2", "look2", "comp", "morph", "depth", "anatomy", "figure", "edges", "opening", "marks", "critic"];
 function compactTune(finish) {
   const v = tuneValue(finish.key, finish.settings || {});
   const layer = finish.layers?.[0];
@@ -42804,6 +42966,7 @@ function recordStyleVote(plan, liked) {
   if (plan.scene?.growers) growerOutcomes(plan.scene.growers, { vote: liked ? 1 : -1 });
   if (plan.opening) openingRuleOutcome(plan.opening, { vote: liked ? 1 : -1 });
   runOutcome(plan, liked ? 1 : -1);
+  criticOutcome(plan, liked ? 1 : -1);
   return row;
 }
 
