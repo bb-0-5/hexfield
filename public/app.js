@@ -25821,6 +25821,64 @@ function wordEngine() {
   return typeof globalThis !== "undefined" ? globalThis.HexfieldWords : null;
 }
 
+/* Its own words (Auto words): nobody types any more - each new painting
+ * writes itself a line from what the painter has pictures for: a thing,
+ * sometimes a second one in some relation to it, often a place, now and
+ * then a colour or a mood ("a quiet cat on a wall in the forest"). Things
+ * you have kept come up more (each thing's votes, visualLexicon), and
+ * those painted lately give way, so it does not paint one thing forever. */
+const AUTO_WORDS = { recent: "hexfield.autowords.v1", keep: 10, second: 0.4, place: 0.75, colour: 0.25, mood: 0.3 };
+const AUTO_MOODS = ["quiet", "wild", "bright", "dark", "soft", "vast", "ancient", "old", "broken", "hollow", "heavy", "sharp"];
+const AUTO_RELATIONS = ["on", "under", "beside", "near", "above", "with", "behind"];
+const AUTO_PLACE = { night: "at night", sunset: "at sunset", underwater: "underwater", rain: "in the rain", snow: "in the snow", fog: "in the fog",
+  storm: "in a storm", road: "on the road", island: "on an island", sea: "by the sea", river: "by the river" };
+function autoWords(rng = Math.random) {
+  const Visual = globalThis.HexfieldVisual;
+  if (!Visual?.ENTRIES) return "";
+  let recent = [];
+  try { recent = JSON.parse(localStorage.getItem(AUTO_WORDS.recent) || "[]") || []; } catch { recent = []; }
+  const liked = (key) => {
+    const stats = visualLexicon[key];
+    const nl = Number(stats?.nl) || 0, nr = Number(stats?.nr) || 0;
+    return (nl - 0.8 * nr) / (nl + nr + 2);
+  };
+  const pick = (keys, avoid = []) => {
+    const weights = keys.map((k) => avoid.includes(k) ? 0 : Math.exp(2 * liked(k)) * (recent.includes(k) ? 0.25 : 1));
+    let x = rng() * weights.reduce((a, b) => a + b, 0), i = 0;
+    while (i < keys.length - 1 && (x -= weights[i]) > 0) i++;
+    return keys[i];
+  };
+  const keys = Object.keys(Visual.ENTRIES);
+  const things = keys.filter((k) => Visual.ENTRIES[k].kind === "subject" && !Visual.ENTRIES[k].variantOf);
+  const places = keys.filter((k) => Visual.ENTRIES[k].kind === "setting");
+  const a = (line, word = line) => (/^(stairs|mountains)$/.test(word) ? "" : /^([aeiou]|hour)/.test(line) ? "an " : "a ") + line;
+  const first = pick(things);
+  let line = (rng() < AUTO_WORDS.mood ? AUTO_MOODS[Math.floor(rng() * AUTO_MOODS.length)] + " " : "") +
+    (rng() < AUTO_WORDS.colour ? Object.keys(Visual.COLOUR_WORDS)[Math.floor(rng() * 12)] + " " : "") + first;
+  line = a(line, first);
+  const used = [first];
+  if (rng() < AUTO_WORDS.second) {
+    const second = pick(things, used);
+    used.push(second);
+    line += " " + AUTO_RELATIONS[Math.floor(rng() * AUTO_RELATIONS.length)] + " " + a(second);
+  }
+  if (rng() < AUTO_WORDS.place) {
+    const place = pick(places);
+    used.push(place);
+    line += " " + (AUTO_PLACE[place] || "in the " + place);
+  }
+  try { localStorage.setItem(AUTO_WORDS.recent, JSON.stringify([...used, ...recent].slice(0, AUTO_WORDS.keep))); } catch { /* this visit only */ }
+  return line;
+}
+// A new painting, new words.
+function writeAutoWords() {
+  const box = document.getElementById("wordPrompt");
+  if (!box) return;
+  box.value = autoWords();
+  const shown = document.getElementById("autoWords");
+  if (shown) shown.textContent = box.value;
+}
+
 function wordPromptText() {
   return String(document.getElementById("wordPrompt")?.value || "").trim();
 }
@@ -45136,7 +45194,8 @@ function randomizeAutonomousControls() {
    * studio's own short subject/verb/object sentence from the same LEXICON the
    * word engine already ships, the way style/palette/font already draw their
    * own choice below. */
-  setAutonomousControl("wordPrompt", chooseFresh("wordPhrase", autonomousWordPhraseCandidates()));
+  // ...now a line of things it has pictures for (Auto words).
+  writeAutoWords();
   /* Full-size fractals remain an explicit study, never a surprise live pass.
    * Sampling FIELDS here bypassed LIVE_AUTO_FIELDS and let CHANGE SEED choose
    * the one synchronous renderer deliberately excluded above, pinning the tab
@@ -49330,8 +49389,6 @@ async function connectAndStart() {
   // Rules the studio wrote in an earlier session only constrain anything once
   // they are handed back to the engine that places the words.
   syncInventedRules();
-  // Says "nothing to read" until something is typed, and says so rather than
-  // sitting blank - an empty status strip reads as a broken feature.
   updateWordStatus();
   // Paint the known-answer grounding proof before the first full artwork. The
   // initial search may legitimately occupy the main thread for a few seconds;

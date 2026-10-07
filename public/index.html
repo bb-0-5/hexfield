@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- autodeploy-check: workers-builds-verify-8f2c1a -->
-<!-- hexfield build 290 (2026-10-07) -->
+<!-- hexfield build 291 (2026-10-07) -->
 <html lang="en">
 <head>
 <script>
@@ -787,7 +787,7 @@
     <div id="colourChoice">colour: choosing…</div>
     <div id="robBossMood" aria-live="polite">rob boss: waking up · show me 4–8 clear choices</div>
     <div id="painterStatus">seed held · preparing the first paint pass</div>
-    <div id="buildBadge">build 290</div>
+    <div id="buildBadge">build 291</div>
     <div id="bootErrors" style="display:none;color:#ff6b6b;font-size:10px;white-space:pre-wrap;margin-top:4px;"></div>
   </div>
   <div id="shopEssentials" aria-label="print controls"></div>
@@ -795,22 +795,13 @@
   <p class="sub">novelty-driven generative fields</p>
 
   <div>
-    <label for="seed">seed text</label>
-    <!-- Starts empty. It used to arrive holding "no notes", which is text the
-         visitor did not write sitting in a box asking them to write some. The
-         field still needs something to shape it, so seedText() falls back to
-         the studio's own name when the box is empty - what changes is that
-         typing is now an offer rather than a correction. -->
-    <textarea id="seed" placeholder="type anything"></textarea>
-  </div>
-
-  <div>
-    <label for="wordPrompt">describe it</label>
-    <!-- Separate from the seed text on purpose. The seed is a string hashed
-         into a starting point. This is what the picture should be *like*, and
-         it never appears as letters. Reading one box as both would mean a visitor
-         could not ask for a calm picture without the word "calm" in it. -->
-    <input type="text" id="wordPrompt" placeholder="a word or a short sentence">
+    <label>it paints</label>
+    <!-- Nobody types: each painting writes its own words (autoWords in
+         app.js) from what the painter has pictures for, leaning to what was
+         kept. The boxes stay, hidden, as where the words are held. -->
+    <p id="autoWords" class="note"></p>
+    <textarea id="seed" hidden></textarea>
+    <input type="hidden" id="wordPrompt">
     <p id="wordPaints" class="note"></p>
     <p id="wordStatus" class="note">words: nothing to read</p>
     <p class="note">Read as stance rather than as meaning - roughly how good,
