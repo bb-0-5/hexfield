@@ -31741,6 +31741,7 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null, opening =
   plan.tips = choosePlanTips(plan, params);
   // In runs from the catalogue, or copied stroke by stroke (Runs).
   plan.marks = choosePlanMarks(plan);
+  requestDirectorPlan(plan);
   plan.finish = choosePlanFinish(plan, params);
   const { Lf, Lb } = planLuminanceStats(ref, width, height, plan);
   plan.lightOnDark = Math.abs(Lf - Lb) > 6 ? Lf > Lb : mulberry32((Number(drawSeed) || 7) >>> 0)() < 0.6;
@@ -33775,7 +33776,8 @@ function chooseByTaste(keys, { lean, learned, rng, taste, tasted = 3, axis = nul
   // Variety: an option chosen in most recent paintings gives way a little.
   const recent = axis && Array.isArray(recentChoices()[axis]) ? recentChoices()[axis] : [];
   const used = (key) => recent.length ? recent.filter((k) => k === key).length / recent.length : 0;
-  const scores = keys.map((key) => ({ key, lean: lean(key), learned: learned(key), chance: (rng() - 0.5) * 1.1, taste: null, used: used(key),
+  if (axis && directorKey) directorOptions[axis] = keys.slice(0, 16);
+  const scores = keys.map((key) => ({ key, lean: lean(key) + directorLean(axis, key), learned: learned(key), chance: (rng() - 0.5) * 1.1, taste: null, used: used(key),
     // How this option's finished paintings have scored (styleOutcomeLean),
     // and how it has done with the choices already made (stylePairLean).
     outcome: styleOutcomeLean(axis, key), pair: stylePairLean(axis, key, given) }));
@@ -40860,6 +40862,12 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
   };
   const starts = [];
   let cells = 0;
+  // Where the director asked for more work a place is painted sooner, and where it asked for less, later.
+  const directed = directiveLean(width, height);
+  const toleranceAt = directed ? (x, y) => {
+    const lean = directed(x, y);
+    return tolerance * (lean > 0 ? 1 - 0.5 * lean : 1 - 0.6 * lean);
+  } : () => tolerance;
   // How far each cell is from the reference: whether it is still to be painted.
   const cgw = Math.ceil(width / cell), cellError = new Float32Array(cgw * Math.ceil(height / cell));
   for (let cy = 0; cy < height; cy += cell) {
@@ -40876,7 +40884,7 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       }
       cellError[((cy / cell) | 0) * cgw + ((cx / cell) | 0)] = n ? sum / n : 0;
       if (guarded(wx, wy)) continue;
-      if (n && sum / n > tolerance) starts.push({ x: wx, y: wy, error: sum / n });
+      if (n && sum / n > toleranceAt(wx, wy)) starts.push({ x: wx, y: wy, error: sum / n });
     }
   }
   /* The two finest brushes work mostly at the focus; elsewhere a start
@@ -40901,7 +40909,8 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
         ? 1 : Math.exp(-(dx * dx + dy * dy) / (2 * sigma * sigma));
       // Less fine detail the farther off it is.
       const far = airAt ? 1 - DEPTH_BRUSH.detail * Math.max(0, airAt(starts[i].x, starts[i].y)) : 1;
-      if (rng() > Math.max(floor, w) * far) starts.splice(i, 1);
+      const asked = directed ? Math.max(0, directed(starts[i].x, starts[i].y)) : 0;
+      if (rng() > Math.max(floor, w, asked) * far) starts.splice(i, 1);
     }
   }
   /* From what is laid (Planes, and painting from what is laid): nearest the
@@ -40915,9 +40924,12 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       start.dist = dist[k];
       // Painted with this brush already, and not badly off: left as it is.
       start.again = laid.layer[k] >= layer + 1 && start.error < tolerance * PLANES.worse;
-      start.priority = start.error / (1 + PLANES.reach * start.dist);
+      start.priority = start.error / (1 + PLANES.reach * start.dist) * (directed ? 1 + Math.max(0, directed(start.x, start.y)) : 1);
     }
     for (let i = starts.length - 1; i >= 0; i--) if (starts[i].again) starts.splice(i, 1);
+    starts.sort((a, b) => b.priority - a.priority);
+  } else if (directed) {
+    for (const start of starts) start.priority = start.error * (1 + Math.max(0, directed(start.x, start.y)));
     starts.sort((a, b) => b.priority - a.priority);
   } else starts.sort((a, b) => b.error - a.error);
   const chosen = starts.slice(0, STROKE_CARE.on ? Math.ceil(limit * STROKE_CARE.spare) : limit);
@@ -41041,7 +41053,8 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       }
       if (anatomyK) [dx, dy] = followAnatomy(paintingAnatomyAt(strokePainter.plan, start.x, start.y), dx, dy, anatomyK);
       const l = Math.hypot(dx, dy) || 1;
-      const run = pickRun(layer, rng, recentRuns);
+      // Finer runs where more detail was asked for, broader where less.
+      const run = pickRun(layer + (directed ? 0.8 * directed(start.x, start.y) : 0), rng, recentRuns, activeDirective()?.marks);
       recentRuns.push(run.id); if (recentRuns.length > 3) recentRuns.shift();
       const air = airAt ? airAt(start.x, start.y) : 0;
       for (const st of placeRun(run, start.x, start.y, dx / l, dy / l, radius * (1 - DEPTH_BRUSH.width * air), colour, rng, guarded, width, height)) {
@@ -41310,9 +41323,10 @@ const runRank = (run) => (run.kept - 0.8 * run.rejected) / (run.kept + run.rejec
 /* A run for a place: suited to the brush's size (each run has a size it
  * suits, 0 the biggest brush .. 3 the finest), liked, and not the one
  * just used (a painter does not repeat one mark across a passage). */
-function pickRun(layer, rng, recent) {
+function pickRun(layer, rng, recent, favoured = null) {
   const runs = runCatalogue().runs;
-  const weights = runs.map((r) => Math.exp(2 * runRank(r)) * Math.exp(-((r.size - layer) ** 2) / 1.6) * (recent.includes(r.id) ? 0.25 : 1));
+  const weights = runs.map((r) => Math.exp(2 * runRank(r)) * Math.exp(-((r.size - layer) ** 2) / 1.6) * (recent.includes(r.id) ? 0.25 : 1) *
+    (favoured?.includes(r.name.replace(/′+$/, "")) ? 3 : 1));
   let x = rng() * weights.reduce((a, b) => a + b, 0), k = 0;
   while (k < runs.length - 1 && (x -= weights[k]) > 0) k++;
   return runs[k];
@@ -41456,6 +41470,192 @@ function choosePlanMarks(plan) {
   });
   plan.marksScores = summariseChoice(scores);
   return { key: scores[0].key, name: scores[0].key === "runs" ? "marks from the catalogue" : "copied strokes" };
+}
+
+/* ── The director ───────────────────────────────────────────────────────
+ * Claude as the painter's critic and planner (supabase/functions/
+ * hexfield-director). The owner's only: it runs when this browser holds the
+ * owner's key (opened once as ?director=KEY; ?director=off forgets it), so
+ * a visitor never calls it.
+ *   critique - now and then while a painting is worked, a small picture of
+ *     the canvas goes up and a few places come back, each with what to do
+ *     there (darker, warmer, more detail, simpler...) and the marks to
+ *     favour. The aim is bent that way there and its brushes go and do it.
+ *   plan - once for a set of words, which way to lean each choice; later
+ *     paintings of those words lean that way. */
+const DIRECTOR_URL = SUPABASE_URL + "/functions/v1/hexfield-director";
+const DIRECTOR = { every: 25000, perPainting: 4, thumb: 384, plans: "hexfield.director.plans.v1", keep: 40 };
+const DIRECTOR_ACTIONS = ["detail", "simplify", "darken", "lighten", "warm", "cool", "saturate", "mute"];
+const directorKey = (() => {
+  try {
+    const url = new URL(location.href), asked = url.searchParams.get("director");
+    if (asked === "off") localStorage.removeItem("hexfield.director.key");
+    else if (asked && /^[\w-]{8,128}$/.test(asked)) localStorage.setItem("hexfield.director.key", asked);
+    // Not left in the address bar, where it could be shared.
+    if (asked !== null) { url.searchParams.delete("director"); history.replaceState(history.state, "", url.pathname + url.search + url.hash); }
+    return localStorage.getItem("hexfield.director.key") || "";
+  } catch { return ""; }
+})();
+let directorBusy = false, directorQuietUntil = 0;
+function directorSay(text) {
+  const status = document.getElementById("localLearningStatus");
+  if (status && text) status.textContent = text.slice(0, 160);
+}
+async function askDirector(body) {
+  if (!directorKey || directorBusy || Date.now() < directorQuietUntil) return null;
+  directorBusy = true;
+  try {
+    const session = await ensureTasteSession();
+    const response = await fetch(DIRECTOR_URL, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_KEY, Authorization: "Bearer " + session.access_token,
+        "Content-Type": "application/json", "x-hexfield-director": directorKey,
+      },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      // Not set up, the wrong key or the day's cap: quiet for a while.
+      directorQuietUntil = Date.now() + ([403, 404, 503].includes(response.status) ? 30 : 5) * 60000;
+      directorSay("director: " + (payload.error || "HTTP " + response.status));
+      return null;
+    }
+    return payload.result || null;
+  } catch {
+    directorQuietUntil = Date.now() + 60000;
+    return null;
+  } finally { directorBusy = false; }
+}
+// What the director is told besides the picture: the words, the choices, where the things are, the marks it can ask for.
+function directorContext(plan) {
+  const scene = plan?.scene, sw = scene?.width || 1, sh = scene?.height || 1;
+  const things = (scene?.items || []).filter((item) => item.box && !item.lettering).slice(0, 12).map((item) => ({
+    name: String(item.key || item.entry?.key || "thing"),
+    box: [item.box.x / sw, item.box.y / sh, item.box.w / sw, item.box.h / sh].map((v) => +Math.max(0, Math.min(1, v)).toFixed(3)),
+  }));
+  const marks = [...new Set(runCatalogue().runs.map((r) => r.name.replace(/′+$/, "")))];
+  return { words: seedText(), choices: paintingChoices(plan).map((c) => c.label), things, marks };
+}
+
+/* Critique: due every so often once the big brushes have laid the painting
+ * in, a few times a painting at most, until it says the painting is done. */
+function maybeDirect(plan) {
+  if (!directorKey || !plan || directorBusy || !view?.width || Date.now() < directorQuietUntil) return;
+  const d = plan.direction || (plan.direction = { asked: 0, at: Date.now(), done: false });
+  if (d.done || d.asked >= DIRECTOR.perPainting || strokePainter.layer < 1 || Date.now() - d.at < DIRECTOR.every) return;
+  d.at = Date.now(); d.asked++;
+  const k = Math.min(1, DIRECTOR.thumb / Math.max(view.width, view.height));
+  const thumb = paintBuffer(Math.max(8, Math.round(view.width * k)), Math.max(8, Math.round(view.height * k)));
+  thumb.getContext("2d").drawImage(view, 0, 0, thumb.width, thumb.height);
+  const image = thumb.toDataURL("image/jpeg", 0.72).split(",")[1];
+  thumb.width = 0;
+  askDirector({ mode: "critique", image, ...directorContext(plan), pass: { layer: strokePainter.layer, critique: d.asked } }).then((result) => {
+    if (!result || strokePainter.plan !== plan) return;
+    d.done = result.done === true;
+    const unit = (v) => Math.max(0, Math.min(1, Number(v) || 0));
+    const regions = (Array.isArray(result.regions) ? result.regions : []).slice(0, 4)
+      .filter((r) => DIRECTOR_ACTIONS.includes(r?.action))
+      .map((r) => {
+        const x = unit(r.x), y = unit(r.y);
+        return { x0: x, y0: y, x1: Math.min(1, x + Math.max(0.03, unit(r.w))), y1: Math.min(1, y + Math.max(0.03, unit(r.h))), action: r.action, strength: unit(r.strength) || 0.5 };
+      });
+    const marks = (Array.isArray(result.marks) ? result.marks : []).map((m) => String(m).toLowerCase()).slice(0, 6);
+    strokePainter.directive = { plan, regions, marks };
+    (plan.directed ||= []).push({ note: String(result.note || ""), regions: regions.map((r) => r.action), marks, done: d.done });
+    directorSay("director: " + (result.note || regions.map((r) => r.action).join(" · ")));
+  });
+}
+const activeDirective = () => {
+  const dir = strokePainter.directive;
+  return dir && dir.plan === strokePainter.plan ? dir : null;
+};
+// How much a place is to be worked: >0 more (detail, and the places to change), <0 less (simplify), 0 untouched.
+function directiveLean(width, height) {
+  const dir = activeDirective();
+  if (!dir?.regions.length) return null;
+  return (x, y) => {
+    const fx = x / width, fy = y / height;
+    let lean = 0;
+    for (const r of dir.regions) {
+      if (fx < r.x0 || fx > r.x1 || fy < r.y0 || fy > r.y1) continue;
+      lean += r.action === "detail" ? r.strength : r.action === "simplify" ? -r.strength : 0.5 * r.strength;
+    }
+    return Math.max(-1, Math.min(1, lean));
+  };
+}
+/* The aim bent where the director asked: darker, lighter, warmer, cooler,
+ * richer or quieter there, or (simplify) as a big brush means it - feathered
+ * at the edges so a region reads as worked, not as a box. */
+const directedCache = { source: null, dir: null, map: null };
+function directedReference(ref, width, height) {
+  const dir = activeDirective();
+  if (!dir || !dir.regions.some((r) => r.action !== "detail") || ref.length !== width * height * 4) return ref;
+  if (directedCache.source === ref && directedCache.dir === dir) return directedCache.map;
+  const out = new Uint8ClampedArray(ref);
+  let soft = null;
+  for (const r of dir.regions) {
+    if (r.action === "detail") continue;
+    if (r.action === "simplify" && !soft) soft = intentReference(ref, width, height, Math.min(width, height) / 30);
+    const x0 = Math.floor(r.x0 * width), x1 = Math.ceil(r.x1 * width), y0 = Math.floor(r.y0 * height), y1 = Math.ceil(r.y1 * height);
+    const feather = Math.max(2, 0.25 * Math.min(x1 - x0, y1 - y0));
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const inside = Math.min(x - x0, x1 - 1 - x, y - y0, y1 - 1 - y) / feather;
+        const m = r.strength * (inside >= 1 ? 1 : inside * inside * (3 - 2 * inside));
+        if (m <= 0) continue;
+        const o = (y * width + x) * 4;
+        let R = out[o], G = out[o + 1], B = out[o + 2];
+        const L = 0.299 * R + 0.587 * G + 0.114 * B;
+        if (r.action === "darken") { R *= 1 - 0.35 * m; G *= 1 - 0.35 * m; B *= 1 - 0.35 * m; }
+        else if (r.action === "lighten") { R += (255 - R) * 0.3 * m; G += (255 - G) * 0.3 * m; B += (255 - B) * 0.3 * m; }
+        else if (r.action === "warm") { R += 26 * m; G += 6 * m; B -= 22 * m; }
+        else if (r.action === "cool") { R -= 22 * m; G += 2 * m; B += 26 * m; }
+        else if (r.action === "saturate" || r.action === "mute") {
+          const s = r.action === "saturate" ? 1 + 0.6 * m : 1 - 0.6 * m;
+          R = L + (R - L) * s; G = L + (G - L) * s; B = L + (B - L) * s;
+        } else if (r.action === "simplify") { R += (soft[o] - R) * m; G += (soft[o + 1] - G) * m; B += (soft[o + 2] - B) * m; }
+        out[o] = R; out[o + 1] = G; out[o + 2] = B;
+      }
+    }
+  }
+  directedCache.source = ref; directedCache.dir = dir; directedCache.map = out;
+  return out;
+}
+
+/* Plan: the options each choice offered this visit (seen as they are
+ * chosen), sent with the words once; the leans that come back are kept for
+ * those words and lean their later paintings' choices. */
+const directorOptions = {};
+let directorPlanBook = null;
+function directorPlans() {
+  if (directorPlanBook) return directorPlanBook;
+  try { directorPlanBook = JSON.parse(localStorage.getItem(DIRECTOR.plans) || "{}") || {}; } catch { directorPlanBook = {}; }
+  return directorPlanBook;
+}
+const directorWords = () => seedText().toLowerCase().replace(/\s+/g, " ").slice(0, 120);
+function directorLean(axis, key) {
+  if (!directorKey || !axis) return 0;
+  const strength = directorPlans()[directorWords()]?.lean?.[axis]?.[key];
+  return Number.isFinite(strength) ? 1.2 * Math.max(0, Math.min(1, strength)) : 0;
+}
+function requestDirectorPlan(plan) {
+  const words = directorWords();
+  if (!directorKey || !words || directorPlans()[words] || !Object.keys(directorOptions).length) return;
+  askDirector({ mode: "plan", ...directorContext(plan), options: directorOptions }).then((result) => {
+    if (!result || !Array.isArray(result.lean)) return;
+    const lean = {};
+    for (const l of result.lean) {
+      if (!directorOptions[l?.axis]?.includes(l.option)) continue;
+      (lean[l.axis] ||= {})[l.option] = Math.max(0, Math.min(1, Number(l.strength) || 0.5));
+    }
+    const book = directorPlans();
+    book[words] = { lean, mood: String(result.mood || ""), emphasis: (result.emphasis || []).map(String).slice(0, 6), note: String(result.note || ""), at: Date.now() };
+    const old = Object.keys(book).sort((a, b) => book[a].at - book[b].at);
+    while (old.length > DIRECTOR.keep) delete book[old.shift()];
+    try { localStorage.setItem(DIRECTOR.plans, JSON.stringify(book)); } catch { /* full storage: this visit only */ }
+    directorSay("director plan: " + (result.note || result.mood || ""));
+  });
 }
 
 /* ── The light ──────────────────────────────────────────────────────────
@@ -43146,7 +43346,9 @@ function strokesTowardReference(result, ref, width, height, { layer, limit, refK
   const toleranceFor = (l) => l === 0 ? tolerance * 0.35 : tolerance;
   // Painting in runs, the brush aims at the picture as its own size sees it (Runs).
   const runs = strokePainter.plan?.marks?.key === "runs";
-  const aim = (l) => runs ? intentReference(ref, width, height, strokeRadiusForLayer(l, strokeBrushBase(width, height))) : ref;
+  maybeDirect(strokePainter.plan);
+  const bent = directedReference(ref, width, height);
+  const aim = (l) => runs ? intentReference(bent, width, height, strokeRadiusForLayer(l, strokeBrushBase(width, height))) : bent;
   let plan = planStrokeBatch(current, aim(useLayer), strokePainter.gradient, width, height,
     strokeRadiusForLayer(useLayer, strokeBrushBase(width, height)), rng, hand, limit, toleranceFor(useLayer), useLayer, palette);
   // A layer with (almost) nothing left to fix hands over to the next, finer one.
