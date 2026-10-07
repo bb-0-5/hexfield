@@ -33151,7 +33151,10 @@ function keepGrower(candidate, best) {
     height: best.entry.facts?.span?.[1] ?? null,
   };
   // A near copy of a kept one takes its place only if better.
-  const twin = kept.find((o) => G.distance(o.genes, genes) < GROWER_LIB.duplicate);
+  // (A cat's line of action is never drawn twice: the same rules taken is a twin.)
+  const signature = best.entry?.facts?.signature;
+  if (signature) outcome.signature = signature;
+  const twin = kept.find((o) => G.distance(o.genes, genes) < GROWER_LIB.duplicate || (signature && o.signature === signature));
   if (twin) {
     if (growerRank(outcome) <= growerRank(twin) || twin.kept > twin.rejected) { saveGrowerLibrary(); return null; }
     dropGrowerOutcome(kept, twin);
@@ -33352,7 +33355,7 @@ function scheduleGrowerBreeding(delay = GROWER_LIB.everyMs * (isMobileBrowser() 
 /* Kinds cheap enough to grow there and then when a painting needs one and
  * the shelf is bare; the others are painted from their written drawing
  * until the background has grown some. */
-const GROWER_SYNC = { fern: 3, face: 3 };
+const GROWER_SYNC = { fern: 3, face: 3, cat: 3 };
 function pickGrowerOutcomes(kind, n, rng, traits = null) {
   const shelf = growerShelf(kind);
   for (let i = 0; shelf.outcomes.length < (GROWER_SYNC[kind] || 0) && i < 8; i++) breedGrower(kind, mulberry32((Math.floor(rng() * 4294967296) ^ i) >>> 0));

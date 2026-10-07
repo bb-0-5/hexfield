@@ -692,221 +692,14 @@
     ],
     choices: [["pose", CAT_POSES], ["coat", COATS], ["mood", MOODS], ["eyeShape", ["round", "almond"]], ["facing", [-1, 1]]],
     lifespan: () => 14,
-    grow: growCat,
+    grow: growGesture,
     judge: judgeCat,
   };
 
-  // A capsule round a bone: its outline, round at both ends.
-  function capsule(a, b, ra, rb, n = 7) {
-    const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1e-6, ux = dx / l, uy = dy / l, nx = -uy, ny = ux;
-    const pts = [];
-    for (let i = 0; i <= n; i++) { const t = Math.PI / 2 + (i / n) * Math.PI; pts.push([b[0] + (ux * Math.cos(t - Math.PI) + nx * Math.sin(t - Math.PI)) * -rb, b[1] + (uy * Math.cos(t - Math.PI) + ny * Math.sin(t - Math.PI)) * -rb]); }
-    for (let i = 0; i <= n; i++) { const t = -Math.PI / 2 + (i / n) * Math.PI; pts.push([a[0] - (ux * Math.cos(t) - nx * Math.sin(t)) * ra, a[1] - (uy * Math.cos(t) - ny * Math.sin(t)) * ra]); }
-    return pts;
-  }
   const ellipsePts = (cx, cy, rx, ry, rot = 0, n = 16) => Array.from({ length: n }, (_, i) => {
     const a = (i / n) * Math.PI * 2, x = Math.cos(a) * rx, y = Math.sin(a) * ry;
     return [cx + x * Math.cos(rot) - y * Math.sin(rot), cy + x * Math.sin(rot) + y * Math.cos(rot)];
   });
-  const lerp2 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-  const at2 = (p, a, r) => [p[0] + Math.cos(a) * r, p[1] + Math.sin(a) * r];
-
-  function growCat(g, { age = null, pose = null } = {}) {
-    const rng = seeded(g.seed ^ 0xca7);
-    const years = Number.isFinite(age) ? age : g.years;
-    // Growing up: a kitten (0) to grown (1), then old age.
-    const grown = smooth(years / 1.2), old = clamp((years - 10) / 5, 0, 1);
-    const kit = 1 - grown;
-    const P = pose || g.pose;
-    const mood = P === "curl" ? "sleepy" : g.mood;
-    // (Standing, the back is shorter for its legs than lying: a cat is not a stoat.)
-    const body = g.body * (0.72 + 0.28 * grown) * (P === "stand" || P === "walk" ? 0.78 : 1), girth = g.girth * (0.9 + 0.1 * grown) * (1 - 0.12 * old) * (1 + 0.25 * g.fluff);
-    const legs = g.legs * (0.78 + 0.22 * grown), head = g.head * (1 + 0.45 * kit), ears = g.ears * (1 + 0.5 * kit);
-    const eyes = g.eyes * (1 + 0.35 * kit), tail = g.tail * (0.65 + 0.35 * grown);
-    const legW = girth * 0.32 * (1 + 0.2 * g.fluff);
-    const parts = [];   // { poly | line | ellipse, colour, tone, layer } - layer orders them (far legs first)
-    const bones = [];   // the stick figure, for the brush and the judge
-    const push = (layer, part) => parts.push({ layer, ...part });
-    const limb = (layer, hip, knee, foot, w, colour = "fur", tone = 0) => {
-      bones.push([hip, knee], [knee, foot]);
-      push(layer, { poly: capsule(hip, knee, w * 1.25, w), colour, tone });
-      push(layer, { poly: capsule(knee, foot, w, w * 0.85), colour, tone });
-      push(layer, { poly: ellipsePts(foot[0] + w * 0.35, foot[1] - w * 0.45, w * 1.05, w * 0.55), colour: "paw", tone });
-      return foot;
-    };
-    const tailChain = (start, dir, layer, curl, lie = false) => {
-      const pts = [start];
-      let a = dir;
-      const n = 7, step = tail / n;
-      for (let i = 0; i < n; i++) {
-        a += lie ? curl * 0.25 : curl * 0.35 * (i / n) * 2;
-        let q = at2(pts[pts.length - 1], a, step);
-        if (q[1] > -0.02) q = [q[0], -0.02];
-        pts.push(q);
-      }
-      bones.push(...pts.slice(1).map((q, i) => [pts[i], q]));
-      push(layer, { line: pts, width: girth * (lie ? 0.34 : 0.42) * (1 + 0.6 * g.fluff), colour: "tail", tone: lie ? -0.04 : 0 });
-      return pts;
-    };
-    let headAt, front = false, chest, hip, tailPts = null, feet = [];
-    if (P === "stand" || P === "walk") {
-      const H = legs * 0.95, swing = P === "walk" ? 0.35 : 0.08;
-      hip = [-body / 2, -H]; chest = [body / 2, -H - 0.03];
-      const mid = [0, -H - girth * 0.15 + 0.02];
-      // Far legs, then the body, then near legs.
-      feet.push(limb(0, [chest[0] - 0.02, chest[1] + girth * 0.4], [chest[0] + 0.02 - swing * 0.15, -H * 0.45], [chest[0] - swing * 0.2, 0], legW, "fur", -0.12));
-      feet.push(limb(0, [hip[0] + 0.03, hip[1] + girth * 0.3], [hip[0] + 0.12 + swing * 0.1, -H * 0.5], [hip[0] + 0.04 + swing * 0.25, 0], legW * 1.1, "fur", -0.12));
-      bones.push([hip, mid], [mid, chest]);
-      push(1, { poly: capsule(hip, mid, girth * 1.05, girth * 0.95), colour: "fur", tone: 0 });
-      push(1, { poly: capsule(mid, chest, girth * 0.95, girth * 1.05), colour: "fur", tone: 0 });
-      feet.push(limb(2, [chest[0] - 0.04, chest[1] + girth * 0.5], [chest[0] + swing * 0.12, -H * 0.45], [chest[0] + swing * 0.25 - 0.02, 0], legW));
-      feet.push(limb(2, [hip[0] + 0.06, hip[1] + girth * 0.4], [hip[0] + 0.16 - swing * 0.1, -H * 0.5], [hip[0] + 0.07 - swing * 0.2, 0], legW * 1.1));
-      headAt = [chest[0] + head * 0.9, chest[1] - head * 1.25];
-      bones.push([chest, headAt]);
-      push(1, { poly: capsule(chest, headAt, girth * 0.8, head * 0.6), colour: "fur", tone: 0 });
-      tailPts = tailChain([hip[0] - girth * 0.6, hip[1] - girth * 0.2], -Math.PI + (P === "walk" ? -0.9 : -0.35), 0, g.tailCurl);
-    } else if (P === "sit") {
-      // Haunch on the ground, back rising to the chest, front legs straight.
-      hip = [-body * 0.18, -girth * 1.2]; chest = [body * 0.12, -legs * 0.95 - girth * 0.4];
-      bones.push([hip, chest]);
-      tailPts = tailChain([hip[0] - girth * 0.9, -0.03], 0.15, 3, g.tailCurl * 0.5, true);
-      push(1, { poly: ellipsePts(hip[0], hip[1] - girth * 0.1, girth * 1.55, girth * 1.3), colour: "fur", tone: 0 });
-      push(1, { poly: capsule(hip, chest, girth * 1.3, girth * 1.0), colour: "fur", tone: 0 });
-      feet.push(limb(0, [chest[0] + 0.02, chest[1] + girth * 0.3], [chest[0] + 0.05, -legs * 0.45], [chest[0] + 0.06, 0], legW, "fur", -0.12));
-      feet.push(limb(2, [chest[0] + 0.07, chest[1] + girth * 0.4], [chest[0] + 0.1, -legs * 0.45], [chest[0] + 0.12, 0], legW));
-      push(2, { poly: ellipsePts(hip[0] + girth * 0.5, -legW * 0.6, girth * 0.9, legW * 0.7), colour: "paw", tone: 0 });
-      headAt = [chest[0] + head * 0.35, chest[1] - head * 1.35];
-      bones.push([chest, headAt]);
-      push(1, { poly: capsule(chest, headAt, girth * 0.9, head * 0.6), colour: "fur", tone: 0 });
-    } else if (P === "front") {
-      // Facing you: a pear of a body, the front legs two columns, the tail round the paws.
-      front = true;
-      const top = -legs * 0.95 - girth * 0.6;
-      chest = [0, top + girth * 0.6]; hip = [0, -girth * 1.1];
-      bones.push([hip, chest]);
-      push(1, { poly: ellipsePts(0, hip[1] + girth * 0.05, girth * 1.7, girth * 1.15), colour: "fur", tone: -0.03 });
-      push(1, { poly: capsule(hip, chest, girth * 1.45, girth * 1.05), colour: "fur", tone: 0 });
-      for (const side of [-1, 1]) feet.push(limb(2, [side * girth * 0.45, chest[1] + girth * 0.4], [side * girth * 0.45, -legs * 0.45], [side * girth * 0.5, 0], legW, "fur", 0));
-      tailPts = tailChain([girth * 1.3, -0.04], Math.PI * 0.95, 3, -0.15, true);
-      headAt = [0, chest[1] - head * 1.2];
-      bones.push([chest, headAt]);
-      // The neck: the head sits on the body (one outline round both).
-      push(1, { poly: capsule(chest, headAt, girth * 0.95, head * 0.62), colour: "fur", tone: 0 });
-    } else if (P === "loaf") {
-      hip = [-body * 0.42, -girth * 1.1]; chest = [body * 0.32, -girth * 1.15];
-      bones.push([hip, chest]);
-      // The tail laid along the ground at its side, round to the front paws.
-      tailPts = tailChain([hip[0] - girth * 0.5, -0.03], 0, 3, 0.05, true);
-      push(1, { poly: capsule(hip, chest, girth * 1.15, girth * 1.15), colour: "fur", tone: 0 });
-      push(2, { poly: ellipsePts(chest[0] + girth * 0.55, -legW * 0.5, legW * 1.3, legW * 0.6), colour: "paw", tone: 0 });
-      headAt = [chest[0] + head * 0.5, chest[1] - girth * 0.6 - head * 0.55];
-    } else {
-      // Curled up asleep: a round of body, the tail wrapped round the nose.
-      const R = body * 0.42;
-      hip = [-R * 0.3, -R * 0.75]; chest = [R * 0.35, -R * 0.75];
-      bones.push([hip, chest]);
-      push(1, { poly: ellipsePts(0, -R * 0.62, R * 1.05, R * 0.66), colour: "fur", tone: 0 });
-      headAt = [R * 0.45, -R * 0.5];
-      // The tail hugging the round of it, from the back along the bottom
-      // to the front, its tip by the nose.
-      const cy = -R * 0.62, rx = R * 1.08, ry = R * 0.7;
-      tailPts = Array.from({ length: 9 }, (_, k) => { const a = Math.PI * 0.95 - (k / 8) * Math.PI * 0.95; return [rx * Math.cos(a), Math.min(-0.02, cy + ry * Math.sin(a))]; });
-      bones.push(...tailPts.slice(1).map((q, i) => [tailPts[i], q]));
-      push(3, { line: tailPts, width: girth * 0.36 * (1 + 0.6 * g.fluff), colour: "tail", tone: -0.04 });
-    }
-    // The head: skull, muzzle, ears, the face.
-    const hx = headAt[0], hy = headAt[1];
-    const earSpread = 0.35 + 0.5 * g.earSet;
-    for (const side of front ? [-1, 1] : [-1, 1]) {
-      // Side on, the far ear shows a little behind the near one.
-      const ex = front ? side * head * earSpread * 0.9 : (side < 0 ? -head * 0.35 : head * 0.15);
-      const base = [hx + ex, hy - head * 0.55];
-      const tip = [base[0] + (front ? side * ears * 0.35 * (0.5 + g.earSet) : ears * 0.1), base[1] - ears * (1.1 - 0.25 * g.earSet)];
-      const w = ears * 0.62;
-      const layer = !front && side < 0 ? 3 : 4;
-      push(layer, { poly: [[base[0] - w, base[1] + w * 0.3], tip, [base[0] + w, base[1] + w * 0.3]], colour: "ear", tone: !front && side < 0 ? -0.1 : 0 });
-      push(layer, { poly: [[base[0] - w * 0.5, base[1] + w * 0.1], lerp2(tip, base, 0.2), [base[0] + w * 0.5, base[1] + w * 0.1]], colour: "inner", tone: 0 });
-    }
-    push(4, { poly: ellipsePts(hx, hy, head * (front ? 0.82 : 0.78), head * 0.68), colour: "face", tone: 0 });
-    const curled = P === "curl";
-    if (!curled) {
-      // The muzzle comes forward (side on) or sits low in the middle (facing you).
-      const mx = front ? hx : hx + head * (0.45 + 0.4 * g.muzzle), my = hy + head * 0.22;
-      push(4, { poly: ellipsePts(mx, my, head * (front ? 0.36 : 0.3 + 0.12 * g.muzzle), head * 0.24), colour: "muzzle", tone: 0.04 });
-      const nose = front ? [hx, hy + head * 0.12] : [mx + head * 0.22, my - head * 0.08];
-      push(5, { poly: [[nose[0] - head * 0.07, nose[1] - head * 0.04], [nose[0] + head * 0.07, nose[1] - head * 0.04], [nose[0], nose[1] + head * 0.05]], colour: "nose", tone: 0 });
-      // The mouth: a small "w" under the nose.
-      const m0 = [nose[0], nose[1] + head * 0.05];
-      push(5, { line: [[m0[0] - head * 0.12, m0[1] + head * 0.08], [m0[0] - head * 0.05, m0[1] + head * 0.1], m0, [m0[0] + head * 0.05, m0[1] + head * 0.1], [m0[0] + head * 0.12, m0[1] + head * 0.08]].filter((_, i) => front || i >= 2), width: head * 0.025, colour: "line", tone: 0 });
-      // Whiskers.
-      for (const side of front ? [-1, 1] : [1]) for (let k = -1; k <= 1; k++) {
-        const o = [nose[0] + side * head * 0.12, nose[1] + head * 0.08];
-        push(6, { line: [o, [o[0] + side * head * 0.75, o[1] + k * head * 0.14 - head * 0.05]], width: head * 0.012, colour: "whisker", tone: 0 });
-      }
-    }
-    // Eyes: their shape, the pupil (round in a kitten or in the dark, a slit
-    // in light), and the lids by mood.
-    const eyeR = head * eyes * 0.55;
-    const eyeAt = front ? [[hx - head * 0.33, hy - head * 0.08], [hx + head * 0.33, hy - head * 0.08]] : [[hx + head * (0.25 + 0.2 * g.muzzle), hy - head * 0.1]];
-    for (const [ex, ey] of eyeAt) {
-      if (mood === "sleepy" || curled) {
-        push(5, { line: [[ex - eyeR, ey], [ex, ey + eyeR * 0.35], [ex + eyeR, ey]], width: head * 0.03, colour: "line", tone: 0 });
-        continue;
-      }
-      const ry = eyeR * (g.eyeShape === "round" ? 0.95 : 0.62) * (mood === "content" ? 0.55 : 1);
-      push(5, { poly: ellipsePts(ex, ey, eyeR * (front ? 1 : 0.8), ry, g.eyeShape === "almond" ? -0.2 : 0), colour: "eye", tone: 0 });
-      const slit = kit < 0.5 && mood !== "content";
-      push(6, { poly: ellipsePts(ex + (front ? 0 : eyeR * 0.2), ey, slit ? eyeR * 0.16 : eyeR * 0.42, ry * 0.92), colour: "pupil", tone: 0 });
-      push(6, { poly: ellipsePts(ex + eyeR * 0.25, ey - ry * 0.4, eyeR * 0.13, eyeR * 0.13), colour: "glint", tone: 0 });
-      if (mood === "content") push(6, { line: [[ex - eyeR, ey - ry * 0.6], [ex + eyeR, ey - ry * 0.6]], width: head * 0.035, colour: "face", tone: -0.05 });
-    }
-    // The coat's markings, on top of the body and head they mark.
-    coatMarks(g, { push, rng, hip, chest, headAt, head, girth, legs, tailPts, feet, front, P, legW, body, curled });
-    const facts = { pose: P, kit, feet: feet.length, tail: !!tailPts };
-    return seenCat(g, parts, bones, { facing: g.facing || 1, age: years, facts, headAt, head, ears, tailPts });
-  }
-
-  /* Tabby stripes ring the legs and tail and bar the back, with an M on the
-   * brow; a tuxedo is white at the chest, muzzle and paws; a colourpoint is
-   * dark at the face, ears, paws and tail; calico and tortie are patched. */
-  function coatMarks(g, { push, rng, hip, chest, headAt, head, girth, legs, tailPts, feet, front, P, legW, curled }) {
-    const coat = g.coat;
-    if (coat === "tabby") {
-      const n = g.stripes;
-      for (let i = 0; i < n && !front && !curled; i++) {
-        const t = (i + 0.5) / n, p = lerp2(hip, chest, t);
-        push(3, { line: [[p[0] - girth * 0.05, p[1] - girth * 0.95], [p[0] + girth * 0.08, p[1] - girth * 0.2], [p[0] + girth * 0.02, p[1] + girth * 0.35]], width: girth * 0.16, colour: "dark", tone: 0 });
-      }
-      if (front) for (let i = 0; i < 4; i++) push(3, { line: [[-girth * 0.9, chest[1] + girth * (0.3 + i * 0.35)], [-girth * 0.5, chest[1] + girth * (0.4 + i * 0.35)]], width: girth * 0.12, colour: "dark", tone: 0 }, push(3, { line: [[girth * 0.9, chest[1] + girth * (0.3 + i * 0.35)], [girth * 0.5, chest[1] + girth * (0.4 + i * 0.35)]], width: girth * 0.12, colour: "dark", tone: 0 }));
-      if (tailPts) for (let i = 2; i < tailPts.length; i += 2) {
-        const a = tailPts[i - 1], b = tailPts[i], d = [b[0] - a[0], b[1] - a[1]], l = Math.hypot(...d) || 1, nx = -d[1] / l, ny = d[0] / l, w = girth * 0.3;
-        push(3, { line: [[b[0] - nx * w, b[1] - ny * w], [b[0] + nx * w, b[1] + ny * w]], width: girth * 0.14, colour: "dark", tone: 0 });
-      }
-      // The M on the brow.
-      const [hx, hy] = headAt;
-      push(5, { line: [[hx - head * 0.25, hy - head * 0.3], [hx - head * 0.15, hy - head * 0.5], [hx, hy - head * 0.35], [hx + head * 0.15, hy - head * 0.5], [hx + head * 0.25, hy - head * 0.3]], width: head * 0.05, colour: "dark", tone: 0 });
-    }
-    if (coat === "tuxedo" || coat === "calico") {
-      const bib = front ? [0, chest[1] + girth * 0.5] : [chest[0] + girth * 0.4, chest[1] + girth * 0.3];
-      if (!curled && P !== "loaf") push(3, { poly: ellipsePts(bib[0], bib[1], girth * (front ? 0.7 : 0.45), girth * 0.75), colour: "white", tone: 0 });
-      for (const f of feet) push(3, { poly: ellipsePts(f[0] + legW * 0.35, f[1] - legW * 0.7, legW * 1.1, legW * 0.95), colour: "white", tone: 0 });
-    }
-    if (coat === "calico" || coat === "tortie") {
-      // Patches: irregular, spread along the back and flank, within the body.
-      const n = coat === "calico" ? 5 : 9;
-      for (let i = 0; i < n; i++) {
-        const t = rng(), p = lerp2(hip, chest, t), r = girth * (coat === "calico" ? 0.4 + rng() * 0.35 : 0.22 + rng() * 0.25);
-        const c = [p[0] + (rng() - 0.5) * girth * 0.8, p[1] - girth * (0.1 + rng() * 0.6)];
-        const pts = Array.from({ length: 14 }, (_, k) => { const a = (k / 14) * Math.PI * 2, rr = r * (0.7 + 0.5 * rng()); return [c[0] + Math.cos(a) * rr * 1.3, c[1] + Math.sin(a) * rr * 0.75]; });
-        push(3, { poly: pts, colour: i % 2 ? "patchB" : "patchA", tone: 0 });
-      }
-      push(5, { poly: ellipsePts(headAt[0] - head * 0.3, headAt[1] - head * 0.2, head * 0.35, head * 0.3, 0.4), colour: "patchA", tone: 0 });
-    }
-    if (coat === "point") {
-      push(5, { poly: ellipsePts(headAt[0] + (front ? 0 : head * 0.25), headAt[1] + head * 0.12, head * 0.5, head * 0.4), colour: "dark", tone: 0 });
-      for (const f of feet) push(3, { poly: ellipsePts(f[0] + legW * 0.2, f[1] - legW * 1.3, legW * 1.05, legW * 1.6), colour: "dark", tone: 0 });
-    }
-  }
 
   /* The outline round a set of shapes as one line: the shapes (polygons,
    * and lines as thick strokes) drawn small into a grid, the edge of all of
@@ -989,100 +782,8 @@
     });
   }
 
-  // The parts of a cat that make its outline (its markings and face lie inside it).
-  const CAT_BODY = new Set(["fur", "face", "tail", "ear", "paw", "muzzle"]);
-  const MARKINGS = new Set(["dark", "white", "patchA", "patchB"]);
-  function insidePoly([x, y], pts) {
-    let inside = false;
-    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-      const [xi, yi] = pts[i], [xj, yj] = pts[j];
-      if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
-    }
-    return inside;
-  }
-
-  function seenCat(g, parts, bones, { facing, age, facts, headAt, head, ears, tailPts }) {
-    // Facing left is the cat mirrored.
-    const fx = (p) => [p[0] * facing, p[1]];
-    const ordered = parts.map((p, i) => ({ p, i })).sort((a, b) => a.p.layer - b.p.layer || a.i - b.i).map((x) => x.p);
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    const take = ([x, y], pad = 0) => { x0 = Math.min(x0, x - pad); y0 = Math.min(y0, y - pad); x1 = Math.max(x1, x + pad); y1 = Math.max(y1, y + pad); };
-    for (const part of ordered) (part.poly || part.line).forEach((q) => take(fx(q), part.line ? part.width / 2 : 0));
-    const bw = Math.max(1e-3, x1 - x0), bh = Math.max(1e-3, y1 - y0);
-    const r4 = (v) => Math.round(v * 1e4) / 1e4;
-    const U = (q) => { const [x, y] = fx(q); return [r4((x - x0) / bw), r4((y - y0) / bh)]; };
-    /* Drawn as the sketches draw a cat: one line all the way round it -
-     * ears, head, back, tail, legs - over one flat of its fur, its markings
-     * inside; crescents in the ears, almond eyes with a dot for a pupil,
-     * whiskers as three short dashes, little loops for its toes. */
-    const line = 0.016, out = [];
-    const body = ordered.filter((p) => CAT_BODY.has(p.colour));
-    const outline = outlineOf(body.filter((p) => p.poly).map((p) => p.poly.map(fx)), body.filter((p) => p.line).map((p) => ({ pts: p.line.map(fx), width: p.width })), x0, y0, bw, bh);
-    const toUnit = ([x, y]) => [r4((x - x0) / bw), r4((y - y0) / bh)];
-    for (const loop of outline || []) out.push({ shape: "poly", smooth: true, pts: loop.map(toUnit), colour: "fur", tone: 0 });
-    for (const part of ordered) {
-      const c = part.colour;
-      if (CAT_BODY.has(c) && !(c === "muzzle" && g.coat === "tuxedo")) continue;
-      if (c === "inner") {
-        // The ear's crescent: a curve inside it, from one side of its base up and round.
-        const [a, tip, b] = part.poly;
-        const mid = lerp2(a, b, 0.5), bulge = lerp2(mid, tip, 0.55);
-        out.push({ shape: "line", pts: [a, lerp2(a, bulge, 0.6), bulge, lerp2(bulge, tip, 0.5)].map(U), width: r4(line * 0.8), colour: "line", tone: 0 });
-        continue;
-      }
-      if (c === "whisker") {
-        // Three short dashes off the cheek instead of long whiskers.
-        const [o, e] = part.line;
-        out.push({ shape: "line", pts: [lerp2(o, e, 0.25), lerp2(o, e, 0.55)].map(U), width: r4(line * 0.8), colour: "line", tone: 0 });
-        continue;
-      }
-      if (c === "pupil") {
-        // A dot, not a slit.
-        let sx = 0, sy = 0, ymin = Infinity, ymax = -Infinity;
-        for (const [x, y] of part.poly) { sx += x; sy += y; ymin = Math.min(ymin, y); ymax = Math.max(ymax, y); }
-        const n = part.poly.length, r = (ymax - ymin) * 0.36;
-        out.push({ shape: "poly", pts: ellipsePts(sx / n, sy / n, r, r).map(U), colour: "pupil", tone: 0 });
-        continue;
-      }
-      if (c === "glint") continue;
-      // Markings stay inside the line round it.
-      if (MARKINGS.has(c) && outline) {
-        const within = (q) => outline.some((loop) => insidePoly(fx(q), loop));
-        if (part.line) {
-          let run = [];
-          const flush = () => { if (run.length > 1) out.push({ shape: "line", pts: run.map(U), width: r4(part.width / bw), colour: c, tone: part.tone || 0 }); run = []; };
-          for (let n = 0; n < part.line.length; n++) {
-            const a = part.line[n], b = part.line[n + 1] || a;
-            for (let k = 0; k < (n + 1 < part.line.length ? 4 : 1); k++) { const q = lerp2(a, b, k / 4); if (within(q)) run.push(q); else flush(); }
-          }
-          flush();
-        } else {
-          const kept = part.poly.filter(within);
-          if (kept.length > 2) out.push({ shape: "poly", smooth: true, pts: kept.map(U), colour: c, tone: part.tone || 0 });
-        }
-        continue;
-      }
-      if (part.line) { out.push({ shape: "line", pts: part.line.map(U), width: r4(part.width / bw), colour: c, tone: part.tone || 0 }); continue; }
-      out.push({ shape: "poly", smooth: true, pts: part.poly.map(U), colour: c, tone: part.tone || 0 });
-      // An almond eye is inked round.
-      if (c === "eye") out.push({ shape: "line", pts: [...part.poly, part.poly[0]].map(U), width: r4(line * 0.8), colour: "line", tone: 0 });
-    }
-    // The one line round it all.
-    for (const loop of outline || []) out.push({ shape: "line", pts: [...loop, loop[0]].map(toUnit), width: line, colour: "line", tone: 0 });
-    // Toes: two small loops at the front of each paw on the ground.
-    for (const part of ordered) {
-      if (part.colour !== "paw" || !part.poly) continue;
-      let px0 = Infinity, px1 = -Infinity, py1 = -Infinity;
-      for (const q of part.poly) { const [x, y] = fx(q); px0 = Math.min(px0, x); px1 = Math.max(px1, x); py1 = Math.max(py1, y); }
-      if (py1 < -0.06) continue;
-      const w = (px1 - px0), lead = facing > 0 ? px1 : px0, dir = facing > 0 ? -1 : 1;
-      for (let k = 0; k < 2; k++) {
-        const cxp = lead + dir * w * (0.18 + 0.24 * k), r = w * 0.11;
-        out.push({ shape: "line", pts: Array.from({ length: 7 }, (_, i) => { const a = Math.PI * (1 + i / 6); return toUnit([cxp + Math.cos(a) * r, py1 - r * 0.2 + Math.sin(a) * r * 1.2]); }), width: r4(line * 0.7), colour: "line", tone: 0 });
-      }
-    }
-    // Coat colours: the main one ("fur") first, so a painting's colour for
-    // the word recolours the cat; the rest follow the coat.
+  // A cat's coat: the main one ("fur") first, so a painting's colour for the word recolours it.
+  function catColours(g) {
     const base = [g.hue, g.coat === "point" ? Math.min(20, g.sat) : g.sat, g.coat === "point" ? Math.max(70, g.light) : g.coat === "calico" ? 90 : g.light];
     const dark = g.coat === "point" ? [g.hue + 5, Math.min(40, g.sat + 10), 22] : [g.hue, Math.min(90, g.sat + 10), Math.max(6, g.light * 0.45)];
     const white = [40, 15, 93];
@@ -1092,17 +793,16 @@
       eye: [g.eyeHue, 70, 52], pupil: [0, 0, 6], glint: [0, 0, 98], line: [0, 0, 12], whisker: [0, 0, 92],
     };
     if (g.coat === "tortie") { colours.patchA = [24, 75, 40]; colours.patchB = [20, 25, 10]; }
-    const hd = U(headAt);
-    const anatomy = bones.map(([a, b]) => ({ k: "bone", a: U(a), b: U(b), r: r4(0.04 / bw) }));
-    facts.aspect = bw / bh;
-    facts.headShare = (head * 2) / bh;
-    facts.earsShow = (headAt[1] - head * 0.55 - ears) < y0 + bh * 0.12 || facts.pose === "curl" ? 1 : 0;
-    facts.tailOut = tailPts ? Math.hypot(tailPts[tailPts.length - 1][0] - tailPts[0][0], tailPts[tailPts.length - 1][1] - tailPts[0][1]) / bw : 0;
-    return {
-      kind: "subject", anchor: "ground", size: clamp(0.22 + 0.14 * (1 - facts.kit * 0.5) * (facts.pose === "curl" || facts.pose === "loaf" ? 0.8 : 1), 0.18, 0.4),
-      aspect: clamp(bw / bh, 0.4, 3), depth: 0.5, colours, parts: out, grown: true, anatomy, grower: g.kind, age: r4(age), drawn: 2,
-      head: { x: hd[0], y: r4(hd[1] - head / bh), w: r4(head * 1.6 / bw) }, facts, pose: facts.pose,
-    };
+    return colours;
+  }
+
+  function insidePoly([x, y], pts) {
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const [xi, yi] = pts[i], [xj, yj] = pts[j];
+      if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
   }
 
   /* A good cat, as a picture: it reads as a cat from its silhouette - ears
@@ -1120,6 +820,330 @@
     let s = 0, w = 0;
     for (const k in weights) { s += Math.log(Math.max(0.05, reasons[k])) * weights[k]; w += weights[k]; }
     return { score: Math.exp(s / w), reasons };
+  }
+
+  /* ── Gesture: a creature from one stroke ─────────────────────────────
+   * Not a picture of a cat: a line of action. One stroke in space from
+   * where its head is, down its neck and back, to its tail bone - in the
+   * pose's place (standing, the line runs level; sitting, it rises steep
+   * from the ground; curled, it bows round on itself). The stroke is grown
+   * by splitting it, again and again, each piece taking a rule - arch,
+   * sag, twist, kink, stretch, an S - never the rule of the piece it came
+   * from nor of the piece beside it, so no two strokes are alike, and the
+   * rules it took are its signature. Along it are its stations - head,
+   * neck, shoulders, ribs, hips, tail root - and at each a blob of mass,
+   * itself bent by a rule of its own (swell, squash, taper, lump, lean),
+   * neighbours never the same. From stations sprout smaller strokes by the
+   * same kind of rules: legs down to the ground, a tail on from the tail
+   * root, ears up from the head. Everything is seen in the painting's
+   * view, and drawn by the sketches' hand: one line round all of it over
+   * one flat of its coat, the coat's markings following the stroke. */
+  const LINE_RULES = ["arch", "sag", "twist", "kink", "stretch", "s"];
+  const BLOB_RULES = ["swell", "squash", "taper", "lump", "lean"];
+  const TAIL_RULES = ["sweep", "hook", "droop", "lift", "s"];
+  // A cat's line of action by pose: head and tail bone (x forward, y down, z
+  // toward you), its legs, and a rule the whole line must take.
+  const CAT_LINES = {
+    stand: { head: [0.5, -0.68, 0], tail: [-0.5, -0.58, 0], legs: "four" },
+    walk: { head: [0.52, -0.62, 0], tail: [-0.5, -0.56, 0], legs: "four", stride: 0.32 },
+    sit: { head: [0.18, -1.02, 0], tail: [-0.22, -0.18, 0], legs: "sit" },
+    front: { head: [0, -1.02, 0.22], tail: [0, -0.2, -0.3], legs: "front" },
+    loaf: { head: [0.46, -0.5, 0], tail: [-0.44, -0.26, 0], legs: "tucked" },
+    curl: { head: [0.34, -0.36, 0.12], tail: [-0.36, -0.28, 0.12], legs: "none", force: "arch", bow: 0.55 },
+  };
+  const CAT_STATIONS = [["head", 0], ["neck", 0.13], ["shoulders", 0.3], ["ribs", 0.52], ["hips", 0.84], ["root", 1]];
+
+  // A stroke from a to b grown by rules: its points and the rules it took.
+  function growStroke(a, b, rng, { depth = 3, rules = LINE_RULES, force = null, bow = 0.3, up = [0, -1, 0], side = [0, 0, 1] } = {}) {
+    const took = [], out = [a];
+    const split = (p, q, d, parent, sibling, forced) => {
+      if (d === 0) { out.push(q); return null; }
+      const options = rules.filter((r) => r !== parent && r !== sibling);
+      const rule = forced || options[Math.floor(rng() * options.length)];
+      took.push(rule);
+      const len = Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]);
+      const amt = len * (forced ? bow : (0.06 + 0.1 * rng()) * (d === depth ? 0.7 : 1));
+      const sign = rng() < 0.5 ? -1 : 1;
+      let t = 0.5, off = [0, 0, 0], kids = [null, null];
+      if (rule === "arch" || rule === "lift") off = v3.scale(up, amt);
+      else if (rule === "sag" || rule === "droop") off = v3.scale(up, -amt * 0.7);
+      else if (rule === "twist") off = v3.scale(side, amt * sign);
+      else if (rule === "kink") { t = sign > 0 ? 0.32 : 0.68; off = v3.scale(up, amt * 0.6); }
+      else if (rule === "s") { kids = ["arch", "sag"]; }
+      else if (rule === "sweep") off = v3.add(v3.scale(up, amt * 0.4), side, amt * 0.5 * sign);
+      else if (rule === "hook") { t = 0.7; off = v3.scale(up, amt * 1.1); }
+      const m = v3.add([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t], off);
+      const first = split(p, m, d - 1, rule, null, kids[0] && rules.includes(kids[0]) ? kids[0] : null);
+      split(m, q, d - 1, rule, first, kids[1] && rules.includes(kids[1]) ? kids[1] : null);
+      return rule;
+    };
+    split(a, b, depth, null, null, force);
+    return { pts: smoothPath(out, 4), rules: took };
+  }
+  // Catmull-Rom through the points, n between each.
+  function smoothPath(pts, n) {
+    if (pts.length < 3) return pts;
+    const out = [];
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || pts[i + 1];
+      for (let k = 0; k < n; k++) {
+        const t = k / n, t2 = t * t, t3 = t2 * t;
+        out.push([0, 1, 2].map((c) => 0.5 * (2 * p1[c] + (p2[c] - p0[c]) * t + (2 * p0[c] - 5 * p1[c] + 4 * p2[c] - p3[c]) * t2 + (3 * p1[c] - p0[c] - 3 * p2[c] + p3[c]) * t3)));
+      }
+    }
+    out.push(pts[pts.length - 1]);
+    return out;
+  }
+  // The point and the way on at a share of the stroke's length.
+  function along(pts, f) {
+    const seg = [];
+    let total = 0;
+    for (let i = 0; i + 1 < pts.length; i++) { const l = Math.hypot(...v3.add(pts[i + 1], pts[i], -1)); seg.push(l); total += l; }
+    let need = clamp(f, 0, 1) * total;
+    for (let i = 0; i < seg.length; i++) {
+      if (need <= seg[i] || i === seg.length - 1) {
+        const t = seg[i] ? clamp(need / seg[i], 0, 1) : 0, a = pts[i], b = pts[i + 1];
+        return { p: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t], dir: v3.norm(v3.add(b, a, -1)) };
+      }
+      need -= seg[i];
+    }
+    return { p: pts[pts.length - 1], dir: [1, 0, 0] };
+  }
+
+  function growGesture(g, { age = null, pose = null } = {}) {
+    const rng = seeded(g.seed ^ 0x6e57);
+    const years = Number.isFinite(age) ? age : g.years;
+    const grown = smooth(years / 1.2), old = clamp((years - 10) / 5, 0, 1), kit = 1 - grown;
+    const P = pose || g.pose, L = CAT_LINES[P] || CAT_LINES.stand;
+    const mood = P === "curl" ? "sleepy" : g.mood;
+    const body = g.body * (0.72 + 0.28 * grown), girth = g.girth * (0.9 + 0.1 * grown) * (1 - 0.12 * old) * (1 + 0.25 * g.fluff);
+    const legs = g.legs * (0.78 + 0.22 * grown), head = g.head * (1 + 0.45 * kit), ears = g.ears * (1 + 0.5 * kit);
+    const tailLen = g.tail * (0.65 + 0.35 * grown), legW = girth * 0.3 * (1 + 0.2 * g.fluff);
+    const hk = legs / 0.52;
+    const place = ([x, y, z]) => [x * body, y * hk, z * body];
+    // ── The line of action.
+    const line = growStroke(place(L.head), place(L.tail), rng, { force: L.force || null, bow: L.bow || 0.3 });
+    const blobs = [];     // { c, axes: [[dir, r] x3], part, far, colour }
+    const sig = [...line.rules];
+    const blob = (c, dir, rx, ry, rz, part, extra = {}) => {
+      const u = v3.norm(dir), w0 = Math.abs(u[2]) > 0.9 ? [1, 0, 0] : [0, 0, 1];
+      const v = v3.norm(v3.cross(w0, u)), w = v3.norm(v3.cross(u, v));
+      blobs.push({ c, axes: [[u, rx], [v, ry], [w, rz]], part, ...extra });
+    };
+    // ── Masses at its stations, each bent by a rule unlike its neighbour's.
+    const radius = { head: 0, neck: girth * 0.75, shoulders: girth * 1.0, ribs: girth * 1.12, hips: girth * 1.05, root: girth * 0.45 };
+    let lastRule = null;
+    const shape = {};
+    for (const [name, f] of CAT_STATIONS) {
+      if (name === "head") continue;
+      const options = BLOB_RULES.filter((r) => r !== lastRule);
+      const rule = options[Math.floor(rng() * options.length)];
+      lastRule = rule; sig.push(rule);
+      let rx = radius[name] * 1.25, ry = radius[name], rz = radius[name] * 0.9, c = along(line.pts, f);
+      if (rule === "swell") { rx *= 1.12; ry *= 1.12; rz *= 1.1; }
+      else if (rule === "squash") { ry *= 0.82; rx *= 1.15; }
+      else if (rule === "taper") { rx *= 1.3; ry *= 0.88; }
+      else if (rule === "lump") c = { ...c, p: v3.add(c.p, [0, -1, 0], radius[name] * 0.18) };
+      else if (rule === "lean") c = { ...c, dir: v3.norm(v3.add(c.dir, [0, -1, 0], 0.35)) };
+      shape[name] = { ...c, rx, ry, rz, off: v3.add(c.p, along(line.pts, f).p, -1) };
+    }
+    // The body between them: masses all along the line, each the size of the stations either side.
+    const st = CAT_STATIONS.filter(([n]) => n !== "head");
+    for (let k = 0; k <= 26; k++) {
+      const f = st[0][1] + (st[st.length - 1][1] - st[0][1]) * k / 26;
+      let i = 0;
+      while (i < st.length - 2 && f > st[i + 1][1]) i++;
+      const A = shape[st[i][0]], B = shape[st[i + 1][0]], t = clamp((f - st[i][1]) / (st[i + 1][1] - st[i][1]), 0, 1);
+      const at = along(line.pts, f);
+      const off = v3.add(v3.scale(A.off, 1 - t), B.off, t), dir = v3.norm(v3.add(v3.scale(at.dir, 1), v3.add(v3.scale(A.dir, 1 - t), B.dir, t), 0.5));
+      blob(v3.add(at.p, off), dir, A.rx + (B.rx - A.rx) * t, A.ry + (B.ry - A.ry) * t, A.rz + (B.rz - A.rz) * t, "body");
+    }
+    // ── The head, its muzzle forward, ears up.
+    // (The head held level whatever the line does: a sitting cat looks ahead, not up.)
+    const H = along(line.pts, 0), fwd = v3.norm([-H.dir[0], -H.dir[1] * 0.25, -H.dir[2]]);
+    const headC = v3.add(H.p, [0, -1, 0], head * 0.15);
+    blob(headC, fwd, head * 0.78, head * 0.7, head * 0.74, "head");
+    const muzzleC = v3.add(v3.add(headC, fwd, head * (0.42 + 0.25 * g.muzzle)), [0, 1, 0], head * 0.2);
+    blob(muzzleC, fwd, head * (0.28 + 0.1 * g.muzzle), head * 0.24, head * 0.3, "muzzle");
+    const earStrokes = [];
+    for (const s of [-1, 1]) {
+      const sideW = v3.norm(v3.cross([0, -1, 0], fwd));
+      const base = v3.add(v3.add(v3.add(headC, [0, -1, 0], head * 0.55), sideW, s * head * (0.3 + 0.25 * g.earSet)), fwd, -head * 0.08);
+      const tip = v3.add(v3.add(base, [0, -1, 0], ears * (2 - 0.35 * g.earSet)), sideW, s * ears * 0.5 * g.earSet);
+      earStrokes.push({ base, tip, s });
+      for (let k = 0; k <= 4; k++) {
+        const t = k / 4, p = [base[0] + (tip[0] - base[0]) * t, base[1] + (tip[1] - base[1]) * t, base[2] + (tip[2] - base[2]) * t];
+        const r = ears * 1.05 * (1 - t * 0.9);
+        blob(p, v3.add(tip, base, -1), r * 0.55, r, r * 0.5, "ear", { far: s < 0 });
+      }
+    }
+    // ── Legs: strokes down from shoulders and hips.
+    const limb = (from, foot, knee, w, far, paw = true) => {
+      const pts = smoothPath([from, knee, foot], 4);
+      for (let k = 0; k < pts.length; k++) {
+        const t = k / (pts.length - 1), r = w * (1.15 - 0.3 * t);
+        blob(pts[k], k + 1 < pts.length ? v3.add(pts[k + 1], pts[k], -1) : v3.add(pts[k], pts[k - 1], -1), r * 0.9, r, r, "leg", { far });
+      }
+      if (paw) blob(v3.add(foot, [Math.sign(fwd[0]) || 1, 0, 0], w * 0.3), [Math.sign(fwd[0]) || 1, 0, 0], w * 1.15, w * 0.55, w * 0.8, "paw", { far });
+      return pts;
+    };
+    const legLines = [];
+    const sh = shape.shoulders, hp = shape.hips;
+    const stride = L.stride || 0.06;
+    if (L.legs === "four") {
+      for (const s of [-1, 1]) {
+        const z = s * girth * 0.55, far = s < 0, swing = (s > 0 ? 1 : -1) * stride;
+        const fFrom = v3.add(sh.p, [0, 1, z / girth], girth * 0.45), fFoot = [sh.p[0] + swing * legs * 0.4, 0, sh.p[2] + z];
+        legLines.push(limb([fFrom[0], fFrom[1], sh.p[2] + z], fFoot, [sh.p[0] - legs * 0.06 + swing * legs * 0.15, -legs * 0.45, sh.p[2] + z], legW, far));
+        const hFrom = [hp.p[0], hp.p[1] + girth * 0.4, hp.p[2] + z], hFoot = [hp.p[0] - swing * legs * 0.4 + legs * 0.05, 0, hp.p[2] + z];
+        legLines.push(limb(hFrom, hFoot, [hp.p[0] + legs * 0.16, -legs * 0.5, hp.p[2] + z], legW * 1.1, far));
+      }
+    } else if (L.legs === "sit" || L.legs === "front") {
+      const forward = L.legs === "front" ? [0, 0, 1] : [1, 0, 0];
+      for (const s of [-1, 1]) {
+        const far = L.legs === "front" ? false : s < 0, z = s * girth * 0.5;
+        const sideV = L.legs === "front" ? [s * girth * 0.45, 0, 0] : [0, 0, z];
+        const from = v3.add(v3.add(sh.p, [0, 1, 0], girth * 0.4), sideV), foot = v3.add([sh.p[0], 0, sh.p[2]], v3.add(sideV, forward, girth * 0.35));
+        legLines.push(limb(from, foot, v3.add(v3.scale(v3.add(from, foot), 0.5), forward, girth * 0.05), legW, far));
+        // The haunch on the ground, its hind foot forward.
+        blob(v3.add([hp.p[0], -girth * 1.1, hp.p[2]], sideV, 0.4), [1, 0, 0], girth * 1.45, girth * 1.15, girth * 1.0, "body", { far });
+        blob(v3.add([hp.p[0], 0, hp.p[2]], v3.add(sideV, forward, girth * 0.9)), forward, girth * 0.7, legW * 0.6, legW * 0.8, "paw", { far });
+      }
+    } else if (L.legs === "tucked") {
+      for (const s of [-1, 1]) blob([sh.p[0] + girth * 0.55, -legW * 0.5, sh.p[2] + s * girth * 0.4], [1, 0, 0], legW * 1.3, legW * 0.6, legW * 0.8, "paw", { far: s < 0 });
+    }
+    // ── The tail: a stroke on from the tail root, by its own rules.
+    const root = along(line.pts, 1), lying = P === "sit" || P === "front" || P === "loaf" || P === "curl";
+    let tailDir = lying ? [Math.sign(fwd[0]) || 1, 0, 0.3] : v3.add(root.dir, [0, 0.35 - 0.45 * Math.max(0, g.tailCurl), 0], 1);
+    tailDir = v3.norm(tailDir);
+    const tailEnd = v3.add(root.p, tailDir, tailLen);
+    if (lying) tailEnd[1] = -girth * 0.3;
+    const tail = growStroke(lying ? [root.p[0], -girth * 0.3, root.p[2] + girth * 0.6] : root.p, tailEnd, rng, { depth: 2, rules: TAIL_RULES, force: g.tailCurl > 0.6 ? "hook" : null, bow: 0.25 });
+    sig.push(...tail.rules);
+    const tw = girth * 0.32 * (1 + 0.6 * g.fluff);
+    tail.pts.forEach((p, k) => { const t = k / (tail.pts.length - 1); blob(p, k + 1 < tail.pts.length ? v3.add(tail.pts[k + 1], p, -1) : tailDir, tw * 1.2, tw * (1 - 0.35 * t), tw * (1 - 0.35 * t), "tail"); });
+
+    // ── Seen: a little turned, a little from above, facing its way.
+    const facing = g.facing || 1, yaw = 0.32, pitch = 0.16;
+    const cyw = Math.cos(yaw), syw = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+    const proj = ([x, y, z]) => { const X = x * cyw + z * syw, z1 = -x * syw + z * cyw; return [X * facing, y * cp + z1 * sp, -y * sp + z1 * cp]; };
+    // A blob seen: the ellipse its axes make on the picture.
+    const ellipseOf = (b, n = 18) => {
+      const a = b.axes.map(([d, r]) => { const q = proj(d); return [q[0] * r, q[1] * r]; });
+      let sxx = 0, sxy = 0, syy = 0;
+      for (const [x, y] of a) { sxx += x * x; sxy += x * y; syy += y * y; }
+      const tr = sxx + syy, det = sxx * syy - sxy * sxy, disc = Math.sqrt(Math.max(0, tr * tr / 4 - det));
+      const l1 = tr / 2 + disc, l2 = Math.max(1e-9, tr / 2 - disc), ang = Math.abs(sxy) > 1e-12 ? Math.atan2(l1 - sxx, sxy) : (sxx >= syy ? 0 : Math.PI / 2);
+      const c = proj(b.c), r1 = Math.sqrt(l1), r2 = Math.sqrt(l2);
+      return Array.from({ length: n }, (_, i) => { const t = i / n * Math.PI * 2, x = Math.cos(t) * r1, y = Math.sin(t) * r2; return [c[0] + x * Math.cos(ang) - y * Math.sin(ang), c[1] + x * Math.sin(ang) + y * Math.cos(ang)]; });
+    };
+    const shapes = blobs.map((b) => ({ ...b, pts: ellipseOf(b), z: proj(b.c)[2] }));
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const s of shapes) for (const [x, y] of s.pts) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    const pad = girth * 0.05;
+    x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
+    const bw = x1 - x0, bh = y1 - y0, r4 = (v) => Math.round(v * 1e4) / 1e4;
+    const U = ([x, y]) => [r4((x - x0) / bw), r4((y - y0) / bh)];
+    const lw = 0.016, parts = [];
+    // One flat of the coat, the far legs and ear a shade darker, the near on top.
+    const outline = outlineOf(shapes.map((s) => s.pts), [], x0, y0, bw, bh, 220) || [];
+    for (const loop of outline) parts.push({ shape: "poly", smooth: true, pts: loop.map(U), colour: "fur", tone: 0 });
+    const coat = g.coat, isPoint = coat === "point", whiteFeet = coat === "tuxedo" || coat === "calico";
+    for (const s of shapes.filter((s) => s.far)) parts.push({ shape: "poly", smooth: true, pts: s.pts.map(U), colour: isPoint && (s.part === "paw" || s.part === "ear") ? "dark" : whiteFeet && s.part === "paw" ? "white" : "fur", tone: -0.14 });
+    // The near side over the far: its own flat, and a lighter line where it crosses the far legs.
+    const near = shapes.some((s) => s.far) ? outlineOf(shapes.filter((s) => !s.far).map((s) => s.pts), [], x0, y0, bw, bh, 220) || [] : [];
+    for (const loop of near) parts.push({ shape: "poly", smooth: true, pts: loop.map(U), colour: "fur", tone: 0 });
+    for (const s of shapes.filter((s) => !s.far && s.part !== "body" && s.part !== "tail").sort((a, b) => a.z - b.z)) {
+      const colour = isPoint && (s.part === "paw" || s.part === "ear" || s.part === "muzzle") ? "dark" : whiteFeet && s.part === "paw" ? "white" : coat === "tuxedo" && s.part === "muzzle" ? "white" : "fur";
+      parts.push({ shape: "poly", smooth: true, pts: s.pts.map(U), colour, tone: 0 });
+    }
+    // ── Markings, laid along the stroke.
+    const inside = (q) => outline.some((loop) => insidePoly(q, loop));
+    const markLine = (pts3, width, colour) => {
+      let run = [];
+      const flush = () => { if (run.length > 1) parts.push({ shape: "line", pts: run.map(U), width: r4(width / bw), colour, tone: 0 }); run = []; };
+      for (const p of pts3) { const q = proj(p); if (inside(q)) run.push(q); else flush(); }
+      flush();
+    };
+    if (coat === "tabby") {
+      for (let k = 0; k < g.stripes; k++) {
+        const at = along(line.pts, 0.28 + 0.6 * (k + 0.5) / g.stripes), r = girth * 1.05;
+        const side = [0, 0, 1];
+        markLine(Array.from({ length: 7 }, (_, i) => { const a = -Math.PI / 2 - 0.9 + 1.8 * i / 6; return v3.add(v3.add(at.p, [0, -1, 0], Math.cos(a + Math.PI / 2) * -r), side, Math.sin(a + Math.PI / 2) * r * 0.9); }), girth * 0.14, "dark");
+      }
+      for (let k = 2; k < tail.pts.length; k += 3) { const p = tail.pts[k]; markLine([v3.add(p, [0, -1, 0], tw), v3.add(p, [0, 1, 0], tw)], girth * 0.12, "dark"); }
+    }
+    if (coat === "calico" || coat === "tortie") {
+      const n = coat === "calico" ? 5 : 9;
+      for (let k = 0; k < n; k++) {
+        const at = along(line.pts, 0.2 + 0.75 * rng()), c = proj(v3.add(at.p, [0, -1, 0], girth * (0.2 + 0.5 * rng()))), r = girth * (coat === "calico" ? 0.45 + 0.3 * rng() : 0.25 + 0.2 * rng());
+        const pts = Array.from({ length: 14 }, (_, i) => { const a = i / 14 * Math.PI * 2, rr = r * (0.7 + 0.5 * rng()); return [c[0] + Math.cos(a) * rr * 1.3, c[1] + Math.sin(a) * rr * 0.75]; }).filter(inside);
+        if (pts.length > 2) parts.push({ shape: "poly", smooth: true, pts: pts.map(U), colour: k % 2 ? "patchB" : "patchA", tone: 0 });
+      }
+    }
+    if (coat === "tuxedo") {
+      const bib = proj(v3.add(v3.add(sh.p, fwd, girth * 0.6), [0, 1, 0], girth * 0.3));
+      const pts = ellipsePts(bib[0], bib[1], girth * 0.45, girth * 0.75).filter(inside);
+      if (pts.length > 2) parts.push({ shape: "poly", smooth: true, pts: pts.map(U), colour: "white", tone: 0 });
+    }
+    // ── The face, the sketches' way.
+    const fz = proj(fwd), facingYou = Math.abs(fz[2]) > 0.75;
+    const hc = proj(headC), hr = head * 0.75;
+    const sx = facing * (Math.sign(fz[0] * facing) || 1);
+    const eyes = facingYou ? [-1, 1].map((s) => [hc[0] + s * hr * 0.42, hc[1] - hr * 0.05]) : [[hc[0] + sx * hr * 0.42, hc[1] - hr * 0.12]];
+    const eyeR = head * g.eyes * 0.55;
+    for (const [ex, ey] of eyes) {
+      if (mood === "sleepy") { parts.push({ shape: "line", pts: [[ex - eyeR, ey], [ex, ey + eyeR * 0.4], [ex + eyeR, ey]].map(U), width: lw, colour: "line", tone: 0 }); continue; }
+      const ry = eyeR * (g.eyeShape === "round" ? 0.85 : 0.55) * (mood === "content" ? 0.6 : 1);
+      const almond = ellipsePts(ex, ey, eyeR * (facingYou ? 1 : 0.8), ry, g.eyeShape === "almond" ? -0.2 * sx : 0);
+      parts.push({ shape: "poly", smooth: true, pts: almond.map(U), colour: "eye", tone: 0 });
+      parts.push({ shape: "poly", pts: ellipsePts(ex + (facingYou ? 0 : sx * eyeR * 0.2), ey, ry * 0.42, ry * 0.42).map(U), colour: "pupil", tone: 0 });
+      parts.push({ shape: "line", pts: [...almond, almond[0]].map(U), width: r4(lw * 0.8), colour: "line", tone: 0 });
+    }
+    const mc = proj(muzzleC), noseAt = facingYou ? [hc[0], hc[1] + hr * 0.18] : [mc[0] + sx * head * 0.22, mc[1] - head * 0.06];
+    parts.push({ shape: "poly", pts: [[noseAt[0] - head * 0.07, noseAt[1] - head * 0.04], [noseAt[0] + head * 0.07, noseAt[1] - head * 0.04], [noseAt[0], noseAt[1] + head * 0.05]].map(U), colour: "nose", tone: 0 });
+    const m0 = [noseAt[0], noseAt[1] + head * 0.05];
+    parts.push({ shape: "line", pts: (facingYou ? [[m0[0] - head * 0.1, m0[1] + head * 0.08], m0, [m0[0] + head * 0.1, m0[1] + head * 0.08]] : [m0, [m0[0] - sx * head * 0.08, m0[1] + head * 0.09]]).map(U), width: r4(lw * 0.8), colour: "line", tone: 0 });
+    for (const s of facingYou ? [-1, 1] : [sx]) for (let k = -1; k <= 1; k++) {
+      const o = [noseAt[0] + s * head * 0.2, noseAt[1] + head * 0.1 + k * head * 0.07];
+      parts.push({ shape: "line", pts: [o, [o[0] + s * head * 0.28, o[1] + k * head * 0.05]].map(U), width: r4(lw * 0.8), colour: "line", tone: 0 });
+    }
+    // Crescents in the ears (the near one; both, facing you).
+    for (const e of earStrokes) {
+      if (!facingYou && e.s < 0) continue;
+      const b = proj(e.base), t = proj(e.tip), mid = [b[0] + (t[0] - b[0]) * 0.55, b[1] + (t[1] - b[1]) * 0.55];
+      parts.push({ shape: "line", pts: [[b[0] - ears * 0.18, b[1]], [mid[0] - ears * 0.05, mid[1]], [t[0], t[1] + ears * 0.2]].map(U), width: r4(lw * 0.8), colour: "line", tone: 0 });
+    }
+    // The one line round it (and the near side's, lighter, where it lies over the far).
+    for (const loop of near) parts.push({ shape: "line", pts: [...loop, loop[0]].map(U), width: r4(lw * 0.65), colour: "line", tone: 0 });
+    for (const loop of outline) parts.push({ shape: "line", pts: [...loop, loop[0]].map(U), width: lw, colour: "line", tone: 0 });
+    // Toe loops on the near paws on the ground.
+    for (const s of shapes) {
+      if (s.part !== "paw" || s.far) continue;
+      let px0 = Infinity, px1 = -Infinity, py1 = -Infinity;
+      for (const [x, y] of s.pts) { px0 = Math.min(px0, x); px1 = Math.max(px1, x); py1 = Math.max(py1, y); }
+      const w = px1 - px0, lead = facing > 0 ? px1 : px0, dir = facing > 0 ? -1 : 1;
+      for (let k = 0; k < 2; k++) {
+        const cx = lead + dir * w * (0.2 + 0.25 * k), r = w * 0.1;
+        parts.push({ shape: "line", pts: Array.from({ length: 7 }, (_, i) => { const a = Math.PI * (1 + i / 6); return U([cx + Math.cos(a) * r, py1 - r * 0.2 + Math.sin(a) * r * 1.2]); }), width: r4(lw * 0.7), colour: "line", tone: 0 });
+      }
+    }
+    // ── What it is, for the painter and the judge.
+    const tipY = Math.min(...earStrokes.map((e) => proj(e.tip)[1]));
+    const tailTip = proj(tail.pts[tail.pts.length - 1]), tailRoot = proj(tail.pts[0]);
+    const facts = { pose: P, kit, feet: L.legs === "four" ? 4 : 2, tail: true, aspect: bw / bh, headShare: (head * 2) / bh,
+      earsShow: tipY < y0 + bh * 0.15 || P === "curl" ? 1 : 0, tailOut: Math.hypot(tailTip[0] - tailRoot[0], tailTip[1] - tailRoot[1]) / bw,
+      signature: sig.map((r) => r.slice(0, 2)).join("") };
+    const colours = catColours(g);
+    const hd = U(hc);
+    return {
+      kind: "subject", anchor: "ground", size: clamp(0.22 + 0.14 * (1 - kit * 0.5) * (P === "curl" || P === "loaf" ? 0.8 : 1), 0.18, 0.4),
+      aspect: clamp(bw / bh, 0.4, 3), depth: 0.5, colours, parts, grown: true, grower: g.kind, age: r4(years), drawn: 3,
+      head: { x: hd[0], y: r4(hd[1] - hr / bh), w: r4(head * 1.6 / bw) }, facts, pose: P,
+      // The line of action as seen, its stations on it: for a brush to follow.
+      gesture: { line: line.pts.map((p) => U(proj(p))), tail: tail.pts.map((p) => U(proj(p))), legs: legLines.map((l) => l.map((p) => U(proj(p)))) },
+      anatomy: [...line.pts.slice(1).map((p, i) => ({ k: "bone", a: U(proj(line.pts[i])), b: U(proj(p)), r: r4(0.04 / bw) }))],
+    };
   }
 
   /* ── Faces ────────────────────────────────────────────────────────────
@@ -2113,6 +2137,6 @@
   const partName = (gene, value) => PART_WORDS[gene]?.[value] || `${value} ${gene === "eyeShape" ? "eyes" : gene === "pose" ? "pose" : gene}`;
 
   // A kind's drawings are of this make: one stored from an older make is drawn again.
-  const DRAWN = { face: 2, cat: 2 };
+  const DRAWN = { face: 2, cat: 3 };
   global.HexfieldGrowers = { GROWERS, WORDS, MASS, TRAITS, FACE_DEFAULTS, DRAWN, PART_GENES, partsOf, partName, traitsOf, kindOfWord, seed, mutate, crossover, distance, grow, growAt, judge, lifespan, patches };
 })(typeof window !== "undefined" ? window : globalThis);
