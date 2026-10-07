@@ -31739,6 +31739,8 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null, opening =
   plan.edgeStyle = choosePlanEdges(plan, params);
   plan.light = choosePlanLight(plan, params);
   plan.tips = choosePlanTips(plan, params);
+  // In runs from the catalogue, or copied stroke by stroke (Runs).
+  plan.marks = choosePlanMarks(plan);
   plan.finish = choosePlanFinish(plan, params);
   const { Lf, Lb } = planLuminanceStats(ref, width, height, plan);
   plan.lightOnDark = Math.abs(Lf - Lb) > 6 ? Lf > Lb : mulberry32((Number(drawSeed) || 7) >>> 0)() < 0.6;
@@ -34582,6 +34584,7 @@ function recordVisualVote(liked) {
   if (plan?.manner) variations[mannerVoteWord(plan.manner.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.dims) variations[dimsVoteWord(plan.dims.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.tips) variations[tipsVoteWord(plan.tips.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
+  if (plan?.marks) variations[marksVoteWord(plan.marks.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.finish) variations[finishVoteWord(plan.finish.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.finish?.look) variations[lookVoteWord(plan.finish.look)] = { size: 0, hue: 0, light: 0, literal: 0 };
   if (plan?.light) variations[lightVoteWord(plan.light.key)] = { size: 0, hue: 0, light: 0, literal: 0 };
@@ -34640,6 +34643,7 @@ function paintingChoices(plan) {
   if (plan.depthStyle) { const name = plan.depthStyle.name || plan.depthStyle.key; add(/depth$/.test(name) ? name : name + " depth", depthVoteWord(plan.depthStyle.key)); }
   if (plan.dims) add(plan.dims.name || plan.dims.key, dimsVoteWord(plan.dims.key));
   if (plan.tips) add(plan.tips.key + " brushes", tipsVoteWord(plan.tips.key));
+  if (plan.marks) add(plan.marks.name, marksVoteWord(plan.marks.key));
   return out;
 }
 
@@ -40996,6 +41000,9 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
     return lit ? litStrokeColour(colour, lit, strokePainter.plan) : colour;
   };
   let dropped = 0, spilt = 0;
+  // In runs from the catalogue (not a print's hatching, nor a flat manner's shapes).
+  const runMarks = strokePainter.plan?.marks?.key === "runs" && !hatch && !edgeStop;
+  const recentRuns = [];
   const order = paintingOrder(strokePainter.plan, width, height);
   const pending = (x, y) => cellError[Math.min(cellError.length - 1, ((y / cell) | 0) * cgw + ((x / cell) | 0))] > tolerance * 0.5;
   for (const start of chosen) {
@@ -41021,6 +41028,31 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
     // The light, put back after the palette has flattened it.
     const lit = lightAt(strokePainter.plan, start.x, start.y, width, height);
     colour = asPainted(colour, lit);
+    /* Painted in runs (Runs): a mark from the catalogue laid here, turned
+     * to the way the place runs - its contour, a plane's direction, a body
+     * - instead of one stroke walked toward the reference. */
+    if (runMarks) {
+      const gi = Math.min(gradient.gh - 1, (start.y | 0) >> 1) * gradient.gw + Math.min(gradient.gw - 1, (start.x | 0) >> 1);
+      const gX = gradient.gx[gi], gY = gradient.gy[gi], mag = Math.hypot(gX, gY);
+      let dx = mag < STROKE_GRADIENT_MIN ? Math.cos(strokeSettleAngle) : -gY / mag, dy = mag < STROKE_GRADIENT_MIN ? Math.sin(strokeSettleAngle) : gX / mag;
+      if (planeLock) {
+        const a = planeAt(strokePainter.plan, start.x, start.y, width, height);
+        if (Number.isFinite(a)) { dx = dx * (1 - planeLock) + Math.cos(a) * planeLock; dy = dy * (1 - planeLock) + Math.sin(a) * planeLock; }
+      }
+      if (anatomyK) [dx, dy] = followAnatomy(paintingAnatomyAt(strokePainter.plan, start.x, start.y), dx, dy, anatomyK);
+      const l = Math.hypot(dx, dy) || 1;
+      const run = pickRun(layer, rng, recentRuns);
+      recentRuns.push(run.id); if (recentRuns.length > 3) recentRuns.shift();
+      const air = airAt ? airAt(start.x, start.y) : 0;
+      for (const st of placeRun(run, start.x, start.y, dx / l, dy / l, radius * (1 - DEPTH_BRUSH.width * air), colour, rng, guarded, width, height)) {
+        if (strokes.length >= limit) break;
+        strokes.push(st);
+      }
+      run.uses++;
+      const used = strokePainter.plan ? (strokePainter.plan.runsUsed ||= {}) : null;
+      if (used) used[run.id] = (used[run.id] || 0) + 1;
+      continue;
+    }
     const points = [[start.x, start.y]];
     let crossed = 0;
     let x = start.x, y = start.y, lastDx = 0, lastDy = 0;
@@ -41229,6 +41261,128 @@ const TIP_KITS = {
   soft: { soft: 0.55, filbert: 0.25, round: 0.2 },
 };
 const tipsVoteWord = (key) => "tips" + String(key).replace(/[^a-z]/g, "");
+
+/* ── Runs: marks from an evolving catalogue ─────────────────────────────
+ * Copying a reference stroke by stroke ends up looking like a filter over
+ * it: every mark is only the reference's colour, laid along its contours.
+ * A painter has a repertoire instead - a sweep, a scumble, a hatch, a
+ * cross-hatch, a scatter of dabs, a fan, a broken line, a glaze, a lit and
+ * a shaded side laid together - and paints a place with one of them,
+ * turned to the way the place runs, as big as the brush, in colours round
+ * the place's own. A run is such a mark: a few strokes in its own frame
+ * (along, across; in brush widths) with colours as offsets from the
+ * place's colour. The catalogue starts with a hand-made few and evolves:
+ * every run a painting uses is remembered, KEEP and REJECT score them, and
+ * a kept painting's most used runs breed mutated children, while the
+ * weakest are dropped. Whether a painting paints in runs or copies stroke
+ * by stroke ("marks") is chosen and learned like its other choices. */
+const RUNS_KEY = "hexfield.runs.v1";
+const RUNS = { cap: 48, children: 2 };
+const marksVoteWord = (key) => "marks" + key;
+let runBook = null;
+function seedRuns() {
+  const S = (pts, w = 1, dc = [0, 0, 0], a) => ({ pts, w, dc, ...(a ? { a } : {}) });
+  const shade = (k) => [k, k, k];
+  const runs = [
+    { name: "sweep", size: 0.3, strokes: [S([[-3, 0.2], [-1, -0.25], [1, 0.1], [3, 0.45]], 1)] },
+    { name: "glaze", size: 0.4, strokes: [S([[-2.5, 0], [0, 0.15], [2.5, 0]], 1.8, [0, 0, 0], 0.5)] },
+    { name: "modelled", size: 1, strokes: [S([[-2, -0.6], [0, -0.75], [2, -0.6]], 0.8, shade(16)), S([[-2, 0.6], [0, 0.75], [2, 0.6]], 0.8, shade(-16))] },
+    { name: "fan", size: 1.2, strokes: [-0.6, -0.3, 0, 0.3, 0.6].map((a, i) => S([[0, 0], [Math.cos(a) * 2, Math.sin(a) * 2]], 0.55, shade((i - 2) * 5))) },
+    { name: "scumble", size: 1.6, strokes: [[0.3, 0.1], [-0.8, -0.3], [1.4, 0.4], [-0.2, -0.5], [0.9, 0.2]].map(([a, o], i) => S([[-Math.cos(a) * 0.9, o - Math.sin(a) * 0.9], [Math.cos(a) * 0.9, o + Math.sin(a) * 0.9]], 0.6, shade(i % 2 ? 9 : -7))) },
+    { name: "broken", size: 1.6, strokes: [-2, 0, 2].map((u, i) => S([[u - 0.7, 0.1 * i], [u + 0.7, 0.1 * i - 0.05]], 0.5, shade(i === 1 ? 6 : -4))) },
+    { name: "hatch", size: 2.2, strokes: [-1.5, -0.5, 0.5, 1.5].map((v, i) => S([[-1.2, v - 0.25], [1.2, v + 0.25]], 0.35, shade(i % 2 ? 7 : -8))) },
+    { name: "cross", size: 2.6, strokes: [...[-1, 0, 1].map((v) => S([[-1.1, v - 0.2], [1.1, v + 0.2]], 0.3, shade(-6))), ...[-1, 0, 1].map((u) => S([[u - 0.2, -1.1], [u + 0.2, 1.1]], 0.3, shade(8)))] },
+    { name: "dabs", size: 3, strokes: [[0, 0], [1, 0.6], [-0.9, 0.5], [0.5, -0.8], [-0.6, -0.7], [1.3, -0.2]].map(([u, v], i) => S([[u, v], [u + 0.25, v + 0.1]], 0.45, shade(i % 2 ? 10 : -10))) },
+  ];
+  return runs.map((r, i) => ({ id: "r" + (i + 1), ...r, kept: 0, rejected: 0, uses: 0, born: 0, parent: null }));
+}
+function runCatalogue() {
+  if (runBook) return runBook;
+  try { runBook = JSON.parse(localStorage.getItem(RUNS_KEY) || "null"); } catch { runBook = null; }
+  if (!Array.isArray(runBook?.runs) || !runBook.runs.length) { const runs = seedRuns(); runBook = { next: runs.length + 1, runs }; }
+  return runBook;
+}
+function saveRuns() {
+  try { localStorage.setItem(RUNS_KEY, JSON.stringify(runCatalogue())); } catch { /* full storage: this visit only */ }
+}
+// How a run has done with you: -1 .. 1, shrunk while it has few votes.
+const runRank = (run) => (run.kept - 0.8 * run.rejected) / (run.kept + run.rejected + 2);
+/* A run for a place: suited to the brush's size (each run has a size it
+ * suits, 0 the biggest brush .. 3 the finest), liked, and not the one
+ * just used (a painter does not repeat one mark across a passage). */
+function pickRun(layer, rng, recent) {
+  const runs = runCatalogue().runs;
+  const weights = runs.map((r) => Math.exp(2 * runRank(r)) * Math.exp(-((r.size - layer) ** 2) / 1.6) * (recent.includes(r.id) ? 0.25 : 1));
+  let x = rng() * weights.reduce((a, b) => a + b, 0), k = 0;
+  while (k < runs.length - 1 && (x -= weights[k]) > 0) k++;
+  return runs[k];
+}
+/* A run laid at a place: turned to the way it runs, as big as the brush,
+ * mirrored now and then, in colours round its colour - each stroke cut
+ * where it would reach a guarded place (lettering, a thing kept for its own brush). */
+function placeRun(run, x0, y0, dx, dy, radius, base, rng, blocked, width, height) {
+  const scale = radius * (0.85 + rng() * 0.3), flip = rng() < 0.5 ? -1 : 1, out = [];
+  for (const st of run.strokes) {
+    const points = [];
+    for (const [u, v0] of st.pts) {
+      const v = v0 * flip, x = x0 + (u * dx - v * dy) * scale, y = y0 + (u * dy + v * dx) * scale;
+      if (x < 0 || y < 0 || x >= width || y >= height || blocked(x, y)) break;
+      points.push([x, y]);
+    }
+    if (points.length < 2) continue;
+    const stroke = {
+      points, width: Math.max(1.2, radius * 2 * st.w * (0.85 + rng() * 0.3)),
+      colour: base.map((c, i) => Math.max(0, Math.min(255, Math.round(c + st.dc[i] + (rng() - 0.5) * 6)))),
+      bristle: rng(), run: run.id,
+    };
+    if (st.a) stroke.alpha = st.a;
+    out.push(stroke);
+  }
+  return out;
+}
+// A run bred from another: its strokes nudged, widened or narrowed, a stroke added or left out.
+function mutateRun(run, rng) {
+  const book = runCatalogue();
+  const strokes = run.strokes.map((st) => ({ ...st, pts: st.pts.map(([u, v]) => [+(u + (rng() - 0.5) * 0.6).toFixed(2), +(v + (rng() - 0.5) * 0.4).toFixed(2)]),
+    w: +Math.max(0.2, Math.min(2.2, st.w * (0.8 + rng() * 0.45))).toFixed(2), dc: st.dc.map((c) => Math.round(Math.max(-40, Math.min(40, c + (rng() - 0.5) * 14)))) }));
+  if (strokes.length > 1 && rng() < 0.25) strokes.splice(Math.floor(rng() * strokes.length), 1);
+  else if (strokes.length < 8 && rng() < 0.3) {
+    const c = strokes[Math.floor(rng() * strokes.length)], du = (rng() - 0.5) * 1.6, dv = (rng() - 0.5) * 1.2;
+    strokes.push({ ...c, pts: c.pts.map(([u, v]) => [+(u + du).toFixed(2), +(v + dv).toFixed(2)]) });
+  }
+  return { id: "r" + book.next++, name: run.name.replace(/[′]+$/, "") + "′", size: +Math.max(0, Math.min(3.2, run.size + (rng() - 0.5) * 0.8)).toFixed(2),
+    strokes, kept: 0, rejected: 0, uses: 0, born: Date.now(), parent: run.id };
+}
+/* What a vote on a painting says about the runs it was painted with: each
+ * counted for or against; a kept one's most used runs breed children, and
+ * the catalogue keeps to its size by dropping the weakest it has tried. */
+function runOutcome(plan, vote) {
+  const used = plan?.runsUsed;
+  if (!used || !Object.keys(used).length) return;
+  const book = runCatalogue(), byId = new Map(book.runs.map((r) => [r.id, r]));
+  for (const id of Object.keys(used)) { const r = byId.get(id); if (!r) continue; if (vote > 0) r.kept++; else r.rejected++; }
+  if (vote > 0) {
+    const rng = mulberry32((Date.now() ^ 0x52a7) >>> 0);
+    const top = Object.entries(used).sort((a, b) => b[1] - a[1]).slice(0, RUNS.children).map(([id]) => byId.get(id)).filter(Boolean);
+    for (const r of top) book.runs.push(mutateRun(r, rng));
+  }
+  while (book.runs.length > RUNS.cap) {
+    const tried = book.runs.filter((r) => r.uses > 20 || r.kept + r.rejected > 0);
+    const weakest = (tried.length ? tried : book.runs).slice().sort((a, b) => runRank(a) - runRank(b) || a.born - b.born)[0];
+    book.runs.splice(book.runs.indexOf(weakest), 1);
+  }
+  saveRuns();
+}
+// Whether this painting paints in runs or copies stroke by stroke.
+function choosePlanMarks(plan) {
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x3a71) >>> 0);
+  const scores = chooseByTaste(["runs", "copied"], {
+    rng, tasted: 0, axis: "marks", given: planStyleChain(plan), lean: (key) => key === "runs" ? 0.5 : 0,
+    learned: (key) => visualLearnedChoice(marksVoteWord(key)), taste: () => null,
+  });
+  plan.marksScores = summariseChoice(scores);
+  return { key: scores[0].key, name: scores[0].key === "runs" ? "marks from the catalogue" : "copied strokes" };
+}
 
 /* ── The light ──────────────────────────────────────────────────────────
  * Which light the painting is lit by (hexfield-craft.js, LIGHTS): noon sun,
@@ -42158,6 +42312,7 @@ function planStyleChain(plan) {
     anatomy: plan?.anatomy?.key || null,
     figure: plan?.figure?.key || null,
     edges: plan?.edgeStyle?.key || null,
+    marks: plan?.marks?.key || null,
     // The tuned value of the first filter's look, and of a stack's strength.
     tune: plan?.finish ? compactTune(plan.finish) : null,
   };
@@ -42281,7 +42436,7 @@ function computeStyleOutcomeStats() {
 /* A chain's choices as small numbers (axis and option), worked out once per
  * row: counting every pair of hundreds of chains by name cost a phone tens
  * of milliseconds. */
-const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form", "look", "light", "combo", "finish2", "look2", "comp", "morph", "depth", "anatomy", "figure", "edges", "opening"];
+const STYLE_AXES = ["manner", "tips", "finish", "dims", "perspective", "form", "look", "light", "combo", "finish2", "look2", "comp", "morph", "depth", "anatomy", "figure", "edges", "opening", "marks"];
 function compactTune(finish) {
   const v = tuneValue(finish.key, finish.settings || {});
   const layer = finish.layers?.[0];
@@ -42374,6 +42529,7 @@ function recordStyleVote(plan, liked) {
   if (plan.morph) morphOutcome(plan.morph, { vote: liked ? 1 : -1 });
   if (plan.scene?.growers) growerOutcomes(plan.scene.growers, { vote: liked ? 1 : -1 });
   if (plan.opening) openingRuleOutcome(plan.opening, { vote: liked ? 1 : -1 });
+  runOutcome(plan, liked ? 1 : -1);
   return row;
 }
 
