@@ -9439,7 +9439,13 @@ function applyHalftone(ctx, W, H, cfg) {
  * ranked went through the compositor and got it. The studio would have chosen a
  * newsprint fractal and posted the customer a glossy one. Fractals are ranks 1,
  * 2 and 5 of the museum, so that is most of the shop. */
+/* The field's own print screens (a halftone, a Munker-White grating) are
+ * dormant: the field is the ground a painting is painted toward, and the
+ * brushes copied the screen's dots as noise, or a painting arrived looking
+ * printed. Kept, and back by setting this true. */
+const FIELD_SCREENS = false;
 function screenIfPrinted(ctx, W, H, p) {
+  if (!FIELD_SCREENS) return;
   if (!p?.halftone || p.halftone.mode === "off") return;
   // Words that named a colour are never printed in black ink only - see
   // mergeWordRecipe. Checked here too, because a refinement can re-roll the
@@ -9460,7 +9466,7 @@ function screenIfPrinted(ctx, W, H, p) {
  * stripe width) so a dot never straddles two bands, which is what would
  * wash the effect out. */
 function drawMunkerIllusion(ctx, W, H, cfg, palette) {
-  if (!cfg) return;
+  if (!cfg || !FIELD_SCREENS) return;
   const horizontal = cfg.orientation !== "vertical";
   const across = horizontal ? H : W;
   const along = horizontal ? W : H;
@@ -22628,11 +22634,11 @@ function scoreColourTreatment(candidate) {
 let colourBallotRun = null;
 let colourBallotKey = "";
 function scheduleColourTreatmentChoice(reason = "taste", asked = Date.now()) {
-  /* Nothing waits on the ballot, so it waits for a painting's strokes to be
-   * landing: run while a new painting was being prepared, it took 1.6s of a
-   * phone's processor from the 6s before the first stroke. (At most 20s.) */
-  if (!(strokePainter.strokes > 0) && Date.now() - asked < 20000) {
-    setTimeout(() => scheduleColourTreatmentChoice(reason, asked), 700);
+  /* Nothing waits on the ballot, so it waits for the painting to be done:
+   * run while one was being prepared or painted, each of its samples was a
+   * freeze of its own on a phone. (At most three minutes.) */
+  if (!paintingFinishedAt && Date.now() - asked < 180000) {
+    setTimeout(() => scheduleColourTreatmentChoice(reason, asked), 1500);
     return;
   }
   const key = visibleTasteEpoch + "|" + (globalTaste.ready ? globalTaste.effectiveSampleCount : 0);
@@ -28028,6 +28034,10 @@ let tasteCycleCanvas = null;
 let tasteCycleRetryArmed = false;
 function runTasteCycle(source = "visitor") {
   if (tasteCycleState.running) return Promise.resolve(null);
+  /* Never on a phone by itself: sixteen test renders froze the page for
+   * seconds at a time while a painting was being painted. (A phone already
+   * skips the background sim for the same reason.) */
+  if (source === "autonomous" && isMobileBrowser()) return Promise.resolve(null);
   /* Background learning, not the painting. On a phone it waits until nobody
    * has touched the page for 45s, so it never lands on someone reaching for a
    * button - it used to start 30s after load, exactly when people start. */
@@ -28176,10 +28186,16 @@ function runTasteCycle(source = "visitor") {
        * when the ledger actually took it. */
       const recorded = await shareTasteCycle(tasteStudies, populationSize * generations, source);
       const winner = ranked[0];
-      current = { ...winner, rejected: Math.max(0, populationSize * generations - 1), cycle: true, action: "taste-cycle" };
       remember(winner.params.field, winner.sig, winner.params);
-      draw(current);
-      showCandidates(ranked);
+      /* Background learning keeps to the background: its winner used to
+       * replace the painting on the easel - a restart part-way through, with
+       * the same words and a different picture. Only a cycle someone asked
+       * for puts its winner up. */
+      if (source !== "autonomous") {
+        current = { ...winner, rejected: Math.max(0, populationSize * generations - 1), cycle: true, action: "taste-cycle" };
+        draw(current);
+        showCandidates(ranked);
+      }
       tasteCycleState = {
         running: false,
         completed: (Number(tasteCycleState.completed) || 0) + 1,
@@ -28272,9 +28288,20 @@ function trimAnalysisJobs() {
   for (const [key] of stale) analysisJobs.delete(key);
 }
 
+// Resolves once the painting on the easel is finished (or after a few minutes regardless).
+function paintingAtRest(limitMs = 180000) {
+  const until = Date.now() + limitMs;
+  return new Promise((resolve) => {
+    const check = () => (paintingFinishedAt || Date.now() > until ? resolve() : setTimeout(check, 1000));
+    check();
+  });
+}
+
 function draw(result, options = {}) {
   beginRenderTiming(result);
   const committed = drawImmediate(result, options);
+  // KEEP and REJECT are live from the painting's first stroke (its measurements wait for it to finish).
+  updateHumanVoteButtons();
   // A held refinement deliberately leaves the existing canvas and its dwell
   // clock alone. There is no new image to analyse, learn from, or claim as a
   // fresh observation.
@@ -28306,8 +28333,10 @@ function draw(result, options = {}) {
     setTimeout(async () => {
       try {
         // One analysis at a time: they share the harvest and learning state,
-        // and each now yields between its measuring passes.
-        const run = analysisChain.then(() => analyseRender(result));
+        // and each now yields between its measuring passes. And not while a
+        // painting is being painted: run as one began, its measuring passes
+        // were the longest freezes a phone had left (Painting first).
+        const run = analysisChain.then(() => paintingAtRest()).then(() => analyseRender(result));
         analysisChain = run.catch(() => {});
         await run;
         const record = analysisJobs.get(key);
@@ -31044,6 +31073,21 @@ function updatePainterStatus(result) {
   lastPassCompletedAt = Date.now();
   const label = document.getElementById("painterStatus");
   if (!label) return;
+  // A painting being set up, or painted (Painting first): what it paints, and how far along.
+  if (strokePainter.preparing || (current?.params && !strokePainter.plan)) {
+    label.textContent = "starting a new painting · " + (wordPromptText() || "its own subject");
+    return;
+  }
+  if (strokePainter.plan && paintingFinishedAt) {
+    label.textContent = "finished · KEEP keeps it up longer, REJECT moves on";
+    return;
+  }
+  if (strokePainter.plan && current?.params) {
+    const plan = strokePainter.plan, layers = plan ? maxStrokeLayer(plan) + 1 : 0;
+    label.textContent = "painting" + (layers ? " · brush " + (Math.min(strokePainter.layer, layers - 1) + 1) + " of " + layers : "") +
+      " · " + (Number(strokePainter.strokes) || 0).toLocaleString() + " strokes";
+    return;
+  }
   const state = result?.params?.__hexfieldArtifactState;
   const parts = ["seed held", `pass ${Math.max(1, painterPass)}`];
   if (result?.paintCommit === "lay-in") {
@@ -31329,6 +31373,8 @@ function continuePaintOpening(result) {
 const STROKE_LAYER_FRACTIONS = [1 / 12, 1 / 24, 1 / 48, 1 / 96];
 // Batches a layer gets before the next, finer brush takes over.
 const STROKE_LAYER_BATCHES = [2, 3, 4, 6];
+// How many of its layer's passes the finest brush gets before the painting is done with it.
+const FINEST_BATCHES = 2;
 const STROKE_ERROR_TOLERANCE = 20;
 const STROKE_BATCH = isMobileBrowser() ? 140 : 260;
 const STROKES_PER_FRAME = isMobileBrowser() ? 18 : 40;
@@ -31645,14 +31691,6 @@ function regionBlob(members, sw, sh, width, height, rgb) {
 function setBlobPitch(blobs, plan, height) {
   const eyeY = plan.scene?.view?.horizon ?? height * 0.5;
   for (const blob of blobs || []) blob.pitch = Math.max(-1, Math.min(1, (blob.box.y + blob.box.h / 2 - eyeY) / height * 2.4));
-}
-
-/* Things that can be put onto a blob when the words name nothing to put
- * them on: "a hat", "a flag", "apples". */
-const BLOB_ADDABLE = new Set(["hat", "crown", "flag", "chimney", "apple", "flower", "bird", "star", "candle", "balloon", "umbrella"]);
-function blobSpot(subject) {
-  if (["apple", "flower", "bird", "star"].includes(subject.key) && subject.count > 1) return "canopy";
-  return subject.key === "chimney" ? "roof" : "top";
 }
 
 /* Strokes wrap round forms. Each named thing and each blob is a frame; a
@@ -33829,7 +33867,26 @@ function rememberChoice(axis, key) {
   try { localStorage.setItem(RECENT_CHOICES_KEY, JSON.stringify(all)); } catch { /* memory only */ }
 }
 
+/* Fewer choices: each painting used to roll some twenty choices (its
+ * manner, light and brushes, but also how abstract, how it opened, its
+ * finish and filters, its depth, edges, perspective...), so your votes were
+ * spread thin over all of them and seldom added up to a picture, and some
+ * undid the others (a finish screened over the brushwork; an opening read
+ * a blob as something else and painted that). Four stay choices - the
+ * manner, the light, the brushes and where the focus goes - and the rest
+ * are set to what reads best. Their code is all still here: an axis comes
+ * back by taking it out of this list. */
+const PINNED_CHOICES = {
+  abstraction: "faithful", anatomy: "guided", application: "opaque", combo: "single", critic: "critic",
+  depth: "air", dims: "shaded", edges: "gentle", figure: "clear", finish: "none", form: "plain",
+  marks: "runs", morph: "none", opening: "copy", perspective: "one-point", refColour: "own", turn: "three",
+};
 function chooseByTaste(keys, { lean, learned, rng, taste, tasted = 3, axis = null, given = null }) {
+  const pinned = axis ? PINNED_CHOICES[axis] : null;
+  if (pinned && keys.includes(pinned)) {
+    return keys.map((key) => ({ key, lean: 0, learned: 0, chance: 0, taste: null, used: 0, outcome: 0, pair: 0,
+      prior: key === pinned ? 1 : 0, score: key === pinned ? 1 : 0, pinned: true })).sort((a, b) => b.score - a.score);
+  }
   // Each preview is a small render; a phone tastes two at most.
   if (isMobileBrowser()) tasted = Math.min(tasted, 2);
   // Variety: an option chosen in most recent paintings gives way a little.
@@ -34056,14 +34113,10 @@ function planScene(params, width, height, fx, drawSeed, ref = null, blobs = null
   // (The garden's pick stands with the named things, too.)
   if (morph && (!read.subjects.length || morph.favourite)) read.subjects.push({ key: "morph", entry: morph.entry, count: 1, colour: null, morph: true });
   if (!read.subjects.length && !read.settings.length && !letters) return null;
-  /* Words that name only things to put onto something - "a hat", "a flag",
-   * "apples" - put them onto the painting's main blob, in its tilt and
-   * perspective: the abstract shape becomes what wears the hat. */
-  const hostless = read.subjects.filter((s) => !s.attach);
-  if (blobs?.length && hostless.length && hostless.every((s) => BLOB_ADDABLE.has(s.key))) {
-    read.blobs = blobs;
-    for (const s of hostless) s.attach = { blob: 0, spot: blobSpot(s) };
-  }
+  /* (Words that named only things to put onto something - "a hat", "a
+   * flag" - used to put them onto the field's main blob, which made the
+   * thing the painting was of a speck on top of an abstract shape. A thing
+   * with nothing named to put it on is the subject now.) */
   const rng = mulberry32(((Number(drawSeed) || 0) ^ 0x5ce4e) >>> 0);
   // Things grown from rules take kept outcomes, one per copy (Growers).
   const growers = growSceneSubjects(read, rng, text);
@@ -34691,22 +34744,23 @@ function recordVisualVote(liked) {
 function paintingChoices(plan) {
   if (!plan) return [];
   const scene = plan.scene, out = [];
-  const add = (label, word) => { if (label && /^[a-z]{1,24}$/.test(word)) out.push({ label, word }); };
-  if (plan.manner) add(plan.manner.name || plan.manner.key, mannerVoteWord(plan.manner.key));
-  if (plan.abstraction) add(plan.abstraction.name, abstractionVoteWord(plan.abstraction.key));
-  if (plan.turn) add("turned " + plan.turn.name, turnVoteWord(plan.turn.key));
-  if (plan.application) add(plan.application.name, applyVoteWord(plan.application.key));
-  if (plan.opening) add("began " + plan.opening.name + (plan.opening.seen?.length ? " (saw " + plan.opening.seen.join(", ") + ")" : ""), openingVoteWord(plan.opening.key));
-  if (plan.light) add(plan.light.name || plan.light.key, lightVoteWord(plan.light.key));
+  // (A choice that is set, not chosen - PINNED_CHOICES - is not offered: a vote on it would teach nothing.)
+  const add = (label, word, axis = null) => { if (label && /^[a-z]{1,24}$/.test(word) && !(axis && PINNED_CHOICES[axis])) out.push({ label, word }); };
+  if (plan.manner) add(plan.manner.name || plan.manner.key, mannerVoteWord(plan.manner.key), "manner");
+  if (plan.abstraction) add(plan.abstraction.name, abstractionVoteWord(plan.abstraction.key), "abstraction");
+  if (plan.turn) add("turned " + plan.turn.name, turnVoteWord(plan.turn.key), "turn");
+  if (plan.application) add(plan.application.name, applyVoteWord(plan.application.key), "application");
+  if (plan.opening) add("began " + plan.opening.name + (plan.opening.seen?.length ? " (saw " + plan.opening.seen.join(", ") + ")" : ""), openingVoteWord(plan.opening.key), "opening");
+  if (plan.light) add(plan.light.name || plan.light.key, lightVoteWord(plan.light.key), "light");
   if (plan.weather) add(plan.weather.kinds.join(" + ") + " · " + plan.weather.key, weatherVoteWord(plan.weather.key));
   if (plan.water) add(plan.water.name, waterVoteWord(plan.water.key));
-  if (plan.finish && plan.finish.key !== "none") add("finish: " + (plan.finish.look ? plan.finish.look.replace(/^[a-z]+\./, "") : plan.finish.key), plan.finish.look ? lookVoteWord(plan.finish.look) : finishVoteWord(plan.finish.key));
-  if (scene?.perspective) add(scene.perspective.name || scene.perspective.key, perspVoteWord(scene.perspective.key));
-  if (plan.depthStyle) { const name = plan.depthStyle.name || plan.depthStyle.key; add(/depth$/.test(name) ? name : name + " depth", depthVoteWord(plan.depthStyle.key)); }
-  if (plan.dims) add(plan.dims.name || plan.dims.key, dimsVoteWord(plan.dims.key));
-  if (plan.tips) add(plan.tips.key + " brushes", tipsVoteWord(plan.tips.key));
-  if (plan.marks) add(plan.marks.name, marksVoteWord(plan.marks.key));
-  if (plan.critic) add(plan.critic.name, criticVoteWord(plan.critic.key));
+  if (plan.finish && plan.finish.key !== "none") add("finish: " + (plan.finish.look ? plan.finish.look.replace(/^[a-z]+\./, "") : plan.finish.key), plan.finish.look ? lookVoteWord(plan.finish.look) : finishVoteWord(plan.finish.key), "finish");
+  if (scene?.perspective) add(scene.perspective.name || scene.perspective.key, perspVoteWord(scene.perspective.key), "perspective");
+  if (plan.depthStyle) { const name = plan.depthStyle.name || plan.depthStyle.key; add(/depth$/.test(name) ? name : name + " depth", depthVoteWord(plan.depthStyle.key), "depth"); }
+  if (plan.dims) add(plan.dims.name || plan.dims.key, dimsVoteWord(plan.dims.key), "dims");
+  if (plan.tips) add(plan.tips.key + " brushes", tipsVoteWord(plan.tips.key), "tips");
+  if (plan.marks) add(plan.marks.name, marksVoteWord(plan.marks.key), "marks");
+  if (plan.critic) add(plan.critic.name, criticVoteWord(plan.critic.key), "critic");
   return out;
 }
 
@@ -39762,7 +39816,11 @@ function choosePlanManner(plan, composed, width, height, params) {
   const sctx = small.getContext("2d", { willReadFrequently: true });
   const leans = Craft.wordLeans(params?.__hexfieldWords?.text || "", params?.__hexfieldWords?.axes || {});
   const scores = chooseByTaste(Craft.KEYS, {
-    rng, axis: "manner", given: planStyleChain(plan), lean: (key) => leans[key] || 0, learned: (key) => visualLearnedChoice(mannerVoteWord(key)),
+    // (A phone does not taste drafts of the manners: two of them held the page
+    // for a third of a second as each painting began. Votes and how each
+    // manner's paintings have scored choose it there.)
+    rng, axis: "manner", given: planStyleChain(plan), tasted: isMobileBrowser() ? 0 : 3,
+    lean: (key) => leans[key] || 0, learned: (key) => visualLearnedChoice(mannerVoteWord(key)),
     taste: (key) => {
       // A throwaway plan at the small size: its own palette, no scene layer.
       const probe = { ...plan, palette: null, manner: Craft.manner(key), scene: null, contourInk: null };
@@ -40925,10 +40983,12 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
   let cells = 0;
   // Where the director asked for more work a place is painted sooner, and where it asked for less, later.
   const directed = directiveLean(width, height);
+  // ...and while the darks or lights are being pushed, the broad brushes take on smaller differences.
+  const valued = layer <= 1 && valueDirected() ? 0.7 : 1;
   const toleranceAt = directed ? (x, y) => {
     const lean = directed(x, y);
-    return tolerance * (lean > 0 ? 1 - 0.5 * lean : 1 - 0.6 * lean);
-  } : () => tolerance;
+    return valued * tolerance * (lean > 0 ? 1 - 0.5 * lean : 1 - 0.6 * lean);
+  } : () => valued * tolerance;
   // How far each cell is from the reference: whether it is still to be painted.
   const cgw = Math.ceil(width / cell), cellError = new Float32Array(cgw * Math.ceil(height / cell));
   for (let cy = 0; cy < height; cy += cell) {
@@ -40946,6 +41006,17 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       cellError[((cy / cell) | 0) * cgw + ((cx / cell) | 0)] = n ? sum / n : 0;
       if (guarded(wx, wy)) continue;
       if (n && sum / n > toleranceAt(wx, wy)) starts.push({ x: wx, y: wy, error: sum / n });
+    }
+  }
+  /* In the critic's turn the brushes work only where it asked - a painting
+   * it looks at is done, and its other places stay as they are. */
+  const turn = criticTurnBatch ? activeDirective() : null;
+  if (turn) {
+    for (let i = starts.length - 1; i >= 0; i--) {
+      const st = starts[i], c = colourAt(ref, st.x, st.y), L = 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
+      let w = 0;
+      for (const r of turn.regions) w = Math.max(w, regionWeight(r, st.x / width, st.y / height, L));
+      if (w < 0.12) starts.splice(i, 1);
     }
   }
   /* The two finest brushes work mostly at the focus; elsewhere a start
@@ -41384,9 +41455,11 @@ const runRank = (run) => (run.kept - 0.8 * run.rejected) / (run.kept + run.rejec
 /* A run for a place: suited to the brush's size (each run has a size it
  * suits, 0 the biggest brush .. 3 the finest), liked, and not the one
  * just used (a painter does not repeat one mark across a passage). */
+// Runs of thin parallel lines (hatch, cross and what they bred) are not picked: brush-sized they read as glyphs - |||, # - not paint.
+const GLYPH_RUNS = /^(hatch|cross)/;
 function pickRun(layer, rng, recent, favoured = null) {
   const runs = runCatalogue().runs;
-  const weights = runs.map((r) => Math.exp(2 * runRank(r)) * Math.exp(-((r.size - layer) ** 2) / 1.6) * (recent.includes(r.id) ? 0.25 : 1) *
+  const weights = runs.map((r) => GLYPH_RUNS.test(r.name) ? 0 : Math.exp(2 * runRank(r)) * Math.exp(-((r.size - layer) ** 2) / 1.6) * (recent.includes(r.id) ? 0.25 : 1) *
     (favoured?.includes(r.name.replace(/′+$/, "")) ? 3 : 1));
   let x = rng() * weights.reduce((a, b) => a + b, 0), k = 0;
   while (k < runs.length - 1 && (x -= weights[k]) > 0) k++;
@@ -41604,7 +41677,8 @@ function directorContext(plan) {
  * With the owner's key it is Claude's; without, the painter's own critic. */
 function maybeDirect(plan) {
   if (!plan || !view?.width) return;
-  const d = plan.direction || (plan.direction = { asked: 0, at: Date.now(), done: false });
+  // (Not on a clock: the painter calls for a critique when it has nothing left to paint - paintNextBatch.)
+  const d = plan.direction || (plan.direction = { asked: 0, at: Infinity, done: false });
   if (d.done || d.asked >= DIRECTOR.perPainting || strokePainter.layer < 1 || Date.now() - d.at < DIRECTOR.every) return;
   if (!directorKey) {
     if (plan.critic?.key !== "critic") return;
@@ -41632,11 +41706,24 @@ function applyDirective(plan, result, who) {
     .filter((r) => DIRECTOR_ACTIONS.includes(r?.action))
     .map((r) => {
       const x = unit(r.x), y = unit(r.y);
+      const m = r.mask;
+      // (The painter's own critic says how its places are shaped; the director's are boxes.)
+      const mask = m?.kind === "value" ? { kind: "value", side: m.side === "light" ? "light" : "dark", mean: Number(m.mean) || 128 }
+        : m?.kind === "radial" ? { kind: "radial", x: unit(m.x), y: unit(m.y), r: Math.max(0.05, unit(m.r)), aspect: Number(m.aspect) || 1 } : null;
       return { x0: x, y0: y, x1: Math.min(1, x + Math.max(0.03, unit(r.w))), y1: Math.min(1, y + Math.max(0.03, unit(r.h))),
-        action: r.action, strength: unit(r.strength) || 0.5, rule: r.rule || null };
+        action: r.action, strength: unit(r.strength) || 0.5, rule: r.rule || null, mask };
     });
   const marks = (Array.isArray(result.marks) ? result.marks : []).map((m) => String(m).toLowerCase()).slice(0, 6);
   strokePainter.directive = { plan, regions, marks };
+  // (So the painter can tell whether this critique changed anything.)
+  d.strokesAt = Number(strokePainter.strokes) || 0;
+  /* A value or a colour is changed the way a painter changes it - the
+   * broad brush over the mass, then finer again - and only "detail" is
+   * fine work. (Done with the finest brush, a darker or lighter region
+   * came out as speckle over a third of the canvas.) */
+  if (regions.some((r) => r.action !== "detail") && strokePainter.layer > 1) strokePainter.layer = 1;
+  // (And the brushes it opens have their passes again.)
+  strokePainter.layerBatches = 0;
   (plan.directed ||= []).push({ who, note: String(result.note || ""), regions: regions.map((r) => r.rule || r.action), marks, done: d.done });
   for (const r of regions) if (r.rule) (plan.criticRules ||= {})[r.rule] = true;
   if (result.note) directorSay(who + ": " + result.note);
@@ -41734,16 +41821,20 @@ function localCritique(plan) {
   const spread = Math.sqrt(cells.reduce((a, x) => a + x.v + (x.L - meanL) ** 2, 0) / cells.length) || 1;
   const focus = blocks.reduce((a, b) => (b.far < a.far ? b : a));
   const away = blocks.filter((b) => b.far > CRITIC.far);
-  const round = blocks.filter((b) => b.far > focus.far + 0.08 && b.far < focus.far + 0.4);
+  const ring = blocks.filter((b) => b.far > focus.far + 0.08 && b.far < focus.far + 0.4);
   const clamp = (v) => Math.max(0, Math.min(1, v));
   const most = (list, f) => list.reduce((a, b) => (!a || f(b) > f(a) ? b : a), null);
   const found = [];
-  const say = (rule, block, action, need, note) => { if (block && need > 0) found.push({ rule, block, action, need, note }); };
+  /* Each finding's place: a soft round patch round a place, or the darks or
+   * the lights of the whole painting (regionWeight) - never a box. */
+  const round = (b, r = 0.2) => b && { kind: "radial", x: b.x + b.w / 2, y: b.y + b.h / 2, r, aspect };
+  const valueMask = (side) => ({ kind: "value", side, mean: meanL });
+  const say = (rule, block, action, need, note, mask = round(block)) => { if (block && need > 0) found.push({ rule, block, action, need, note, mask }); };
   // The focus should be where the most is going on.
   say("focus", focus, "detail", clamp((1 - focus.spread / spread) / 0.4), "sharpen the focus");
   // ...and stand apart from what is round it.
-  if (round.length) {
-    const ground = round.reduce((a, b) => a + b.L, 0) / round.length, diff = focus.L - ground;
+  if (ring.length) {
+    const ground = ring.reduce((a, b) => a + b.L, 0) / ring.length, diff = focus.L - ground;
     say("separate", focus, diff >= 0 ? "lighten" : "darken", 0.8 * clamp(1 - Math.abs(diff) / 30), "set the focus apart from its ground");
   }
   // Nothing far from it busier...
@@ -41757,30 +41848,30 @@ function localCritique(plan) {
   const range = values[Math.floor(values.length * 0.9)] - values[Math.floor(values.length * 0.1)];
   const need = clamp((80 - range) / 50);
   if (need > 0) {
-    say("masses", most(blocks, (b) => -b.L), "darken", need, "darker darks, lighter lights");
-    say("masses", most(blocks, (b) => b.L), "lighten", 0.8 * need, "darker darks, lighter lights");
+    say("masses", focus, "darken", need, "darker darks, lighter lights", valueMask("dark"));
+    say("masses", focus, "lighten", 0.8 * need, "darker darks, lighter lights", valueMask("light"));
   }
   // Warm light, cool shadows (and a moonlit picture cool in its lights).
   const light = plan.light?.key || "";
   if (["noon", "golden", "dusk", "dawn", "lamp", "backlit"].includes(light)) {
     const shade = most(blocks, (b) => -b.L);
-    if (shade) say("temperature", shade, "cool", clamp(shade.warm / 25), "cool the shadows");
+    if (shade) say("temperature", shade, "cool", clamp(shade.warm / 25), "cool the shadows", valueMask("dark"));
   } else if (light === "moon") {
     const lit = most(blocks, (b) => b.L);
-    if (lit) say("temperature", lit, "cool", clamp((lit.warm - 6) / 30), "cool the moonlit lights");
+    if (lit) say("temperature", lit, "cool", clamp((lit.warm - 6) / 30), "cool the moonlit lights", valueMask("light"));
   }
   // The strongest few, each rule weighed by how its paintings have done.
   for (const f of found) f.score = f.need * criticWeight(f.rule);
   const chosen = [];
   for (const f of found.filter((x) => x.score > 0.2).sort((a, b) => b.score - a.score)) {
     if (chosen.length >= CRITIC.keep) break;
-    if (chosen.some((x) => x.block === f.block && x.action === f.action)) continue;
+    if (chosen.some((x) => x.action === f.action && (x.mask?.kind === "value" ? x.mask.side === f.mask?.side : x.block === f.block))) continue;
     chosen.push(f);
   }
   if (!chosen.length) return { note: "it reads - leaving it be", regions: [], marks: [], done: true };
   return {
     note: [...new Set(chosen.map((f) => f.note))].join(" · "),
-    regions: chosen.map((f) => ({ x: f.block.x, y: f.block.y, w: f.block.w, h: f.block.h, action: f.action,
+    regions: chosen.map((f) => ({ x: f.block.x, y: f.block.y, w: f.block.w, h: f.block.h, action: f.action, mask: f.mask,
       strength: Math.min(1, (0.35 + 0.5 * f.need) * Math.min(1.3, criticWeight(f.rule))), rule: f.rule })),
     marks: [], done: false,
   };
@@ -41789,23 +41880,47 @@ const activeDirective = () => {
   const dir = strokePainter.directive;
   return dir && dir.plan === strokePainter.plan ? dir : null;
 };
+/* Where a directive works, as a weight 0..1 - never a box. A place the
+ * critic names is a soft round patch (strongest at its middle, nothing at
+ * its edge); "the darks" or "the lights" are those pixels across the whole
+ * painting, by how much darker or lighter than its middle value they are;
+ * the director's boxes are soft ovals inside them. (Bent as feathered
+ * boxes, a lighter region came out as a lighter rectangle.) */
+function regionWeight(r, fx, fy, L = null) {
+  const m = r.mask;
+  if (m?.kind === "value") {
+    if (L === null) return 0;
+    return Math.max(0, Math.min(1, (m.side === "dark" ? m.mean - L : L - m.mean) / 60));
+  }
+  const d = m?.kind === "radial"
+    ? Math.hypot((fx - m.x) * m.aspect, fy - m.y) / m.r
+    : Math.hypot((fx - (r.x0 + r.x1) / 2) / Math.max(0.01, (r.x1 - r.x0) / 2), (fy - (r.y0 + r.y1) / 2) / Math.max(0.01, (r.y1 - r.y0) / 2));
+  return d >= 1 ? 0 : (1 - d * d) ** 2;
+}
+// The part of the canvas (fractions) a region can reach: all of it for "the darks" or "the lights".
+function regionBounds(r) {
+  const m = r.mask;
+  if (m?.kind === "value") return [0, 0, 1, 1];
+  if (m?.kind === "radial") return [m.x - m.r / m.aspect, m.y - m.r, m.x + m.r / m.aspect, m.y + m.r];
+  return [r.x0, r.y0, r.x1, r.y1];
+}
+const valueDirected = () => activeDirective()?.regions.some((r) => r.mask?.kind === "value" && r.action !== "detail") || false;
 // How much a place is to be worked: >0 more (detail, and the places to change), <0 less (simplify), 0 untouched.
 function directiveLean(width, height) {
-  const dir = activeDirective();
-  if (!dir?.regions.length) return null;
+  const places = activeDirective()?.regions.filter((r) => r.mask?.kind !== "value") || [];
+  if (!places.length) return null;
   return (x, y) => {
     const fx = x / width, fy = y / height;
     let lean = 0;
-    for (const r of dir.regions) {
-      if (fx < r.x0 || fx > r.x1 || fy < r.y0 || fy > r.y1) continue;
-      lean += r.action === "detail" ? r.strength : r.action === "simplify" ? -r.strength : 0.5 * r.strength;
+    for (const r of places) {
+      const w = regionWeight(r, fx, fy);
+      if (w > 0) lean += w * (r.action === "detail" ? r.strength : r.action === "simplify" ? -r.strength : 0.5 * r.strength);
     }
     return Math.max(-1, Math.min(1, lean));
   };
 }
-/* The aim bent where the director asked: darker, lighter, warmer, cooler,
- * richer or quieter there, or (simplify) as a big brush means it - feathered
- * at the edges so a region reads as worked, not as a box. */
+/* The aim bent where the critic asked: darker, lighter, warmer, cooler,
+ * richer or quieter there, or (simplify) as a big brush means it. */
 const directedCache = { source: null, dir: null, map: null };
 function directedReference(ref, width, height) {
   const dir = activeDirective();
@@ -41816,23 +41931,24 @@ function directedReference(ref, width, height) {
   for (const r of dir.regions) {
     if (r.action === "detail") continue;
     if (r.action === "simplify" && !soft) soft = intentReference(ref, width, height, Math.min(width, height) / 30);
-    const x0 = Math.floor(r.x0 * width), x1 = Math.ceil(r.x1 * width), y0 = Math.floor(r.y0 * height), y1 = Math.ceil(r.y1 * height);
-    const feather = Math.max(2, 0.25 * Math.min(x1 - x0, y1 - y0));
+    const [bx0, by0, bx1, by1] = regionBounds(r);
+    const x0 = Math.max(0, Math.floor(bx0 * width)), x1 = Math.min(width, Math.ceil(bx1 * width));
+    const y0 = Math.max(0, Math.floor(by0 * height)), y1 = Math.min(height, Math.ceil(by1 * height));
     for (let y = y0; y < y1; y++) {
       for (let x = x0; x < x1; x++) {
-        const inside = Math.min(x - x0, x1 - 1 - x, y - y0, y1 - 1 - y) / feather;
-        const m = r.strength * (inside >= 1 ? 1 : inside * inside * (3 - 2 * inside));
-        if (m <= 0) continue;
         const o = (y * width + x) * 4;
+        const L0 = 0.299 * ref[o] + 0.587 * ref[o + 1] + 0.114 * ref[o + 2];
+        const m = r.strength * regionWeight(r, (x + 0.5) / width, (y + 0.5) / height, L0);
+        if (m <= 0) continue;
         let R = out[o], G = out[o + 1], B = out[o + 2];
         const L = 0.299 * R + 0.587 * G + 0.114 * B;
-        if (r.action === "darken") { R *= 1 - 0.35 * m; G *= 1 - 0.35 * m; B *= 1 - 0.35 * m; }
-        else if (r.action === "lighten") { R += (255 - R) * 0.3 * m; G += (255 - G) * 0.3 * m; B += (255 - B) * 0.3 * m; }
-        else if (r.action === "warm") { R += 26 * m; G += 6 * m; B -= 22 * m; }
-        else if (r.action === "cool") { R -= 22 * m; G += 2 * m; B += 26 * m; }
+        if (r.action === "darken") { R *= 1 - 0.55 * m; G *= 1 - 0.55 * m; B *= 1 - 0.55 * m; }
+        else if (r.action === "lighten") { R += (255 - R) * 0.5 * m; G += (255 - G) * 0.5 * m; B += (255 - B) * 0.5 * m; }
+        else if (r.action === "warm") { R += 30 * m; G += 6 * m; B -= 26 * m; }
+        else if (r.action === "cool") { R -= 26 * m; G += 2 * m; B += 30 * m; }
         else if (r.action === "saturate" || r.action === "mute") {
-          const s = r.action === "saturate" ? 1 + 0.6 * m : 1 - 0.6 * m;
-          R = L + (R - L) * s; G = L + (G - L) * s; B = L + (B - L) * s;
+          const k = r.action === "saturate" ? 1 + 0.7 * m : 1 - 0.7 * m;
+          R = L + (R - L) * k; G = L + (G - L) * k; B = L + (B - L) * k;
         } else if (r.action === "simplify") { R += (soft[o] - R) * m; G += (soft[o + 1] - G) * m; B += (soft[o + 2] - B) * m; }
         out[o] = R; out[o + 1] = G; out[o + 2] = B;
       }
@@ -43526,6 +43642,8 @@ function strokesTowardReference(result, ref, width, height, { layer, limit, refK
   refreshStrokeGradient(ref, refKey, width, height);
   const hand = wordBrushHand(result?.params || bestRun?.params);
   const rng = mulberry32(((Number(result?.drawSeed) || 0) ^ (painterPass * 0x9e3779b9) ^ paintRevision) >>> 0);
+  // The critic looks first: what it asks for decides which brush this batch is (a darker mass is the broad brush's).
+  if (layer == null) maybeDirect(strokePainter.plan);
   let useLayer = layer ?? strokePainter.layer;
   /* Once the letter brush has lettered the word, general strokes leave the
    * letter bodies to it: they would only scribble over them chasing the exact
@@ -43567,9 +43685,10 @@ function strokesTowardReference(result, ref, width, height, { layer, limit, refK
   const toleranceFor = (l) => l === 0 ? tolerance * 0.35 : tolerance;
   // Painting in runs, the brush aims at the picture as its own size sees it (Runs).
   const runs = strokePainter.plan?.marks?.key === "runs";
-  maybeDirect(strokePainter.plan);
   const bent = directedReference(ref, width, height);
   const aim = (l) => runs ? intentReference(bent, width, height, strokeRadiusForLayer(l, strokeBrushBase(width, height))) : bent;
+  // The critic's turn: this batch works only where it asked (planStrokeBatch).
+  criticTurnBatch = layer == null && Boolean(activeDirective()?.regions.length);
   let plan = planStrokeBatch(current, aim(useLayer), strokePainter.gradient, width, height,
     strokeRadiusForLayer(useLayer, strokeBrushBase(width, height)), rng, hand, limit, toleranceFor(useLayer), useLayer, palette);
   // A layer with (almost) nothing left to fix hands over to the next, finer one.
@@ -43597,7 +43716,15 @@ function strokesTowardReference(result, ref, width, height, { layer, limit, refK
     }
   }
   current = null;
-  const strokes = plan.strokes;
+  criticTurnBatch = false;
+  /* The finest brush stops too: its passes are counted like the others',
+   * and once they are used up the painting has had its fine work (a
+   * critique opens the brushes again). Left to work until nothing differed,
+   * it never stopped - no brush matches every pixel - and laid thousands of
+   * strokes of noise. */
+  const finestDone = layer == null && useLayer >= finestLayer &&
+    strokePainter.layerBatches > FINEST_BATCHES * STROKE_LAYER_BATCHES[Math.min(finestLayer, STROKE_LAYER_BATCHES.length - 1)];
+  const strokes = finestDone ? [] : plan.strokes;
   if (laid) markLaid(laid, strokes, useLayer);
   result.paintStrokeLayer = useLayer;
   result.paintStrokeCount = strokes.length;
@@ -43807,32 +43934,12 @@ function strokeLogEnd(completed, epoch) {
   strokeLog.mark = strokeLog.pixels ? pixelMark(strokeLog.pixels) : null;
 }
 
-/* REJECT puts back an earlier canvas; the log goes back with it. A snapshot
- * records how far the log had got. When the restored pixels are exactly the
- * pixels that log state described, it is restored too; otherwise the restored
- * canvas simply becomes the new base. */
+// How far the stroke log had got, carried on a snapshot of the canvas.
 function strokeLogSnapshot() {
   return strokeLog.base && !strokeLog.drawing && strokeLog.mark !== null
     ? { base: strokeLog.base, strokes: strokeLog.strokes, count: strokeLog.strokes.length, mark: strokeLog.mark,
         width: strokeLog.width, height: strokeLog.height }
     : null;
-}
-
-function strokeLogRestore(state) {
-  strokeLog.epoch++;
-  strokeLog.drawing = false;
-  const pixels = vctx.getImageData(0, 0, view.width, view.height).data;
-  const mark = pixelMark(pixels);
-  if (state && state.mark === mark && state.width === view.width && state.height === view.height) {
-    strokeLog.base = state.base;
-    strokeLog.strokes = state.strokes.slice(0, state.count);
-    strokeLog.width = state.width;
-    strokeLog.height = state.height;
-  }
-  // Without a matching state the mark still differs from the log's, so the
-  // next batch starts a new base from the restored canvas.
-  strokeLog.mark = state && state.mark === mark ? mark : null;
-  strokeLog.pixels = strokeLog.mark === null ? null : pixels;
 }
 
 /* Redraw the screen painting onto `out`: the base enlarged, then every logged
@@ -44019,6 +44126,9 @@ async function saveTimelapse() {
   }
 }
 
+let masterPixels = { params: null, drawSeed: null, text: null, pixels: null };
+// Set while the main painter plans a batch in the critic's turn (strokesTowardReference).
+let criticTurnBatch = false;
 function continueMasterDetail(result) {
   // A new painting still being prepared has nothing to detail yet.
   if (strokePainter.preparing) return false;
@@ -44029,18 +44139,26 @@ function continueMasterDetail(result) {
   view.dataset.paintCoverage = "1.000";
   view.dataset.paintCanvasFilled = "1";
   const width = view.width, height = view.height;
-  const target = paintBuffer(width, height);
-  const targetCtx = target.getContext("2d", { willReadFrequently: true });
-  try {
-    renderMiniBasedTarget(targetCtx, width, height, source.params, source.drawSeed,
-      seedText(), textMode());
-  } catch (error) {
+  // The held master, rendered once: a painting's target no longer changes
+  // under it, so every pass reading it afresh was a full-size render and
+  // read-back for nothing (Painting first).
+  const text = seedText();
+  let reference = masterPixels.params === source.params && masterPixels.drawSeed === source.drawSeed &&
+    masterPixels.text === text && masterPixels.pixels?.length === width * height * 4 ? masterPixels.pixels : null;
+  if (!reference) {
+    const target = paintBuffer(width, height);
+    const targetCtx = target.getContext("2d", { willReadFrequently: true });
+    try {
+      renderMiniBasedTarget(targetCtx, width, height, source.params, source.drawSeed, text, textMode());
+    } catch (error) {
+      target.width = 0; target.height = 0;
+      console.warn("master detail render failed", error);
+      return false;
+    }
+    reference = targetCtx.getImageData(0, 0, width, height).data;
     target.width = 0; target.height = 0;
-    console.warn("master detail render failed", error);
-    return false;
+    masterPixels = { params: source.params, drawSeed: source.drawSeed, text, pixels: reference };
   }
-  const reference = targetCtx.getImageData(0, 0, width, height).data;
-  target.width = 0; target.height = 0;
   /* The held master is the reference; the painter keeps working toward it in
    * strokes, a layer at a time, until even the finest brush finds nothing it
    * can improve. Then the pass counts as held and the stall/bold/finish logic
@@ -45563,8 +45681,6 @@ function changeSeed(auto = false) {
    * replacement had rendered, which made the button look inert. */
   current = null;
   bestRun = null;
-  lastHumanKeptRun = null;
-  lastHumanKeptCanvas = null;
   sceneMaterialEpoch = 0;
   pendingDislikeCounterfactual = null;
   brushReseed++;
@@ -45615,9 +45731,7 @@ function changeSeed(auto = false) {
     pendingPerturb = false;
     current = null;
     bestRun = null;
-    lastHumanKeptRun = null;
-    lastHumanKeptCanvas = null;
-    pendingAction = auto ? "autonomous-new-composition" : "change-seed";
+        pendingAction = auto ? "autonomous-new-composition" : "change-seed";
     const painterStatus = document.getElementById("painterStatus");
     if (painterStatus) painterStatus.textContent = auto
       ? "starting a fresh composition · local preference skipped"
@@ -45663,8 +45777,6 @@ let autoAdvanceTimer = null;
 const IMPROVEMENT_EPSILON = 0.004;
 const STAGNATION_PRESSURE_LIMIT = 6;
 let bestRun = null;
-let lastHumanKeptRun = null;
-let lastHumanKeptCanvas = null;
 let stagnation = 0;
 // Consecutive refine passes where the held control itself scored below the
 // structural-composition floor (rankTastePopulation's "anchor.score < 0").
@@ -45709,20 +45821,6 @@ function snapshotVisibleCanvas() {
     canvas.strokeLogState = strokeLogSnapshot();
     return canvas;
   } catch { return null; }
-}
-
-function restoreVisibleCanvas(snapshot) {
-  if (!snapshot || snapshot.width !== view.width || snapshot.height !== view.height) return false;
-  try {
-    vctx.save();
-    vctx.globalCompositeOperation = "source-over";
-    vctx.globalAlpha = 1;
-    vctx.clearRect(0, 0, view.width, view.height);
-    vctx.drawImage(snapshot, 0, 0);
-    vctx.restore();
-    strokeLogRestore(snapshot.strokeLogState);
-    return true;
-  } catch { return false; }
 }
 
 /* ─────────────────────────── The painting's life ───────────────────────────
@@ -46235,7 +46333,62 @@ function checkPaintingFinished() {
   return paintingFinishedAt;
 }
 
-function scheduleAutoAdvance() {
+/* Painting first: a painting on the easel is painted through to its end,
+ * toward its own plan. A pass used to search for a different picture first
+ * - a field optimisation costing a phone a second or two, for one batch of
+ * strokes - and every change it accepted moved the target the brushes were
+ * painting toward, so a painting was slow and never settled. A pass is now
+ * the next batch of strokes (and the things, the ink, the weather and the
+ * critic, as continueMasterDetail gives out their turns). When nothing is
+ * left to paint and the critic has had its say, the painting is finished:
+ * held a while, and then a new one begins. */
+const PAINT_STEP = { gapMs: 40, mobileGapMs: 110, idleToFinish: 3 };
+let paintIdle = { plan: null, steps: 0 };
+function paintingUnderway() {
+  return Boolean(current?.params && (strokePainter.plan || strokePainter.preparing) && !paintingFinishedAt);
+}
+// Whether the critic (or the director) has turns left in this painting.
+function critiqueLeft(plan) {
+  if (!plan || (!directorKey && plan.critic?.key !== "critic")) return false;
+  const d = plan.direction;
+  return !d || (!d.done && d.asked < DIRECTOR.perPainting);
+}
+function paintNextBatch() {
+  const gap = isMobileBrowser() ? PAINT_STEP.mobileGapMs : PAINT_STEP.gapMs;
+  if (strokePainter.preparing || !strokePainter.plan) { scheduleAutoAdvance(gap * 4); return; }
+  const plan = strokePainter.plan;
+  if (paintIdle.plan !== plan) paintIdle = { plan, steps: 0 };
+  painterPass++;
+  const result = { ...current, action: "paint" };
+  let painted = false;
+  try { painted = continueMasterDetail(result); } catch (error) { console.warn("paint step failed", error); }
+  if (painted) {
+    paintIdle.steps = 0;
+    // The next batch once this one has landed.
+    Promise.resolve(visiblePaintCompletion).catch(() => false).then(() => scheduleAutoAdvance(gap));
+    return;
+  }
+  updatePainterStatus(result);
+  if (++paintIdle.steps >= PAINT_STEP.idleToFinish) {
+    paintIdle.steps = 0;
+    /* A critique that moved no brush has said all it can - and so has one
+     * asked for and not taken (a drawn painting has no brush to direct). */
+    const d = plan.direction;
+    if (d && ((d.asked && d.strokesAt === (Number(strokePainter.strokes) || 0)) || d.requested === d.asked)) d.done = true;
+    if (critiqueLeft(plan)) {
+      // Nothing left to paint: the critic steps back and looks, now.
+      plan.direction ||= { asked: 0, at: 0, done: false };
+      plan.direction.at = 0;
+      plan.direction.requested = plan.direction.asked;
+    } else {
+      paintingFinishedAt = Date.now();
+      recordStyleOutcome(plan, "finished");
+    }
+  }
+  scheduleAutoAdvance(gap * 3);
+}
+
+function scheduleAutoAdvance(delay = null) {
   if (autoAdvanceTimer) clearTimeout(autoAdvanceTimer);
   autoAdvanceTimer = setTimeout(() => {
     autoAdvanceTimer = null;
@@ -46287,9 +46440,12 @@ function scheduleAutoAdvance() {
           changeSeed(true);
         } else {
           const label = document.getElementById("painterStatus");
-          if (label) label.textContent = "finished · holding this painting · new one in " + Math.ceil(left / 1000) + "s · tap KEEP or REJECT to keep working on it";
+          if (label) label.textContent = "finished · new painting in " + Math.ceil(left / 1000) + "s · KEEP keeps it up longer, REJECT moves on";
           scheduleAutoAdvance();
         }
+      } else if (paintingUnderway()) {
+        // The painting on the easel, painted on (Painting first).
+        paintNextBatch();
       } else if (controlDegenerateStreak >= CONTROL_DEGENERATE_RESEED_LIMIT) {
         controlDegenerateStreak = 0;
         autonomousPassPending = true;
@@ -46315,7 +46471,7 @@ function scheduleAutoAdvance() {
     // from landing back-to-back and leaves room for a tap/scroll in between;
     // the periodic longer rest (nextAutoAdvanceDelay) is what actually lets a
     // phone's CPU cool down instead of staying under near-continuous load.
-  }, nextAutoAdvanceDelay());
+  }, delay ?? nextAutoAdvanceDelay());
 }
 
 function applyFormat() {
@@ -48940,90 +49096,25 @@ function castHumanTasteDecision(liked) {
   startHumanTasteRefinement(liked);
 }
 
-/* Turn the teaching control into a visible editing instruction.
- *
- * KEEP holds the exact seed and immediately asks for finer, nearby detail.
- * REJECT holds the seed too, but raises the structural pressure and lets the
- * named dislike counterfactual remove or replace the weakest relationship.
- * Neither button reseeds. A click during a running pass is coalesced into the
- * already-supported queued perturbation path, so it cannot disappear. */
+/* What a vote does once it has taught: KEEP lets the painting carry on,
+ * REJECT moves on to a new one. */
 function startHumanTasteRefinement(liked) {
   if (!current?.params) return false;
   recordVisualVote(liked);
-  pendingHumanReject = liked ? false : true;
-  /* KEEP accepts the visible perturbation. REJECT does the inverse: it returns
-   * to the control captured before the perturbation. The old code assigned
-   * `bestRun = current` for both branches, recursively refining the rejected
-   * canvas instead of discarding it. */
-  const hasImmediateParent = Boolean(current.parentRun);
-  const rollback = snapshotRun(current.parentRun) || lastHumanKeptRun;
-  const rollbackCanvas = hasImmediateParent ? current.parentCanvas : lastHumanKeptCanvas;
-  if (liked) {
-    bestRun = snapshotRun(current);
-    lastHumanKeptRun = snapshotRun(current);
-    lastHumanKeptCanvas = snapshotVisibleCanvas();
-  } else if (rollback) {
-    bestRun = snapshotRun(rollback);
-    current.rejectedRollback = bestRun;
-    current.rejectedCanvasRestored = restoreVisibleCanvas(rollbackCanvas);
-  }
-  if (!liked) {
-    /* The opening/detail ledger belongs to the rejected target. Leaving it alive
-     * lets a later timer repaint the very blob the click just quarantined. The
-     * visible pixels remain until the measured rebirth deposit replaces them;
-     * only the stale future work is cancelled. */
-    paintOpening = null;
-    paintDetailCursor = 0;
-    if (activePaintAnimation) activePaintAnimation++;
-  }
-  loopMode = "refine";
-  if (liked) {
-    stagnation = 0;
-  } else {
-    stagnation = Math.max(stagnation, STAGNATION_PRESSURE_LIMIT);
-    /* The counterfactual was created by this click and starts at attempt zero.
-     * Skipping it straight to attempt two bypassed the strongest direct escape
-     * (for rails, `artifact.rails -> 0`) and began with a weaker sideways gene.
-     * Failed passes advance this counter in recordAutonomousProgress; the first
-     * response must remain the first, most literal inverse. */
-  }
-  pendingAction = liked ? "human-keep" : "human-reject";
-  const status = document.getElementById("localLearningStatus");
-  if (status) status.textContent += liked
-    ? " · refining this composition now"
-    : rollback ? " · rejected change discarded · restoring the prior pass"
-      : " · rejected change blocked · finding a different first pass";
+  /* Painting first: a vote teaches (above) and then KEEP lets this
+   * painting carry on as it is - finished, it stays up a while longer -
+   * and REJECT moves on to a new one. (A vote used to start a search for
+   * a different field under the painting, which changed it from under
+   * the brushes.) */
   const painter = document.getElementById("painterStatus");
-  if (painter) painter.textContent = liked
-    ? "KEEP learned · same seed · resolving finer detail"
-    : pendingDislikeCounterfactual?.operation?.visualSignature === "parallel-rails"
-      ? "REJECT learned · rails sealed · unresolved motif archived"
-      : "REJECT learned · same seed · testing removal and replacement";
-  updateLoopStatus();
-  if ($("overlay")?.classList.contains("on")) {
-    if (liked) {
-      /* KEEP accepts the candidate already being painted, then asks for the
-       * next continuation once it has landed. */
-      pendingPerturb = true;
-      return true;
-    }
-    /* REJECT cannot wait behind the pass it rejects. The old pass read the
-     * mutable global pendingAction when it eventually landed, so an unrelated
-     * pre-click winner could arrive wearing `human-reject`. Invalidate both
-     * search and paint tokens, leave the restored parent pixels visible, and
-     * start the named counterfactual as the sole owner of the UI. */
-    pendingPerturb = false;
-    pendingHumanReject = false;
-    renderRequestToken++;
-    if (activePaintAnimation) activePaintAnimation++;
-    $("overlay")?.classList.remove("on");
-    counter++;
-    generate();
+  if (liked) {
+    const finished = Boolean(paintingFinishedAt);
+    if (finished) paintingFinishedAt = Date.now();
+    if (painter) painter.textContent = finished ? "KEEP learned · keeping it up a while longer" : "KEEP learned · painting on";
     return true;
   }
-  pendingHumanReject = false;
-  counter++;
-  generate();
+  if (painter) painter.textContent = "REJECT learned · starting a new painting";
+  changeSeed();
   return true;
 }
 
