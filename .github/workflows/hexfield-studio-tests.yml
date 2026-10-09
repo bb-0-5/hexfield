@@ -23,6 +23,8 @@ jobs:
           node-version: '22'
       - name: Worker security and successive painting requests
         run: node --experimental-default-type=module tests/imagination-worker.test.mjs
+      - name: Australian independent printer handoff leaves Hexfield out of transactions
+        run: node --experimental-default-type=module tests/print-handoff.test.mjs
       - name: Evolving painting procedures
         run: node --experimental-default-type=module tests/studio-evolution.test.mjs
       - name: Install Canvas test renderer
