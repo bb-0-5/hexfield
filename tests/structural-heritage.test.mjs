@@ -16,7 +16,8 @@ globalThis.localStorage={
 const {
  extractStructuralIdea,paintInheritedIdeas,advanceStructuralIdeas,evolveContour,
  judgeStructuralIdeas,heritageEvidence,heritageTaste,
- rankBalancedCandidates,selectBalancedCandidate,
+ rememberStructuralIdeas,rememberedSignatures,recallStructuralIdea,
+ HERITAGE_LIBRARY_LIMIT,rankBalancedCandidates,selectBalancedCandidate,
  HERITAGE_TTL,MAX_STRUCTURAL_IDEAS,SAMPLES,MATERIALS
 }=await import('../public/studio/structural-heritage.js');
 
@@ -106,6 +107,24 @@ assert.ok(ancestorDrift>.002&&ancestorDrift<.22,
 const boosted=judgeStructuralIdeas(current,true);
 assert.ok(boosted[0].trust>current[0].trust);
 assert.equal(heritageTaste().votes,1);
+const signatures=rememberedSignatures();
+assert.ok(signatures.length>=1&&signatures.length<=HERITAGE_LIBRARY_LIMIT,
+ 'KEEP makes a bounded, browser-local visual signature library');
+const archived=JSON.stringify(signatures);
+assert.ok(!archived.includes('data:image')&&!archived.includes('base64'),
+ 'Learned visual identity saves only editable geometric descriptions, not image files');
+assert.deepEqual(signatures[0].rootOutline,shape.outline,
+ 'The original root shape remains retrievable after approval');
+const recalled=recallStructuralIdea({seed:612,cycle:28});
+assert.ok(recalled&&recalled.id===shape.id);
+assert.equal(recalled.age,0);
+assert.equal(recalled.recalled,1);
+assert.ok(recalled.generation>=7,'Remembered signatures retain generational ancestry');
+assert.deepEqual(recallStructuralIdea({seed:612,cycle:28}),recalled,
+ 'An autonomous return of a learned idea is deterministic for the same seed');
+rememberStructuralIdeas(Array(11).fill(current[0]).map((g,i)=>({...g,id:'saved-'+i})));
+assert.ok(rememberedSignatures().length<=HERITAGE_LIBRARY_LIMIT,
+ 'Persistent signatures cannot grow indefinitely on Android');
 assert.ok(heritageTaste().weights['material:'+current[0].material]>0,
  'A human KEEP should establish a reusable material preference');
 const rejected=judgeStructuralIdeas(current,false);
