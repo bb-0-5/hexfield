@@ -61,6 +61,19 @@ export function programKey(g) {
     [g.letterForm,g.letterStroke,g.letterFrame,g.joint,g.terminal];
   return [g.kind, ...ops].join('|');
 }
+// Full method identity includes numeric parameters and nested node structure.
+// The older programKey only includes operator names; use it for describing
+// families, not for rejecting or preserving a specific learned descendant.
+export function methodFingerprint(genome){
+  if(!genome?.kind)return 'missing';
+  const {generation,origin,...core}=genome;
+  const source=JSON.stringify(core);
+  let h=2166136261;
+  for(let i=0;i<source.length;i++){
+    h=Math.imul(h^source.charCodeAt(i),16777619)>>>0;
+  }
+  return genome.kind+'-'+h.toString(16).padStart(8,'0');
+}
 export function geneFeatures(g) {
   if(!g || !g.kind)return {};
   return g.kind==='landscape'

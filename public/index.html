@@ -23,9 +23,9 @@
     </header>
     <div class="product-frame">
       <aside class="controls" aria-label="Studio controls">
-        <p class="eyebrow">STUDIO / 296</p>
+        <p class="eyebrow">STUDIO / 297</p>
         <h1>Make something<br><em>worth keeping.</em></h1>
-        <p class="intro">Two disciplines. Many competing ways to make them. Reject a painting and compare entirely different methods.</p>
+        <p class="intro">Two disciplines. An artist learning from the pictures themselves, not merely changing its instructions.</p>
         <fieldset class="mode-switch" aria-label="Choose an artistic discipline">
           <legend class="small-label">01 / CHOOSE A DISCIPLINE</legend>
           <div class="segment">
@@ -64,7 +64,8 @@
           <button type="button" id="vary" class="ghost-button">MUTATE THIS METHOD ↺</button>
           <button type="button" id="export" class="ghost-button">EXPORT PNG ↓</button>
         </div>
-        <div class="studio-principle"><span>OUR RULE</span><p>A rejection is evidence against a method, not a command to shuffle the same picture.</p></div>
+        <button type="button" id="blindStart" class="ghost-button audit-trigger">BLIND TEST / HAS IT LEARNED? ↗</button>
+        <div class="studio-principle"><span>OUR RULE</span><p>A changed procedure is only interesting if it changes the actual picture.</p></div>
       </aside>
       <main class="workspace" aria-label="Artwork and feedback">
         <div class="canvas-heading">
@@ -75,7 +76,8 @@
           <canvas id="artwork" width="1200" height="740" aria-label="Current artwork"></canvas>
           <div class="canvas-overlay" id="paintingOverlay" role="status" aria-live="polite">STARTING A NEW PAINTING</div>
         </div>
-        <div class="work-details"><div><span class="small-label">THE METHOD USED</span><p id="workCaption">Inventing a painting procedure.</p><small id="methodLine" class="method-line">METHOD / GENERATION 0</small></div><span id="renderStatus">01 / STUDIO IS OPEN</span></div>
+        <div class="work-details"><div><span class="small-label">THE METHOD USED</span><p id="workCaption">Inventing a painting procedure.</p><small id="methodLine" class="method-line">METHOD / GENERATION 0</small>
+          <small id="visualMetric" class="method-line">IMAGE MEASUREMENT NOT YET AVAILABLE</small></div><span id="renderStatus">01 / STUDIO IS OPEN</span></div>
         <section class="vote-section" aria-label="Judge this artwork">
           <div class="vote-description"><strong>Worth keeping?</strong><span>Your judgement changes what the artist tries next.</span></div>
           <div class="vote-actions">
@@ -85,8 +87,17 @@
         </section>
         <div class="feedback-line" role="status" aria-live="polite" id="feedbackStatus">No account required. Your votes belong to you.</div>
         <section class="experiments" id="experiments" aria-label="Different painting method experiments" hidden>
-          <div class="experiments-title"><span class="small-label">COUNTERFACTUAL STUDIES</span><h2 id="experimentHeading">WHAT SHOULD CHANGE?</h2><p>Same task, different construction rules. Select a method to test; KEEP or REJECT its result.</p></div>
+          <div class="experiments-title"><span class="small-label">COUNTERFACTUAL STUDIES</span><h2 id="experimentHeading">WHAT SHOULD CHANGE?</h2><p>Same seed, same task. These images were rendered and compared with the rejected painting. A changed algorithm alone does not count as discovery.</p></div>
+          <figure class="rejected-reference" id="rejectedReference" hidden><img id="rejectedSnapshot" alt="The rejected painting used as the comparison baseline"><figcaption>REJECTED ORIGINAL — ALL COUNTERFACTUALS RETAIN ITS SEED</figcaption></figure>
           <div class="experiment-cards" id="experimentCards"></div>
+        </section>
+        <section class="blind-panel" id="blindPanel" aria-label="Blind learned-versus-untrained painter comparison" hidden>
+          <p class="small-label">BLIND COMPARISON / HUMAN VERDICT</p>
+          <h2>Learned method or a fresh start?</h2>
+          <p id="blindAnswer">Choose whichever image you genuinely prefer. The painter identities are hidden until you vote.</p>
+          <div class="blind-cards" id="blindCards"></div>
+          <p id="blindCount">No blind comparisons yet</p>
+          <p id="blindVerdict">At least 12 comparisons are needed to judge whether feedback helped.</p>
         </section>
       </main>
     </div>
@@ -94,7 +105,7 @@
       <div class="shelf-title"><div><p class="eyebrow">THE WORK LEFT BEHIND</p><h2 id="shelfHeading">Your kept studies <span id="keepCount">00</span></h2></div><p>A small, growing collection of your choices. Select a study to revisit it.</p></div>
       <div id="savedGallery" class="gallery" aria-live="polite"><p class="empty-gallery">You haven't kept anything yet. When you see something good, tell the artist.</p></div>
     </section>
-    <footer class="footer"><span>HEXFIELD / METHODS CAN MUTATE · YOUR VERDICT MATTERS</span><div><a href="/legacy.html">EARLIER EXPERIMENTS &amp; MUSEUM ↗</a><span id="syncNote">LEARNING: LOCAL FIRST</span></div></footer>
+    <footer class="footer"><span>HEXFIELD / IMAGE DIFFERENCES MEASURED · CLAIMS TESTED BLIND</span><div><a href="/legacy.html">EARLIER EXPERIMENTS &amp; MUSEUM ↗</a><span id="syncNote">LEARNING: LOCAL FIRST</span></div></footer>
   </div>
 </body>
 </html>

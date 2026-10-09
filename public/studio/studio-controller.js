@@ -1,10 +1,11 @@
-/* Hexfield Studio 296 — human-guided evolution of visual procedures.
+/* Hexfield Studio 297 — human-guided evolution of visual procedures.
  * Legacy painter / hand-drawn reference library is never loaded on this page.
  * The old engine and historic museum remain reachable at /legacy.html.
  */
 import {SCENES,MOODS,renderLandscape,landscapeDescription,landscapeFeatures} from './landscape.js';
 import {LETTER_STYLES,LETTER_TYPES,cleanLogoText,renderLettering,letteringDescription,letteringFeatures} from './lettering.js';
-import {FOCI,makeGenome,mutateGenome,sampleGenome,proposeExperiments,methodDescription,programKey,geneFeatures,methodDistance,evaluateSurface,randomFrom} from './evolution.js';
+import {FOCI,makeGenome,mutateGenome,sampleGenome,proposeExperiments,methodDescription,programKey,methodFingerprint,geneFeatures,methodDistance,evaluateSurface,randomFrom} from './evolution.js';
+import {describeCanvas,descriptorValid,visualDistance,visualBreakdown,visualFeedbackScore,discoveryLabel,blindSummary} from './vision.js';
 
 const $ = id=>document.getElementById(id);
 const storage = {
@@ -15,6 +16,8 @@ const storage = {
   session:'hexfield.taste.session.v1',
   count:'hexfield.studio.paint-count.v1',
   evolution:'hexfield.studio.procedure-memory.v1',
+  visual:'hexfield.studio.visual-evidence.v1',
+  blind:'hexfield.studio.blind-tests.v1',
 };
 const API='https://uiobhojjgtsvyzuzqqiy.supabase.co';
 // Supabase's public, publishable key: safe in a browser, never an admin credential.
@@ -29,7 +32,9 @@ const state={
   collective:readJson(storage.shared,{landscape:{},lettering:{}}),
   pending:readJson(storage.votes,[]),
   evolution:readJson(storage.evolution,{landscape:{elites:[],rejected:[],focus:{}},lettering:{elites:[],rejected:[],focus:{}}}),
-  experiments:[],experimentRevision:0,
+  experiments:[],experimentRevision:0,currentVisual:null,comparisonReference:null,
+  visual:readJson(storage.visual,{landscape:[],lettering:[]}),
+  blindHistory:readJson(storage.blind,[]),blindCurrent:null,blindRevision:0,
 };
 try{state.sample=Number(localStorage.getItem(storage.count))||0;}catch{state.sample=0;}
 if(!Array.isArray(state.kept))state.kept=[];
@@ -42,6 +47,8 @@ for(const k of ['landscape','lettering']){
   }
   if(!Array.isArray(state.evolution[k].rejected))state.evolution[k].rejected=[];
   if(!state.evolution[k].focus)state.evolution[k].focus={};
+  if(!Array.isArray(state.evolution[k].comparisons))state.evolution[k].comparisons=[];
+  if(!Array.isArray(state.visual?.[k]))state.visual={...state.visual,[k]:[]};
 }
 
 function pickWeighted(values,key){
@@ -58,6 +65,8 @@ function selected(select,possibles,key){const v=$(select).value;return possibles
 // The human is asked which counterfactual to inspect: a binary rejection alone
 // cannot tell us whether lighting, structure, subject, or the marks were wrong.
 const saveEvolution=()=>writeJson(storage.evolution,state.evolution);
+const saveVisual=()=>writeJson(storage.visual,state.visual);
+const saveBlind=()=>writeJson(storage.blind,state.blindHistory);
 const methodMemory=mode=>state.evolution[mode];
 function genomeValue(mode,g){
   const model=state.learned[mode]||{},shared=state.collective[mode]||{};
@@ -68,20 +77,31 @@ function genomeValue(mode,g){
     value+=Math.max(-18,Math.min(18,Number(shared[key+':'+feature])||0))*.07;
   }
   const rejected=methodMemory(mode).rejected||[];
-  const signature=programKey(g);
+  const signature=methodFingerprint(g);
   if(rejected.includes(signature))value-=10;
   // A rare method has room to grow, even before anyone likes its first image.
   value+=Math.min(2,rejected.reduce((best,old)=>best+Number(old!==signature),0)*.024);
   return value;
+}
+function chooseLearnedFocus(mode,r){
+  const focus=methodMemory(mode).focus||{};
+  if(r()<.35)return FOCI[Math.floor(r()*FOCI.length)];
+  const weights=FOCI.map(x=>Math.max(.18,1+(Number(focus[x])||0)*.22));
+  let total=weights.reduce((a,b)=>a+b,0),target=r()*total;
+  for(let i=0;i<FOCI.length;i++){target-=weights[i];if(target<=0)return FOCI[i];}
+  return 'structure';
 }
 function selectGenome(mode,seed){
   const memory=methodMemory(mode),r=randomFrom(seed),seen=new Set(memory.rejected.slice(-30));
   const possibilities=[];
   for(let i=0;i<9;i++){
     const candidate=i===0||r()<.3?makeGenome(mode,(seed+i*137)>>>0)
+      :memory.elites.length&&i%2===0
+      ?mutateGenome(memory.elites[(seed+i)%memory.elites.length].genome,
+        chooseLearnedFocus(mode,r),(seed+i*727)>>>0)
       :sampleGenome(memory.elites,mode,(seed+i*727)>>>0);
     if(evaluateSurface(candidate).length)continue;
-    const signature=programKey(candidate);
+    const signature=methodFingerprint(candidate);
     const score=genomeValue(mode,candidate)+(seen.has(signature)?-11:0);
     possibilities.push({genome:candidate,score});
   }
@@ -91,14 +111,14 @@ function selectGenome(mode,seed){
   return possibilities[0]?.genome || makeGenome(mode,seed);
 }
 function makeRecipe({parent=null,focus=null,genome=null,subjectChange=false}={}){
-  const seed=rand(),mode=state.mode;
+  const seed=parent?.seed ?? rand(),mode=state.mode;
   let method=genome || (parent?.genome
     ? mutateGenome(parent.genome,focus||FOCI[Math.floor(rand()%FOCI.length)],seed,
        methodMemory(mode).elites.find(e=>programKey(e.genome)!==programKey(parent.genome))?.genome || null)
     :selectGenome(mode,seed));
   if(evaluateSurface(method).length)method=makeGenome(mode,seed);
   const base={version:2,mode,seed,genome:method,experiment:focus||'invent',
-    parentMethod:parent?.genome?programKey(parent.genome).slice(0,120):null};
+    parentMethod:parent?.genome?methodFingerprint(parent.genome):null};
   if(mode==='landscape'){
     const scene=parent?.mode===mode?parent.scene:selected('landscapeScene',SCENES,'scene');
     const mood=parent?.mode===mode?parent.mood:selected('landscapeMood',MOODS,'mood');
@@ -111,8 +131,8 @@ function makeRecipe({parent=null,focus=null,genome=null,subjectChange=false}={})
 function recordProcedure(recipe,liked){
   const g=recipe.genome;
   if(!g||evaluateSurface(g).length)return;
-  const memory=methodMemory(recipe.mode),key=programKey(g);
-  const existing=memory.elites.find(e=>programKey(e.genome)===key);
+  const memory=methodMemory(recipe.mode),key=methodFingerprint(g);
+  const existing=memory.elites.find(e=>methodFingerprint(e.genome)===key);
   if(liked){
     if(existing)existing.score=Math.min(20,(existing.score||0)+1);
     else memory.elites.unshift({genome:structuredClone(g),score:1,learnedAt:Date.now()});
@@ -124,65 +144,116 @@ function recordProcedure(recipe,liked){
   if(recipe.experiment&&recipe.experiment!=='invent'){
     memory.focus[recipe.experiment]=Math.max(-20,Math.min(20,(Number(memory.focus[recipe.experiment])||0)+(liked?1:-1)));
   }
+  if(recipe.comparison && ['structure','surface','light','subject'].includes(recipe.comparison.focus)) {
+    const cmp=recipe.comparison;
+    const comparisons=memory.comparisons||[];
+    comparisons.push({parent:cmp.parent,child:key,focus:cmp.focus,liked,
+      distance:Number(cmp.distance)||0,at:Date.now()});
+    memory.comparisons=comparisons.slice(-100);
+  }
   memory.elites=memory.elites.filter(e=>e.score>0).slice(0,28);
   saveEvolution();
 }
 function clearExperiments(){
   state.experimentRevision++;state.experiments=[];
   const root=$('experiments');if(root){root.hidden=true;$('experimentCards').replaceChildren();}
+  if($('rejectedReference'))$('rejectedReference').hidden=true;
+}
+const pauseFrame=()=>new Promise(resolve=>requestAnimationFrame(resolve));
+async function renderPreview(recipe,quality=.17){
+  const canvas=document.createElement('canvas');canvas.width=390;canvas.height=241;
+  if(recipe.mode==='landscape')await renderLandscape(canvas,recipe,{animate:false,quality});
+  else renderLettering(canvas,recipe);
+  return {canvas,visual:describeCanvas(canvas,recipe.mode)};
+}
+function voteEvidence(recipe,liked,visual,clientId){
+  if(!descriptorValid(visual))return;
+  const history=state.visual[recipe.mode];
+  history.push({id:clientId,visual,liked,method:methodFingerprint(recipe.genome),focus:recipe.experiment||null,
+    comparison:recipe.comparison?.distance??null,at:Date.now()});
+  state.visual[recipe.mode]=history.slice(-100);
+  saveVisual();
 }
 async function showExperiments(rejected){
   if(!rejected.genome)return;
   clearExperiments();const token=state.experimentRevision;
-  const otherMethods=methodMemory(rejected.mode).elites.map(item=>item.genome);
-  const proposals=proposeExperiments(rejected.genome,rand(),otherMethods);
-  if(rejected.mode==='landscape' && $('landscapeScene').value==='surprise'){
-    proposals.push({focus:'subject',genome:mutateGenome(rejected.genome,'structure',rand())});
-  }
+  // Compare against an equivalent low-resolution render, not the full-detail
+  // original versus deliberately cheap thumbnails; that would inflate change.
+  const reference=await renderPreview(rejected,.17);
+  if(token!==state.experimentRevision)return;
+  const referenceVisual=reference.visual;
+  const referenceImg=$('rejectedSnapshot');
+  if(referenceImg){referenceImg.src=thumbnail();$('rejectedReference').hidden=false;}
   const root=$('experiments'),cards=$('experimentCards');root.hidden=false;
-  const heading=$('experimentHeading');
-  if(heading)heading.textContent='THAT FAILED. WHAT SHOULD CHANGE?';
-  state.experiments=proposals.map(({focus,genome})=>({focus,recipe:makeRecipe({parent:rejected,focus,genome,subjectChange:focus==='subject'})}));
-  for(const [i,item] of state.experiments.entries()){
+  $('experimentHeading').textContent='THAT FAILED. WHICH CHANGE IS WORTH TESTING?';
+  const methods=methodMemory(rejected.mode).elites.map(item=>item.genome);
+  const proposals=proposeExperiments(rejected.genome,rand(),methods);
+  if(rejected.mode==='landscape' && $('landscapeScene').value==='surprise')
+    proposals.push({focus:'subject',genome:mutateGenome(rejected.genome,'structure',rand())});
+  let found=0;
+  for(const {focus,genome} of proposals){
     if(token!==state.experimentRevision)return;
+    let best=null;
+    // Retries are bounded. We measure actual previews and prefer a visually
+    // different counterfactual, instead of pretending changed code means new art.
+    for(let attempt=0;attempt<3;attempt++){
+      const alternative=attempt===0?genome:mutateGenome(rejected.genome,
+        focus==='subject'?'structure':focus,rand(),methods.length?methods[rand()%methods.length]:null);
+      const recipe=makeRecipe({parent:rejected,focus,genome:alternative,subjectChange:focus==='subject'});
+      let rendered;
+      try{rendered=await renderPreview(recipe,.17);}catch(err){console.warn('Experiment paint failure:',err);continue;}
+      if(token!==state.experimentRevision)return;
+      const difference=visualDistance(referenceVisual,rendered.visual);
+      const relative=state.experiments.some(x=>visualDistance(x.visual,rendered.visual)<.043);
+      const score=difference-(relative?.12:0)+Math.min(.015,visualFeedbackScore(rendered.visual,state.visual[rejected.mode])*.011);
+      if(!best||score>best.score)best={focus,recipe,score,visual:rendered.visual,canvas:rendered.canvas,difference};
+      if(difference>=.13&&!relative)break;
+      await pauseFrame();
+    }
+    if(!best)continue;
+    // Insist that the result looks different, not merely that its genome differs.
+    const threshold=rejected.mode==='lettering'?.026:.045;
+    if(best.difference<threshold || state.experiments.some(x=>visualDistance(x.visual,best.visual)<threshold*.95))continue;
+    best.recipe.comparison={parent:methodFingerprint(rejected.genome),focus, distance:best.difference};
+    state.experiments.push(best);found++;
     const button=document.createElement('button');button.type='button';button.className='experiment-card';
-    const canvas=document.createElement('canvas');canvas.width=390;canvas.height=241;
-    try{
-      if(rejected.mode==='landscape')await renderLandscape(canvas,item.recipe,{animate:false,quality:.20});
-      else renderLettering(canvas,item.recipe);
-    }catch(err){console.warn('Experiment thumbnail unavailable:',err);}
-    if(token!==state.experimentRevision)return;
     const img=document.createElement('img');img.alt='';
-    try{img.src=canvas.toDataURL('image/webp',.62);}catch{/* no thumbnail on restricted browsers */}
-    const name=document.createElement('strong');
+    try{img.src=best.canvas.toDataURL('image/webp',.62);}catch{}
+    const title=document.createElement('strong');
     const labels=rejected.mode==='lettering'
       ? {structure:'REBUILD THE LETTERS',surface:'CHANGE THE STROKES',light:'CHANGE THE COMPOSITION'}
       : {structure:'REBUILD THE TERRAIN',surface:'CHANGE THE BRUSHWORK',light:'CHANGE THE ATMOSPHERE',subject:'PAINT SOMEWHERE ELSE'};
-    name.textContent=labels[item.focus]||'NEW METHOD';
-    const sub=document.createElement('span');sub.textContent=methodDescription(item.recipe.genome);
-    button.append(img,name,sub);
-    button.setAttribute('aria-label',`${name.textContent}: ${sub.textContent}`);
+    title.textContent=labels[focus]||'A DIFFERENT METHOD';
+    const detail=document.createElement('span');detail.textContent=methodDescription(best.recipe.genome);
+    const measured=document.createElement('small');measured.className='image-distance';
+    measured.textContent=`IMAGE DISTANCE ${best.difference.toFixed(3)} · ${discoveryLabel(best.difference,rejected.mode)}`;
+    button.append(img,title,detail,measured);
+    button.setAttribute('aria-label',`${title.textContent}: ${measured.textContent}`);
     button.addEventListener('click',()=>{
       if(token!==state.experimentRevision)return;
-      const chosen=structuredClone(item.recipe);clearExperiments();
-      setStatus(`Testing ${item.focus}: this changes the painting procedure. KEEP or REJECT the result to teach the artist.`);
+      const chosen=structuredClone(best.recipe);
+      state.comparisonReference=state.currentVisual;
+      clearExperiments();
+      setStatus(`Testing ${focus} with the same seed and subject. Judge the actual result.`);
       void paintRecipe(chosen);
     });
     cards.append(button);
-    // Give touch devices a chance to paint the preview before the next.
-    await new Promise(resolve=>requestAnimationFrame(resolve));
+    await pauseFrame();
   }
-  // On phones, the experiments are usually below the fold: show them rather
-  // than leaving REJECT looking like an unresponsive button.
-  if(token===state.experimentRevision && matchMedia('(max-width:730px)').matches){
+  if(token!==state.experimentRevision)return;
+  if(!found){
+    const msg=document.createElement('p');msg.className='empty-experiments';
+    msg.textContent='These method changes still looked too similar. No discovery counted. Try INVENT A NEW METHOD.';
+    cards.append(msg);
+  }
+  if(matchMedia('(max-width:730px)').matches)
     root.scrollIntoView({behavior:'smooth',block:'start'});
-  }
 }
 function disableVoting(value){$('keep').disabled=value;$('reject').disabled=value;}
 function setStatus(message){$('feedbackStatus').textContent=message;}
 function setMode(mode,{paint=true}={}){
   if(!['landscape','lettering'].includes(mode))return;
-  clearExperiments();state.mode=mode;
+  clearExperiments();clearBlind();state.mode=mode;
   $('landscapeControls').hidden=mode!=='landscape';
   $('letteringControls').hidden=mode!=='lettering';
   for(const el of document.querySelectorAll('[data-mode]')) {
@@ -191,12 +262,14 @@ function setMode(mode,{paint=true}={}){
   }
   $('generate').firstChild.textContent=mode==='landscape'?'PAINT SOMETHING ':'DESIGN A LOGO ';
   $('canvasWrap').classList.toggle('logo-surface',mode==='lettering');
+  updateBlindSummary();
   if(paint)void paintFresh();
 }
 async function paintRecipe(recipe,{newStudy=true}={}) {
   state.controller?.abort();const abort=new AbortController();state.controller=abort;
   state.mode=recipe.mode;
   state.recipe=recipe;
+  state.currentVisual=null;
   state.working=true;state.revision++;
   const version=state.revision;
   disableVoting(true);
@@ -223,19 +296,57 @@ async function paintRecipe(recipe,{newStudy=true}={}) {
       renderLettering(state.canvas,recipe);
     }
     if(abort.signal.aborted||version!==state.revision)return;
+    state.currentVisual=describeCanvas(state.canvas,recipe.mode);
+    if(recipe.comparison&&descriptorValid(state.comparisonReference)){
+      const delta=visualDistance(state.comparisonReference,state.currentVisual);
+      recipe.comparison.distance=delta;
+      $('visualMetric').textContent=`MEASURED CHANGE ${delta.toFixed(3)} · ${discoveryLabel(delta,recipe.mode)}`;
+    }else{
+      const saved=state.visual[recipe.mode];
+      const last=saved.length?saved.at(-1).visual:null;
+      const dist=visualDistance(last,state.currentVisual);
+      $('visualMetric').textContent=dist===null?'IMAGE MEASUREMENT READY':
+        `DISTANCE FROM LAST JUDGED IMAGE ${dist.toFixed(3)} · ${discoveryLabel(dist,recipe.mode)}`;
+    }
     $('paintingOverlay').hidden=true;
     $('statusOrb').classList.remove('busy');
     $('renderStatus').textContent='READY FOR YOUR VERDICT';
     disableVoting(false);
-    setStatus('KEEP preserves this method. REJECT opens genuinely different ways of constructing it.');
+    setStatus('KEEP or REJECT this image. Rejection tests visibly different construction methods, not shuffled positions.');
   }catch(error){
     if(!abort.signal.aborted){console.error('Hexfield painter error:',error);$('paintingOverlay').textContent='COULD NOT FINISH THE STUDY';setStatus('The artist ran into a rendering error. Try another version.');}
   }finally{if(version===state.revision)state.working=false;}
 }
-function paintFresh(){clearExperiments();return paintRecipe(makeRecipe());}
+// A new painting competes with other *rendered* options, not just with genetic
+// instructions. This protects against the user's core failure mode: repeatedly
+// showing the same visual arrangement with a different random seed.
+async function paintFresh(){
+  clearExperiments();clearBlind();
+  const token=++state.experimentRevision,seed=rand();
+  const options=[],seen=state.visual[state.mode];
+  const limit=matchMedia('(max-width:730px)').matches?3:5;
+  for(let i=0;i<limit;i++){
+    const recipe=makeRecipe({genome:selectGenome(state.mode,(seed+i*271828)>>>0)});
+    try{
+      const preview=await renderPreview(recipe,.12);
+      if(token!==state.experimentRevision)return;
+      const novelty=seen.filter(x=>descriptorValid(x.visual)).length?
+        Math.min(...seen.slice(-45).filter(x=>descriptorValid(x.visual)).map(x=>visualDistance(preview.visual,x.visual))):1;
+      const score=genomeValue(state.mode,recipe.genome)*.14+
+        visualFeedbackScore(preview.visual,seen)+novelty*.95;
+      options.push({recipe,score,novelty});
+    }catch(err){console.warn('New procedure preview failed:',err);}
+    await pauseFrame();
+  }
+  if(token!==state.experimentRevision)return;
+  options.sort((a,b)=>b.score-a.score);
+  const chosen=options[0]?.recipe ||makeRecipe();
+  state.comparisonReference=null;
+  return paintRecipe(chosen);
+}
 function varyMethod(){
   const base=state.recipe?.mode===state.mode?structuredClone(state.recipe):null;
-  clearExperiments();return paintRecipe(makeRecipe({parent:base,focus:FOCI[rand()%FOCI.length]}));
+  clearExperiments();clearBlind();state.comparisonReference=null;return paintRecipe(makeRecipe({parent:base,focus:FOCI[rand()%FOCI.length]}));
 }
 function updatePreference(recipe,liked){
   const features=recipe.mode==='landscape'?landscapeFeatures(recipe):letteringFeatures(recipe);
@@ -264,19 +375,22 @@ function vote(liked){
   if(state.working||!state.recipe||$('keep').disabled)return;
   const recipe=structuredClone(state.recipe);
   disableVoting(true);
+  const client_id=crypto.randomUUID();
   updatePreference(recipe,liked);
+  voteEvidence(recipe,liked,state.currentVisual,client_id);
   recordProcedure(recipe,liked);
   if(liked)rememberKeep(recipe);
   const features=recipe.mode==='landscape'?landscapeFeatures(recipe):letteringFeatures(recipe);
-  state.pending.push({client_id:crypto.randomUUID(),mode:recipe.mode,liked,recipe,features});
+  state.pending.push({client_id,mode:recipe.mode,liked,recipe,features,
+    visual_signature:descriptorValid(state.currentVisual)?state.currentVisual:null});
   if(state.pending.length>120)state.pending=state.pending.slice(-120);
   writeJson(storage.votes,state.pending);
   void syncVotes();
   if(liked){
-    setStatus('KEPT. This painting procedure survived. Its descendants can mutate and recombine.');
+    setStatus('KEPT. The exact painting method and its visual evidence were retained for future descendants.');
     clearExperiments();
   }else{
-    setStatus('REJECTED. Compare changes to the construction, brushwork and light — then choose what to investigate.');
+    setStatus('REJECTED. Rendering controlled experiments, then measuring how different they really look.');
     void showExperiments(recipe);
   }
 }
@@ -317,7 +431,7 @@ function buildGallery(){
       if(item.recipe.mode==='lettering'){
         $('logoText').value=cleanLogoText(item.recipe.text);$('logoStyle').value=item.recipe.style;$('logoType').value=item.recipe.type;
       }else{$('landscapeScene').value=item.recipe.scene;$('landscapeMood').value=item.recipe.mood;}
-      void paintRecipe(item.recipe,{newStudy:false});
+      state.comparisonReference=null;void paintRecipe(item.recipe,{newStudy:false});
       window.scrollTo({top:0,behavior:'smooth'});
     });root.append(button);
   }
@@ -402,22 +516,93 @@ async function restoreRemoteProcedures(){
   if(remoteProceduresLoaded)return;
   try{
     const session=await acquireSession();
-    const res=await withTimeout(API+'/rest/v1/hexfield_studio_votes?select=mode,liked,recipe,created_at&order=created_at.desc&limit=80',{
+    const res=await withTimeout(API+'/rest/v1/hexfield_studio_votes?select=client_id,mode,liked,recipe,visual_signature,created_at&order=created_at.desc&limit=80',{
       headers:{apikey:PUBLIC_KEY,Authorization:'Bearer '+session.access_token},
     });
     if(!res.ok)return;
     const rows=await res.json();
     for(const row of rows.reverse()){
+      // Own private rendered fingerprints survive moving to another device.
+      if(['landscape','lettering'].includes(row.mode)&&descriptorValid(row.visual_signature)){
+        const local=state.visual[row.mode];
+        if(!local.some(v=>v.id===row.client_id))local.push({id:row.client_id,
+          liked:row.liked,visual:row.visual_signature,at:new Date(row.created_at).getTime()||Date.now(),
+          method:methodFingerprint(row.recipe?.genome)});
+        state.visual[row.mode]=local.slice(-100);
+      }
       const g=row.recipe?.genome;
       if(!row.liked||!g||g.kind!==row.mode||evaluateSurface(g).length)continue;
       const memory=methodMemory(row.mode);
-      const key=programKey(g),existing=memory.elites.find(x=>programKey(x.genome)===key);
+      const key=methodFingerprint(g),existing=memory.elites.find(x=>methodFingerprint(x.genome)===key);
       if(existing)existing.score=Math.max(existing.score||1,2);
       else memory.elites.unshift({genome:g,score:2,learnedAt:new Date(row.created_at).getTime()||Date.now()});
       memory.elites=memory.elites.slice(0,28);
     }
-    saveEvolution();remoteProceduresLoaded=true;
+    saveEvolution();saveVisual();remoteProceduresLoaded=true;
   }catch(err){console.info('Studio method archive offline; local evolution continues.',err);}
+}
+// The comparison is blinded: left/right are randomized, the fresh baseline
+// and learned descendants receive the exact same subject, lighting and seed.
+// A preference is independent evidence, not an automated claim of improvement.
+function clearBlind(){
+  state.blindRevision++;state.blindCurrent=null;
+  if($('blindPanel')){$('blindPanel').hidden=true;$('blindCards').replaceChildren();}
+}
+function updateBlindSummary(){
+  const s=blindSummary(state.blindHistory.filter(t=>t.mode===state.mode));
+  $('blindCount').textContent=s.trials?`${s.wins}/${s.trials} chose the trained method`:'No blind comparisons yet';
+  $('blindVerdict').textContent=s.trials<12?'At least 12 comparisons are needed to begin judging whether feedback helped.':
+    s.lower>.5?'The learned methods beat fresh methods in these blind trials (95% interval entirely above 50%).':
+    s.upper<.5?'Fresh methods beat learned methods in these blind trials (95% interval entirely below 50%).':
+    'Inconclusive: the 95% preference interval still includes 50%. Keep testing.';
+}
+async function beginBlindTest(){
+  clearExperiments();clearBlind();
+  const mode=state.mode,elite=methodMemory(mode).elites.filter(e=>e.score>0);
+  if(!elite.length){setStatus('KEEP at least one painting before testing whether learned methods beat untrained ones.');return;}
+  const token=state.blindRevision,seed=rand();
+  // Both canvases get the SAME recipe apart from the painting procedure.
+  const control=makeRecipe({genome:makeGenome(mode,seed+911)});
+  control.seed=seed;
+  const ranked=[...elite].sort((a,b)=>b.score-a.score);
+  const eliteGen=ranked[seed%Math.min(ranked.length,6)].genome;
+  const trained={...control,genome:mutateGenome(eliteGen,FOCI[seed%FOCI.length],seed+733),experiment:'blind-trained'};
+  const conditions=[{role:'trained',recipe:trained},{role:'baseline',recipe:control}];
+  if(seed%2)conditions.reverse();
+  const rendered=[];
+  try{
+    for(const condition of conditions){
+      const preview=await renderPreview(condition.recipe,.22);
+      if(token!==state.blindRevision||mode!==state.mode)return;
+      rendered.push({...condition,...preview});await pauseFrame();
+    }
+    state.blindCurrent={seed,mode,conditions:rendered.map(x=>({role:x.role,recipe:x.recipe,visual:x.visual}))};
+    $('blindPanel').hidden=false;
+    $('blindAnswer').textContent='Which painting would you keep? The labels are hidden until you vote.';
+    $('blindCards').replaceChildren();
+    for(const [index,candidate] of rendered.entries()){
+      const btn=document.createElement('button');btn.type='button';btn.className='blind-card';
+      const image=document.createElement('img');image.alt=`Painting ${index===0?'A':'B'}`;
+      image.src=candidate.canvas.toDataURL('image/webp',.75);
+      const label=document.createElement('strong');label.textContent=`PREFER ${index===0?'A':'B'}`;
+      btn.append(image,label);btn.addEventListener('click',()=>chooseBlind(index));
+      $('blindCards').append(btn);
+    }
+    $('blindPanel').scrollIntoView({behavior:'smooth',block:'nearest'});
+  }catch(err){console.error('Blind comparison failed:',err);setStatus('Could not render comparison on this device.');}
+}
+function chooseBlind(index){
+  const current=state.blindCurrent;if(!current||!current.conditions[index])return;
+  const winner=current.conditions[index],loser=current.conditions[1-index];
+  const preferred=winner.role==='trained',distance=visualDistance(winner.visual,loser.visual);
+  state.blindHistory.push({id:crypto.randomUUID(),mode:current.mode,
+    trainedPreferred:preferred,distance,at:Date.now()});
+  state.blindHistory=state.blindHistory.slice(-120);saveBlind();
+  state.blindCurrent=null;
+  for(const btn of $('blindCards').children)btn.disabled=true;
+  $('blindAnswer').textContent=`You preferred ${winner.role==='trained'?'the learned descendant':'the untrained fresh method'}.
+    Image distance: ${distance?.toFixed(3)??'unmeasured'}. This choice is a test result, not automatically counted as a general KEEP/REJECT vote.`;
+  updateBlindSummary();
 }
 function bind(){
   for(const btn of document.querySelectorAll('[data-mode]'))btn.addEventListener('click',()=>setMode(btn.dataset.mode));
@@ -426,13 +611,14 @@ function bind(){
   $('keep').addEventListener('click',()=>vote(true));
   $('reject').addEventListener('click',()=>vote(false));
   $('export').addEventListener('click',()=>void download());
+  $('blindStart').addEventListener('click',()=>void beginBlindTest());
   $('logoText').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();void paintFresh();}});
   $('logoType').addEventListener('change',()=>{if(state.mode==='lettering')void paintFresh();});
   $('logoStyle').addEventListener('change',()=>{if(state.mode==='lettering')void paintFresh();});
   $('landscapeScene').addEventListener('change',()=>{if(state.mode==='landscape')void paintFresh();});
   $('landscapeMood').addEventListener('change',()=>{if(state.mode==='landscape')void paintFresh();});
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void syncVotes();});
-  buildGallery();setMode('landscape');
+  buildGallery();setMode('landscape');updateBlindSummary();
   void restoreRemoteProcedures();
   if(state.pending.length)void syncVotes();
   void loadSharedTaste();
