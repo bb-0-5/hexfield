@@ -29,6 +29,9 @@ export function nextAbstractRecipe(parent,{cycle=0,subject='abstract',lockLaw=fa
    ...options,primary:law,secondary,mark,
    rework:'abstract_masses',seed:(Math.random()*4294967295)>>>0
  });
+ // The first picture uses all mark-making engines together unless the
+ // painter explicitly locks an individual mark as a formal restriction.
+ if(!lockLaw||mark==='surprise')recipe.mark='hybrid';
  else {
    const focus=cycle%5===1?'mark':cycle%4===0?'law':'rework';
    recipe=mutateRecipe(parent,focus);
@@ -38,6 +41,8 @@ export function nextAbstractRecipe(parent,{cycle=0,subject='abstract',lockLaw=fa
    if(cycle%9===0)recipe.seed=((parent.seed>>>0)+cycle*9973)>>>0;
    if(lockLaw&&law!=='surprise'){recipe.primary=law;recipe.secondary=secondary==='none'?'none':secondary;}
    if(lockLaw&&mark!=='surprise')recipe.mark=mark;
+   else if(recipe.rework!=='remove_strength' && cycle%5!==0)
+     recipe.mark='hybrid'; // Use all surface renderers together for most generations.
    if(recipe.rework==='remove_strength'){
      if(lockLaw&&mark!=='surprise'){
        // The user explicitly locked the brush. Do a subtractive rebuild
