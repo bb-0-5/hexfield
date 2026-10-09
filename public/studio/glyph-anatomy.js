@@ -121,6 +121,18 @@ G['6']=()=>[A('bowl',.53,.66,.32,.21),B('spine','.22,.66','.16,.38','.45,.09','.
 G['7']=()=>[L('arm','.16,.13 .85,.13'),L('diagonal','.85,.13 .39,.86')];
 G['8']=()=>[A('bowl',.50,.31,.29,.19),A('bowl',.50,.68,.36,.19)];
 G['9']=()=>[A('bowl',.49,.33,.32,.20),B('spine','.81,.32','.89,.55','.67,.90','.27,.84')];
+G['.']=()=>[A('dot',.50,.81,.055,.055)];
+G[':']=()=>[A('dot',.50,.45,.055,.055),A('dot',.50,.81,.055,.055)];
+G['!']=()=>[L('stem','.50,.13 .50,.68'),A('dot',.50,.82,.06,.055)];
+G['?']=()=>[A('shoulder',.50,.33,.29,.22,-PI*.92,PI*.05),
+ L('spine','.75,.30 .50,.61'),A('dot',.50,.81,.06,.06)];
+G['-']=()=>[L('cross_stroke','.20,.54 .80,.54')];
+G['_']=()=>[L('crossbar','.13,1.04 .87,1.04')];
+G['/']=()=>[L('diagonal','.18,.91 .82,.10')];
+G['&']=()=>[A('bowl',.42,.34,.25,.20),B('spine','.64,.38','.34,.52','.25,.65','.24,.74'),
+ B('tail','.24,.74','.43,1.0','.83,.83','.89,.47')];
+G['+']=()=>[L('stem','.50,.29 .50,.74'),L('cross_stroke','.22,.52 .78,.52')];
+G["'"]=()=>[L('terminal','.53,.13 .47,.30')];
 // Lowercase is structurally distinct: x-height, extenders and tittle are
 // genuine regions, not capital letters shrunk without named anatomy.
 const lower={
@@ -216,10 +228,13 @@ export function normalizePartRule(value={}){
  return {target,operation,amount,glyph};
 }
 export function editAnatomyProgram(program=null,overrides={}){
- const rules=(Array.isArray(program?.rules)?program.rules:[]).slice(0,3).map(normalizePartRule);
+ const explicitlySet=Array.isArray(program?.rules);
+ const rules=(explicitlySet?program.rules:[]).slice(0,3).map(normalizePartRule);
  if(overrides.rule)rules[0]=normalizePartRule(overrides.rule);
  return {v:1,enabled:overrides.enabled??program?.enabled??true,
-   rules:rules.length?rules:[normalizePartRule({target:'crossbar',operation:'lift'})],
+   // Explicit empty list means the last law has been UNDONE. Fresh genomes
+   // (with no prior list) get a single useful editable default.
+   rules:rules.length||explicitlySet?rules:[normalizePartRule({target:'crossbar',operation:'lift'})],
    guide:!!(overrides.guide??program?.guide),seed:(overrides.seed??program?.seed??11)>>>0};
 }
 function mutateChoice(r,values,previous){const other=values.filter(x=>x!==previous);return other[Math.floor(r()*other.length)];}
@@ -253,8 +268,10 @@ export function transformedComponent(component,rule,{char='A'}={}){
  const cx=points.reduce((sum,p)=>sum+p[0],0)/points.length,
    cy=points.reduce((sum,p)=>sum+p[1],0)/points.length;
  const side=component.side||((cx>=.5)?1:-1);
- let omit=false,dotted=false,dashed=false,fractured=false,faceted=false;
- let width=1,invert=false,serifs=false,open=false;
+ let omit=!!component.omit,dotted=!!component.dotted,dashed=!!component.dashed,
+   fractured=!!component.fractured,faceted=!!component.faceted;
+ let width=component.width||1,invert=!!component.invert,serifs=!!component.serifs,
+   open=!!component.open;
  const isTerm=rule.target==='terminal'||rule.target==='serif';
  for(let i=0;i<points.length;i++){
    const p=points[i],t=i/Math.max(1,points.length-1);
@@ -282,16 +299,16 @@ export function transformedComponent(component,rule,{char='A'}={}){
  if(effect==='dashes')dashed=true;
  if(effect==='fracture')fractured=true;
  if(effect==='facet')faceted=true;
- if(effect==='thin')width=1-amount*.7;
- if(effect==='thicken')width=1+amount*1.3;
- if(effect==='taper')width=.55+amount*.48;
- if(effect==='invert')invert=true;
+ if(effect==='thin')width*=1-amount*.7;
+ if(effect==='thicken')width*=1+amount*1.3;
+ if(effect==='taper')width*=.55+amount*.48;
+ if(effect==='invert')invert=!invert;
  if(effect==='serifs')serifs=true;
  if(effect==='open'&&!component.closed)fractured=true;
  // A requested serif or terminal edit acts on the stroke ends rather than
  // changing the entire interior of a stem or bowl.
  return {...component,points,omit,dotted,dashed,fractured,faceted,
-   width,open,invert,serifs,isTerm,amount};
+   width,open,invert,serifs,isTerm:isTerm||component.isTerm,amount};
 }
 export function compileAnatomyGlyph(char,index,program){
  const anatomy=glyphAnatomy(char);
