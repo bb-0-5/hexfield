@@ -962,6 +962,12 @@ function bind(){
   $('phiTasteMode').value=getGoldenMode();
   $('phiTasteMode').addEventListener('change',()=>setGoldenMode($('phiTasteMode').value));
   $('phiRefine').addEventListener('click',()=>void refineGolden());
+  for(const quick of document.querySelectorAll('[data-phi-refine]')){
+    quick.addEventListener('click',()=>{
+      $('phiTasteDetails').open=true;
+      void refineGolden();
+    });
+  }
   for(const btn of document.querySelectorAll('[data-mode]'))btn.addEventListener('click',()=>setMode(btn.dataset.mode));
   $('generate').addEventListener('click',()=>{
     if(state.mode==='lettering')logoLoop?.pause('new logo requested');
