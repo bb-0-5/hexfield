@@ -390,6 +390,14 @@ async function paintRecipe(recipe,{newStudy=true}={}) {
       $('visualMetric').textContent=dist===null?'IMAGE MEASUREMENT READY':
         `DISTANCE FROM LAST JUDGED IMAGE ${dist.toFixed(3)} · ${discoveryLabel(dist,recipe.mode)}`;
     }
+    if(state.nonredundancy){
+      const W=state.nonredundancy;
+      $('visualMetric').textContent+=' · GLOBAL W NOVELTY '+
+        (W.globalNovelty*100).toFixed(1)+'% · STRUCTURAL COMPLEXITY '+
+        (W.complexity*100).toFixed(1)+'%'+
+        (W.redundant?' · REPEATED METHOD / IMAGE':'')+
+        ' · DERIVED SEED '+(recipe.seed>>>0);
+    }
     $('paintingOverlay').hidden=true;
     $('statusOrb').classList.remove('busy');
     $('renderStatus').textContent=state.nonredundancy?.redundant?
