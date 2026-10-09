@@ -129,10 +129,24 @@ export function initAnatomyControls({onApply=()=>{},getText=()=>''}={}){
    const incoming=editAnatomyProgram(genome||{rules:[defaultRule]});
    const locked=$('logoAnatomyLock').checked;
    const base=locked&&(manual||previous)?editAnatomyProgram(manual||previous):incoming;
-   return editAnatomyProgram({...base},{
+   const generated=editAnatomyProgram({...base},{
      enabled:$('logoAnatomyEnabled').checked,
      guide:$('logoAnatomyGuide').checked
    });
+   // Evolved experiments must demonstrably touch an existing part of the
+   // actual wordmark. Ascender-only rules on all-caps HEXFIELD, for example,
+   // were silently generating the same picture before this guard.
+   if(!locked){
+     const available=Object.keys(partsForWord(getText()));
+     for(let i=0;i<generated.rules.length;i++){
+       const rule=generated.rules[i];
+       if(available.includes(rule.target))continue;
+       if(!available.length)continue;
+       const seed=(Number(generated.seed)||1)+i*13;
+       rule.target=available[Math.abs(seed)%available.length];
+     }
+   }
+   return generated;
  }
  function updateAfterRender(metadata,recipe){
    if(!metadata||metadata.engine!=='named-glyph-anatomy'){
