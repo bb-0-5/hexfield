@@ -47,6 +47,8 @@ jobs:
         run: node --experimental-default-type=module tests/golden-creative-process.test.mjs
       - name: Test carried canvas fragments
         run: node --experimental-default-type=module tests/motif-memory.test.mjs
+      - name: Verify geometric idea inheritance and W-phi-H negotiation
+        run: node --experimental-default-type=module tests/structural-heritage.test.mjs
       - name: Test continuous renderer fusion and recursive abstraction
         run: node --experimental-default-type=module tests/studio-abstraction-loop.test.mjs
       - name: Visual novelty and painting comparison
