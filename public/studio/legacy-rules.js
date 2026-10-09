@@ -86,6 +86,7 @@ if(stage&&raw&&mount){
        ' / '+result.metrics.strokes+' marks / global novelty '+
        ((result.nonredundancy?.globalNovelty||0)*100).toFixed(1)+
        '% / complexity '+((result.nonredundancy?.complexity||0)*100).toFixed(1)+'%' +
+       ' / '+(result.survival?.carried||0)+' actual motifs survive' +
        ' / '+explainGolden(golden));
      if(result.cycle%4===0)publishSource(constrained,'archive',result.recipe);
    },
@@ -100,6 +101,7 @@ if(stage&&raw&&mount){
        (state.nonredundancy?' / W novelty '+
          (state.nonredundancy.novelty*100).toFixed(1)+
          '% · complexity '+(state.nonredundancy.complexity*100).toFixed(1)+'%':'')+
+       ' / '+(state.motifs?.length||0)+' inherited painted regions' +
        (state.lastError?' / '+state.lastError:'');
      paintStrip(state.history||[]);
    },
