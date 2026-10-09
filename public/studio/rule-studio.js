@@ -6,7 +6,8 @@ import {SUBJECTS,LAWS,MARKS,REWORKS,makeRecipe,mutateRecipe,drawReality,applyRul
   noteRuleVerdict,noteLineage,describeRecipe,buildRulePrompt,RULE_STORE} from './rule-engine.js';
 import {createAbstractionLoop} from './abstraction-loop.js';
 import {createCreativePerformance} from './creative-performance.js';
-import {measureGoldenTaste,explainGolden} from './golden-taste.js';
+import {measureGoldenTaste,explainGolden,diagnoseGolden,
+  compareGoldenTaste} from './golden-taste.js';
 import {publishSource} from './source-mixer.js';
 import {evolveSeed,rankNoveltyCandidates,assessCanvas,commitCanvas,
   methodSignature,snapshotNoveltyMemory} from './nonredundancy.js';
@@ -59,11 +60,19 @@ export function initRuleStudio(){
    host:document.querySelector('.rule-frame'),
    canvas:$('ruleArtwork'),name:'rules'
  });
+ let lastPhi=null;
  function displayPhi(canvas){
    const s=measureGoldenTaste(canvas,{mode:'rule-studio'});
+   const verdict=diagnoseGolden(s);
+   const delta=compareGoldenTaste(lastPhi,s);
    const el=$('ruleGoldenEvidence');
-   if(el){el.textContent='φ×φ / '+explainGolden(s);
-     el.dataset.qualifies=String(s.qualifies);}
+   if(el){
+     el.textContent='φ×φ / '+explainGolden(s)+
+       (delta&&!delta.first?' / '+delta.description:'')+
+       ' / NEXT: '+verdict.instruction;
+     el.dataset.qualifies=String(s.qualifies);
+   }
+   lastPhi=s;
    return s;
  }
  function showLoopHistory(rows){
