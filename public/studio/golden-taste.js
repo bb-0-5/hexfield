@@ -211,6 +211,86 @@ export function setGoldenMode(value){
  try{localStorage.setItem(GOLDEN_MODE_KEY,mode);}catch{}
  return mode;
 }
+/* Build 309 — actionable φ critique and parent→child change.
+ * A failed constraint is not called beautiful. We expose exactly WHY it
+ * failed, and how a renderer might repair it on its next seeded attempt.
+ */
+export function diagnoseGolden(taste){
+ if(!taste?.constraints||!taste.ratios)return {
+   target:'geometry',instruction:'Render a study before diagnosing its proportions.',passes:[]
+ };
+ const tests=[
+   {id:'geometry',score:taste.geometry,target:taste.constraints.geometry,
+    hint:'Change the silhouette, its size, or the distribution of visual mass.'},
+   {id:'color',score:taste.color,target:taste.constraints.color,
+    hint:'Redistribute palette roles and pigment mass rather than merely recolouring the canvas.'},
+   {id:'coupling',score:taste.coupling,target:taste.constraints.coupling,
+    hint:'Move colour regions relative to ink structure and test the reverse movement.'},
+   {id:'combined',score:taste.combined,target:taste.constraints.combined,
+    hint:'The full composition needs stronger cooperation between both golden constraints.'}
+ ];
+ const failures=tests.map(row=>({
+   ...row,pass:row.score>=row.target,
+   shortfall:+Math.max(0,row.target-row.score).toFixed(4)
+ }));
+ failures.sort((a,b)=>b.shortfall-a.shortfall);
+ const worst=failures.find(x=>!x.pass);
+ const ratios=taste.ratios;
+ let instruction=worst?.hint||'All four experimental φ constraints passed.';
+ if(worst?.id==='geometry'){
+   const xgap=1-phiFit(ratios.geometryLeft,.19);
+   const ygap=1-phiFit(ratios.geometryTop,.19);
+   const axis=xgap>ygap?'horizontal':'vertical';
+   instruction=axis==='horizontal'?
+     'Shift structural mass left/right until its split approaches 61.8% / 38.2%.':
+     'Shift structural mass upward/downward until its split approaches 61.8% / 38.2%.';
+   if(ratios.aspect>PHI*1.4)
+     instruction+=' The occupied silhouette is too wide for this aspect criterion.';
+ }
+ if(worst?.id==='color'){
+   instruction='Rebalance dominant pigments toward a 61.8% / 38.2% share;'+
+    ' adjust colour placement along the φ divisions.';
+   if(ratios.hueAngle<95)
+     instruction+=' Current dominant hues are closer than the 137.5° golden angle.';
+ }
+ if(worst?.id==='coupling'){
+   const effects=taste.interaction;
+   instruction=(effects.colorOnGeometry<effects.geometryOnColor?
+     'Colour movement currently harms the fixed structure more than the reverse:':
+     'Moving the silhouette alters colour relationships more than moving pigment:')+
+     ' test relocating accents without redrawing the entire subject.';
+ }
+ return {
+   target:worst?.id||'qualified',
+   shortfall:worst?.shortfall||0,instruction,
+   passes:failures.map(x=>({id:x.id,pass:x.pass,actual:x.score,target:x.target})),
+   qualified:taste.qualifies
+ };
+}
+export function compareGoldenTaste(parent,child){
+ if(!child)return null;
+ if(!parent)return {first:true,deltas:null,description:'First measurement: no earlier painting for comparison.'};
+ const delta=key=>+((Number(child[key])||0)-(Number(parent[key])||0)).toFixed(4);
+ const changes={
+   geometry:delta('geometry'),color:delta('color'),
+   coupling:delta('coupling'),combined:delta('combined'),
+   colorOnGeometry:+((child.interaction?.colorOnGeometry||0)-
+     (parent.interaction?.colorOnGeometry||0)).toFixed(4),
+   geometryOnColor:+((child.interaction?.geometryOnColor||0)-
+     (parent.interaction?.geometryOnColor||0)).toFixed(4)
+ };
+ const percent=v=>(v>=0?'+':'')+(v*100).toFixed(1)+'pt';
+ const effect=changes.colorOnGeometry+changes.geometryOnColor;
+ const verdict=effect>.02?'interaction strengthened':
+   effect<-.02?'interaction weakened':'interaction nearly unchanged';
+ return {first:false,deltas:changes,
+   improved:changes.combined>0,
+   description:'Δ Geometry '+percent(changes.geometry)+
+     ' · Δ Colour '+percent(changes.color)+
+     ' · Δ Interaction '+percent(changes.coupling)+
+     ' · '+verdict
+ };
+}
 export function goldenPrior(s,{mode='guide'}={}){
  if(!s)return 0;
  if(mode==='off')return 0;
