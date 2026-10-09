@@ -470,15 +470,21 @@ async function paintFresh(){
         mode:recipe.mode,method:studioMethod(recipe),
         parent:state.nonredundancy?.fingerprint||null
       });
+      const golden=measureGoldenTaste(preview.canvas,{mode:recipe.mode});
       const score=genomeValue(state.mode,recipe.genome)*.12+
         visualFeedbackScore(preview.visual,seen)+visualNovelty*.35+
-        novelty.score*2.6-(novelty.redundant?2:0);
-      options.push({recipe,score,novelty,visualNovelty});
+        novelty.score*2.6-(novelty.redundant?2:0)+
+        goldenPrior(golden,{mode:getGoldenMode()})*.95;
+      options.push({recipe,score,novelty,visualNovelty,golden});
     }catch(err){console.warn('New procedure preview failed:',err);}
     await pauseFrame();
   }
   if(token!==state.experimentRevision)return;
-  options.sort((a,b)=>b.score-a.score);
+  options.sort((a,b)=>{
+    if(getGoldenMode()==='strict'&&a.golden.qualifies!==b.golden.qualifies)
+      return a.golden.qualifies?-1:1;
+    return b.score-a.score;
+  });
   const chosen=options[0]?.recipe||makeRecipe({parent});
   state.comparisonReference=null;
   return paintRecipe(chosen);
