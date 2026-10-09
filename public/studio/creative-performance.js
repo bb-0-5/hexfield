@@ -243,7 +243,10 @@ export function createCreativePerformance({host,canvas,name='theatre',statusElem
          const count=Math.ceil(assembly*plan.marks.length);
          for(let i=0;i<count;i++)drawMark(ctx,plan.marks[i]);
          ctx.save();ctx.globalAlpha=assembly*.45;fit(data.final,1);ctx.restore();
-         label('04 / MAKE EACH MARK',plan.method+' · '+count+' / '+plan.marks.length+' recorded marks');
+         label('04 / MAKE EACH MARK',plan.ideas.length?
+           'H / '+plan.ideas.map(x=>x.was+' → '+x.material).join(', ')+
+           ' / inherited contour, new material · '+count+' real marks':
+           plan.method+' · '+count+' / '+plan.marks.length+' recorded marks');
        }else{
          ctx.save();ctx.globalAlpha=assembly;fit(data.final,1);ctx.restore();
          label('04 / RECONSTRUCT UNDER THE LAW',plan.method+' · source transformed by this actual rule');
@@ -253,7 +256,12 @@ export function createCreativePerformance({host,canvas,name='theatre',statusElem
        fit(data.final,1);
        outlineSurvivors(ctx,plan.survivors,.35);
        sketchInheritedIdeas(ctx,plan.ideas,1);
-       label('05 / THE IDEA SURVIVES',plan.survivors.length?
+       label('05 / THE IDEA SURVIVES',plan.ideas.length?
+         'W '+Math.round((plan.tradeoff?.W||0)*100)+'% / φ '+
+         Math.round((plan.tradeoff?.phi||0)*100)+'% / H '+
+         Math.round((plan.tradeoff?.H||0)*100)+'% · '+
+         plan.ideas.length+' inherited geometry gene(s) survived':
+         plan.survivors.length?
          plan.survivors.length+' inherited fragments coexist with the newly constructed image':
          plan.method+' · now available for the next mutation');
      }
