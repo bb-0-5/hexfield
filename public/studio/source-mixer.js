@@ -99,21 +99,27 @@ export function createSourceBank({width=WIDTH,height=HEIGHT,getArchive=()=>null,
     busy=true;
     try{
       // Other modes never have to rerender during every 1.5-second interval.
-      if(force||refreshCount%7===0||!cached.terrain){
-        const land=canvasOf(width,height),which=SCENES[Math.abs(seed)%SCENES.length],
-          mood=MOODS[Math.abs(Math.floor(seed/7))%MOODS.length];
-        await renderLandscape(land,{mode:'landscape',seed,scene:which,mood,
-          genome:makeGenome('landscape',seed)}, {animate:false,quality:.24});
-        cached.terrain=land;
-        const lettering=canvasOf(width,height);
-        renderLettering(lettering,{mode:'lettering',seed:seed+53,text:'HEXFIELD',
-          type:'wordmark',style:['geometric','experimental','heavy'][Math.abs(seed)%3],
-          genome:makeGenome('lettering',seed+53)});
-        cached.lettering=lettering;
-      }
+      // Reality is always available, even if the optional landscape or font
+      // renderer fails on a particular device/browser.
       const reality=canvasOf(width,height);
       drawReality(reality,subject,seed+10);
       cached.reality=reality;
+      if(force||refreshCount%7===0||!cached.terrain){
+        const land=canvasOf(width,height),which=SCENES[Math.abs(seed)%SCENES.length],
+          mood=MOODS[Math.abs(Math.floor(seed/7))%MOODS.length];
+        try{
+          await renderLandscape(land,{mode:'landscape',seed,scene:which,mood,
+            genome:makeGenome('landscape',seed)}, {animate:false,quality:.24});
+          cached.terrain=land;
+        }catch(error){console.warn('Landscape renderer skipped:',String(error).slice(0,110));}
+        const lettering=canvasOf(width,height);
+        try{
+          renderLettering(lettering,{mode:'lettering',seed:seed+53,text:'HEXFIELD',
+            type:'wordmark',style:['geometric','experimental','heavy'][Math.abs(seed)%3],
+            genome:makeGenome('lettering',seed+53)});
+          cached.lettering=lettering;
+        }catch(error){console.warn('Letter renderer skipped:',String(error).slice(0,110));}
+      }
       const archive=getArchive();
       if(archive)cached.archive=cloneCanvas(archive,width,height);
       const uploaded=getUploaded();
