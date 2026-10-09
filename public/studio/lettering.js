@@ -9,6 +9,7 @@ export const LETTER_STYLES=['anatomy','geometric','minimal','heavy','elegant','e
 export const LETTER_TYPES=['wordmark','monogram','emblem'];
 const W=1200,H=740,PI=Math.PI;
 const FONTS={
+ anatomy:{font:'Arial, Helvetica, sans-serif',weight:750},
  geometric:{font:'Arial, Helvetica, sans-serif',weight:750},
  minimal:{font:'Arial, Helvetica, sans-serif',weight:400},
  heavy:{font:'Impact, "Arial Black", sans-serif',weight:900},
