@@ -3,13 +3,14 @@
  * visual laws, then use the ACTUAL result as the next source image.
  * Explicit start/stop. Never invokes a paid image model automatically.
  */
-import {makeRecipe,mutateRecipe,applyRules,noteLineage,LAWS,MARKS} from './rule-engine.js';
+import {makeRecipe,mutateRecipe,applyRules,noteLineage,LAWS,MARKS,SUBJECTS} from './rule-engine.js';
 import {createSourceBank,mixSources,cloneCanvas} from './source-mixer.js';
 import {evolveSeed,rankNoveltyCandidates,commitCanvas,
   methodSignature,snapshotNoveltyMemory} from './nonredundancy.js';
+import {paintHeldMotifs,advanceMotifMemory,motifEvidence} from './motif-memory.js';
 export const REWORK_SEQUENCE=['abstract_masses','negative_repaint','misread','remove_strength'];
 const clamp=(n,a,b)=>Math.max(a,Math.min(n,b));
-const choice=a=>a[Math.floor(Math.random()*a.length)];
+const choice=(a,seed=1)=>a[(seed>>>0)%a.length];
 const freshCanvas=(w,h)=>{const c=document.createElement('canvas');c.width=w;c.height=h;return c;};
 export function visualDelta(a,b){
  if(!a||!b)return 1;
@@ -38,7 +39,10 @@ export function nextAbstractRecipe(parent,{cycle=0,branch=0,seed=null,
    // painter explicitly locks an individual mark as a formal restriction.
    if(!lockLaw||mark==='surprise')recipe.mark='hybrid';
  }else{
-   const focus=cycle%5===1?'mark':cycle%4===0?'law':'rework';
+   // Invent the next constraint, scene, brush and rework autonomously.
+   // Deliberate locks remain authoritative; the basic UI needs no knobs.
+   const focus=cycle%7===0?'subject':cycle%5===1?'mark':
+     cycle%4===0?'law':'rework';
    const nextSeed=Number.isFinite(seed)?seed:
      evolveSeed(parent.seed,cycle+1,branch,'abstract');
    recipe=mutateRecipe(parent,focus,'studio',nextSeed);
@@ -61,13 +65,14 @@ export function nextAbstractRecipe(parent,{cycle=0,branch=0,seed=null,
      }else{
        recipe.forbiddenMark=parent.mark;
        if(recipe.mark===parent.mark)
-         recipe.mark=choice(Object.keys(MARKS).filter(x=>x!==parent.mark));
+         recipe.mark=choice(Object.keys(MARKS).filter(x=>x!==parent.mark),
+           nextSeed);
      }
    }
  }
  if(recipe.primary===recipe.secondary)recipe.secondary='none';
- if(!(recipe.primary in LAWS))recipe.primary=choice(Object.keys(LAWS));
- if(!(recipe.mark in MARKS))recipe.mark=choice(Object.keys(MARKS));
+ if(!(recipe.primary in LAWS))recipe.primary=choice(Object.keys(LAWS),recipe.seed);
+ if(!(recipe.mark in MARKS))recipe.mark=choice(Object.keys(MARKS),recipe.seed);
  return recipe;
 }
 export function createAbstractionLoop({
@@ -79,13 +84,14 @@ export function createAbstractionLoop({
  let running=false,waiting=false,timer=null,activeStep=false;
  let cycle=0,seed=Math.floor(Math.random()*4294967295),last=null;
  let lastRecipe=null,config={},lastMix=null,lastError=null,lastAssessment=null;
- let stamps=[],stamp=0,forceFreshSources=true;
+ let stamps=[],stamp=0,forceFreshSources=true,motifs=[];
  const state=()=>({
    running,waiting,cycle,recipe:lastRecipe,
    sourceNames:lastMix?.sources||[],method:lastMix?.mode||null,
    lastError,nonredundancy:lastAssessment,golden:lastAssessment?.golden||null,
    globalMemory:snapshotNoveltyMemory().count,
    currentSeed:lastRecipe?.seed??seed,donorGenerations:bank.genomes(),
+   motifs:motifEvidence(motifs),
    history:stamps.map(x=>({...x})),
    waitingReason:waiting?'Page hidden':''
  });
@@ -103,6 +109,7 @@ export function createAbstractionLoop({
  }
  function reset(){
    pause();cycle=0;last=null;lastRecipe=null;lastMix=null;stamps=[];lastAssessment=null;
+   motifs=[];
    seed=Math.floor(Math.random()*4294967295);
    bank.clear();forceFreshSources=true;status();
  }
@@ -120,11 +127,16 @@ export function createAbstractionLoop({
      const previous=last||getParent();
      const parentSeed=lastRecipe?.seed??seed;
      const baseSeed=evolveSeed(parentSeed,cycle+1,0,'abstraction-parent');
+     if(!motifs.length&&previous)motifs=advanceMotifMemory([],previous,{
+       seed:parentSeed,cycle,parent:previous
+     });
      // The source bank refreshes from the current lineage seed. The
      // picture still has an external reference; the generator isn't reset.
      if(cycle===0||cycle%6===0||forceFreshSources){
        try{
-         await bank.refresh(baseSeed,config.subject||'abstract',{force:true});
+         const scene=config.subject&&config.subject!=='surprise'?
+           config.subject:choice(Object.keys(SUBJECTS),baseSeed);
+         await bank.refresh(baseSeed,scene,{force:true});
          forceFreshSources=false;
        }catch(error){
          forceFreshSources=true;
@@ -158,23 +170,33 @@ export function createAbstractionLoop({
        const metrics=applyRules(mixed.canvas,output,recipe,{
          iteration:cycle+attempt,trace:true
        });
+       // The new law governs the NEW marks; islands of actual previous
+       // brushwork survive as archaeological material. Even wildly
+       // different mixers cannot erase them just to score high W novelty.
+       const held=paintHeldMotifs(output,motifs,{cycle,opacity:.96});
        const method=methodSignature({mode:'abstraction',primary:recipe.primary,
          secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework,
          blend:mixed.mode,subject:recipe.subject});
-       candidates.push({canvas:output,recipe,mixed,metrics,method});
+       candidates.push({canvas:output,recipe,mixed,metrics,held,method});
        if(currentStamp!==stamp)return;
      }
      const [best]=rankNoveltyCandidates(candidates,{
        mode:'abstraction',parent:previous
      });
-     const {canvas:output,recipe,mixed,metrics,assessment,golden}=best;
+     const {canvas:output,recipe,mixed,metrics,assessment,golden,held}=best;
      const novelty=visualDelta(previous,output);
      const stalled=cycle>2&&(assessment.redundant||novelty<.035);
      const recorded=commitCanvas(output,{mode:'abstraction',method:best.method,
        seed:recipe.seed,parentId:recipe.parentId,evaluation:assessment});
      lastAssessment={...recorded,golden,candidates:candidates.length};
+     const survived=motifEvidence(motifs);
+     motifs=advanceMotifMemory(motifs,output,{
+       seed:recipe.seed,cycle:cycle+1,parent:previous
+     });
      const result={canvas:output,recipe,cycle:cycle+1,metrics,
        blend:mixed.mode,sources:mixed.sources,novelty,stalled,
+       survival:{held:survived,coverage:held.coverage,
+         carried:held.held.length,available:motifEvidence(motifs).length},
        golden,nonredundancy:lastAssessment};
      last=output;lastRecipe=recipe;lastMix=mixed;cycle++;lastError=null;
      noteLineage(recipe);
@@ -184,7 +206,8 @@ export function createAbstractionLoop({
        mark:recipe.mark,law:recipe.primary,blend:mixed.mode,novelty,
        globalNovelty:lastAssessment.globalNovelty,
        minSimilarity:lastAssessment.novelty,
-       complexity:lastAssessment.complexity});
+       complexity:lastAssessment.complexity,
+       survivors:survived.length,heldCoverage:held.coverage});
      stamps=stamps.slice(-10);
      try{onFrame(result)}catch(error){onError(error)}
      status();
