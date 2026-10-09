@@ -829,12 +829,12 @@ async function paintNextLogoGeneration(parent,focus){
     evolutionSeed:evolveSeed(parent.seed,parent.genome.generation+1,7,'letter-fallback')});
   // The rejected ideas are exhibited before the winning form is drawn.
   // These are the actual preview canvases used for selection, not fiction.
-  pendingProcessTrials=options.map(({recipe,novelty,preview},i)=>({
+  pendingProcessTrials=options.map(({recipe,novelty,preview,golden},i)=>({
     canvas:preview?.canvas,
     label:(recipe.anatomy?.rules?.[0]?.target||'glyph')+' / '+
       (recipe.anatomy?.rules?.[0]?.operation||focus),
     method:'actual rendered counterfactual',
-    score:novelty.score,selected:recipe===chosen
+    score:novelty.score,golden,selected:recipe===chosen
   })).filter(x=>x.canvas);
   await paintRecipe(chosen);
   const diff=visualDistance(last,state.currentVisual);
