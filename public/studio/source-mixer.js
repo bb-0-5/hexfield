@@ -5,7 +5,8 @@
 import {drawReality} from './rule-engine.js';
 import {renderLandscape,SCENES,MOODS} from './landscape.js';
 import {renderLettering} from './lettering.js';
-import {makeGenome} from './evolution.js';
+import {makeGenome,mutateGenome} from './evolution.js';
+import {evolveSeed} from './nonredundancy.js';
 
 export const SOURCE_KEYS = [
   'parent','reality','terrain','lettering','logo','archive','imagination','upload','kept'
@@ -96,6 +97,7 @@ export function publishSource(canvas,key,recipe=null){
 }
 export function createSourceBank({width=WIDTH,height=HEIGHT,getArchive=()=>null,getUploaded=()=>null,getParent=()=>null}={}){
   let cached={};let refreshCount=0;
+  let landAncestor=null,letterAncestor=null;
   let busy=false;
   async function refresh(seed=1,subject='coast',{force=false}={}){
     if(busy)return cached;
@@ -108,19 +110,31 @@ export function createSourceBank({width=WIDTH,height=HEIGHT,getArchive=()=>null,
       drawReality(reality,subject,seed+10);
       cached.reality=reality;
       if(force||refreshCount%7===0||!cached.terrain){
+        // Each donor now evolves its OWN program from its most recent
+        // procedure genome. Regeneration no longer discards accumulated
+        // structure by calling makeGenome() from scratch every few passes.
         const land=canvasOf(width,height),which=SCENES[Math.abs(seed)%SCENES.length],
           mood=MOODS[Math.abs(Math.floor(seed/7))%MOODS.length];
+        const focus=['structure','surface','light'][refreshCount%3];
+        const nextTerrain=landAncestor?
+          mutateGenome(landAncestor,focus,
+            evolveSeed(seed,refreshCount+1,0,'terrain-genome')):
+          makeGenome('landscape',evolveSeed(seed,1,0,'terrain-origin'));
         try{
           await renderLandscape(land,{mode:'landscape',seed,scene:which,mood,
-            genome:makeGenome('landscape',seed)}, {animate:false,quality:.24});
-          cached.terrain=land;
+            genome:nextTerrain}, {animate:false,quality:.24});
+          cached.terrain=land;landAncestor=nextTerrain;
         }catch(error){console.warn('Landscape renderer skipped:',String(error).slice(0,110));}
         const lettering=canvasOf(width,height);
+        const nextLetter=letterAncestor?
+          mutateGenome(letterAncestor,focus,
+            evolveSeed(seed,refreshCount+1,1,'letter-genome')):
+          makeGenome('lettering',evolveSeed(seed,1,1,'letter-origin'));
         try{
           renderLettering(lettering,{mode:'lettering',seed:seed+53,text:'HEXFIELD',
             type:'wordmark',style:['geometric','experimental','heavy'][Math.abs(seed)%3],
-            genome:makeGenome('lettering',seed+53)});
-          cached.lettering=lettering;
+            genome:nextLetter});
+          cached.lettering=lettering;letterAncestor=nextLetter;
         }catch(error){console.warn('Letter renderer skipped:',String(error).slice(0,110));}
       }
       const archive=getArchive();
@@ -148,7 +162,14 @@ export function createSourceBank({width=WIDTH,height=HEIGHT,getArchive=()=>null,
       .map(([name,canvas])=>({name,canvas}));
   }
   return {refresh,sources,
-    clear(){cached={};refreshCount=0;},
+    clear({wipeGenomes=false}={}){
+      cached={};refreshCount=0;
+      // Novelty rescue retains the procedural ancestry. Only an explicit
+      // full reset would erase the grammar's history.
+      if(wipeGenomes){landAncestor=null;letterAncestor=null;}
+    },
+    genomes(){return {terrain:landAncestor?.generation||0,
+      lettering:letterAncestor?.generation||0};},
     available(){return Object.keys(cached).filter(x=>SOURCE_KEYS.includes(x));}};
 }
 const hash=(x,y,seed)=>{
