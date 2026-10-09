@@ -6,6 +6,7 @@ import {initImagination} from './imagination.js';
 import {initRuleStudio} from './rule-studio.js';
 import {initAnatomyControls} from './anatomy-controls.js';
 import {initLogoEvolution} from './logo-evolution.js';
+import {createCreativePerformance} from './creative-performance.js';
 import {evolveSeed,assessCanvas,commitCanvas,rankNoveltyCandidates,
   methodSignature,snapshotNoveltyMemory} from './nonredundancy.js';
 import {publishSource} from './source-mixer.js';
@@ -41,7 +42,8 @@ const state={
   collective:readJson(storage.shared,{landscape:{},lettering:{}}),
   pending:readJson(storage.votes,[]),
   evolution:readJson(storage.evolution,{landscape:{elites:[],rejected:[],focus:{}},lettering:{elites:[],rejected:[],focus:{}}}),
-  experiments:[],experimentRevision:0,currentVisual:null,comparisonReference:null,nonredundancy:null,
+  experiments:[],experimentRevision:0,currentVisual:null,comparisonReference:null,
+  nonredundancy:null,lastGlyphMeta:null,
   visual:readJson(storage.visual,{landscape:[],lettering:[]}),
   blindHistory:readJson(storage.blind,[]),blindCurrent:null,blindRevision:0,
 };
@@ -301,7 +303,9 @@ function setStatus(message){$('feedbackStatus').textContent=message;}
 function setMode(mode,{paint=true}={}){
   if(!['rules','imagination','landscape','lettering'].includes(mode))return;
   if(state.mode==='rules'&&mode!=='rules')ruleStudio?.hide();
-  if(state.mode==='lettering'&&mode!=='lettering')logoLoop?.pause('switched modes');
+  if(state.mode==='lettering'&&mode!=='lettering'){
+    logoLoop?.pause('switched modes');logoTheatre?.stop();
+  }
   clearExperiments();clearBlind();state.controller?.abort();state.mode=mode;
   const imagining=mode==='imagination',ruling=mode==='rules';
   $('ruleControls').hidden=!ruling;
@@ -326,6 +330,18 @@ function setMode(mode,{paint=true}={}){
   if(paint)void paintFresh();
 }
 async function paintRecipe(recipe,{newStudy=true}={}) {
+  // Preserve the actual parent image and its previously named anatomical
+  // geometry before the production canvas is overwritten by the next child.
+  const parentImage=(recipe.mode==='lettering'&&state.recipe?.mode==='lettering'&&!state.working)?
+    document.createElement('canvas'):null;
+  if(parentImage){
+    parentImage.width=state.canvas.width;parentImage.height=state.canvas.height;
+    parentImage.getContext('2d').drawImage(state.canvas,0,0);
+  }
+  const oldGlyphMeta=state.lastGlyphMeta;
+  const processTrials=pendingProcessTrials;
+  pendingProcessTrials=null;
+  logoTheatre?.stop();
   state.controller?.abort();const abort=new AbortController();state.controller=abort;
   state.mode=recipe.mode;
   state.recipe=recipe;
@@ -364,7 +380,8 @@ async function paintRecipe(recipe,{newStudy=true}={}) {
     if(recipe.mode==='lettering'){
       logoControls?.updateAfterRender(glyphResult,recipe);
       publishSource(state.canvas,'logo',recipe);
-    }
+      state.lastGlyphMeta=glyphResult?.hitMap?glyphResult:null;
+    }else state.lastGlyphMeta=null;
     // All renderers observe the SAME global visual nonredundancy memory:
     // logos and terrain cannot silently create the same pixels forever.
     const parentFp=state.nonredundancy?.fingerprint||null;
@@ -399,6 +416,19 @@ async function paintRecipe(recipe,{newStudy=true}={}) {
         ' · DERIVED SEED '+(recipe.seed>>>0);
     }
     $('paintingOverlay').hidden=true;
+    if(recipe.mode==='lettering'&&logoTheatre){
+      $('renderStatus').textContent='PERFORMING THE CREATIVE PROCESS';
+      await logoTheatre.play({
+        kind:'logo',recipe,
+        parent:parentImage,oldAnatomy:oldGlyphMeta,
+        trials:processTrials||[],
+        final:state.canvas,anatomy:glyphResult,
+        // The sequence depicts actual rendered trials and exact glyph
+        // components. No fake image-model thoughts or invented drawings.
+        duration:(processTrials?.length?2400:1750)
+      });
+      if(abort.signal.aborted||version!==state.revision)return;
+    }
     $('statusOrb').classList.remove('busy');
     $('renderStatus').textContent=state.nonredundancy?.redundant?
       'REPEATED VISUAL / TEST ANOTHER METHOD':'READY FOR YOUR VERDICT';
@@ -747,7 +777,7 @@ function chooseBlind(index){
     Image distance: ${distance?.toFixed(3)??'unmeasured'}. This choice is a test result, not automatically counted as a general KEEP/REJECT vote.`;
   updateBlindSummary();
 }
-let imagination,ruleStudio,logoControls,logoLoop;
+let imagination,ruleStudio,logoControls,logoLoop,logoTheatre,pendingProcessTrials=null;
 async function paintNextLogoGeneration(parent,focus){
   const last=state.currentVisual,options=[];
   // Use the CURRENT font genome and CURRENT seed to explore competing,
@@ -765,7 +795,7 @@ async function paintNextLogoGeneration(parent,focus){
         mode:'lettering',method:studioMethod(recipe),
         parent:state.nonredundancy?.fingerprint||null
       });
-      options.push({recipe,novelty});
+      options.push({recipe,novelty,preview});
     }catch(error){console.warn('Logo anatomy candidate omitted:',error);}
   }
   options.sort((a,b)=>{
@@ -775,6 +805,15 @@ async function paintNextLogoGeneration(parent,focus){
   });
   const chosen=options[0]?.recipe||makeRecipe({parent,focus,
     evolutionSeed:evolveSeed(parent.seed,parent.genome.generation+1,7,'letter-fallback')});
+  // The rejected ideas are exhibited before the winning form is drawn.
+  // These are the actual preview canvases used for selection, not fiction.
+  pendingProcessTrials=options.map(({recipe,novelty,preview},i)=>({
+    canvas:preview?.canvas,
+    label:(recipe.anatomy?.rules?.[0]?.target||'glyph')+' / '+
+      (recipe.anatomy?.rules?.[0]?.operation||focus),
+    method:'actual rendered counterfactual',
+    score:novelty.score,selected:recipe===chosen
+  })).filter(x=>x.canvas);
   await paintRecipe(chosen);
   const diff=visualDistance(last,state.currentVisual);
   chosen._measuredDistance=Number.isFinite(diff)?diff:null;
@@ -842,6 +881,10 @@ function bind(){
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void syncVotes();});
   imagination=initImagination({getSession:acquireSession});
   ruleStudio=initRuleStudio();
+  logoTheatre=createCreativePerformance({
+    host:$('canvasWrap'),canvas:$('artwork'),
+    name:'letterforms',statusElement:$('renderStatus')
+  });
   logoControls=initAnatomyControls({
      onApply:applyEditedLogo,
      getText:()=>{
