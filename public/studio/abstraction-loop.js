@@ -174,11 +174,17 @@ export function createAbstractionLoop({
          lockLaw:!!config.lockLaw,law:config.law||'surprise',
          secondary:config.secondary||'none',mark:config.mark||'surprise'
        });
+       // Candidate methods span the full renderer grammar. The painter
+       // cannot maximise H by choosing one comfortable mixer forever.
+       const autoMixer=!config.mixMode||config.mixMode==='auto';
+       const families=['quilt','cutaway','dissonance','relief','edges'];
+       const mode=autoMixer?
+         families[(Math.floor(cycle/3)+attempt)%families.length]:
+         config.mixMode;
        const mixed=mixSources(inputs,{
          width,height,
          cycle:cycle+attempt*2,
-         seed:candidateSeed,
-         mode:config.mixMode||'auto'
+         seed:candidateSeed,mode
        });
        const output=freshCanvas(width,height);
        const metrics=applyRules(mixed.canvas,output,recipe,{
@@ -205,9 +211,20 @@ export function createAbstractionLoop({
      // None of these objectives may monopolize artistic judgement:
      // W seeks novelty, φ seeks proportional harmony, H preserves a
      // recognizable identity while its EXECUTED material evolves.
-     const best=selectBalancedCandidate(evaluated,{
+     const goal=selectBalancedCandidate(evaluated,{
        strict:getGoldenMode()==='strict'
      })||evaluated[0];
+     // Every third pass deliberately trials a new mixer family. This is
+     // genuine active non-redundancy at the METHOD level, not simply
+     // scoring arbitrary pixel differences. Strict φ-qualified work
+     // retains precedence over this exploratory scheduling.
+     const families=['quilt','cutaway','dissonance','relief','edges'];
+     const evolvingMix=!config.mixMode||config.mixMode==='auto';
+     const expected=families[Math.floor(cycle/3)%families.length];
+     const strictQualified=getGoldenMode()==='strict'&&
+       evaluated.some(x=>x.golden?.qualifies);
+     const best=evolvingMix&&cycle%3===0&&!strictQualified?
+       evaluated.find(x=>x.mixed.mode===expected)||goal:goal;
      const {canvas:output,recipe,mixed,metrics,assessment,
        golden,held,heritage,threeWay}=best;
      const novelty=visualDelta(previous,output);
