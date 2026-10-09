@@ -4,12 +4,20 @@ on:
     branches: [main]
     paths:
       - "worker.js"
+      - "public/index.html"
+      - "public/legacy.html"
+      - "public/hexfield-integrations.js"
+      - "public/print-handoff.js"
       - "public/studio/**"
       - "tests/**"
       - ".github/workflows/hexfield-studio-tests.yml"
   pull_request:
     paths:
       - "worker.js"
+      - "public/index.html"
+      - "public/legacy.html"
+      - "public/hexfield-integrations.js"
+      - "public/print-handoff.js"
       - "public/studio/**"
       - "tests/**"
 jobs:
