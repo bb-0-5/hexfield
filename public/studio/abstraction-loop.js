@@ -152,7 +152,7 @@ export function createAbstractionLoop({
        const metrics=applyRules(mixed.canvas,output,recipe,{iteration:cycle+attempt});
        const method=methodSignature({mode:'abstraction',primary:recipe.primary,
          secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework,
-         blend:mixed.mode,subject:recipe.subject,parents:recipe.parentId||''});
+         blend:mixed.mode,subject:recipe.subject});
        candidates.push({canvas:output,recipe,mixed,metrics,method});
        if(currentStamp!==stamp)return;
      }
