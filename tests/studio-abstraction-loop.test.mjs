@@ -78,6 +78,9 @@ await waitGeneration(2);
 assert.ok(produced[1].sources.includes('parent'),'Second pass must use output of first pass');
 assert.equal(produced[1].recipe.parentId,produced[0].recipe.id);
 assert.ok(produced[1].novelty>0,'Recursive rework must modify pixels');
+assert.ok(produced[1].survival?.carried>=1,
+ 'The second painting must PHYSICALLY preserve a motif from the first');
+const preservedFirst=produced[1].survival.held[0].id;
 // Regression: a novelty reset used to clear the donor bank and leave the
 // experiment painting nothing except its own previous canvas.
 for(let pass=3;pass<=10;pass++){
@@ -96,6 +99,14 @@ for(let pass=3;pass<=10;pass++){
     'Every generation must compare multiple actual rendered candidates');
   assert.ok(Number.isFinite(produced.at(-1).nonredundancy?.complexity),
     'Global W novelty must produce a structural complexity reading');
+  assert.ok(produced.at(-1).survival?.carried>=1,
+    'Pass '+pass+' must carry some previous physical artwork forward');
+  assert.ok(produced.at(-1).survival?.coverage>0,
+    'Pass '+pass+' must visibly preserve a nonzero area of the parent');
+  if(pass<=6){
+    assert.ok(produced.at(-1).survival.held.some(x=>x.id===preservedFirst),
+      'Same original motif must persist across reworks, not respawn as a fresh unrelated patch');
+  }
 }
 assert.ok(loop.state().globalMemory>=10,'Ten accepted passes must enter the shared memory');
 assert.ok(loop.state().donorGenerations.terrain>=1,
