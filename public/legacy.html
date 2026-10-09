@@ -741,6 +741,23 @@
   @media (prefers-reduced-motion: reduce) {
     body::before, body::after { animation: none; }
   }
+
+/* Build 302: constrained generative painting inside the experimental archive. */
+#legacyRulesPanel{border:1px solid rgba(110,231,255,.44);background:#101722;
+  border-radius:5px;padding:7px 9px;margin:7px 0;min-height:28px}
+#legacyRulesPanel>summary{font:800 10px/1.5 sans-serif;letter-spacing:.09em;color:#88e7e8;cursor:pointer}
+#legacyRulesPanel[open]{max-height:min(50vh,470px);overflow:auto}
+#legacyRulesMount{display:grid;gap:5px;margin-top:9px}
+#legacyRulesMount label{font-size:9px;color:#b4c2cf}
+#legacyRulesMount select,#legacyRulesMount input{font-size:10px;width:100%;padding:7px 4px;box-sizing:border-box}
+#legacyRulesMount .hex-check{display:flex;align-items:center;gap:9px;cursor:pointer;font-weight:750;color:#d3edf0}
+#legacyRulesMount .hex-check input{width:auto}
+#legacyRulesMount .hex-rule-buttons{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+#legacyRulesMount button{background:#192638;color:#d6f4e9;border:1px solid #3c6771;
+  border-radius:4px;min-height:30px;padding:7px 5px;line-height:1.25;font:800 9px sans-serif}
+#legacyRulesMount button:hover{background:#26445b}
+#legacyRuleStatus{font:10px/1.45 sans-serif;color:#abc4cc;margin:7px 0}
+
 </style>
 </head>
 <body>
@@ -886,7 +903,11 @@
     </div>
   </details>
 
-  <button id="go" class="primary">GENERATE</button>
+  <details id="legacyRulesPanel"><summary>↯ RULE ENGINE 302 · FORBID / REWORK ↯</summary>
+  <div id="legacyRulesMount"><p>Loading executable visual laws…</p></div>
+  <p class="note">The original archive generator is still underneath. Every new field is painted again under its chosen laws; you can recursively repaint its actual output. <a href="/">Open the full Rule Studio ↗</a></p>
+</details>
+<button id="go" class="primary">GENERATE</button>
   <div class="row">
     <button id="again">VARY</button>
     <button id="perturb">PERTURB</button>
@@ -986,5 +1007,6 @@
 <script src="words/hexfield-phylo.js"></script>
 <script src="hexfield-integrations.js"></script>
 <script src="app.js"></script>
+<script type="module" src="studio/legacy-rules.js"></script>
 </body>
 </html>
