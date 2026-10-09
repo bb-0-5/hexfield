@@ -98,14 +98,14 @@ export function createAbstractionLoop({
        try{await bank.refresh(refreshSeed,recipe.subject,{force:true});}
        catch(error){lastError='One renderer unavailable; using other sources: '+String(error.message||error).slice(0,120);}
      }
-     if(currentStamp!==stamp||(!running&&cycle>0))return;
+     if(currentStamp!==stamp)return;
      const inputs=bank.sources(previous);
      if(!inputs.length)throw Error('No renderer produced an image');
      const mixed=mixSources(inputs,{width,height,cycle,seed,
        mode:config.mixMode||'auto'});
      const output=freshCanvas(width,height);
      const metrics=applyRules(mixed.canvas,output,recipe,{iteration:cycle});
-     if(currentStamp!==stamp||(!running&&cycle>0))return;
+     if(currentStamp!==stamp)return;
      const novelty=visualDelta(previous,output);
      // A monotonous feedback loop gets a new reality/terrain source next pass.
      // This is a mechanical novelty guard, not an aesthetic quality score.
