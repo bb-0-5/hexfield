@@ -15,7 +15,8 @@ globalThis.localStorage={
 };
 const {
  extractStructuralIdea,paintInheritedIdeas,advanceStructuralIdeas,
- judgeStructuralIdeas,heritageEvidence,selectBalancedCandidate,
+ judgeStructuralIdeas,heritageEvidence,heritageTaste,
+ selectBalancedCandidate,
  HERITAGE_TTL,MAX_STRUCTURAL_IDEAS,SAMPLES,MATERIALS
 }=await import('../public/studio/structural-heritage.js');
 
@@ -84,8 +85,15 @@ assert.ok(heritageEvidence(current).every(x=>x.generation>0));
 assert.ok(heritageEvidence(current).every(x=>typeof x.material==='string'));
 const boosted=judgeStructuralIdeas(current,true);
 assert.ok(boosted[0].trust>current[0].trust);
+assert.equal(heritageTaste().votes,1);
+assert.ok(heritageTaste().weights['material:'+current[0].material]>0,
+ 'A human KEEP should establish a reusable material preference');
 const rejected=judgeStructuralIdeas(current,false);
 assert.ok(rejected[0].trust<current[0].trust);
+assert.equal(heritageTaste().votes,2);
+assert.ok(heritageTaste().weights['material:'+current[0].material]<
+  heritageTaste().weights['shape:'+
+    (current[0].holes?.length?'counter':current[0].stats.circularity>.49?'round':'angular')]+1);
 const mine={canvas:fresh(),assessment:{score:.61,redundant:false},
  golden:{combined:.41,qualifies:false},heritage:{score:.95}};
 const stranger={canvas:fresh(),assessment:{score:.7,redundant:false},
