@@ -262,6 +262,12 @@ function mutateChoice(r,values,previous){const other=values.filter(x=>x!==previo
 export function mutateAnatomyProgram(program,seed=1,{forcePart=null,mate=null}={}){
  const input=editAnatomyProgram(program),r=(()=>{let x=seed>>>0;return ()=>{x=(Math.imul(x,1664525)+1013904223)>>>0;return x/4294967296;}})();
  const rules=input.rules.map(x=>({...x}));
+ if(!rules.length){
+   rules.push(normalizePartRule({
+     target:forcePart||'stem',operation:'bend',amount:.4+r()*.5
+   }));
+   return {v:1,enabled:true,rules,guide:input.guide,seed:seed>>>0};
+ }
  if(r()<.20&&rules.length<3){
    rules.push(normalizePartRule({target:forcePart||mutateChoice(r,Object.keys(ANATOMY),'any'),
      operation:mutateChoice(r,Object.keys(PART_OPERATIONS),'bend'),amount:.45+r()*.5}));
