@@ -40,16 +40,21 @@ psychophysical preferences.
 
 ## Interaction (X) — how each affected the other
 
-Compare actual overlap between geometry's luminance salience and actual
-spatial pigment salience against a **counterfactual pigment field** shifted
-horizontally by 0.382 of the canvas and vertically by 0.618 of the canvas.
-The shape is held fixed. The signed difference measures whether the color
-placement reinforces or disrupts the observed geometry relative to that
-specific alternate placement.
+Compare observed overlap between the geometry's luminance salience
+and the pigment distribution against TWO independent spatial ablations:
+
+1. **Colour → geometry**: shift the pigment field horizontally by 0.382 of
+   the canvas and vertically by 0.618, holding geometry fixed.
+2. **Geometry → colour**: shift the geometry field by the same offsets,
+   holding pigment fixed.
+
+Each ablation records its own signed delta relative to the observed
+composition. The interface displays BOTH causal-direction *proxies*,
+rather than incorrectly treating all harmony as a single colour score.
 
 Additionally score whether joint shape-and-color attention is supported
-at the four golden-grid intersections. X combines true overlap, signed
-ablation impact and golden-focal-point support.
+at the four golden-grid intersections. X combines true overlap,
+the two separate ablation impacts and golden-focal-point support.
 
 A stronger shape can make an otherwise sensible color palette fail this
 interaction, and moving only the colored segments may change X without
