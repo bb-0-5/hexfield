@@ -122,11 +122,21 @@ export function paintAnatomyWord(canvas,recipe={},options={}){
    const char=letters[index],width=glyphW[index];
    if(char===' '){at+=xscale*(width+tracking);continue;}
    const anatomy=compileAnatomyGlyph(char,index,program);
-   const glyphStart=at;
+   const glyphStart=at,form=g.letterForm||'upright';
+   const localTop=top+(form==='stagger'?(index%3-1)*em*.045:0);
    for(const event of anatomy.affected){
      if(event.matched)affectedCount[event.target]=(affectedCount[event.target]||0)+1;
    }
-   for(const component of anatomy.components){
+   for(const rawComponent of anatomy.components){
+     const component={...rawComponent,points:rawComponent.points.map(point=>{
+       const p=[...point];
+       if(form==='shear')p[0]+=(GUIDELINES.baseline-p[1])*.19;
+       if(form==='squeeze')p[0]=.5+(p[0]-.5)*.80;
+       if(form==='waist')p[0]=.5+(p[0]-.5)*(.83+.15*Math.abs(p[1]-.52));
+       return p;
+     })};
+     if(g.terminal==='serif'&&['stem','ascender','descender'].includes(component.part))
+       component.serifs=true;
      const rules=program.rules.filter(rule=>{
        const gMatch=rule.glyph==='all'||rule.glyph===char||rule.glyph==='first'&&index===0;
        return gMatch&&(component.part===rule.target||rule.target==='any'||
@@ -138,9 +148,34 @@ export function paintAnatomyWord(canvas,recipe={},options={}){
      });
      const highlight=guide&&rules.length>0;
      const stroke=baseWidth*(component.part==='diagonal'?face.contrast:1)*weightFactor;
-     const world=paintPart(ctx,component,sampleCurve(component),xscale,yscale,
-       glyphStart,top,stroke,ink,accent,{harsh:program.rules.some(r=>r.operation==='facet'),
-         guide,highlight});
+     const pts=sampleCurve(component),hard=program.rules.some(r=>r.operation==='facet');
+     const mode=g.letterStroke||'solid';
+     let active={...component};
+     if(mode==='stencil')active.fractured=true;
+     if(mode==='double'){
+       paintPart(ctx,{...active,invert:true},pts,xscale,yscale,
+         glyphStart+stroke*.65,localTop+stroke*.65,stroke*1.12,ink,accent,
+         {harsh:hard,guide:false,highlight:false});
+     }
+     if(mode==='inline'||mode==='outline'){
+       // Two *structural* strokes, never font shadows: cut the interior of
+       // every stem/bowl before adding the next anatomy component.
+       paintPart(ctx,active,pts,xscale,yscale,
+         glyphStart,localTop,stroke*(mode==='outline'?1.28:1.5),ink,accent,
+         {harsh:hard,guide:false,highlight:false});
+       const erased={...active,invert:false};
+       paintPart(ctx,erased,pts,xscale,yscale,
+         glyphStart,localTop,stroke*(mode==='outline'?.56:.48),bg,bg,
+         {harsh:hard,guide:false,highlight:false});
+     }
+     const world=(mode==='inline'||mode==='outline')?
+       pts.map(([px,py])=>[glyphStart+px*xscale,localTop+py*yscale]):
+       paintPart(ctx,active,pts,xscale,yscale,
+         glyphStart,localTop,stroke,ink,accent,{harsh:hard,guide,highlight});
+     if((mode==='inline'||mode==='outline')&&guide&&world.length){
+       ctx.save();ctx.strokeStyle=highlight?'#bb644a':'#789fa2';ctx.lineWidth=1;
+       clipPath(ctx,world);ctx.stroke();ctx.restore();
+     }
      if(world){
        const bound={minX:Math.min(...world.map(p=>p[0])),maxX:Math.max(...world.map(p=>p[0])),
          minY:Math.min(...world.map(p=>p[1])),maxY:Math.max(...world.map(p=>p[1]))};
@@ -151,6 +186,39 @@ export function paintAnatomyWord(canvas,recipe={},options={}){
      }
    }
    at+=xscale*(width+tracking);
+ }
+ // Join rules are construction operators: they really connect independent
+ // letters, so ligature experiments change topology rather than kerning.
+ if(['ligature','shared'].includes(g.joint)&&letters.length>1){
+   ctx.save();ctx.strokeStyle=ink;ctx.lineWidth=baseWidth*.55;ctx.lineCap='butt';
+   for(let i=1;i<letters.length;i++){
+     const here=hitMap.filter(p=>p.index===i),prev=hitMap.filter(p=>p.index===i-1);
+     if(!here.length||!prev.length)continue;
+     const x1=Math.max(...prev.map(p=>p.box.maxX));
+     const x2=Math.min(...here.map(p=>p.box.minX));
+     const y=g.joint==='shared'?top+yscale*.33:top+yscale*.70;
+     if(x2>x1&&x2-x1<em*.55){
+       ctx.beginPath();ctx.moveTo(x1,y);ctx.lineTo(x2,y);ctx.stroke();
+     }
+   }ctx.restore();
+ }
+ const frame=g.letterFrame||'none';
+ if(frame!=='none'){
+   const x=x0-24,y=top+GUIDELINES.cap*yscale-27,
+     w=actualW+48,h=yscale*(GUIDELINES.baseline-GUIDELINES.cap)+54;
+   ctx.save();ctx.strokeStyle=ink;ctx.lineWidth=Math.max(2,em*.018);
+   if(frame==='box'){ctx.strokeRect(x,y,w,h);}
+   else if(frame==='rails'){ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+w,y);
+     ctx.moveTo(x,y+h);ctx.lineTo(x+w,y+h);ctx.stroke();}
+   else if(frame==='ring'){
+     ctx.beginPath();ctx.ellipse(x+w/2,y+h/2,w*.57,h*.66,0,0,PI*2);ctx.stroke();
+   }else if(frame==='brackets'){
+     for(const side of [0,1]){
+       const px=side?x+w:x,sign=side?-1:1;
+       ctx.beginPath();ctx.moveTo(px+sign*34,y);ctx.lineTo(px,y);
+       ctx.lineTo(px,y+h);ctx.lineTo(px+sign*34,y+h);ctx.stroke();
+     }
+   }ctx.restore();
  }
  // The guides are overlays, never part of the final stored logo when disabled.
  return {engine:'named-glyph-anatomy',text,program,glyphCount:letters.filter(x=>x!==' ').length,
