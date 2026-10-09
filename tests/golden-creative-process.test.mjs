@@ -11,7 +11,9 @@ globalThis.localStorage={
 };
 const {PHI,GOLD,GOLD_MINOR,GOLDEN_ANGLE,phiFit,measureGoldenTaste,
  goldenPrior,rankGoldenCandidates,getGoldenMode,setGoldenMode,GOLDEN_THRESHOLDS,
- explainGolden}=await import('../public/studio/golden-taste.js');
+ explainGolden,diagnoseGolden,compareGoldenTaste}=await import('../public/studio/golden-taste.js');
+const {refineGoldenRecipe,PHI_BRANCHES}=await import('../public/studio/phi-refinement.js');
+const {makeGenome,evaluateSurface}=await import('../public/studio/evolution.js');
 const {rankNoveltyCandidates}=await import('../public/studio/nonredundancy.js');
 const {makeRecipe,applyRules,drawReality}=await import('../public/studio/rule-engine.js');
 const {performancePlan}=await import('../public/studio/creative-performance.js');
@@ -126,4 +128,52 @@ assert.ok(score.phaseLabels.some(x=>x.key==='construct'));
 const ruled=performancePlan({kind:'rule',recipe:rule,trace});
 assert.equal(ruled.kind,'rule');assert.ok(ruled.marks.length>30);
 assert.ok(ruled.phaseLabels.some(x=>x.key==='undo'));
+const diagnose=diagnoseGolden(A);
+assert.ok(['geometry','color','coupling','combined','qualified'].includes(diagnose.target));
+assert.equal(diagnose.passes.length,4);
+assert.ok(typeof diagnose.instruction==='string'&&diagnose.instruction.length>20);
+const diff=compareGoldenTaste(A,B);
+assert.equal(diff.first,false);
+assert.ok(diff.deltas.geometry===+(B.geometry-A.geometry).toFixed(4));
+assert.ok(diff.deltas.colorOnGeometry===+
+  (B.interaction.colorOnGeometry-A.interaction.colorOnGeometry).toFixed(4));
+assert.ok(compareGoldenTaste(null,A).first);
+const originalGenome=makeGenome('lettering',754);
+const originalRecipe={
+  mode:'lettering',seed:754,genome:originalGenome,
+  anatomy:originalGenome.anatomy,
+  text:'HELLO',style:'anatomy',type:'wordmark'
+};
+const candidates=Array.from({length:PHI_BRANCHES},(_,i)=>
+  refineGoldenRecipe(originalRecipe,i,{target:'geometry'}));
+assert.equal(new Set(candidates.map(x=>x.seed)).size,PHI_BRANCHES,
+  'Every φ candidate must derive a distinct deterministic descendant seed');
+assert.ok(candidates.every(x=>x.text==='HELLO'&&x.genome.generation===
+  originalGenome.generation+1));
+assert.ok(candidates.every(x=>JSON.stringify(x.anatomy)===
+  JSON.stringify(originalRecipe.anatomy)),
+  'Golden layout and colour cannot erase the user’s locked glyph rules');
+assert.equal(candidates[3].parentSeed,originalRecipe.seed);
+const secondRun=refineGoldenRecipe(originalRecipe,3,{target:'geometry'});
+assert.deepEqual(secondRun,candidates[3],'Same seed and branch must generate the same construction');
+assert.equal(originalRecipe.phiComposition,undefined,'Refinement must not mutate the parent');
+const rendered=[];
+for(const candidate of candidates.slice(0,5)){
+  assert.equal(evaluateSurface(candidate.genome).length,0);
+  const result=new Canvas(1200,740);
+  renderLettering(result,candidate);
+  rendered.push(result.toBufferSync('png'));
+}
+assert.ok(new Set(rendered.map(b=>b.toString('base64'))).size>=4,
+  'Golden-guided attempts must alter actual glyph layout and pigment, not only metadata');
+const landscapeGenome=makeGenome('landscape',912);
+const terrain={mode:'landscape',seed:912,scene:'mountain',mood:'golden',
+  genome:landscapeGenome,constraint:{enabled:true,primary:'no_curves',mark:'dots'}};
+const hill=refineGoldenRecipe(terrain,2,{target:'geometry'});
+assert.equal(hill.scene,terrain.scene);
+assert.deepEqual(hill.constraint,terrain.constraint);
+assert.notEqual(hill.seed,terrain.seed);
+assert.equal(hill.genome.generation,landscapeGenome.generation+1);
+assert.equal(evaluateSurface(hill.genome).length,0);
+
 console.log('Dual golden constraints: measured geometry/color/cross-effect, strict gate, W, anatomical bubble and upper bold, real creative process scored.');
