@@ -204,6 +204,17 @@ export function applyRules(source,target,recipe,options={}){
  const sample=document.createElement('canvas');sample.width=width;sample.height=height;
  const sc=sample.getContext('2d',{willReadFrequently:true});sc.drawImage(source,0,0,width,height);
  const data=sc.getImageData(0,0,width,height).data,ctx=target.getContext('2d');
+ // Reabstraction is a genuine loss-of-information operation: first reduce
+ // the input to spatial masses, then invent marks from that coarse image.
+ // Applying only a wider dot size is not the same as abstracting a reference.
+ let mass=null;
+ if(recipe.rework==='abstract_masses'){
+   const mw=Math.max(9,Math.ceil(width/35)),mh=Math.max(7,Math.ceil(height/35));
+   const low=document.createElement('canvas');low.width=mw;low.height=mh;
+   const lowCtx=low.getContext('2d',{willReadFrequently:true});
+   lowCtx.drawImage(sample,0,0,mw,mh);
+   mass={width:mw,height:mh,data:lowCtx.getImageData(0,0,mw,mh).data};
+ }
  const laws=[recipe.primary,recipe.secondary];
  const has=id=>laws.includes(id);
  const abstract=recipe.rework==='abstract_masses',misread=recipe.rework==='misread';
@@ -227,7 +238,9 @@ export function applyRules(source,target,recipe,options={}){
      if(has('flatten_perspective'))dx+=Math.sin(phi*15)*width*.025;
      if(misread)dx+=Math.sin(phi*9+x/width*7)*step*1.8;
      const sourceX=x+dx,sourceY=misread?height-y:y;
-     const rgb=getPixel(data,width,height,sourceX,sourceY);
+     const rgb=mass?
+       getPixel(mass.data,mass.width,mass.height,sourceX/width*mass.width,sourceY/height*mass.height):
+       getPixel(data,width,height,sourceX,sourceY);
      const dist=Math.hypot(rgb[0]-back[0],rgb[1]-back[1],rgb[2]-back[2]);
      // Foreground from colour contrast to a border sample. The negative-space
      // law forbids drawing this foreground, rather than just inverting colours.
