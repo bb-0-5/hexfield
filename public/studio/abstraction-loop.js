@@ -9,7 +9,8 @@ import {evolveSeed,rankNoveltyCandidates,commitCanvas,
   methodSignature,snapshotNoveltyMemory} from './nonredundancy.js';
 import {paintHeldMotifs,advanceMotifMemory,motifEvidence} from './motif-memory.js';
 import {extractStructuralIdea,paintInheritedIdeas,advanceStructuralIdeas,
- heritageEvidence,judgeStructuralIdeas,rankBalancedCandidates} from './structural-heritage.js';
+ heritageEvidence,judgeStructuralIdeas,rankBalancedCandidates,
+ recallStructuralIdea} from './structural-heritage.js';
 import {getGoldenMode} from './golden-taste.js';
 export const REWORK_SEQUENCE=['abstract_masses','negative_repaint','misread','remove_strength'];
 const clamp=(n,a,b)=>Math.max(a,Math.min(n,b));
@@ -143,6 +144,12 @@ export function createAbstractionLoop({
          seed:parentSeed,cycle:Math.max(0,cycle-1)
        });
        if(recovered)ideas=[recovered];
+     }
+     if(!ideas.length){
+       const recollected=recallStructuralIdea({
+         seed:parentSeed,cycle
+       });
+       if(recollected)ideas=[recollected];
      }
      // The source bank refreshes from the current lineage seed. The
      // picture still has an external reference; the generator isn't reset.
