@@ -46,7 +46,7 @@ function persistCanvas(canvas,recipe,judged){
 }
 export function initRuleStudio(){
  optionMarkup();
- let current=null,upload=null,parentCanvas=null,sequence=0;
+ let current=null,upload=null,parentCanvas=null,realitySource=null,sequence=0;
  const context=$('ruleArtwork').getContext('2d');
  const status=m=>text('ruleStatus',m);
  function present(recipe,source,revision=false){
@@ -88,6 +88,7 @@ export function initRuleStudio(){
  async function paintFresh(){
    try{
      const recipe=makeRecipe(selections()),source=await sourceFor(recipe);
+     realitySource=source;
      present(recipe,source);
    }catch(error){status(safe(error.message));}
  }
@@ -99,8 +100,14 @@ export function initRuleStudio(){
    if(focus==='subject'){r.primary=ancestor.primary;r.secondary=ancestor.secondary;r.mark=ancestor.mark;}
    if(focus==='law'){r.subject=ancestor.subject;r.mark=ancestor.mark;}
    if(focus==='mark'){r.subject=ancestor.subject;r.primary=ancestor.primary;r.secondary=ancestor.secondary;}
-   const base=parentCanvas||current.canvas;
-   // A child with unchanged source tests the law, not a newly generated seed.
+   // Controlled comparisons must change ACTUAL picture content.
+   // Law/mark trials reuse the same raw reality anchor; subject trials make
+   // a NEW source depicting the new subject instead of relabelling pixels.
+   let base=realitySource||parentCanvas||current.canvas;
+   if(focus==='subject'){
+     base=canvasOf();drawReality(base,r.subject,ancestor.seed);
+     realitySource=base;
+   }
    r.rework='none';
    present(r,base,true);
    $('ruleSubject').value=r.subject;$('rulePrimary').value=r.primary;$('ruleMark').value=r.mark;
@@ -111,7 +118,9 @@ export function initRuleStudio(){
    const opts=selections();
    const next=makeRecipe({...opts,parentId:ancestor.id,generation:ancestor.generation+1,seed:ancestor.seed});
    if(next.rework==='none')next.rework='abstract_masses';
-   present(next,current.canvas,true);
+   const prior=current.canvas;
+   realitySource=prior;
+   present(next,prior,true);
  }
  function gallery(){
    const rows=read(GALLERY)||[],root=$('ruleGallery');
