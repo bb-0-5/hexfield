@@ -86,7 +86,11 @@ if(stage&&raw&&mount){
        ' / '+result.metrics.strokes+' marks / global novelty '+
        ((result.nonredundancy?.globalNovelty||0)*100).toFixed(1)+
        '% / complexity '+((result.nonredundancy?.complexity||0)*100).toFixed(1)+'%' +
-       ' / '+(result.survival?.carried||0)+' actual motifs survive' +
+       ' / '+(result.survival?.carried||0)+' ancestral pixel islands'+
+       ' / '+(result.heritage?.drawn?.length||0)+' geometric ancestors'+
+       ' / W '+Math.round((result.heritage?.tradeoff?.W||0)*100)+
+       ' φ '+Math.round((result.heritage?.tradeoff?.phi||0)*100)+
+       ' H '+Math.round((result.heritage?.tradeoff?.H||0)*100)+
        ' / '+explainGolden(golden));
      if(result.cycle%4===0)publishSource(constrained,'archive',result.recipe);
    },
@@ -208,6 +212,7 @@ if(stage&&raw&&mount){
    loop.pause();
    if(!current||current.judged){status('Make a new ruled version before voting again.');return;}
    noteRuleVerdict(current.recipe,liked,$('legacyCritique').value);
+   loop.feedback(liked);
    publishSource(constrained,'archive',current.recipe);
    current.judged=true;
    status(liked?'Kept — this method influences BOTH studios.':
