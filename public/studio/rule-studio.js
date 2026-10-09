@@ -85,7 +85,8 @@ export function initRuleStudio(){
      img.alt='Abstract generation '+item.cycle;
      const caption=document.createElement('figcaption');
      caption.textContent='#'+item.cycle+' / '+item.blend+' / '+item.law+
-      ' / '+item.mark+' · '+(item.survivors||0)+' held';
+      ' / '+item.mark+' · '+(item.survivors||0)+' pixels held'+
+      ' · '+(item.inheritedIdeas||0)+' shape genes';
      el.append(img,caption);root.append(el);
    }
  }
@@ -104,14 +105,14 @@ export function initRuleStudio(){
    getUploaded:()=>upload,
    onFrame(result){
      const {canvas,recipe,cycle,metrics,blend,sources,novelty,nonredundancy,
-       survival}=result;
+       survival,heritage}=result;
      const before=current?.canvas||null;
      context.clearRect(0,0,960,600);context.drawImage(canvas,0,0,960,600);
      current={recipe,canvas,judged:false,metrics};
      parentCanvas=canvas;
      displayPhi(canvas);
      void theatre.play({kind:'rule',recipe,trace:metrics.trace,
-       survival,parent:before,final:canvas,duration:2200});
+       survival,heritage,parent:before,final:canvas,duration:2400});
      $('ruleArtwork').hidden=false;$('ruleEmpty').hidden=true;
      $('ruleKeep').disabled=false;$('ruleReject').disabled=false;
      $('ruleReworkBtn').disabled=false;$('ruleSave').disabled=false;
@@ -119,25 +120,34 @@ export function initRuleStudio(){
      text('ruleEvidence','GENERATION '+cycle+' / '+metrics.strokes+
        ' marks / '+metrics.skipped+' removed / '+blend.toUpperCase()+
        ' / '+sources.join(' + ')+' / visual change '+(novelty*100).toFixed(1)+
-       '% / '+(survival?.carried||0)+' physical islands inherited');
+       '% / '+(survival?.carried||0)+' original-pixel islands / '+
+       (heritage?.drawn?.length||0)+' reconstructed shape identities'+
+       (heritage?.drawn?.length?' / '+heritage.drawn.map(x=>
+         x.was+' → '+x.material).join(', '):''));
      status('Reabstracting generation '+cycle+
        '. Shared novelty '+((nonredundancy?.novelty||0)*100).toFixed(1)+
        '%, structural complexity '+((nonredundancy?.complexity||0)*100).toFixed(1)+
        '%. '+(survival?.carried||0)+' motifs survived this pass; '+
-       (survival?.available||0)+' living references for the next.');
+       (survival?.available||0)+' physical references, '+
+       (heritage?.living?.length||0)+' reconstructable geometry genes / '+
+       'W '+Math.round((heritage?.tradeoff?.W||0)*100)+
+       ' φ '+Math.round((heritage?.tradeoff?.phi||0)*100)+
+       ' H '+Math.round((heritage?.tradeoff?.H||0)*100)+'.');
      if(cycle%4===0){persistCanvas(canvas,recipe,false);publishSource(canvas,'rules',recipe);}
    },
    onState(info){
      $('ruleLoopStart').disabled=info.running;
      $('ruleLoopStop').disabled=!info.running;
      $('ruleLoopOnce').disabled=info.running;
-     const visible=info.motifs||[];
+     const visible=info.motifs||[],genomes=info.ideas||[];
      const survivorStatus=$('ruleSurvivors');
      if(survivorStatus){
        survivorStatus.textContent='SURVIVING IDEAS / '+visible.length+
-         ' protected visual fragment'+(visible.length===1?'':'s')+
-         ' · oldest age '+(visible.length?Math.max(...visible.map(m=>m.age)):0)+
-         '/9 passes · inventions enter and fade automatically.';
+         ' ancestral pixel islands · '+genomes.length+
+         ' independently reconstructable shape genes'+
+         (genomes.length?' / '+genomes.map(g=>
+           g.name+' #'+g.generation+' '+g.material).join(' · '):'')+
+         ' · KEEP or REJECT teaches which lineage to retain.';
      }
      const sources=info.sourceNames?.length?info.sourceNames.join(' + '):'not rendered yet';
      text('ruleLoopStatus',(info.running?'LIVE':'PAUSED')+' / '+info.cycle+
@@ -292,6 +302,7 @@ export function initRuleStudio(){
    if(!current||current.judged)return;
    const critique=safe($('ruleCritique').value,230);
    noteRuleVerdict(current.recipe,liked,critique);
+   loop.feedback(liked);
    current.judged=true;
    $('ruleKeep').disabled=true;$('ruleReject').disabled=true;
    persistCanvas(current.canvas,current.recipe,true);
