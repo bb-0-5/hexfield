@@ -163,3 +163,22 @@
 #landscapeConstraintLaw,#landscapeConstraintMark{font-size:12px;margin:5px 0 13px}
 #landscapeMutateLaw{margin-top:2px;min-height:40px}
 @media(max-width:730px){.landscape-law-panel .control-help{display:block}}
+
+/* 304 / heritable continuous letterform experiment history */
+.logo-evolution-panel{border:1px solid #527b67;padding:12px 11px 15px;margin:0 0 17px;
+ background:#17251e}
+.logo-evolution-panel>summary{cursor:pointer;color:var(--mint);font:850 11px/1.55 var(--sans);
+ letter-spacing:.07em;list-style-position:inside}
+.logo-evolution-panel .glyph-help{font:13px/1.5 var(--serif);margin:13px 0;color:var(--soft)}
+.logo-evolution-panel>label{display:block;margin:11px 0 7px}
+.logo-evolution-panel>select{width:100%;min-height:40px;margin:0 0 11px}
+.logo-evolution-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+.logo-evolution-actions button{font:800 10px/1.4 var(--sans);padding:10px 6px;
+ border:1px solid #6a8777;min-height:40px;color:var(--mint);background:#1c352a}
+.logo-evolution-actions #logoEvolutionStart{grid-column:span 2;background:#cce1bd;color:#192d20}
+#logoEvolutionStatus{font:11px/1.4 var(--sans);color:var(--gold);margin:13px 0 8px}
+#logoEvolutionStrip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+#logoEvolutionStrip figure{margin:0;border:1px solid #52695b;padding:4px}
+#logoEvolutionStrip img{display:block;width:100%;aspect-ratio:200/123;object-fit:cover}
+#logoEvolutionStrip figcaption{font:8px/1.25 var(--sans);padding-top:5px;color:var(--soft);overflow-wrap:anywhere}
+@media(max-width:730px){.logo-evolution-panel{padding:11px 9px}.logo-evolution-actions button{font-size:10px}}
