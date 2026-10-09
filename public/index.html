@@ -52,6 +52,9 @@
           </details>
         </section>
         <section id="ruleControls" class="discipline-panel" aria-label="Executable visual constraints">
+          <p class="artist-autonomy-note">The painter chooses its subject, drawing laws, pigments and techniques automatically. You can intervene whenever you want.</p>
+          <details class="advanced-configuration" id="ruleAdvanced">
+            <summary>OPTIONAL / CHOOSE A SUBJECT OR OVERRIDE ITS RULES</summary>
           <label for="ruleSubject">REALITY ANCHOR / SUBJECT</label>
           <select id="ruleSubject"></select>
           <label for="rulePrimary">PRIMARY LAW / MUST OBEY</label>
@@ -72,10 +75,13 @@
           <label for="ruleFile">OR LOAD A REFERENCE IMAGE</label>
           <input type="file" id="ruleFile" accept="image/*">
           <p class="control-help">Rules are enforced by a local canvas painter. No curves means no curved marks; negative space erases objects. Your output can become the next input.</p>
+          </details>
           <button type="button" class="action-generate" id="rulePaint">PAINT UNDER THESE LAWS ↗</button>
           <section class="abstraction-control" aria-label="Continuous recursive abstraction">
             <p class="small-label">CONTINUOUS ABSTRACTION / ALL RENDERERS</p>
             <p class="control-help">Combine the live canvas, geometric reality, procedural landscapes, evolving letters, archived fields and saved AI images. Every result becomes the next reference. No automatic cloud AI requests.</p>
+            <details class="advanced-configuration" id="ruleLoopAdvanced">
+              <summary>OPTIONAL / CHANGE SPEED OR OVERRIDE THE MIXER</summary>
             <label for="ruleMixMode">HOW TO COMBINE RENDERERS</label>
             <select id="ruleMixMode">
               <option value="auto">Evolve blending methods</option>
@@ -92,19 +98,24 @@
               <option value="6000">6 — slow</option>
             </select>
             <label class="rule-inline"><input id="ruleLockLaw" type="checkbox"> Hold selected law / marks; evolve everything else</label>
+            </details>
             <div class="rule-loop-buttons">
               <button type="button" id="ruleLoopStart" class="action-generate">▶ KEEP ABSTRACTING</button>
               <button type="button" id="ruleLoopStop" class="ghost-button" disabled>Ⅱ PAUSE</button>
               <button type="button" id="ruleLoopOnce" class="ghost-button">ONE MORE PASS</button>
             </div>
             <p id="ruleLoopStatus" class="model-budget" role="status" aria-live="polite">Ready. Start to combine all available renderers into an evolving picture.</p>
+            <p id="ruleSurvivors" class="surviving-ideas" aria-live="polite">SURVIVING IDEAS / Found shapes will linger across generations, with new ones arriving as others fade.</p>
           </section>
+          <details class="advanced-configuration rule-interventions">
+            <summary>OPTIONAL / INTERRUPT THE PAINTER'S DECISIONS</summary>
           <div class="mini-actions rule-mini">
             <button id="ruleNewLaw" type="button" class="ghost-button">SAME SUBJECT / NEW LAW</button>
             <button id="ruleNewSubject" type="button" class="ghost-button">SAME LAW / NEW SUBJECT</button>
             <button id="ruleNewMark" type="button" class="ghost-button">CHANGE THE MARK SYSTEM</button>
           </div>
           <button id="ruleReworkBtn" type="button" class="ghost-button" disabled>REABSTRACT &amp; REPAINT PREVIOUS ↺</button>
+          </details>
           <p class="model-budget">No model inference required. Law preferences and past revisions are shared with the archive's constrained generator in this browser.</p>
         </section>
         <section id="imaginationControls" class="discipline-panel" aria-label="Real model-backed painting controls" hidden>
@@ -116,6 +127,9 @@
           <p class="model-budget" id="imagineQuota" role="status" aria-live="polite">Checking the painting allowance…</p>
         </section>
         <section id="landscapeControls" class="discipline-panel" aria-label="Landscape painting controls">
+          <p class="artist-autonomy-note">The painter invents the place, lighting and method. Override them only if you want.</p>
+          <details class="advanced-configuration">
+            <summary>OPTIONAL / CHOOSE A PLACE OR LIGHTING</summary>
           <label for="landscapeScene">THE PLACE</label>
           <select id="landscapeScene">
             <option value="surprise">Surprise me</option>
@@ -130,6 +144,9 @@
             <option value="storm">Storm coming</option><option value="twilight">Last light</option>
           </select>
           <p class="control-help">The artist invents and mutates its terrain and brushwork. No hand-drawn references.</p>
+          </details>
+          <details class="advanced-configuration">
+            <summary>OPTIONAL / OVERRIDE LANDSCAPE LAWS</summary>
           <section class="landscape-law-panel" aria-label="Executable landscape constraints">
             <label class="glyph-switch"><input id="landscapeConstraintOn" type="checkbox" checked> APPLY FORMAL LAWS TO THE LANDSCAPE</label>
             <label for="landscapeConstraintLaw">A LAW THIS PAINTER MUST OBEY</label>
@@ -143,11 +160,15 @@
             <button type="button" id="landscapeMutateLaw" class="ghost-button">SAME TERRAIN / NEW VISUAL LAW ↺</button>
             <p class="control-help">The landscape is generated by its own terrain procedure, then reconstructed from its actual pixels under these laws. Mutations can change both construction and mark-making.</p>
           </section>
+          </details>
         </section>
         <section id="letteringControls" class="discipline-panel" aria-label="Logo and lettering controls" hidden>
           <label for="logoText">YOUR WORDS</label>
           <input id="logoText" type="text" value="HEXFIELD" maxlength="24" autocomplete="off" spellcheck="false" aria-describedby="logoHelp">
           <p id="logoHelp" class="control-help">Real, readable letters. Up to 24 characters.</p>
+          <p class="artist-autonomy-note">Your text stays. The letter anatomy, bubble forms, split weights and materials evolve themselves.</p>
+          <details class="advanced-configuration" id="logoAdvanced">
+            <summary>OPTIONAL / EDIT LETTER PARTS AND FONT GENES</summary>
           <label for="logoType">DESIGN TYPE</label>
           <select id="logoType"><option value="wordmark">Wordmark</option><option value="monogram">Monogram</option><option value="emblem">Emblem</option></select>
           <label for="logoStyle">FONT CONSTRUCTION FAMILY</label>
@@ -178,6 +199,7 @@
             <p class="small-label">PARTS OF THIS WORD</p>
             <div id="logoAnatomyGlossary" class="glyph-glossary" aria-label="Anatomical glossary and applicability"></div>
           </section>
+          </details>
           <details id="logoEvolutionPanel" class="logo-evolution-panel">
             <summary>∞ CONTINUOUSLY MUTATE LETTER PARTS</summary>
             <p class="glyph-help">Keep the actual word readable while its anatomical rules, construction, joins and strokes evolve. Every revision inherits its parent. Uses zero image-model requests.</p>
