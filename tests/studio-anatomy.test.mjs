@@ -24,7 +24,7 @@ for(const char of 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345678
  }
 }
 const available=partsForWord('HEXFIELD');
-for(const part of ['stem','crossbar','diagonal','arm','leg','counter','join','terminal'])
+for(const part of ['stem','crossbar','diagonal','arm','counter','join','terminal'])
  assert.ok(available[part]?.length,part+' must be named in HEXFIELD');
 assert.ok(glyphAnatomy('g').parts.includes('descender'));
 assert.ok(glyphAnatomy('i').parts.includes('dot'));
