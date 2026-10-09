@@ -97,6 +97,12 @@ for(let pass=3;pass<=10;pass++){
     'Generation '+pass+' must branch from the previous seed, not repeat it');
   assert.ok(produced.at(-1).nonredundancy?.candidates>=2,
     'Every generation must compare multiple actual rendered candidates');
+  assert.ok(Number.isFinite(produced.at(-1).heritage?.tradeoff?.W)&&
+    Number.isFinite(produced.at(-1).heritage?.tradeoff?.phi)&&
+    Number.isFinite(produced.at(-1).heritage?.tradeoff?.H),
+    'W/phi/H metrics are always present on accepted frames');
+  assert.ok(produced.at(-1).heritage?.living?.length<=2,
+    'Only two geometric ancestor identities may be retained');
   assert.ok(Number.isFinite(produced.at(-1).nonredundancy?.complexity),
     'Global W novelty must produce a structural complexity reading');
   assert.ok(produced.at(-1).survival?.carried>=1,
