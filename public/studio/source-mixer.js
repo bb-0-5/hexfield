@@ -8,7 +8,7 @@ import {renderLettering} from './lettering.js';
 import {makeGenome} from './evolution.js';
 
 export const SOURCE_KEYS = [
-  'parent','reality','terrain','lettering','archive','imagination','upload','kept'
+  'parent','reality','terrain','lettering','logo','archive','imagination','upload','kept'
 ];
 export const MIX_METHODS = {
   auto:'Evolve composition',quilt:'Spatial quilt / every renderer',
@@ -17,7 +17,8 @@ export const MIX_METHODS = {
 };
 export const CROSS_STUDIO_KEYS = Object.freeze({
   archive:'hexfield.archive.rule.source.v1',
-  rules:'hexfield.rule-studio.source.v1'
+  rules:'hexfield.rule-studio.source.v1',
+  logo:'hexfield.logo.anatomy.source.v1'
 });
 const WIDTH=720,HEIGHT=450;
 const pick=(a,i)=>a[(Math.abs(i)|0)%a.length];
@@ -69,15 +70,17 @@ async function storedImagination(){
   }catch{return null}finally{try{db?.close()}catch{}}
 }
 export async function loadCachedPictures(){
-  const [a,b,c]=await Promise.all([
+  const [a,b,c,d]=await Promise.all([
     decode(memoryImage(CROSS_STUDIO_KEYS.archive)),
     decode(memoryImage(CROSS_STUDIO_KEYS.rules)),
-    storedImagination().then(decode)
+    storedImagination().then(decode),
+    decode(memoryImage(CROSS_STUDIO_KEYS.logo))
   ]);
   const bank={};
   if(a)bank.archive=a;
   if(b)bank.kept=b;
   if(c)bank.imagination=c;
+  if(d)bank.logo=d;
   return bank;
 }
 export function publishSource(canvas,key,recipe=null){
