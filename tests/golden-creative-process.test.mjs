@@ -88,7 +88,10 @@ const stem=split.components.find(p=>p.part==='stem');
 assert.ok(stem.localWeights?.length>2);
 assert.ok(stem.localWeights[0]>stem.localWeights.at(-1),
  'Upper bold actually thickens upper glyph more than its lower half');
-assert.deepEqual(original.components[0].points,split.components[0].points);
+assert.deepEqual(original.components[0].points[0],split.components[0].points[0]);
+assert.deepEqual(original.components[0].points.at(-1),split.components[0].points.at(-1));
+assert.ok(split.components[0].points.every(p=>Math.abs(p[0]-.17)<1e-8),
+ 'The same straight stem is resampled for local weight, not moved');
 const bubble=compileAnatomyGlyph('O',0,program([
  {target:'bowl',operation:'bubble',amount:.9,glyph:'all'}
 ]));
