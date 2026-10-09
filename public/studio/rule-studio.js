@@ -82,7 +82,8 @@ export function initRuleStudio(){
      const img=document.createElement('img');img.src=item.thumb;
      img.alt='Abstract generation '+item.cycle;
      const caption=document.createElement('figcaption');
-     caption.textContent='#'+item.cycle+' / '+item.blend+' / '+item.law+' / '+item.mark;
+     caption.textContent='#'+item.cycle+' / '+item.blend+' / '+item.law+
+      ' / '+item.mark+' · '+(item.survivors||0)+' held';
      el.append(img,caption);root.append(el);
    }
  }
@@ -100,31 +101,42 @@ export function initRuleStudio(){
    getParent:()=>current?.canvas||null,
    getUploaded:()=>upload,
    onFrame(result){
-     const {canvas,recipe,cycle,metrics,blend,sources,novelty,nonredundancy}=result;
+     const {canvas,recipe,cycle,metrics,blend,sources,novelty,nonredundancy,
+       survival}=result;
      const before=current?.canvas||null;
      context.clearRect(0,0,960,600);context.drawImage(canvas,0,0,960,600);
      current={recipe,canvas,judged:false,metrics};
      parentCanvas=canvas;
      displayPhi(canvas);
      void theatre.play({kind:'rule',recipe,trace:metrics.trace,
-       parent:before,final:canvas,duration:1650});
+       survival,parent:before,final:canvas,duration:2200});
      $('ruleArtwork').hidden=false;$('ruleEmpty').hidden=true;
      $('ruleKeep').disabled=false;$('ruleReject').disabled=false;
      $('ruleReworkBtn').disabled=false;$('ruleSave').disabled=false;
      text('ruleCaption',describeRecipe(recipe));
      text('ruleEvidence','GENERATION '+cycle+' / '+metrics.strokes+
        ' marks / '+metrics.skipped+' removed / '+blend.toUpperCase()+
-       ' / '+sources.join(' + ')+' / visual change '+(novelty*100).toFixed(1)+'%');
+       ' / '+sources.join(' + ')+' / visual change '+(novelty*100).toFixed(1)+
+       '% / '+(survival?.carried||0)+' physical islands inherited');
      status('Reabstracting generation '+cycle+
        '. Shared novelty '+((nonredundancy?.novelty||0)*100).toFixed(1)+
        '%, structural complexity '+((nonredundancy?.complexity||0)*100).toFixed(1)+
-       '%. Last painting is the next reference.');
+       '%. '+(survival?.carried||0)+' motifs survived this pass; '+
+       (survival?.available||0)+' living references for the next.');
      if(cycle%4===0){persistCanvas(canvas,recipe,false);publishSource(canvas,'rules',recipe);}
    },
    onState(info){
      $('ruleLoopStart').disabled=info.running;
      $('ruleLoopStop').disabled=!info.running;
      $('ruleLoopOnce').disabled=info.running;
+     const visible=info.motifs||[];
+     const survivorStatus=$('ruleSurvivors');
+     if(survivorStatus){
+       survivorStatus.textContent='SURVIVING IDEAS / '+visible.length+
+         ' protected visual fragment'+(visible.length===1?'':'s')+
+         ' · oldest age '+(visible.length?Math.max(...visible.map(m=>m.age)):0)+
+         '/9 passes · inventions enter and fade automatically.';
+     }
      const sources=info.sourceNames?.length?info.sourceNames.join(' + '):'not rendered yet';
      text('ruleLoopStatus',(info.running?'LIVE':'PAUSED')+' / '+info.cycle+
        ' passes / blending: '+(info.method||'evolving')+' / renderers: '+sources+
