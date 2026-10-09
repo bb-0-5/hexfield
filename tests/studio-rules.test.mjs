@@ -2,12 +2,19 @@ import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
 const {Canvas}=require('skia-canvas');
+function visualDifference(left,right){
+ const a=left.getContext('2d').getImageData(0,0,left.width,left.height).data;
+ const b=right.getContext('2d').getImageData(0,0,right.width,right.height).data;
+ let sum=0;for(let i=0;i<a.length;i+=4)sum+=Math.abs(a[i]-b[i])+Math.abs(a[i+1]-b[i+1])+Math.abs(a[i+2]-b[i+2]);
+ return sum/(a.length*.75*255);
+}
 const memory=new Map();
 globalThis.localStorage={getItem:key=>memory.get(key)||null,setItem:(key,val)=>memory.set(key,String(val))};
 globalThis.document={createElement(tag){assert.equal(tag,'canvas');return new Canvas(4,4);}};
 const {LAWS,MARKS,makeRecipe,mutateRecipe,drawReality,applyRules,
  noteRuleVerdict,noteLineage,buildRulePrompt,validateRecipe,RULE_STORE}=await import('../public/studio/rule-engine.js');
-assert.ok(Object.keys(LAWS).length>=10&&Object.keys(MARKS).length>=5);
+assert.ok(Object.keys(LAWS).length>=10&&Object.keys(MARKS).length>=6);
+assert.ok(MARKS.hybrid.includes('all five'));
 const input=new Canvas(224,128);const g=input.getContext('2d');
 g.fillStyle='#ff1010';g.fillRect(0,0,224,128);
 const recipe=makeRecipe({subject:'sphere',primary:'blue_for_red',mark:'cutout',seed:19});
@@ -17,6 +24,14 @@ const result=applyRules(input,output,recipe);
 assert.ok(result.strokes>100);
 const pixel=output.getContext('2d').getImageData(20,20,1,1).data;
 assert.ok(pixel[2]>pixel[0],'Red should be replaced with blue: '+[...pixel]);
+const hybridRecipe=makeRecipe({subject:'sphere',primary:'no_curves',mark:'hybrid',seed:19});
+const hybridCanvas=new Canvas(224,128);
+const hybridContext=hybridCanvas.getContext('2d');
+hybridContext.arc=()=>{throw Error('Hybrid attempted a forbidden curved mark');};
+const hybridMetrics=applyRules(input,hybridCanvas,hybridRecipe,{iteration:3});
+assert.equal(hybridMetrics.hybrid,true,'Hybrid execution must use the multi-mark painter');
+assert.equal(hybridMetrics.noCurvedMarks,true);
+assert.ok(visualDifference(input,hybridCanvas)>.02,'Hybrid painting must alter image pixels');
 const dotRecipe=makeRecipe({subject:'sphere',primary:'no_curves',mark:'dots',seed:19});
 const squareCanvas=new Canvas(224,128);
 squareCanvas.getContext('2d').arc=()=>{throw Error('A curve was drawn despite no_curves law');};
