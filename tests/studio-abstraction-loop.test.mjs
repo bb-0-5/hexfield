@@ -78,6 +78,12 @@ await waitGeneration(2);
 assert.ok(produced[1].sources.includes('parent'),'Second pass must use output of first pass');
 assert.equal(produced[1].recipe.parentId,produced[0].recipe.id);
 assert.ok(produced[1].novelty>0,'Recursive rework must modify pixels');
+assert.ok(produced[1].trials.length>=2,'Process theatre must use multiple truly rendered alternatives');
+assert.equal(produced[1].trials.filter(t=>t.selected).length,1,
+ 'Exactly one actually tested method should be adopted');
+assert.ok(produced[1].trials.every(t=>t.canvas?.width===320&&
+ t.canvas?.height===200&&Number.isFinite(t.score)),
+ 'Performance score must use bounded preview canvases and numerical W/phi/H judgements');
 assert.ok(produced[1].survival?.carried>=1,
  'The second painting must PHYSICALLY preserve a motif from the first');
 const preservedFirst=produced[1].survival.held[0].id;
@@ -97,6 +103,8 @@ for(let pass=3;pass<=10;pass++){
     'Generation '+pass+' must branch from the previous seed, not repeat it');
   assert.ok(produced.at(-1).nonredundancy?.candidates>=2,
     'Every generation must compare multiple actual rendered candidates');
+  assert.equal(produced.at(-1).trials.filter(t=>t.selected).length,1,
+    'The chosen generation is always linked to exactly one actually tested alternative');
   assert.ok(Number.isFinite(produced.at(-1).heritage?.tradeoff?.W)&&
     Number.isFinite(produced.at(-1).heritage?.tradeoff?.phi)&&
     Number.isFinite(produced.at(-1).heritage?.tradeoff?.H),
