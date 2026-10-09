@@ -189,6 +189,18 @@ function scoreSamples(samples,mode='landscape'){
 export function measureGoldenTaste(canvas,{mode='landscape'}={}){
  return scoreSamples(safeCanvas(canvas),mode);
 }
+export const GOLDEN_MODE_KEY='hexfield.phi.taste.mode.v1';
+export function getGoldenMode(){
+ try{
+   const mode=localStorage.getItem(GOLDEN_MODE_KEY);
+   return ['off','guide','strict'].includes(mode)?mode:'strict';
+ }catch{return 'strict';}
+}
+export function setGoldenMode(value){
+ const mode=['off','guide','strict'].includes(value)?value:'strict';
+ try{localStorage.setItem(GOLDEN_MODE_KEY,mode);}catch{}
+ return mode;
+}
 export function goldenPrior(s,{mode='guide'}={}){
  if(!s)return 0;
  if(mode==='off')return 0;
@@ -215,5 +227,9 @@ export function rankGoldenCandidates(candidates,{mode='guide',
    return {...item,index,golden:taste,
      score:(Number(item.score)||0)+noveltyWeight*visual+
        goldenWeight*goldenPrior(taste,{mode})};
- }).sort((a,b)=>b.score-a.score);
+ }).sort((a,b)=>{
+   if(mode==='strict'&&a.golden.qualifies!==b.golden.qualifies)
+     return a.golden.qualifies?-1:1;
+   return b.score-a.score;
+ });
 }
