@@ -21,7 +21,7 @@ const allowedDesign = (s: unknown): s is string => {
   try {
     const u = new URL(s);
     return u.origin === PROJECT && u.search === "" && u.hash === "" &&
-      /^\/storage\/v1\/object\/public\/museum\/designs\/[a-f0-9]{64}\.png$/.test(u.pathname);
+      /^\/storage\/v1\/object\/public\/museum\/designs\/hf_[a-f0-9]{64}\.png$/.test(u.pathname);
   } catch { return false; }
 };
 const stripeCall = async (url: string, key: string, form?: Record<string,string>) => {
