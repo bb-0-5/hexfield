@@ -177,7 +177,10 @@ export function createCreativePerformance({host,canvas,name='theatre',statusElem
      if(data.oldAnatomy?.hitMap?.length){
        drawStrokes(ctx,data.oldAnatomy.hitMap,data.oldAnatomy.hitMap.length,phase/.16*20);
      }
-     label('01 / FIND THE OLD FORM','These are the actual parent pixels and anatomical paths');
+     outlineSurvivors(ctx,plan.survivors,.95);
+     label('01 / FIND THE OLD FORM',plan.survivors.length?
+       plan.survivors.length+' painted regions still living inside the new image':
+       'These are the actual parent pixels and anatomical paths');
    }else if(plan.tests.length&&phase<.16+.26){
      const within=(phase-.16)/.26,index=Math.min(plan.tests.length-1,
        Math.floor(within*plan.tests.length));
@@ -200,10 +203,14 @@ export function createCreativePerformance({host,canvas,name='theatre',statusElem
      const movement=clamp((phase-start)/(1-start),0,1);
      if(movement<.13){
        mutedBase();fit(data.parent,.42*(1-movement/.13));
-       label('03 / UNDO A FORM',plan.method+' · subtracting the previous arrangement');
+       outlineSurvivors(ctx,plan.survivors);
+       label('03 / UNDO A FORM',plan.survivors.length?
+         'Old background fades; '+plan.survivors.length+' physical motifs remain':
+         plan.method+' · subtracting the previous arrangement');
      }else if(movement<.82){
        const assembly=clamp((movement-.13)/.69,0,1);
        mutedBase();
+       outlineSurvivors(ctx,plan.survivors,1-assembly*.6);
        if(plan.kind==='logo'&&plan.parts.length){
          drawStrokes(ctx,plan.parts,assembly*plan.parts.length);
          // Finished ink arrives *only where the selected geometry was
@@ -225,7 +232,10 @@ export function createCreativePerformance({host,canvas,name='theatre',statusElem
      }else{
        mutedBase();
        fit(data.final,1);
-       label('05 / THE IDEA SURVIVES',plan.method+' · now available for the next mutation');
+       outlineSurvivors(ctx,plan.survivors,.35);
+       label('05 / THE IDEA SURVIVES',plan.survivors.length?
+         plan.survivors.length+' inherited fragments coexist with the newly constructed image':
+         plan.method+' · now available for the next mutation');
      }
    }
    if(t>=dur){
