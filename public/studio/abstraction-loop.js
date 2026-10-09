@@ -83,7 +83,8 @@ export function createAbstractionLoop({
  const state=()=>({
    running,waiting,cycle,recipe:lastRecipe,
    sourceNames:lastMix?.sources||[],method:lastMix?.mode||null,
-   lastError,nonredundancy:lastAssessment,globalMemory:snapshotNoveltyMemory().count,
+   lastError,nonredundancy:lastAssessment,golden:lastAssessment?.golden||null,
+   globalMemory:snapshotNoveltyMemory().count,
    currentSeed:lastRecipe?.seed??seed,donorGenerations:bank.genomes(),
    history:stamps.map(x=>({...x})),
    waitingReason:waiting?'Page hidden':''
@@ -154,7 +155,9 @@ export function createAbstractionLoop({
          mode:config.mixMode||'auto'
        });
        const output=freshCanvas(width,height);
-       const metrics=applyRules(mixed.canvas,output,recipe,{iteration:cycle+attempt});
+       const metrics=applyRules(mixed.canvas,output,recipe,{
+         iteration:cycle+attempt,trace:true
+       });
        const method=methodSignature({mode:'abstraction',primary:recipe.primary,
          secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework,
          blend:mixed.mode,subject:recipe.subject});
@@ -164,15 +167,15 @@ export function createAbstractionLoop({
      const [best]=rankNoveltyCandidates(candidates,{
        mode:'abstraction',parent:previous
      });
-     const {canvas:output,recipe,mixed,metrics,assessment}=best;
+     const {canvas:output,recipe,mixed,metrics,assessment,golden}=best;
      const novelty=visualDelta(previous,output);
      const stalled=cycle>2&&(assessment.redundant||novelty<.035);
      const recorded=commitCanvas(output,{mode:'abstraction',method:best.method,
        seed:recipe.seed,parentId:recipe.parentId,evaluation:assessment});
-     lastAssessment={...recorded,candidates:candidates.length};
+     lastAssessment={...recorded,golden,candidates:candidates.length};
      const result={canvas:output,recipe,cycle:cycle+1,metrics,
        blend:mixed.mode,sources:mixed.sources,novelty,stalled,
-       nonredundancy:lastAssessment};
+       golden,nonredundancy:lastAssessment};
      last=output;lastRecipe=recipe;lastMix=mixed;cycle++;lastError=null;
      noteLineage(recipe);
      const frame=freshCanvas(164,104);frame.getContext('2d').drawImage(output,0,0,164,104);
