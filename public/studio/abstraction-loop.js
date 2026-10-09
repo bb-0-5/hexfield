@@ -9,7 +9,7 @@ import {evolveSeed,rankNoveltyCandidates,commitCanvas,
   methodSignature,snapshotNoveltyMemory} from './nonredundancy.js';
 import {paintHeldMotifs,advanceMotifMemory,motifEvidence} from './motif-memory.js';
 import {extractStructuralIdea,paintInheritedIdeas,advanceStructuralIdeas,
- heritageEvidence,judgeStructuralIdeas,selectBalancedCandidate} from './structural-heritage.js';
+ heritageEvidence,judgeStructuralIdeas,rankBalancedCandidates} from './structural-heritage.js';
 import {getGoldenMode} from './golden-taste.js';
 export const REWORK_SEQUENCE=['abstract_masses','negative_repaint','misread','remove_strength'];
 const clamp=(n,a,b)=>Math.max(a,Math.min(n,b));
@@ -211,9 +211,10 @@ export function createAbstractionLoop({
      // None of these objectives may monopolize artistic judgement:
      // W seeks novelty, φ seeks proportional harmony, H preserves a
      // recognizable identity while its EXECUTED material evolves.
-     const goal=selectBalancedCandidate(evaluated,{
+     const ranked=rankBalancedCandidates(evaluated,{
        strict:getGoldenMode()==='strict'
-     })||evaluated[0];
+     });
+     const goal=ranked[0];
      // Every third pass deliberately trials a new mixer family. This is
      // genuine active non-redundancy at the METHOD level, not simply
      // scoring arbitrary pixel differences. Strict φ-qualified work
@@ -222,9 +223,12 @@ export function createAbstractionLoop({
      const evolvingMix=!config.mixMode||config.mixMode==='auto';
      const expected=families[Math.floor(cycle/3)%families.length];
      const strictQualified=getGoldenMode()==='strict'&&
-       evaluated.some(x=>x.golden?.qualifies);
+       ranked.some(x=>x.golden?.qualifies);
+     // The exploratory branch MUST use a fully evaluated (W/φ/H) entry;
+     // otherwise its threeWay fields disappear, and the frame crashes
+     // after incrementing the generation counter.
      const best=evolvingMix&&cycle%3===0&&!strictQualified?
-       evaluated.find(x=>x.mixed.mode===expected)||goal:goal;
+       ranked.find(x=>x.mixed.mode===expected)||goal:goal;
      const {canvas:output,recipe,mixed,metrics,assessment,
        golden,held,heritage,threeWay}=best;
      const novelty=visualDelta(previous,output);
