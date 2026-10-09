@@ -84,7 +84,8 @@ export function createAbstractionLoop({
    running,waiting,cycle,recipe:lastRecipe,
    sourceNames:lastMix?.sources||[],method:lastMix?.mode||null,
    lastError,nonredundancy:lastAssessment,globalMemory:snapshotNoveltyMemory().count,
-   currentSeed:lastRecipe?.seed??seed,history:stamps.map(x=>({...x})),
+   currentSeed:lastRecipe?.seed??seed,donorGenerations:bank.genomes(),
+   history:stamps.map(x=>({...x})),
    waitingReason:waiting?'Page hidden':''
  });
  const status=()=>onState(state());
@@ -133,9 +134,13 @@ export function createAbstractionLoop({
      const inputs=bank.sources(previous);
      if(!inputs.length)throw Error('No renderer produced an image');
      const candidates=[];
-     // Compare rendered consequences, not just method strings. Bound attempts
-     // to three to stay responsive on Android. Hold manually locked laws.
-     for(let attempt=0;attempt<3;attempt++){
+     // Compare real images, but avoid overheating browsers on low-powered
+     // phones. Fast mobile mode tests two strategies; desktop tests three.
+     const mobile=typeof matchMedia==='function'&&
+       matchMedia('(max-width:730px)').matches;
+     const attempts=mobile?2:3;
+     // Preserve manually locked laws and rework them with new seed branches.
+     for(let attempt=0;attempt<attempts;attempt++){
        const candidateSeed=evolveSeed(baseSeed,cycle+1,attempt,'render-branch');
        const recipe=nextAbstractRecipe(lastRecipe,{
          cycle,branch:attempt,seed:candidateSeed,subject:config.subject||'abstract',
