@@ -1,4 +1,4 @@
-# Hexfield build 293: learning repair and print checkout
+# Hexfield build 294: learning repair and print checkout
 
 ## Shipped to main
 
@@ -39,19 +39,26 @@ Do a real **sandbox** checkout and confirm a paid record appears in
 
 **Physical fulfillment is intentionally NOT dispatched**. The current `hexfield-fulfil` receiver is a legacy Shopify webhook on a DIFFERENT, inactive Supabase project (`wjtrduojxyaeenifpxct`), so it cannot fulfill Stripe orders. Complete a verified Prodigi sandbox print order, configure real retail prices and shipping, connect the **live** Stripe account/keys, implement a separate verified paid-order fulfillment worker and test an end-to-end proof before enabling live sales. Do not simply rename the button to BUY or switch from `sk_test` to `sk_live`.
 
-## Cloudflare deploy
+## Cloudflare deployment (automatic)
 
 The public site is served by Cloudflare Worker `hexfield` with `./public` assets.
-Changes have been pushed to GitHub main. Cloudflare Workers Builds exposes **no automatic GitHub build triggers for this Worker**; its deployment source is **wrangler**. A Wrangler deployment was observed after the latest GitHub commit, but the exact served asset bytes have not been independently verified.
+**Workers Builds IS connected to GitHub `bb-0-5/hexfield` on `main`, auto_build_enabled=true.**
+The earlier statement that there were no automatic deploys was incorrect: the Worker tag is
+`4b0933bada384ddeb63b191b7c56f2c4`, and Cloudflare recorded a successful push_event
+build for commit `d7e5c3f59954d9cf4dc88517dd811ef8390e9179`.
+Cloudflare invokes `npx wrangler deploy` as the deployment command. No manual deploy is needed for ordinary pushes.
 
-Deploy from the current repo checkout when needed:
+Build 294 adds a shared novelty sampler over **both the pre-existing creations archive
+(over 14,000 64-cell signatures) and the incremental signature table**. The sample RPC
+returns 500 valid 64-cell signatures when tested against the live database. Personal taste
+reads are also explicitly filtered to the authenticated visitor, in addition to RLS.
+The two internal database trigger functions no longer expose EXECUTE to public roles.
 
-```sh
-git pull origin main
-npx wrangler deploy
-```
-
-Then verify `https://hexfield.org/build.txt` returns `293` and that page source loads `hexfield-integrations.js` before `app.js`. Check Supabase `hexfield_render_signatures` grows after fresh paintings.
+Verify `https://hexfield.org/build.txt` returns `294` and the page loads
+`hexfield-integrations.js` before `app.js`. Check the Cloudflare Workers Builds
+status for the current `main` commit. The app deliberately disables unattended
+autonomous cycles on phones to avoid freezing the visible painting; do not override
+that without mobile performance measurements.
 
 ## Not changed
 
