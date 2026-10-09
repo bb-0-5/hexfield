@@ -175,5 +175,28 @@ assert.deepEqual(hill.constraint,terrain.constraint);
 assert.notEqual(hill.seed,terrain.seed);
 assert.equal(hill.genome.generation,landscapeGenome.generation+1);
 assert.equal(evaluateSurface(hill.genome).length,0);
+const repair=diagnoseGolden({
+ geometry:.71,color:.63,coupling:.31,combined:.23,
+ constraints:GOLDEN_THRESHOLDS,
+ ratios:{geometryLeft:.615,geometryTop:.4,aspect:1.2,occupied:.62,
+   hueAngle:137.5,dominantPair:.62,colorLeft:.62,colorTop:.38},
+ interaction:{colorOnGeometry:.05,geometryOnColor:-.04},
+ qualifies:false
+});
+assert.equal(repair.target,'coupling',
+ 'Diagnose the fixable failed interaction, not just the low aggregate score');
+const nativeRecipe=structuredClone(originalRecipe);
+nativeRecipe.anatomy.enabled=false;
+nativeRecipe.genome.anatomy.enabled=false;
+const nativeRepair=refineGoldenRecipe(nativeRecipe,3,{target:'geometry'});
+assert.equal(nativeRepair.anatomy.enabled,false,
+ 'Native fonts must not silently be converted into anatomy-rendered glyphs');
+assert.equal(nativeRepair.genome.anatomy.enabled,false);
+assert.notEqual(nativeRepair.genome.color,nativeRecipe.genome.color);
+assert.equal(evaluateSurface(nativeRepair.genome).length,0);
+const nativeA=new Canvas(1200,740),nativeB=new Canvas(1200,740);
+renderLettering(nativeA,nativeRecipe);renderLettering(nativeB,nativeRepair);
+assert.notDeepEqual(nativeA.toBufferSync('png'),nativeB.toBufferSync('png'),
+ 'Phi refinement in native comparison mode must affect actual rendered pixels');
 
 console.log('Dual golden constraints: measured geometry/color/cross-effect, strict gate, W, anatomical bubble and upper bold, real creative process scored.');
