@@ -62,7 +62,8 @@ function scoreSamples(samples,mode='landscape'){
  borderL/=borderN;
  let totalGeom=0,totalPig=0,geomLeft=0,geomTop=0,pigLeft=0,pigTop=0,
    nonEmpty=0,minX=W,maxX=-1,minY=H,maxY=-1,shapeHue=0;
- const palette=new Float64Array(12);
+ const palette=new Float64Array(12),
+   paletteHueSin=new Float64Array(12),paletteHueCos=new Float64Array(12);
  const xDivision=Math.floor(W*GOLD),yDivision=Math.floor(H*GOLD);
  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
    const i=y*W+x;
@@ -81,7 +82,10 @@ function scoreSamples(samples,mode='landscape'){
      minY=Math.min(minY,y);maxY=Math.max(maxY,y);nonEmpty++;
    }
    if(col>.03){
-     palette[Math.floor(hue[i]/30)%12]+=col;
+     const bin=Math.floor(hue[i]/30)%12,angle=hue[i]*Math.PI/180;
+     palette[bin]+=col;
+     paletteHueSin[bin]+=col*Math.sin(angle);
+     paletteHueCos[bin]+=col*Math.cos(angle);
      shapeHue+=col;
    }
  }
@@ -112,7 +116,15 @@ function scoreSamples(samples,mode='landscape'){
  const topShare=totalPig?largest/totalPig:0;
  const dominantPair=largest+second?largest/(largest+second):0;
  // 137.5077° is the golden ANGLE, not a gold pixel proportion.
- const firstHue=(ordered[0]?.i||0)*30+15,secondHue=(ordered[1]?.i||0)*30+15;
+ // Keep 12 stable dominance classes, but compute the hue angle from the
+ // actual weighted hues within those classes (rather than faking
+ // 'precision' with 30-degree bin centres).
+ const hueAt=index=>{
+   const i=index??0;
+   if(!palette[i])return i*30+15;
+   return (Math.atan2(paletteHueSin[i],paletteHueCos[i])*180/Math.PI+360)%360;
+ };
+ const firstHue=hueAt(ordered[0]?.i),secondHue=hueAt(ordered[1]?.i);
  const separation=gdistance(firstHue,secondHue);
  const goldenHue=fit(separation,GOLDEN_ANGLE,40);
  const diversity=clamp(second/(totalPig*.22));
@@ -234,7 +246,11 @@ export function diagnoseGolden(taste){
    shortfall:+Math.max(0,row.target-row.score).toFixed(4)
  }));
  failures.sort((a,b)=>b.shortfall-a.shortfall);
- const worst=failures.find(x=>!x.pass);
+ // A failed combined score is a CONSEQUENCE of the three individual
+ // conditions. Diagnose the strongest repairable independent constraint
+ // first, unless G/C/X already pass and only their product remains low.
+ const worst=failures.filter(x=>x.id!=='combined').find(x=>!x.pass)||
+   failures.find(x=>!x.pass);
  const ratios=taste.ratios;
  let instruction=worst?.hint||'All four experimental φ constraints passed.';
  if(worst?.id==='geometry'){
@@ -280,15 +296,20 @@ export function compareGoldenTaste(parent,child){
      (parent.interaction?.geometryOnColor||0)).toFixed(4)
  };
  const percent=v=>(v>=0?'+':'')+(v*100).toFixed(1)+'pt';
- const effect=changes.colorOnGeometry+changes.geometryOnColor;
- const verdict=effect>.02?'interaction strengthened':
-   effect<-.02?'interaction weakened':'interaction nearly unchanged';
+ const ablationChange=changes.colorOnGeometry+changes.geometryOnColor;
+ const verdict=ablationChange>.02?'directional placement effect increased':
+   ablationChange<-.02?'directional placement effect decreased':
+   'directional placement effect nearly unchanged';
  return {first:false,deltas:changes,
    improved:changes.combined>0,
    description:'Δ Geometry '+percent(changes.geometry)+
      ' · Δ Colour '+percent(changes.color)+
-     ' · Δ Interaction '+percent(changes.coupling)+
-     ' · '+verdict
+     ' · Δ Coupling score '+percent(changes.coupling)+
+     ' · Colour→shape '+(changes.colorOnGeometry>=0?'+':'')+
+       changes.colorOnGeometry.toFixed(3)+
+     ' · Shape→colour '+(changes.geometryOnColor>=0?'+':'')+
+       changes.geometryOnColor.toFixed(3)+
+     ' / '+verdict
  };
 }
 export function goldenPrior(s,{mode='guide'}={}){
