@@ -522,28 +522,41 @@ function vote(liked){
     void showExperiments(recipe);
   }
 }
+// Only image bytes are passed to the buyer's browser download. The printer
+// collects checkout, customer identity and delivery address on its own site.
+async function prepareStudioPrintFile(){
+  if(state.working||!state.recipe)throw Error('Finish the painting first.');
+  const recipe=structuredClone(state.recipe);
+  const canvas=document.createElement('canvas');
+  canvas.width=2400;canvas.height=1480;
+  if(recipe.mode==='landscape'){
+    await renderLandscape(canvas,recipe,{animate:false});
+    if(recipe.constraint?.enabled)paintUnderLaw(canvas,canvas,recipe.constraint);
+  }else if(recipe.mode==='lettering')renderLettering(canvas,recipe);
+  else throw Error('Unknown studio painting format.');
+  let final=canvas;
+  if(recipe.mode==='lettering'&&recipe.type!=='wordmark'){
+    const square=document.createElement('canvas');square.width=1480;square.height=1480;
+    square.getContext('2d').drawImage(canvas,460,0,1480,1480,0,0,1480,1480);
+    final=square;
+  }
+  const blob=await new Promise(resolve=>final.toBlob(resolve,'image/png'));
+  if(!blob)throw Error('Could not encode artwork.');
+  const label=recipe.mode==='landscape'?recipe.scene:
+    cleanLogoText(recipe.text).replace(/[^a-z0-9]+/gi,'-').toLowerCase();
+  return {blob,width:final.width,height:final.height,
+    name:`hexfield-${recipe.mode}-${label}-${recipe.seed}.png`};
+}
+globalThis.__hexfieldPrepareStudioPrint=prepareStudioPrintFile;
 async function download(){
   if(state.working||!state.recipe){setStatus('Finish the painting first.');return;}
-  const recipe=structuredClone(state.recipe),btn=$('export');btn.disabled=true;
+  const btn=$('export');btn.disabled=true;
   try{
-    const canvas=document.createElement('canvas');canvas.width=2400;canvas.height=1480;
-    if(recipe.mode==='landscape'){
-      await renderLandscape(canvas,recipe,{animate:false});
-      if(recipe.constraint?.enabled)paintUnderLaw(canvas,canvas,recipe.constraint);
-    }else renderLettering(canvas,recipe);
-    let final=canvas;
-    if(recipe.mode==='lettering' && recipe.type!=='wordmark'){
-      const square=document.createElement('canvas');square.width=1480;square.height=1480;
-      square.getContext('2d').drawImage(canvas,460,0,1480,1480,0,0,1480,1480);
-      final=square;
-    }
-    const blob=await new Promise(resolve=>final.toBlob(resolve,'image/png'));
-    if(!blob)throw new Error('Could not encode artwork');
-    const obj=URL.createObjectURL(blob),link=document.createElement('a');
-    const label=recipe.mode==='landscape'?recipe.scene:cleanLogoText(recipe.text).replace(/[^a-z0-9]+/gi,'-').toLowerCase();
-    link.href=obj;link.download=`hexfield-${recipe.mode}-${label}-${recipe.seed}.png`;
-    document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(obj),60000);
-    setStatus(`Exported ${final.width} × ${final.height} PNG.`);
+    const art=await prepareStudioPrintFile();
+    const url=URL.createObjectURL(art.blob),link=document.createElement('a');
+    link.href=url;link.download=art.name;document.body.append(link);link.click();link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+    setStatus('Exported '+art.width+' × '+art.height+' PNG.');
   }catch(error){console.error('Export failed',error);setStatus('Export failed on this device. Try again.');}
   finally{btn.disabled=false;}
 }
