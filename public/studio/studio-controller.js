@@ -4,6 +4,8 @@
  */
 import {initImagination} from './imagination.js';
 import {initRuleStudio} from './rule-studio.js';
+import {initAnatomyControls} from './anatomy-controls.js';
+import {publishSource} from './source-mixer.js';
 import {SCENES,MOODS,renderLandscape,landscapeDescription,landscapeFeatures} from './landscape.js';
 import {LETTER_STYLES,LETTER_TYPES,cleanLogoText,renderLettering,letteringDescription,letteringFeatures} from './lettering.js';
 import {FOCI,makeGenome,mutateGenome,sampleGenome,proposeExperiments,methodDescription,programKey,methodFingerprint,geneFeatures,methodDistance,evaluateSurface,randomFrom} from './evolution.js';
@@ -126,7 +128,12 @@ function makeRecipe({parent=null,focus=null,genome=null,subjectChange=false}={})
     const mood=parent?.mode===mode?parent.mood:selected('landscapeMood',MOODS,'mood');
     return {...base,scene:subjectChange?SCENES.filter(v=>v!==scene)[rand()%(SCENES.length-1)]:scene,mood};
   }
-  return {...base,text:parent?.mode===mode?cleanLogoText(parent.text):cleanLogoText($('logoText').value),
+  const anatomy=logoControls?.programForGenome(method.anatomy,!!parent) || method.anatomy;
+  if(anatomy)method={...method,anatomy};
+  return {...base,genome:method,
+    anatomy,
+    showAnatomyGuides:logoControls?.guides()||false,
+    text:parent?.mode===mode?cleanLogoText(parent.text):cleanLogoText($('logoText').value),
     style:parent?.mode===mode?parent.style:selected('logoStyle',LETTER_STYLES,'style'),
     type:parent?.mode===mode?parent.type:LETTER_TYPES.includes($('logoType').value)?$('logoType').value:'wordmark'};
 }
@@ -296,6 +303,7 @@ async function paintRecipe(recipe,{newStudy=true}={}) {
   if(newStudy){state.sample++;try{localStorage.setItem(storage.count,String(state.sample));}catch{}}
   $('workNumber').textContent=`STUDY ${String(state.sample).padStart(3,'0')}`;
   try {
+    let glyphResult=null;
     if(recipe.mode==='landscape') {
       const ok=await renderLandscape(state.canvas,recipe,{
         signal:abort.signal,
@@ -307,9 +315,13 @@ async function paintRecipe(recipe,{newStudy=true}={}) {
       });
       if(!ok)return;
     }else{
-      renderLettering(state.canvas,recipe);
+      glyphResult=renderLettering(state.canvas,recipe);
     }
     if(abort.signal.aborted||version!==state.revision)return;
+    if(recipe.mode==='lettering'){
+      logoControls?.updateAfterRender(glyphResult,recipe);
+      publishSource(state.canvas,'logo',recipe);
+    }
     state.currentVisual=describeCanvas(state.canvas,recipe.mode);
     if(recipe.comparison&&descriptorValid(state.comparisonReference)){
       const delta=visualDistance(state.comparisonReference,state.currentVisual);
@@ -618,7 +630,27 @@ function chooseBlind(index){
     Image distance: ${distance?.toFixed(3)??'unmeasured'}. This choice is a test result, not automatically counted as a general KEEP/REJECT vote.`;
   updateBlindSummary();
 }
-let imagination,ruleStudio;
+let imagination,ruleStudio,logoControls;
+function applyEditedLogo(program,why='edit'){
+ if(state.mode!=='lettering')return;
+ const old=state.recipe?.mode==='lettering'?state.recipe:null;
+ const base=structuredClone(old?.genome||makeGenome('lettering',rand()));
+ base.anatomy=program;
+ base.generation=(base.generation||0)+1;
+ base.origin='anatomy-'+why;
+ const recipe={
+    version:2,mode:'lettering',seed:old?.seed??rand(),genome:base,
+    text:cleanLogoText($('logoText').value),
+    style:LETTER_STYLES.includes($('logoStyle').value)?$('logoStyle').value:'anatomy',
+    type:LETTER_TYPES.includes($('logoType').value)?$('logoType').value:'wordmark',
+    anatomy:program,showAnatomyGuides:logoControls?.guides()||false,
+    experiment:'part-'+why,
+    parentMethod:old?.genome?methodFingerprint(old.genome):null
+ };
+ state.comparisonReference=state.currentVisual;
+ clearExperiments();clearBlind();
+ void paintRecipe(recipe,{newStudy:why!=='visibility'});
+}
 function bind(){
   for(const btn of document.querySelectorAll('[data-mode]'))btn.addEventListener('click',()=>setMode(btn.dataset.mode));
   $('generate').addEventListener('click',()=>void paintFresh());
@@ -635,6 +667,10 @@ function bind(){
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void syncVotes();});
   imagination=initImagination({getSession:acquireSession});
   ruleStudio=initRuleStudio();
+  logoControls=initAnatomyControls({
+     onApply:applyEditedLogo,
+     getText:()=>$('logoText').value
+  });
   buildGallery();setMode('rules');updateBlindSummary();
   void restoreRemoteProcedures();
   if(state.pending.length)void syncVotes();
