@@ -85,7 +85,10 @@ function paintPart(ctx,item,points,scaleX,scaleY,originX,originY,baseWidth,ink,a
 }
 export function paintAnatomyWord(canvas,recipe={},options={}){
  const ctx=canvas.getContext('2d');if(!ctx)throw Error('2D canvas unavailable');
- const text=String(recipe.text||'HEXFIELD').slice(0,24);
+ const raw=String(recipe.text||'HEXFIELD').slice(0,24),kind=recipe.type||'wordmark';
+ const text=kind==='wordmark'?raw:(
+   raw.includes(' ')?raw.split(/\s+/).map(part=>part[0]||'').join(''):raw
+ ).slice(0,3).toUpperCase();
  const g=recipe.genome||{},program=editAnatomyProgram(options.program||recipe.anatomy||g.anatomy);
  const face=PROFILES[recipe.style]||PROFILES.anatomy;
  const colors=PALETTES[clamp(Math.floor((g.color||0)*PALETTES.length),0,PALETTES.length-1)];
@@ -202,7 +205,8 @@ export function paintAnatomyWord(canvas,recipe={},options={}){
      }
    }ctx.restore();
  }
- const frame=g.letterFrame||'none';
+ const frame=kind==='emblem'&&(!g.letterFrame||g.letterFrame==='none')?'box':
+   (g.letterFrame||'none');
  if(frame!=='none'){
    const x=x0-24,y=top+GUIDELINES.cap*yscale-27,
      w=actualW+48,h=yscale*(GUIDELINES.baseline-GUIDELINES.cap)+54;
