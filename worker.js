@@ -1,4 +1,4 @@
-/* Hexfield 299: real visual imagination (Cloudflare Workers AI), separate from
+/* Hexfield 300: reliable visual imagination (Cloudflare Workers AI), separate from
  * the historical fixed-landscape painter. No automatic/bystander inference.
  * Authenticated on the Supabase Data API before ANY GPU invocation; daily
  * inference caps enforced transactionally in PostgreSQL, across isolates.
@@ -99,11 +99,34 @@ async function apiImagination(request,env){
     const output=await env.AI.run(IMAGE_MODEL,{multipart:{body:wrapped.body,
       contentType:wrapped.headers.get('content-type')}});
     const encoded=output?.image || output?.result?.image;
-    if(!encoded || typeof encoded!=='string')throw Error('No image returned');
+    if(!encoded || typeof encoded!=='string')throw Error('No image returned from model');
+    // Only a confirmed model image consumes one of three successful paintings.
+    // A failed inference stays reserved briefly and then expires; attempts are
+    // separately capped at 10/user and 60/site/day so failures are still bounded.
+    let remaining=budget;
+    try {
+      const confirm=await fetch(SUPABASE+'/rest/v1/rpc/complete_hexfield_imagination',{
+        method:'POST',headers:{apikey:PUBLIC_KEY,authorization:bearer,'content-type':'application/json'},
+        body:JSON.stringify({p_request_id:body.request_id}),signal:AbortSignal.timeout(9000)
+      });
+      if(!confirm.ok)throw Error('completion response HTTP '+confirm.status);
+      remaining=await confirm.json();
+      console.log('Hexfield image complete',JSON.stringify({remaining,model:IMAGE_MODEL}));
+    }catch(error){
+      // Do not throw away a successful painting due to a transient DB error.
+      // The browser can retain the image; the reservation eventually expires.
+      console.error('Image completed but studio quota finalization failed',String(error).slice(0,180));
+    }
     return data({image:'data:image/png;base64,'+encoded,title:plan.title,method:plan.method,
-      prompt:finalPrompt,credits_remaining:budget,model:IMAGE_MODEL});
-  }catch(e){console.error('Workers AI image inference failed',String(e).slice(0,300));
-    return data({error:'The image model failed to create a painting. The daily budget may still count this attempt.'},502);
+      prompt:finalPrompt,credits_remaining:remaining,model:IMAGE_MODEL});
+  }catch(e){
+    const reason=String(e?.message||e||'unknown').slice(0,280);
+    console.error('Workers AI image inference failed',reason);
+    const throttled=/(429|rate.?limit|daily.?limit|quota|capacity|busy|unavailable|overload|1030)/i.test(reason);
+    return data({error:throttled
+      ? 'Cloudflare\'s image model is temporarily at capacity. Try again shortly; failed attempts do not consume completed paintings.'
+      : 'The image model could not finish this picture. Try again; the attempt will expire from your painting allowance.',
+      code:throttled?'MODEL_BUSY':'MODEL_FAILED',retryable:true},throttled?503:502);
   }
 }
 export default {
@@ -113,8 +136,9 @@ export default {
       if(request.method!=='POST')return data({error:'POST only'},405);
       return apiImagination(request,env);
     }
-    if(url.pathname==='/api/imagine/status')return data({ready:!!env?.AI?.run,model:IMAGE_MODEL,limit_per_visitor_per_day:3,site_limit_per_day:60,
-      mode:'explicit action only'});
+    if(url.pathname==='/api/imagine/status')return data({ready:!!env?.AI?.run,model:IMAGE_MODEL,
+      completed_paintings_per_visitor_per_day:3,attempt_safety_cap_per_visitor_per_day:10,
+      site_attempt_cap_per_day:60,failed_reservation_minutes:3,mode:'explicit action only'});
     if(url.pathname==='/')url.pathname='/index.html';
     return env.ASSETS.fetch(new Request(url,request));
   }
