@@ -4,6 +4,8 @@
  */
 import {SUBJECTS,LAWS,MARKS,REWORKS,makeRecipe,mutateRecipe,drawReality,applyRules,
   noteRuleVerdict,noteLineage,describeRecipe,buildRulePrompt,RULE_STORE} from './rule-engine.js';
+import {createAbstractionLoop} from './abstraction-loop.js';
+import {publishSource} from './source-mixer.js';
 const $=id=>document.getElementById(id);
 const GALLERY='hexfield.rule-studio.gallery.v1';
 const CURRENT='hexfield.rule-studio.current.v1';
@@ -49,6 +51,59 @@ export function initRuleStudio(){
  let current=null,upload=null,parentCanvas=null,realitySource=null,sequence=0;
  const context=$('ruleArtwork').getContext('2d');
  const status=m=>text('ruleStatus',m);
+ function showLoopHistory(rows){
+   const root=$('ruleLoopHistory');root.replaceChildren();
+   for(const item of rows.slice(-10).reverse()){
+     const el=document.createElement('figure');el.className='rule-loop-frame';
+     const img=document.createElement('img');img.src=item.thumb;
+     img.alt='Abstract generation '+item.cycle;
+     const caption=document.createElement('figcaption');
+     caption.textContent='#'+item.cycle+' / '+item.blend+' / '+item.law+' / '+item.mark;
+     el.append(img,caption);root.append(el);
+   }
+ }
+ function loopOptions(){
+   return {speed:Number($('ruleLoopSpeed').value)||3000,
+     mixMode:$('ruleMixMode').value,
+     lockLaw:$('ruleLockLaw').checked,
+     subject:$('ruleSubject').value,
+     law:$('rulePrimary').value,
+     secondary:$('ruleSecondary').value,
+     mark:$('ruleMark').value};
+ }
+ const loop=createAbstractionLoop({
+   width:960,height:600,
+   getParent:()=>current?.canvas||null,
+   getUploaded:()=>upload,
+   onFrame(result){
+     const {canvas,recipe,cycle,metrics,blend,sources,novelty}=result;
+     context.clearRect(0,0,960,600);context.drawImage(canvas,0,0,960,600);
+     current={recipe,canvas,judged:false,metrics};
+     parentCanvas=canvas;
+     $('ruleArtwork').hidden=false;$('ruleEmpty').hidden=true;
+     $('ruleKeep').disabled=false;$('ruleReject').disabled=false;
+     $('ruleReworkBtn').disabled=false;$('ruleSave').disabled=false;
+     text('ruleCaption',describeRecipe(recipe));
+     text('ruleEvidence','GENERATION '+cycle+' / '+metrics.strokes+
+       ' marks / '+metrics.skipped+' removed / '+blend.toUpperCase()+
+       ' / '+sources.join(' + ')+' / visual change '+(novelty*100).toFixed(1)+'%');
+     status('Reabstracting generation '+cycle+
+       '. The LAST image is now the parent for the NEXT painting.');
+     if(cycle%4===0){persistCanvas(canvas,recipe,false);publishSource(canvas,'rules',recipe);}
+   },
+   onState(info){
+     $('ruleLoopStart').disabled=info.running;
+     $('ruleLoopStop').disabled=!info.running;
+     $('ruleLoopOnce').disabled=info.running;
+     const sources=info.sourceNames?.length?info.sourceNames.join(' + '):'not rendered yet';
+     text('ruleLoopStatus',(info.running?'LIVE':'PAUSED')+' / '+info.cycle+
+       ' passes / blending: '+(info.method||'evolving')+' / renderers: '+sources+
+       (info.waiting?' / suspended while page is hidden':'')+
+       (info.lastError?' / '+info.lastError:''));
+     showLoopHistory(info.history||[]);
+   },
+   onError(error){status('Abstraction recovered from a renderer error: '+safe(error?.message||error));}
+ });
  function present(recipe,source,revision=false){
    if(!source)throw Error('No input picture to constrain');
    const target=canvasOf();
@@ -65,6 +120,7 @@ export function initRuleStudio(){
      (revision?' · PAINTED FROM PREVIOUS IMAGE':''));
    status('Constraint engine executed the laws on the pixels. No image-model inference was needed.');
    noteLineage(recipe);persistCanvas(target,recipe,false);
+   publishSource(target,'rules',recipe);
    return current;
  }
  async function sourceFor(recipe){
@@ -134,12 +190,14 @@ export function initRuleStudio(){
    }
  }
  function vote(liked){
+   loop.pause();
    if(!current||current.judged)return;
    const critique=safe($('ruleCritique').value,230);
    noteRuleVerdict(current.recipe,liked,critique);
    current.judged=true;
    $('ruleKeep').disabled=true;$('ruleReject').disabled=true;
    persistCanvas(current.canvas,current.recipe,true);
+   publishSource(current.canvas,'rules',current.recipe);
    if(liked){
      const rows=read(GALLERY)||[];
      rows.push({recipe:current.recipe,thumb:thumbnail(current.canvas)});
@@ -153,11 +211,21 @@ export function initRuleStudio(){
    const link=document.createElement('a');link.download='hexfield-rule-'+current.recipe.id+'.png';
    link.href=$('ruleArtwork').toDataURL('image/png');document.body.append(link);link.click();link.remove();
  }
- $('rulePaint').addEventListener('click',()=>void paintFresh());
- $('ruleReworkBtn').addEventListener('click',rework);
- $('ruleNewLaw').addEventListener('click',()=>child('law'));
- $('ruleNewSubject').addEventListener('click',()=>child('subject'));
- $('ruleNewMark').addEventListener('click',()=>child('mark'));
+ $('rulePaint').addEventListener('click',()=>{loop.pause();void paintFresh();});
+ $('ruleReworkBtn').addEventListener('click',()=>{loop.pause();rework();});
+ $('ruleNewLaw').addEventListener('click',()=>{loop.pause();child('law');});
+ $('ruleNewSubject').addEventListener('click',()=>{loop.pause();child('subject');});
+ $('ruleNewMark').addEventListener('click',()=>{loop.pause();child('mark');});
+ $('ruleLoopStart').addEventListener('click',()=>loop.start(loopOptions()));
+ $('ruleLoopStop').addEventListener('click',()=>{
+   loop.pause();
+   if(current){persistCanvas(current.canvas,current.recipe,current.judged);
+     publishSource(current.canvas,'rules',current.recipe);}
+ });
+ $('ruleLoopOnce').addEventListener('click',()=>loop.once(loopOptions()));
+ for(const id of ['ruleLoopSpeed','ruleMixMode','ruleLockLaw']){
+   $(id).addEventListener('change',()=>loop.configure(loopOptions()));
+ }
  $('ruleKeep').addEventListener('click',()=>vote(true));
  $('ruleReject').addEventListener('click',()=>vote(false));
  $('ruleSave').addEventListener('click',save);
@@ -185,5 +253,11 @@ export function initRuleStudio(){
    };image.src=restored.image;
  }
  gallery();
- return {show(){if(!current)status('Choose a subject and visual laws. Generate without using cloud AI credits.');},paintFresh,hasWork:()=>!!current};
+ return {
+   show(){if(!current)status('Choose visual laws, or start continuous reabstraction of every available renderer.');},
+   hide(){loop.pause();if(current){persistCanvas(current.canvas,current.recipe,current.judged);
+     publishSource(current.canvas,'rules',current.recipe);}},
+   paintFresh,hasWork:()=>!!current,
+   loopState:()=>loop.state()
+ };
 }
