@@ -116,7 +116,7 @@ function scoreSamples(samples,mode='landscape'){
  const separation=gdistance(firstHue,secondHue);
  const goldenHue=fit(separation,GOLDEN_ANGLE,40);
  const diversity=clamp(second/(totalPig*.22));
- const color=clamp(pigmentEnergy*(
+ const color=clamp(pigmentEnergy*diversity*(
    .32*phiFit(dominantPair,.20)+.24*phiFit(topShare,.23)+
    .25*colorSpread+.19*goldenHue*diversity
  ));
