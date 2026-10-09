@@ -812,13 +812,18 @@ async function paintNextLogoGeneration(parent,focus){
         mode:'lettering',method:studioMethod(recipe),
         parent:state.nonredundancy?.fingerprint||null
       });
-      options.push({recipe,novelty,preview});
+      const golden=measureGoldenTaste(preview.canvas,{mode:'lettering'});
+      options.push({recipe,novelty,preview,golden});
     }catch(error){console.warn('Logo anatomy candidate omitted:',error);}
   }
   options.sort((a,b)=>{
+    if(getGoldenMode()==='strict'&&a.golden.qualifies!==b.golden.qualifies)
+      return a.golden.qualifies?-1:1;
     if(a.novelty.redundant!==b.novelty.redundant)
       return a.novelty.redundant?1:-1;
-    return b.novelty.score-a.novelty.score;
+    const score=entry=>entry.novelty.score+
+      goldenPrior(entry.golden,{mode:getGoldenMode()})*.66;
+    return score(b)-score(a);
   });
   const chosen=options[0]?.recipe||makeRecipe({parent,focus,
     evolutionSeed:evolveSeed(parent.seed,parent.genome.generation+1,7,'letter-fallback')});
