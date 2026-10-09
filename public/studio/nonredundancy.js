@@ -53,7 +53,6 @@ export function canvasFingerprint(canvas){
    edges+=digit.toString(16);
    edgeSum+=e;
    if(e>28)highEdges++;
-   changes+=Math.abs(px-sum/(all.length||1)); // updated after loop below
  }
  const mean=sum/all.length,variance=all.reduce((acc,l)=>acc+(l-mean)**2,0)/all.length;
  const entropy=hist.reduce((a,b)=>b? a-(b/all.length)*Math.log2(b/all.length):a,0)/4;
@@ -118,13 +117,14 @@ export function noveltyAssessment(fp,{mode='global',method='',parent=null,histor
    return distance<best.distance?{distance,method:r.method,mode:r.mode,serial:r.serial}:best;
  },{distance:1,method:'',mode:'',serial:null});
  const local=nearest(sameMode),global=nearest(records);
- const parentDistance=parent?.getContext?fingerprintDistance(fp,canvasFingerprint(parent)):
-   valid(parent)?fingerprintDistance(fp,parent):1;
+ const parentFp=parent?.getContext?canvasFingerprint(parent):
+   valid(parent)?parent:null;
+ const parentDistance=parentFp?fingerprintDistance(fp,parentFp):1;
  const repeated=records.slice(-28).filter(r=>r.method&&method&&r.method===method).length;
  const exact=sameMode.some(r=>fingerprintDistance(fp,r.fp)<.021);
  // Soft global guard: two disciplines can legitimately share a motif.
  const nearestDistance=Math.min(local.distance,.50*global.distance+.50);
- const complexityGain=valid(parent)?fp.structure-parent.structure:0;
+ const complexityGain=parentFp?fp.structure-parentFp.structure:0;
  const score=clamp(
    .58*local.distance+
    .17*global.distance+
