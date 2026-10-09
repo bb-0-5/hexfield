@@ -46,20 +46,27 @@ function paintPart(ctx,item,points,scaleX,scaleY,originX,originY,baseWidth,ink,a
  if(item.dotted){
    const radius=Math.max(.8,weight*.55),skip=Math.max(1,Math.round(real.length/21));
    for(let i=0;i<real.length;i+=skip){
-     const [x,y]=real[i];
-     if(harsh)ctx.fillRect(x-radius,y-radius,radius*2,radius*2);
-     else{ctx.beginPath();ctx.arc(x,y,radius,0,PI*2);ctx.fill();}
+     const j=Math.round(i/Math.max(1,real.length-1)*(item.points.length-1));
+     if(item.skipLocal?.[j])continue;
+     const [x,y]=real[i],weight=item.localWeights?.[j]||1;
+     const rr=radius*Math.max(.25,weight);
+     ctx.fillStyle=item.localInverts?.[j]?accent:colour;
+     if(harsh)ctx.fillRect(x-rr,y-rr,rr*2,rr*2);
+     else{ctx.beginPath();ctx.arc(x,y,rr,0,PI*2);ctx.fill();}
    }
  }else{
    for(let i=1;i<real.length;i++){
-     const t=i/(real.length-1);
+     const t=i/(real.length-1),j=Math.round(t*(item.points.length-1));
+     if(item.skipLocal?.[j])continue;
      if(item.open&&(t<.11||t>.86))continue;
      if(item.fractured&&(item.isTerm?t<.17||t>.83:
        Math.floor(t*(4+Math.floor(item.amount*6)))%3===1))continue;
      if(item.dashed&&Math.floor(t*20)%2===1)continue;
      const a=real[i-1],b=real[i];if(!a||!b)continue;
-     ctx.lineWidth=item.width&&item.width<.8?weight:weight;
-     if(item.width&&item.width>.2&&item.amount&&item.isTerm)ctx.lineWidth=weight*(1-.28*t);
+     ctx.lineWidth=weight*(item.localWeights?.[j]||1);
+     ctx.strokeStyle=item.localInverts?.[j]?accent:colour;
+     if(item.isTerm&&!item.localWeights&&item.amount)
+       ctx.lineWidth=weight*(1-.20*t);
      // Deliberately draw each segment, rather than join a single font outline:
      // a rule may forbid an individual terminal, section or counter aperture.
      ctx.beginPath();ctx.moveTo(...a);ctx.lineTo(...b);ctx.stroke();
