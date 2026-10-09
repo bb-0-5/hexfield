@@ -43,6 +43,8 @@ jobs:
         run: node --experimental-default-type=module tests/global-nonredundancy.test.mjs
       - name: Verify component-level font anatomy and mutable logo geometry
         run: node --experimental-default-type=module tests/studio-anatomy.test.mjs
+      - name: Measure dual golden-ratio art taste and animate real creative process
+        run: node --experimental-default-type=module tests/golden-creative-process.test.mjs
       - name: Test continuous renderer fusion and recursive abstraction
         run: node --experimental-default-type=module tests/studio-abstraction-loop.test.mjs
       - name: Visual novelty and painting comparison
