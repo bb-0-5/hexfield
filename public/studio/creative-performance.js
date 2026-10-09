@@ -65,6 +65,20 @@ function outlineSurvivors(ctx,items,alpha=1){
  }
  ctx.restore();
 }
+function sketchInheritedIdeas(ctx,ideas,progress=1){
+ if(!Array.isArray(ideas)||!ideas.length)return;
+ ctx.save();ctx.lineCap='round';ctx.lineJoin='round';ctx.lineWidth=3;
+ for(const idea of ideas){
+   const points=idea.outline||[];if(points.length<2)continue;
+   ctx.globalAlpha=.88;ctx.strokeStyle=idea.color||'#4a8057';
+   ctx.setLineDash([7,4]);ctx.beginPath();ctx.moveTo(...points[0]);
+   const count=Math.min(points.length,Math.max(1,Math.ceil(points.length*progress)));
+   for(let i=1;i<count;i++)ctx.lineTo(...points[i]);
+   if(progress>=1)ctx.closePath();
+   ctx.stroke();ctx.setLineDash([]);
+ }
+ ctx.restore();
+}
 function drawStrokes(ctx,parts,count,travel=0){
  const limit=Math.min(parts.length,Math.max(0,Math.ceil(count)));
  for(let i=0;i<limit;i++){
