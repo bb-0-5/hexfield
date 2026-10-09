@@ -5,6 +5,8 @@
 import {SUBJECTS,LAWS,MARKS,REWORKS,makeRecipe,mutateRecipe,drawReality,applyRules,
   noteRuleVerdict,noteLineage,describeRecipe,buildRulePrompt,RULE_STORE} from './rule-engine.js';
 import {createAbstractionLoop} from './abstraction-loop.js';
+import {createCreativePerformance} from './creative-performance.js';
+import {measureGoldenTaste,explainGolden} from './golden-taste.js';
 import {publishSource} from './source-mixer.js';
 import {evolveSeed,rankNoveltyCandidates,assessCanvas,commitCanvas,
   methodSignature,snapshotNoveltyMemory} from './nonredundancy.js';
@@ -53,6 +55,17 @@ export function initRuleStudio(){
  let current=null,upload=null,parentCanvas=null,realitySource=null,sequence=0;
  const context=$('ruleArtwork').getContext('2d');
  const status=m=>text('ruleStatus',m);
+ const theatre=createCreativePerformance({
+   host:document.querySelector('.rule-frame'),
+   canvas:$('ruleArtwork'),name:'rules'
+ });
+ function displayPhi(canvas){
+   const s=measureGoldenTaste(canvas,{mode:'rule-studio'});
+   const el=$('ruleGoldenEvidence');
+   if(el){el.textContent='φ×φ / '+explainGolden(s);
+     el.dataset.qualifies=String(s.qualifies);}
+   return s;
+ }
  function showLoopHistory(rows){
    const root=$('ruleLoopHistory');root.replaceChildren();
    for(const item of rows.slice(-10).reverse()){
@@ -79,9 +92,13 @@ export function initRuleStudio(){
    getUploaded:()=>upload,
    onFrame(result){
      const {canvas,recipe,cycle,metrics,blend,sources,novelty,nonredundancy}=result;
+     const before=current?.canvas||null;
      context.clearRect(0,0,960,600);context.drawImage(canvas,0,0,960,600);
      current={recipe,canvas,judged:false,metrics};
      parentCanvas=canvas;
+     displayPhi(canvas);
+     void theatre.play({kind:'rule',recipe,trace:metrics.trace,
+       parent:before,final:canvas,duration:1650});
      $('ruleArtwork').hidden=false;$('ruleEmpty').hidden=true;
      $('ruleKeep').disabled=false;$('ruleReject').disabled=false;
      $('ruleReworkBtn').disabled=false;$('ruleSave').disabled=false;
@@ -114,7 +131,9 @@ export function initRuleStudio(){
  function present(recipe,source,revision=false){
    if(!source)throw Error('No input picture to constrain');
    const before=current?.canvas||null,target=canvasOf();
-   const metrics=applyRules(source,target,recipe,{iteration:recipe.generation});
+   const metrics=applyRules(source,target,recipe,{
+     iteration:recipe.generation,trace:true
+   });
    const method=methodSignature({
      mode:'rule-studio',subject:recipe.subject,primary:recipe.primary,
      secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework
@@ -127,6 +146,9 @@ export function initRuleStudio(){
    });
    context.clearRect(0,0,960,600);context.drawImage(target,0,0);
    current={recipe,canvas:target,judged:false,metrics,nonredundancy:W};parentCanvas=target;
+   displayPhi(target);
+   void theatre.play({kind:'rule',recipe,trace:metrics.trace,
+     parent:before,final:target,duration:1900});
    $('ruleEmpty').hidden=true;
    $('ruleArtwork').hidden=false;
    $('ruleKeep').disabled=false;$('ruleReject').disabled=false;$('ruleReworkBtn').disabled=false;
@@ -294,7 +316,7 @@ export function initRuleStudio(){
  gallery();
  return {
    show(){if(!current)status('Choose visual laws, or start continuous reabstraction of every available renderer.');},
-   hide(){loop.pause();if(current){persistCanvas(current.canvas,current.recipe,current.judged);
+   hide(){loop.pause();theatre.stop();if(current){persistCanvas(current.canvas,current.recipe,current.judged);
      publishSource(current.canvas,'rules',current.recipe);}},
    paintFresh,hasWork:()=>!!current,
    loopState:()=>loop.state()
