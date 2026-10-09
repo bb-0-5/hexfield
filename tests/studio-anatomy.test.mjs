@@ -69,6 +69,10 @@ const mutant=paintAnatomyWord(second,{...standard,anatomy:editAnatomyProgram({ru
  {target:'crossbar',operation:'lift',amount:.95,glyph:'H'},
  {target:'counter',operation:'expand',amount:.84,glyph:'all'}
 ]})});
+const monogram=paintAnatomyWord(canvas(),{...standard,type:'monogram',text:'Half Man Studios',anatomy:none});
+assert.equal(monogram.text,'HMS','Monogram must use initials instead of painting the whole phrase');
+const emblem=paintAnatomyWord(canvas(),{...standard,type:'emblem',text:'ABC',anatomy:none});
+assert.equal(emblem.text,'ABC','Short-word emblems keep readable initials');
 assert.ok(baseline.paintedComponents>=10);
 assert.ok(mutant.mutatedComponents>0);
 assert.ok(mutant.affected.crossbar>0&&mutant.affected.counter>0);
