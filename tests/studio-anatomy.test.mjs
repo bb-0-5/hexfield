@@ -50,6 +50,20 @@ const opened=compileAnatomyGlyph('O',0,editAnatomyProgram({rules:[
 ]}));
 assert.equal(opened.components.find(c=>c.part==='bowl').open,true,'Opening counter must alter its bowl path');
 assert.notDeepEqual(bowl0.components,opened.components);
+const terminalOnly=compileAnatomyGlyph('H',0,editAnatomyProgram({rules:[
+ {target:'terminal',operation:'lift',amount:1,glyph:'H'}
+]}));
+const baseStem=H0.components[0].points;
+const movedStem=terminalOnly.components[0].points;
+assert.ok(movedStem.length>baseStem.length,'A terminal must be resolved into a local stroke segment');
+assert.ok(Math.abs(movedStem[0][1]-baseStem[0][1])>.1,'The stem top terminal must move');
+assert.ok(Math.abs(movedStem[Math.floor(movedStem.length/2)][1]-
+  (baseStem[0][1]+baseStem.at(-1)[1])/2)<.03,
+  'The stem middle must remain anchored when editing only its terminals');
+const apexOnly=compileAnatomyGlyph('A',0,editAnatomyProgram({rules:[
+ {target:'apex',operation:'lift',amount:1,glyph:'A'}
+]}));
+assert.ok(apexOnly.components.some(c=>c.points.some(p=>p[1]<.07)),'Apex-specific rule must affect the top junction');
 const stacked=editAnatomyProgram({rules:[
  {target:'stem',operation:'bend',amount:.74,glyph:'all'},
  {target:'stem',operation:'thin',amount:.50,glyph:'all'}
