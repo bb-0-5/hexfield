@@ -205,6 +205,11 @@ export function applyRules(source,target,recipe,options={}){
  const sample=document.createElement('canvas');sample.width=width;sample.height=height;
  const sc=sample.getContext('2d',{willReadFrequently:true});sc.drawImage(source,0,0,width,height);
  const data=sc.getImageData(0,0,width,height).data,ctx=target.getContext('2d');
+ // Other renderer families (especially landscape and typography) sometimes
+ // leave a normalized-world transform on their canvas contexts. A rule pass
+ // is *always* applied in physical pixel coordinates and must restore the
+ // previous coordinate system once complete.
+ ctx.save();ctx.setTransform(1,0,0,1,0,0);
  // Reabstraction is a genuine loss-of-information operation: first reduce
  // the input to spatial masses, then invent marks from that coarse image.
  // Applying only a wider dot size is not the same as abstracting a reference.
@@ -287,6 +292,7 @@ export function applyRules(source,target,recipe,options={}){
      strokes++;
    }
  }
+ ctx.restore();
  return {strokes,skipped,cell:step,negativeSpace:negative,noCurvedMarks:has('no_curves'),
   strictColourRemap:has('blue_for_red'),hybrid:recipe.mark==='hybrid',parentId:recipe.parentId};
 }
