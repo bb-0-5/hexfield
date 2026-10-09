@@ -26,7 +26,7 @@ export function performancePlan({kind='logo',trials=[],anatomy=null,trace=null,r
     kind:'test',title:'TRY '+(i+1)+' / '+Math.min(PLAN_LIMIT,trials.length),
     detail:safe(x.label||x.rule?.target||x.method||'rendered counterfactual'),
     score:Number.isFinite(x.score)?x.score:null,
-    selected:!!x.selected,canvas:x.canvas
+    golden:x.golden||null,selected:!!x.selected,canvas:x.canvas
   }));
  const rule=recipe?.anatomy?.rules?.[0]||recipe?.genome?.anatomy?.rules?.[0]||
    (recipe?.primary?{target:recipe.primary,operation:recipe.mark}:null);
@@ -122,11 +122,21 @@ export function createCreativePerformance({host,canvas,name='theatre',statusElem
  }
  function mutedBase(){
    ctx.fillStyle='#e3e0d3';ctx.fillRect(0,0,bounds.w,bounds.h);
-   ctx.strokeStyle='#91aaa0';ctx.lineWidth=1;
-   for(let y=bounds.h*.15;y<bounds.h;y+=bounds.h*.15){
-     ctx.globalAlpha=.24;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(bounds.w,y);ctx.stroke();
+   const minor=(3-Math.sqrt(5))/2,major=1-minor;
+   ctx.save();ctx.globalAlpha=.38;ctx.strokeStyle='#548f72';ctx.lineWidth=1;
+   ctx.setLineDash([6,9]);
+   for(const value of [minor,major]){
+     ctx.beginPath();ctx.moveTo(bounds.w*value,0);
+     ctx.lineTo(bounds.w*value,bounds.h);ctx.stroke();
+     ctx.beginPath();ctx.moveTo(0,bounds.h*value);
+     ctx.lineTo(bounds.w,bounds.h*value);ctx.stroke();
    }
-   ctx.globalAlpha=1;
+   ctx.setLineDash([]);
+   for(const a of [minor,major])for(const b of [minor,major]){
+     ctx.beginPath();ctx.arc(bounds.w*a,bounds.h*b,4,0,Math.PI*2);
+     ctx.stroke();
+   }
+   ctx.restore();
  }
  function finish(reason='completed'){
    if(raf)cancelAnimationFrame(raf);raf=0;serial++;
@@ -156,8 +166,13 @@ export function createCreativePerformance({host,canvas,name='theatre',statusElem
        Math.floor(within*plan.tests.length));
      const trial=plan.tests[index];
      mutedBase();fit(trial.canvas,1);
+     const golden=trial.golden;
      label('02 / '+trial.title,(trial.selected?'ADOPT ':'CONSIDER ')+trial.detail+
-       (trial.score===null?'':' · novelty score '+trial.score.toFixed(3)));
+       (trial.score===null?'':' · score '+trial.score.toFixed(3))+
+       (golden?' · G '+Math.round(golden.geometry*100)+
+         ' C '+Math.round(golden.color*100)+' X '+Math.round(golden.coupling*100)+
+         ' / '+(golden.qualifies?'φ-qualified':'experimental'):''));
+
      if(data.currentTrial!==index){
        data.currentTrial=index;
        log((trial.selected?'SELECT ':'TEST ')+trial.detail+
