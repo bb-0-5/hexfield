@@ -7,6 +7,18 @@ import {evolveSeed} from './nonredundancy.js';
 import {findMotifRegion} from './motif-memory.js';
 export const HERITAGE_TTL=16,MAX_STRUCTURAL_IDEAS=2,SAMPLES=40;
 export const MATERIALS=['outline','facets','dots','hatch','negative','spokes'];
+export const HERITAGE_PREFERENCE_KEY='hexfield.visual-gene-taste.v1';
+export function heritageTaste(){
+ try{
+   const value=JSON.parse(localStorage.getItem(HERITAGE_PREFERENCE_KEY)||'{}');
+   const weights=value?.v===1&&value.weights||{};
+   return {votes:Number(value.votes)||0,weights,
+     habits:Object.entries(weights).filter(([key])=>key.startsWith('material:'))
+       .sort((a,b)=>b[1]-a[1]).slice(0,4)
+       .map(([name,weight])=>({material:name.slice(9),weight}))};
+ }catch{return {votes:0,weights:{},habits:[]};}
+}
+
 const clamp=(x,a=0,b=1)=>Math.max(a,Math.min(b,Number.isFinite(x)?x:a));
 const cn=(x)=>+clamp(x,-10,10).toFixed(4);
 const cvs=(w,h)=>{const c=document.createElement('canvas');c.width=w;c.height=h;return c;};
