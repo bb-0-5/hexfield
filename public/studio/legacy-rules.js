@@ -7,6 +7,8 @@ import {LAWS,MARKS,REWORKS,makeRecipe,mutateRecipe,applyRules,
   noteRuleVerdict,noteLineage} from './rule-engine.js';
 import {createAbstractionLoop} from './abstraction-loop.js';
 import {publishSource} from './source-mixer.js';
+import {evolveSeed,rankNoveltyCandidates,assessCanvas,commitCanvas,
+  methodSignature} from './nonredundancy.js';
 const $=id=>document.getElementById(id);
 const stage=$('stage'),raw=$('view'),mount=$('legacyRulesMount');
 if(stage&&raw&&mount){
@@ -79,7 +81,9 @@ if(stage&&raw&&mount){
      constrained.style.display='block';
      current={recipe:result.recipe,output:shot(constrained),judged:false};
      status('GEN '+result.cycle+' / '+result.blend+' / '+result.sources.join(' + ')+
-       ' / '+result.metrics.strokes+' marks / visual difference '+(result.novelty*100).toFixed(1)+'%');
+       ' / '+result.metrics.strokes+' marks / global novelty '+
+       ((result.nonredundancy?.globalNovelty||0)*100).toFixed(1)+
+       '% / complexity '+((result.nonredundancy?.complexity||0)*100).toFixed(1)+'%');
      if(result.cycle%4===0)publishSource(constrained,'archive',result.recipe);
    },
    onState(state){
@@ -90,6 +94,9 @@ if(stage&&raw&&mount){
        ' revisions / '+(state.method||'not yet mixed')+
        ' / renderers '+(state.sourceNames?.join(', ')||'awaiting first pass')+
        (state.waiting?' / hidden tab paused':'')+
+       (state.nonredundancy?' / W novelty '+
+         (state.nonredundancy.novelty*100).toFixed(1)+
+         '% · complexity '+(state.nonredundancy.complexity*100).toFixed(1)+'%':'')+
        (state.lastError?' / '+state.lastError:'');
      paintStrip(state.history||[]);
    },
@@ -104,19 +111,52 @@ if(stage&&raw&&mount){
    secondary:$('legacySecondary').value,mark:$('legacyMark').value,rework:$('legacyRework').value});
  function paint(recipe,source){
    if(!source)return;
-   const {w,h}=dimensions();constrained.width=w;constrained.height=h;
+   const old=current?.output||null,{w,h}=dimensions();
+   constrained.width=w;constrained.height=h;
    const metrics=applyRules(shot(source),constrained,recipe,{iteration:recipe.generation});
+   const method=methodSignature({mode:'archive',primary:recipe.primary,
+     secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework});
+   const measured=assessCanvas(constrained,{mode:'archive',method,parent:old});
+   const W=commitCanvas(constrained,{
+     mode:'archive',method,seed:recipe.seed,parentId:recipe.parentId,evaluation:measured
+   });
    constrained.style.display='block';
-   current={recipe,output:shot(constrained),judged:false};noteLineage(recipe);
+   current={recipe,output:shot(constrained),judged:false,nonredundancy:W};
+   noteLineage(recipe);
    publishSource(constrained,'archive',recipe);
    status('EXECUTED '+metrics.strokes+' constrained marks, '+metrics.skipped+
      ' forbidden/negative-space marks. '+recipe.primary+' / '+recipe.mark+
+     ' / global W novelty '+(W.globalNovelty*100).toFixed(1)+
+     '%; structure '+(W.complexity*100).toFixed(1)+'%'+
+     (W.redundant?' / repeated image — mutate the law':'')+
      (recipe.parentId?' / child of '+recipe.parentId.slice(0,7):''));
  }
  function applyFresh(){
    loop.pause();
-   try{savedReference=shot(raw);paint(makeRecipe(selections()),savedReference);}
-   catch(e){status('Could not apply law: '+String(e.message||e).slice(0,130));}
+   try{
+     savedReference=shot(raw);
+     const values=selections(),options=[];
+     const parent=current?.recipe||null;
+     const rootSeed=parent?.seed??(
+       Number(window.__hexfield?.getCurrent?.()?.seed)||
+       ((Math.random()*4294967295)>>>0)
+     );
+     for(let i=0;i<3;i++){
+       const derived=evolveSeed(rootSeed,(parent?.generation||0)+1,i,'legacy-raw');
+       const recipe=makeRecipe({...values,seed:derived,
+         parentId:parent?.id||null,generation:(parent?.generation||0)+1});
+       const candidate=document.createElement('canvas');
+       candidate.width=savedReference.width;candidate.height=savedReference.height;
+       applyRules(savedReference,candidate,recipe,{iteration:recipe.generation});
+       const method=methodSignature({mode:'archive',primary:recipe.primary,
+         secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework});
+       options.push({canvas:candidate,recipe,method});
+     }
+     const [best]=rankNoveltyCandidates(options,{
+       mode:'archive',parent:current?.output||null
+     });
+     paint(best.recipe,savedReference);
+   }catch(e){status('Could not apply law: '+String(e.message||e).slice(0,130));}
  }
  function child(focus){
    loop.pause();
