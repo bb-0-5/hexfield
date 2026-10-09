@@ -154,7 +154,11 @@ async function showExperiments(rejected){
     if(token!==state.experimentRevision)return;
     const img=document.createElement('img');img.alt='';
     try{img.src=canvas.toDataURL('image/webp',.62);}catch{/* no thumbnail on restricted browsers */}
-    const name=document.createElement('strong');name.textContent={structure:'REBUILD THE STRUCTURE',surface:'CHANGE THE MARKS',light:'CHANGE THE LIGHT',subject:'PAINT SOMEWHERE ELSE'}[item.focus];
+    const name=document.createElement('strong');
+    const labels=rejected.mode==='lettering'
+      ? {structure:'REBUILD THE LETTERS',surface:'CHANGE THE STROKES',light:'CHANGE THE COMPOSITION'}
+      : {structure:'REBUILD THE TERRAIN',surface:'CHANGE THE BRUSHWORK',light:'CHANGE THE ATMOSPHERE',subject:'PAINT SOMEWHERE ELSE'};
+    name.textContent=labels[item.focus]||'NEW METHOD';
     const sub=document.createElement('span');sub.textContent=methodDescription(item.recipe.genome);
     button.append(img,name,sub);
     button.setAttribute('aria-label',`${name.textContent}: ${sub.textContent}`);
@@ -167,6 +171,11 @@ async function showExperiments(rejected){
     cards.append(button);
     // Give touch devices a chance to paint the preview before the next.
     await new Promise(resolve=>requestAnimationFrame(resolve));
+  }
+  // On phones, the experiments are usually below the fold: show them rather
+  // than leaving REJECT looking like an unresponsive button.
+  if(token===state.experimentRevision && matchMedia('(max-width:730px)').matches){
+    root.scrollIntoView({behavior:'smooth',block:'start'});
   }
 }
 function disableVoting(value){$('keep').disabled=value;$('reject').disabled=value;}

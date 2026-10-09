@@ -48,6 +48,20 @@ function evalForm(n,x,seed,depth=0){
  return 0;
 }
 const rgb=hex=>{const n=parseInt(hex.replace('#',''),16)||0;return [(n>>16)&255,(n>>8)&255,n&255];};
+function gradePalette(p,g){
+ // Atmospheric grading is a heritable *lighting method*, not a random filter.
+ // It changes the underlying sky/land colours as well as the sky-mark grammar.
+ const warmth=Math.sin(Number(g.lightAngle)||0)*30;
+ const chroma=clamp(Number(g.chroma)||1,.45,1.65);
+ const gradeHex=hex=>{
+   const a=rgb(hex),lum=a[0]*.23+a[1]*.68+a[2]*.09;
+   return '#'+a.map((v,i)=>{
+      const warm=i===0?warmth:i===1?warmth*.22:-warmth*.68;
+      return Math.round(clamp(lum+(v-lum)*chroma+warm,0,255)).toString(16).padStart(2,'0');
+   }).join('');
+ };
+ return Object.fromEntries(Object.entries(p).map(([k,value])=>[k,Array.isArray(value)?value.map(gradeHex):gradeHex(value)]));
+}
 const mix=(a,b,t)=>{const c=rgb(a),d=rgb(b);return 'rgb('+c.map((v,i)=>Math.round(lerp(v,d[i],clamp(t)))).join(',')+')';};
 const rgba=(h,a)=>{const c=rgb(h);return `rgba(${c[0]},${c[1]},${c[2]},${clamp(a)})`;};
 const random=(r,lo,hi)=>lerp(lo,hi,r());
@@ -143,9 +157,14 @@ function land(ctx,seed,p,g,scene,signal,quality){
    if(watery && (scene==='coast' || layer>=Math.min(2,n-1)))break;
    const f=x=>heightAt(x,layer,g,scene,seed);
    lastProfiles.push(f);
-   const col=mix(p.land[Math.min(4,Math.round(layer*4/(n-1)))],p.mist, (1-layer/n)*g.atmosphere*.35);
+   let col=mix(p.land[Math.min(4,Math.round(layer*4/(n-1)))],p.mist, (1-layer/n)*g.atmosphere*.35);
+   // The brush grammar chooses the *underpainting* as well as the later marks:
+   // a change of technique must affect masses, not merely a few pixels.
+   if(g.brush==='wash')col=mix(p.land[Math.min(4,Math.round(layer*4/(n-1)))],p.mist,.18+(1-layer/n)*g.atmosphere*.35);
+   if(g.brush==='knife'||g.brush==='stipple')col=mix(p.land[Math.min(4,Math.round(layer*4/(n-1)))],p.shade,g.brush==='knife'?.13:.18);
+   if(g.brush==='mosaic')col=mix(p.land[Math.min(4,Math.round(layer*4/(n-1)))],p.light,.09);
    region(ctx,f,col);
-   const minMarks=layer===n-1?1150:layer===0?175:520;
+   const minMarks=layer===n-1?1900:layer===0?300:900;
    const strokes=Math.floor(minMarks*quality);
    for(let i=0;i<strokes;i++){
      const x=random(r,0,W),yy=f(x/W),y=yy+random(r,7,Math.max(10,H-yy)*.82);
@@ -154,7 +173,7 @@ function land(ctx,seed,p,g,scene,signal,quality){
      const sunDirection=Math.sin(g.lightAngle)*.25;
      const lit=(slope<sunDirection)!==(g.lightAngle<0);
      const tint=r()<.51 ? lit?p.mist:p.shade : layer%2?p.land[Math.min(layer,4)]:p.light;
-     const opacity=random(r,.055,.27)*(layer===n-1?1.13:.75);
+     const opacity=random(r,.10,.47)*(layer===n-1?1.10:.78);
      surfaceMark(ctx,x,y,slope,tint,opacity,r,g,.52+layer/n);
    }
    const fog=ctx.createLinearGradient(0,f(.42)-40,0,f(.42)+145);
@@ -327,7 +346,7 @@ export async function renderLandscape(canvas,recipe,{onProgress,signal,animate=t
  const g=recipe.genome || makeGenome('landscape',recipe.seed);
  if(evaluateSurface(g).length)throw Error('Invalid painting procedure');
  const scene=SCENES.includes(recipe.scene)?recipe.scene:'hills',mood=MOODS.includes(recipe.mood)?recipe.mood:'golden';
- const p=palettes[mood],seed=Number(recipe.seed)>>>0,ctx=canvas.getContext('2d');
+ const p=gradePalette(palettes[mood],g),seed=Number(recipe.seed)>>>0,ctx=canvas.getContext('2d');
  if(!ctx)throw Error('Canvas 2D is unavailable');
  ctx.setTransform(canvas.width/W,0,0,canvas.height/H,0,0);ctx.clearRect(0,0,W,H);
  const tasks=[['painting the atmosphere',()=>background(ctx,seed,p,g,H*g.horizon,quality)],
