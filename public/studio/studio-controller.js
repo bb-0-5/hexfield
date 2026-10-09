@@ -506,10 +506,17 @@ async function varyMethod(){
         mode:recipe.mode,method:studioMethod(recipe),
         parent:state.nonredundancy?.fingerprint||null
       });
-      candidates.push({recipe,novelty});
+      const golden=measureGoldenTaste(preview.canvas,{mode:recipe.mode});
+      candidates.push({recipe,novelty,golden});
     }catch(error){console.warn('Novelty counterfactual failed:',error);}
   }
-  candidates.sort((a,b)=>b.novelty.score-a.novelty.score);
+  candidates.sort((a,b)=>{
+    if(getGoldenMode()==='strict'&&a.golden.qualifies!==b.golden.qualifies)
+      return a.golden.qualifies?-1:1;
+    const score=entry=>entry.novelty.score+
+      goldenPrior(entry.golden,{mode:getGoldenMode()})*.66;
+    return score(b)-score(a);
+  });
   return paintRecipe(candidates[0]?.recipe||
     makeRecipe({parent,focus:'structure',evolutionSeed:evolveSeed(parent.seed,1)}));
 }
