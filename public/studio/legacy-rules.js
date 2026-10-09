@@ -5,6 +5,8 @@
  */
 import {LAWS,MARKS,REWORKS,makeRecipe,mutateRecipe,applyRules,
   noteRuleVerdict,noteLineage} from './rule-engine.js';
+import {createAbstractionLoop} from './abstraction-loop.js';
+import {publishSource} from './source-mixer.js';
 const $=id=>document.getElementById(id);
 const stage=$('stage'),raw=$('view'),mount=$('legacyRulesMount');
 if(stage&&raw&&mount){
@@ -16,6 +18,24 @@ if(stage&&raw&&mount){
  '<label for="legacyMark">MARK-MAKING</label><select id="legacyMark">',option(MARKS,true),'</select>',
  '<label for="legacyRework">REWORK PASS</label><select id="legacyRework">',option(REWORKS),'</select>',
  '<label class="hex-check"><input id="legacyAutoLaw" type="checkbox" checked> CONSTRAIN EACH NEW ARCHIVE FIELD</label>',
+ '<div class="legacy-loop-controls"><strong>∞ CONTINUOUS ABSTRACTION / COMBINE RENDERERS</strong>',
+ '<label for="legacyLoopMode">MIX MODE</label><select id="legacyLoopMode">',
+ '<option value="auto">Evolve mixing strategies</option>',
+ '<option value="quilt">Quilt / every renderer</option>',
+ '<option value="cutaway">Negative-space cutaways</option>',
+ '<option value="dissonance">Colour-channel collisions</option>',
+ '<option value="relief">Relief / displacement</option>',
+ '<option value="edges">Edge-driven repaint</option></select>',
+ '<label for="legacyLoopSpeed">SECONDS BETWEEN REWORKS</label>',
+ '<select id="legacyLoopSpeed"><option value="1500">1.5 (fast)</option>',
+ '<option value="3000">3</option><option value="5000" selected>5 (steady)</option>',
+ '<option value="8000">8 (slow)</option></select>',
+ '<label class="hex-check"><input id="legacyLoopLock" type="checkbox"> Lock my chosen law &amp; mark system</label>',
+ '<div class="hex-rule-buttons"><button id="legacyLoopStart" type="button">▶ CONTINUOUSLY ABSTRACT</button>',
+ '<button id="legacyLoopPause" type="button" disabled>Ⅱ PAUSE LOOP</button>',
+ '<button id="legacyLoopOnce" type="button">ONE MORE PASS</button></div>',
+ '<p id="legacyLoopStatus" role="status">Every step will blend previous output + actual archive field + terrain + typography + saved references.</p>',
+ '<div id="legacyLoopStrip" aria-label="Recent generations"></div></div>',
  '<div class="hex-rule-buttons"><button id="legacyApplyLaw" type="button">APPLY LAW</button>',
  '<button id="legacyChangeLaw" type="button">NEW LAW / SAME FIELD</button>',
  '<button id="legacyRework" type="button">REPAINT RULED RESULT</button>',
@@ -32,6 +52,49 @@ if(stage&&raw&&mount){
  stage.append(constrained);
  let current=null,savedReference=null,observedRevision=null,autoTimer=null;
  const status=s=>{$('legacyRuleStatus').textContent=s;};
+ function paintStrip(history){
+   const strip=$('legacyLoopStrip');strip.replaceChildren();
+   for(const item of history.slice(-8).reverse()){
+     const fig=document.createElement('figure'),img=document.createElement('img'),caption=document.createElement('figcaption');
+     img.src=item.thumb;img.alt='Abstract generation '+item.cycle;
+     caption.textContent='#'+item.cycle+' '+item.blend+' / '+item.law;
+     fig.append(img,caption);strip.append(fig);
+   }
+ }
+ const controls=()=>({
+   speed:Number($('legacyLoopSpeed').value)||5000,
+   mixMode:$('legacyLoopMode').value,
+   lockLaw:$('legacyLoopLock').checked,
+   subject:'abstract',
+   law:$('legacyLaw').value,secondary:$('legacySecondary').value,
+   mark:$('legacyMark').value
+ });
+ const loop=createAbstractionLoop({
+   width:880,height:200,
+   getArchive:()=>raw,
+   getParent:()=>current?.output||null,
+   onFrame(result){
+     constrained.width=880;constrained.height=200;
+     constrained.getContext('2d').drawImage(result.canvas,0,0,880,200);
+     constrained.style.display='block';
+     current={recipe:result.recipe,output:shot(constrained),judged:false};
+     status('GEN '+result.cycle+' / '+result.blend+' / '+result.sources.join(' + ')+
+       ' / '+result.metrics.strokes+' marks / visual difference '+(result.novelty*100).toFixed(1)+'%');
+     if(result.cycle%4===0)publishSource(constrained,'archive',result.recipe);
+   },
+   onState(state){
+     $('legacyLoopStart').disabled=state.running;
+     $('legacyLoopPause').disabled=!state.running;
+     $('legacyLoopOnce').disabled=state.running;
+     $('legacyLoopStatus').textContent=(state.running?'LIVE':'PAUSED')+' / '+state.cycle+
+       ' revisions / '+(state.method||'not yet mixed')+
+       ' / renderers '+(state.sourceNames?.join(', ')||'awaiting first pass')+
+       (state.waiting?' / hidden tab paused':'')+
+       (state.lastError?' / '+state.lastError:'');
+     paintStrip(state.history||[]);
+   },
+   onError(error){status('Recovered from one renderer error: '+String(error?.message||error).slice(0,150));}
+ });
  const dimensions=()=>({w:1100,h:Math.max(120,Math.round(1100*(raw.height||500)/(raw.width||2200)))});
  function shot(source){
    const {w,h}=dimensions(),c=document.createElement('canvas');c.width=w;c.height=h;
@@ -45,15 +108,18 @@ if(stage&&raw&&mount){
    const metrics=applyRules(shot(source),constrained,recipe,{iteration:recipe.generation});
    constrained.style.display='block';
    current={recipe,output:shot(constrained),judged:false};noteLineage(recipe);
+   publishSource(constrained,'archive',recipe);
    status('EXECUTED '+metrics.strokes+' constrained marks, '+metrics.skipped+
      ' forbidden/negative-space marks. '+recipe.primary+' / '+recipe.mark+
      (recipe.parentId?' / child of '+recipe.parentId.slice(0,7):''));
  }
  function applyFresh(){
+   loop.pause();
    try{savedReference=shot(raw);paint(makeRecipe(selections()),savedReference);}
    catch(e){status('Could not apply law: '+String(e.message||e).slice(0,130));}
  }
  function child(focus){
+   loop.pause();
    try{
      if(!current){applyFresh();return;}
      const recipe=mutateRecipe(current.recipe,focus,'archive');
@@ -67,8 +133,18 @@ if(stage&&raw&&mount){
    }catch(e){status('Rule repaint failed: '+String(e.message||e).slice(0,130));}
  }
  function update(){
+   if(loop.isRunning())return; // Every subsequent pass reads the live archive canvas as a source.
    if($('legacyAutoLaw').checked)applyFresh();
    else{constrained.style.display='none';status('Experimental field generated. APPLY LAW to render it under constraints.');}
+ }
+ $('legacyLoopStart').addEventListener('click',()=>loop.start(controls()));
+ $('legacyLoopPause').addEventListener('click',()=>{
+   loop.pause();
+   if(current)publishSource(constrained,'archive',current.recipe);
+ });
+ $('legacyLoopOnce').addEventListener('click',()=>loop.once(controls()));
+ for(const id of ['legacyLoopMode','legacyLoopSpeed','legacyLoopLock']){
+   $(id).addEventListener('change',()=>loop.configure(controls()));
  }
  $('legacyApplyLaw').addEventListener('click',applyFresh);
  $('legacyChangeLaw').addEventListener('click',()=>child('law'));
@@ -83,8 +159,10 @@ if(stage&&raw&&mount){
    a.download='hexfield-archive-ruled-'+current.recipe.id+'.png';document.body.append(a);a.click();a.remove();
  });
  function vote(liked){
+   loop.pause();
    if(!current||current.judged){status('Make a new ruled version before voting again.');return;}
    noteRuleVerdict(current.recipe,liked,$('legacyCritique').value);
+   publishSource(constrained,'archive',current.recipe);
    current.judged=true;
    status(liked?'Kept — this method influences BOTH studios.':
      'Rejected — this method influences BOTH studios.');
@@ -102,5 +180,6 @@ if(stage&&raw&&mount){
  for(const id of ['go','again','perturb','reseedNow','perturbNow'])
    $(id)?.addEventListener('click',schedule);
  setTimeout(()=>{if(window.__hexfield?.getCurrent?.()&&constrained.style.display==='none')schedule();},1600);
- window.__hexfieldRuleStudio={applyFresh,child,getCurrent:()=>current};
+ window.__hexfieldRuleStudio={applyFresh,child,getCurrent:()=>current,
+   loopState:()=>loop.state(),start:()=>loop.start(controls()),pause:()=>loop.pause()};
 }
