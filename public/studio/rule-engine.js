@@ -42,42 +42,46 @@ function read(){
 }
 function write(m){try{localStorage.setItem(RULE_STORE,JSON.stringify(m));}catch{}}
 function ledger(){const m=read();return {weights:m.weights||{},choices:m.choices||{},votes:m.votes||[],lineage:m.lineage||[]};}
-function chooseWeighted(list,group){
+function chooseWeighted(list,group,rng=Math.random){
  const m=ledger(),weights=list.map(id=>{
    const score=clamp(Number(m.weights[group+':'+id])||0,-8,8);
    const repetitions=Number(m.choices[group+':'+id])||0;
    return .15+Math.exp(score*.19)/(1+repetitions*.035);
  });
- const total=weights.reduce((a,b)=>a+b,0);let pick=Math.random()*total;
+ const total=weights.reduce((a,b)=>a+b,0);let pick=rng()*total;
  for(let i=0;i<list.length;i++){pick-=weights[i];if(pick<=0)return list[i];}
  return list[list.length-1];
 }
 function allowed(id,catalog,fallback){return typeof id==='string'&&id in catalog?id:fallback;}
 export function makeRecipe(input={}){
- const primary=allowed(input.primary,LAWS,chooseWeighted(keys(LAWS),'law'));
+ const rng=Number.isFinite(input.seed)?seeded(input.seed>>>0):Math.random;
+ const primary=allowed(input.primary,LAWS,chooseWeighted(keys(LAWS),'law',rng));
  const secondary=allowed(input.secondary,LAWS,'none');
  let rework=allowed(input.rework,REWORKS,'none');
- const mark=allowed(input.mark,MARKS,chooseWeighted(keys(MARKS),'mark'));
+ const mark=allowed(input.mark,MARKS,chooseWeighted(keys(MARKS),'mark',rng));
  if(rework==='remove_strength' && !input.parentId)rework='none';
  const recipe={
    id:input.id||((globalThis.crypto?.randomUUID?.())||('r-'+Date.now()+'-'+randInt(1e8))),
    parentId:input.parentId||null,
-   subject:allowed(input.subject,SUBJECTS,chooseWeighted(keys(SUBJECTS),'subject')),
+   subject:allowed(input.subject,SUBJECTS,chooseWeighted(keys(SUBJECTS),'subject',rng)),
    primary,secondary:secondary===primary?'none':secondary,
    mark,rework,created:Date.now(),seed:Number.isFinite(input.seed)?input.seed:(Math.random()*4294967295)>>>0,
    generation:clamp(Number(input.generation)||0,0,32)
  };
  return recipe;
 }
-export function mutateRecipe(parent,focus='law',source='studio'){
- const input={...parent,id:null,parentId:parent.id,generation:(parent.generation||0)+1,seed:parent.seed};
- if(focus==='subject')input.subject=chooseWeighted(keys(SUBJECTS).filter(x=>x!==parent.subject),'subject');
+export function mutateRecipe(parent,focus='law',source='studio',seedOverride=null){
+ const nextSeed=Number.isFinite(seedOverride)?(seedOverride>>>0):
+   ((Math.imul((parent.seed>>>0)+parent.generation+1,1664525)+1013904223)>>>0);
+ const rng=seeded(nextSeed),input={...parent,id:null,parentId:parent.id,
+   generation:(parent.generation||0)+1,seed:nextSeed};
+ if(focus==='subject')input.subject=chooseWeighted(keys(SUBJECTS).filter(x=>x!==parent.subject),'subject',rng);
  if(focus==='law'){
-   input.primary=chooseWeighted(keys(LAWS).filter(x=>x!==parent.primary),'law');
+   input.primary=chooseWeighted(keys(LAWS).filter(x=>x!==parent.primary),'law',rng);
    input.secondary=parent.secondary;
  }
- if(focus==='mark')input.mark=chooseWeighted(keys(MARKS).filter(x=>x!==parent.mark),'mark');
- if(focus==='rework')input.rework=chooseWeighted(keys(REWORKS).filter(x=>x!=='none'),'rework');
+ if(focus==='mark')input.mark=chooseWeighted(keys(MARKS).filter(x=>x!==parent.mark),'mark',rng);
+ if(focus==='rework')input.rework=chooseWeighted(keys(REWORKS).filter(x=>x!=='none'),'rework',rng);
  if(source==='archive')input.subject=parent.subject;
  return makeRecipe(input);
 }
