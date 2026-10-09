@@ -114,3 +114,41 @@
   .rule-loop-history{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
   .abstraction-control{padding:13px 10px}
 }
+
+/* BUILD 304 — every letter is an editable map of typographic anatomy. */
+.glyph-editor{display:flex;flex-direction:column;gap:0;border:1px solid #697e75;
+ background:#1d2725;padding:16px 13px 13px;margin:9px 0 17px}
+.glyph-editor>.small-label{color:var(--mint);font-size:11px;margin:0 0 12px}
+.glyph-help{font:13px/1.5 var(--serif);color:var(--soft);margin:0 0 14px}
+.glyph-switch{display:flex;align-items:flex-start;gap:10px;text-transform:none;
+ letter-spacing:.01em;line-height:1.4;color:var(--soft);margin:4px 0 11px;font-size:11px}
+.glyph-editor .glyph-switch input{width:17px;height:17px;min-height:0;margin:0;
+ flex:0 0 17px;accent-color:var(--mint)}
+.glyph-fields{display:grid;grid-template-columns:1fr;gap:0;margin-top:7px}
+.glyph-fields label{margin:5px 0 7px}
+.glyph-fields select{font-size:11px;line-height:1.4;margin:0 0 11px;min-height:42px}
+.glyph-fields input[type=range]{appearance:auto;width:100%;height:22px;min-height:22px;
+ margin:0 0 14px;accent-color:var(--mint);border:0;background:none;padding:0}
+.glyph-fields output{color:var(--gold)}
+.glyph-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin:0 0 10px}
+.glyph-actions button{font:850 9px/1.35 var(--sans);letter-spacing:.05em;min-height:43px;
+ padding:10px 6px;background:transparent;border:1px solid var(--line);color:var(--soft);
+ white-space:normal}
+.glyph-actions button:first-child{grid-column:span 2;background:var(--mint);color:#1f3729;border-color:var(--mint)}
+.glyph-actions button:hover{border-color:var(--mint)}
+.glyph-status{font-size:11px;line-height:1.45;overflow-wrap:anywhere;color:var(--gold);
+ background:#121b19;padding:10px;margin:0 0 18px;min-height:36px}
+.glyph-glossary{display:flex;flex-wrap:wrap;gap:5px;max-height:230px;overflow:auto;
+ border:1px solid var(--line);padding:8px 6px;margin:9px 0 0}
+.glyph-term{font:800 9px/1.35 var(--sans);padding:6px 7px;border:1px solid #587668;
+ background:#273a32;color:#d8e7dc;cursor:pointer}
+.glyph-term.absent{color:#65766c;border-color:#313c35;background:#1b2420;cursor:default}
+.glyph-term:focus-visible{outline:2px solid var(--mint)}
+#letteringControls>.control-help{margin-top:7px}
+@media(max-width:730px){
+ .glyph-editor{padding:12px 10px}
+ .glyph-editor .glyph-switch{display:flex;line-height:1.4}
+ .glyph-editor .glyph-help{display:block;font-size:12px}
+ .glyph-glossary{max-height:175px}
+ .glyph-actions button{font-size:10px;min-height:45px}
+}
