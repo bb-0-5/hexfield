@@ -23,7 +23,7 @@
     </header>
     <div class="product-frame">
       <aside class="controls" aria-label="Studio controls">
-        <p class="eyebrow">STUDIO / 302</p>
+        <p class="eyebrow">STUDIO / 303</p>
         <h1>Make something<br><em>worth keeping.</em></h1>
         <p class="intro">A painter that can imagine unfamiliar places and techniques. Your criticism changes what it attempts next.</p>
         <fieldset class="mode-switch" aria-label="Choose an artistic discipline">
@@ -57,6 +57,32 @@
           <input type="file" id="ruleFile" accept="image/*">
           <p class="control-help">Rules are enforced by a local canvas painter. No curves means no curved marks; negative space erases objects. Your output can become the next input.</p>
           <button type="button" class="action-generate" id="rulePaint">PAINT UNDER THESE LAWS ↗</button>
+          <section class="abstraction-control" aria-label="Continuous recursive abstraction">
+            <p class="small-label">CONTINUOUS ABSTRACTION / ALL RENDERERS</p>
+            <p class="control-help">Combine the live canvas, geometric reality, procedural landscapes, evolving letters, archived fields and saved AI images. Every result becomes the next reference. No automatic cloud AI requests.</p>
+            <label for="ruleMixMode">HOW TO COMBINE RENDERERS</label>
+            <select id="ruleMixMode">
+              <option value="auto">Evolve blending methods</option>
+              <option value="quilt">Quilt every renderer into the picture</option>
+              <option value="cutaway">Exchange positive / negative space</option>
+              <option value="dissonance">Disagreeing colour channels</option>
+              <option value="relief">Warp one renderer by another</option>
+              <option value="edges">Let edges drive the other paint</option>
+            </select>
+            <label for="ruleLoopSpeed">SECONDS BETWEEN REWORKS</label>
+            <select id="ruleLoopSpeed">
+              <option value="1500">1.5 — fast</option>
+              <option value="3000" selected>3 — steady</option>
+              <option value="6000">6 — slow</option>
+            </select>
+            <label class="rule-inline"><input id="ruleLockLaw" type="checkbox"> Hold selected law / marks; evolve everything else</label>
+            <div class="rule-loop-buttons">
+              <button type="button" id="ruleLoopStart" class="action-generate">▶ KEEP ABSTRACTING</button>
+              <button type="button" id="ruleLoopStop" class="ghost-button" disabled>Ⅱ PAUSE</button>
+              <button type="button" id="ruleLoopOnce" class="ghost-button">ONE MORE PASS</button>
+            </div>
+            <p id="ruleLoopStatus" class="model-budget" role="status" aria-live="polite">Ready. Start to combine all available renderers into an evolving picture.</p>
+          </section>
           <div class="mini-actions rule-mini">
             <button id="ruleNewLaw" type="button" class="ghost-button">SAME SUBJECT / NEW LAW</button>
             <button id="ruleNewSubject" type="button" class="ghost-button">SAME LAW / NEW SUBJECT</button>
@@ -127,6 +153,8 @@
             </div>
           </section>
           <button type="button" class="ghost-button" id="ruleSave" disabled>EXPORT RULE-BOUND PNG ↓</button>
+          <h2 class="rule-gallery-heading">Continuous rework lineage</h2>
+          <div id="ruleLoopHistory" class="rule-loop-history" aria-label="The last ten generations"></div>
           <h2 class="rule-gallery-heading">Kept experiments &amp; descendants</h2><div id="ruleGallery" class="rule-gallery"></div>
         </section>
         <section id="imaginationWorkspace" class="imaginary-workspace" aria-label="Visual imagination studio" hidden>
