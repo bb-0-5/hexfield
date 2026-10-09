@@ -152,3 +152,14 @@
  .glyph-glossary{max-height:175px}
  .glyph-actions button{font-size:10px;min-height:45px}
 }
+
+/* 304 / visual laws shared with landscape construction */
+.landscape-law-panel{border:1px solid #4a685b;padding:12px 10px 6px;margin:5px 0 17px;
+ background:#1d2925;display:flex;flex-direction:column;gap:3px}
+.landscape-law-panel>.glyph-switch{display:flex;align-items:center;gap:8px}
+.landscape-law-panel>.glyph-switch input{width:17px;height:17px;min-height:0;
+ margin:0;flex:none;accent-color:var(--mint)}
+.landscape-law-panel .control-help{font-size:12px;line-height:1.5;margin:9px 0}
+#landscapeConstraintLaw,#landscapeConstraintMark{font-size:12px;margin:5px 0 13px}
+#landscapeMutateLaw{margin-top:2px;min-height:40px}
+@media(max-width:730px){.landscape-law-panel .control-help{display:block}}
