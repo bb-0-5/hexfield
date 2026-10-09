@@ -5,6 +5,7 @@
 import {initImagination} from './imagination.js';
 import {initRuleStudio} from './rule-studio.js';
 import {initAnatomyControls} from './anatomy-controls.js';
+import {initLogoEvolution} from './logo-evolution.js';
 import {publishSource} from './source-mixer.js';
 import {LAWS,MARKS,makeRecipe as makeLawRecipe,mutateRecipe as mutateLawRecipe,
   applyRules as paintUnderLaw,noteRuleVerdict} from './rule-engine.js';
@@ -285,6 +286,7 @@ function setStatus(message){$('feedbackStatus').textContent=message;}
 function setMode(mode,{paint=true}={}){
   if(!['rules','imagination','landscape','lettering'].includes(mode))return;
   if(state.mode==='rules'&&mode!=='rules')ruleStudio?.hide();
+  if(state.mode==='lettering'&&mode!=='lettering')logoLoop?.pause('switched modes');
   clearExperiments();clearBlind();state.controller?.abort();state.mode=mode;
   const imagining=mode==='imagination',ruling=mode==='rules';
   $('ruleControls').hidden=!ruling;
@@ -424,6 +426,7 @@ function rememberKeep(recipe){
   buildGallery();
 }
 function vote(liked){
+  if(state.mode==='lettering')logoLoop?.pause('waiting for human verdict');
   if(state.working||!state.recipe||$('keep').disabled)return;
   const recipe=structuredClone(state.recipe);
   disableVoting(true);
@@ -660,8 +663,20 @@ function chooseBlind(index){
     Image distance: ${distance?.toFixed(3)??'unmeasured'}. This choice is a test result, not automatically counted as a general KEEP/REJECT vote.`;
   updateBlindSummary();
 }
-let imagination,ruleStudio,logoControls;
+let imagination,ruleStudio,logoControls,logoLoop;
+async function paintNextLogoGeneration(parent,focus){
+  const last=state.currentVisual;
+  const proposal=makeRecipe({parent,focus});
+  proposal.experiment='continuous-'+focus;
+  // This is genuine inheritance: mutateGenome() sees the previous glyph
+  // topology, not a newly sampled image or a different text prompt.
+  await paintRecipe(proposal);
+  const diff=visualDistance(last,state.currentVisual);
+  proposal._measuredDistance=Number.isFinite(diff)?diff:null;
+  return proposal;
+}
 function applyEditedLogo(program,why='edit'){
+ logoLoop?.pause('editing selected letter part');
  if(state.mode!=='lettering')return;
  const old=state.recipe?.mode==='lettering'?state.recipe:null;
  const base=structuredClone(old?.genome||makeGenome('lettering',rand()));
@@ -683,8 +698,14 @@ function applyEditedLogo(program,why='edit'){
 }
 function bind(){
   for(const btn of document.querySelectorAll('[data-mode]'))btn.addEventListener('click',()=>setMode(btn.dataset.mode));
-  $('generate').addEventListener('click',()=>void paintFresh());
-  $('vary').addEventListener('click',()=>void varyMethod());
+  $('generate').addEventListener('click',()=>{
+    if(state.mode==='lettering')logoLoop?.pause('new logo requested');
+    void paintFresh();
+  });
+  $('vary').addEventListener('click',()=>{
+    if(state.mode==='lettering')logoLoop?.pause('manual mutation requested');
+    void varyMethod();
+  });
   $('keep').addEventListener('click',()=>vote(true));
   $('reject').addEventListener('click',()=>vote(false));
   $('export').addEventListener('click',()=>void download());
@@ -722,6 +743,11 @@ function bind(){
        return (raw.includes(' ')?raw.split(/\s+/).map(x=>x[0]||'').join(''):raw)
          .slice(0,3).toUpperCase();
      }
+  });
+  logoLoop=initLogoEvolution({
+    getRecipe:()=>state.recipe,
+    paint:paintNextLogoGeneration,
+    onError:error=>setStatus('Logo evolution paused: '+String(error.message||error).slice(0,140))
   });
   buildGallery();setMode('rules');updateBlindSummary();
   void restoreRemoteProcedures();
