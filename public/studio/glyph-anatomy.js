@@ -32,7 +32,13 @@ export const ANATOMY={
   x_height:['x-height','Top of lower-case body'],
   overshoot:['Overshoot','Round forms slightly overrun aligned lines'],
   sidebearing:['Sidebearing','Unpainted width on either side of a glyph'],
-  axis:['Axis / stress','Angle of weight in rounded strokes']
+  axis:['Axis / stress','Angle of weight in rounded strokes'],
+  top_zone:['Top region','Upper half of any glyph'],
+  bottom_zone:['Bottom region','Lower half of any glyph'],
+  left_zone:['Left region','Left side of any glyph'],
+  right_zone:['Right region','Right side of any glyph'],
+  inner_contour:['Inner contour','Bowl and counter-facing stroke'],
+  outer_contour:['Outer contour','External silhouette and terminal envelope']
 };
 export const PART_OPERATIONS={
   bend:'Bend / opposite bends on mirrored parts',
@@ -53,7 +59,14 @@ export const PART_OPERATIONS={
   invert:'Swap pigment role on this part',
   omit:'Do not draw selected component',
   serifs:'Graft terminal / serif fragments',
-  shift_sidebearing:'Move letters apart without resizing strokes'
+  shift_sidebearing:'Move letters apart without resizing strokes',
+  bubble:'Inflate the selected strokes into rounded bubble letters',
+  upper_bold:'Thicken the upper half of the selected components',
+  lower_bold:'Thicken the lower half of the selected components',
+  split_material:'Top half bold / bottom half broken wireframe',
+  round_rect:'Square off curved bowls with rounded corners',
+  triangle:'Turn curved counter-facing segments triangular',
+  jagged:'Grow a geometric zigzag along the selected stroke'
 };
 export const ANATOMY_PRESETS={
   opposite_stems:{target:'stem',operation:'bend',amount:.75},
@@ -67,6 +80,11 @@ export const ANATOMY_PRESETS={
   counter_collision:{target:'counter',operation:'expand',amount:.85},
   hatch_spines:{target:'spine',operation:'dashes',amount:.8},
   interrupted_stems:{target:'stem',operation:'fracture',amount:.65},
+  bubble_letters:{target:'outer_contour',operation:'bubble',amount:.82},
+  upper_mass:{target:'top_zone',operation:'upper_bold',amount:.90},
+  split_construction:{target:'any',operation:'split_material',amount:.88},
+  angular_counters:{target:'counter',operation:'triangle',amount:.83},
+  rounded_rect_counters:{target:'counter',operation:'round_rect',amount:.83},
   ascending_forms:{target:'ascender',operation:'lift',amount:.68}
 };
 export const GUIDELINES={cap:0.13,x:0.38,baseline:0.86,descent:1.11};
@@ -187,10 +205,13 @@ export function glyphAnatomy(char){
  const fn=G[char];const components=fn?fn():[];
  const parts=new Set(components.map(p=>p.part));
  if(components.length){parts.add('terminal');parts.add('join');parts.add('baseline');
-   parts.add('sidebearing');parts.add('axis');}
+   parts.add('sidebearing');parts.add('axis');
+   for(const region of ['top_zone','bottom_zone','left_zone','right_zone','outer_contour'])
+     parts.add(region);
+ }
  if(/[A-Z0-9]/.test(char))parts.add('cap_height');
  if(/[a-z]/.test(char))parts.add('x_height');
- if(COUNTERS.has(char))parts.add('counter');
+ if(COUNTERS.has(char)){parts.add('counter');parts.add('inner_contour');}
  if(APERTURES.has(char))parts.add('aperture');
  if(char==='e')parts.add('eye');
  if('csCraef'.includes(char))parts.add('ball_terminal');
@@ -223,7 +244,7 @@ export function supportsPart(char,part){
 }
 export function applicableComponents(anatomy,target){
  if(target==='any')return anatomy.components;
- if(target==='counter'||target==='overshoot'||target==='eye')
+ if(target==='counter'||target==='overshoot'||target==='eye'||target==='inner_contour')
    return anatomy.components.filter(c=>['bowl','loop','shoulder'].includes(c.part));
  if(target==='aperture')return anatomy.components.filter(c=>['bowl','spine','shoulder'].includes(c.part));
  if(target==='serif'||target==='sidebearing'||target==='cap_height'||target==='baseline'||
@@ -234,7 +255,8 @@ export function applicableComponents(anatomy,target){
  if(target==='hairline')
    return anatomy.components.filter(c=>['diagonal','crossbar','cross_stroke','spine'].includes(c.part));
  if(target==='ink_trap')return anatomy.components;
- if(target==='join')return anatomy.components;
+ if(target==='join'||['top_zone','bottom_zone','left_zone','right_zone',
+   'outer_contour'].includes(target))return anatomy.components;
  if(target==='apex'||target==='vertex')
    return anatomy.components.filter(c=>c.part==='diagonal');
  if(target==='ascender')return anatomy.components.filter(c=>c.part==='ascender'||c.part==='stem'&&/[bdfhkl]/.test(anatomy.char));
@@ -292,6 +314,7 @@ export function componentMask(rule,char,index,component){
 const LOCAL_REGIONS=new Set([
  'terminal','serif','ball_terminal','finial','beak','bracket','swash','ink_trap',
  'apex','vertex','join','baseline','cap_height','x_height',
+ 'top_zone','bottom_zone','left_zone','right_zone','outer_contour',
  'ascender','descender','sidebearing','overshoot'
 ]);
 export function anatomyZoneWeight(region,point,t){
@@ -308,6 +331,10 @@ export function anatomyZoneWeight(region,point,t){
  if(region==='descender')return clamp((y-.78)/.28,0,1);
  if(region==='sidebearing')return Math.max(fade(x,.34),fade(1-x,.34));
  if(region==='overshoot')return Math.max(fade(y,.18),fade(1-y,.16));
+ if(region==='top_zone')return clamp((.60-y)/.22,0,1);
+ if(region==='bottom_zone')return clamp((y-.48)/.22,0,1);
+ if(region==='left_zone')return clamp((.59-x)/.22,0,1);
+ if(region==='right_zone')return clamp((x-.41)/.22,0,1);
  if(region==='join'||region==='ink_trap')return fade(Math.abs(t-.5),.28);
  return 1;
 }
@@ -316,7 +343,8 @@ export function transformedComponent(component,rule,{char='A'}={}){
  // Bent stems and terminal-only rules must have interior control points;
  // moving the two endpoints of a line isn't the same as bending a stroke.
  let points=component.points.map(p=>[...p]);
- if((local||['bend','fracture','dots','dashes','taper','open'].includes(effect))&&points.length<8){
+ if((local||['bend','fracture','dots','dashes','taper','open','bubble',
+   'upper_bold','lower_bold','split_material','jagged'].includes(effect))&&points.length<8){
    const dense=[];
    for(let j=1;j<points.length;j++){
      const a=points[j-1],b=points[j];
@@ -359,6 +387,38 @@ export function transformedComponent(component,rule,{char='A'}={}){
      p[0]+=weight*(px-p[0]);p[1]+=weight*(py-p[1]);
    }
    if(effect==='shift_sidebearing')p[0]+=side*.15*amount*weight;
+   if(effect==='bubble'){
+     p[0]+=(p[0]-cx)*.20*amount*weight;
+     p[1]+=(p[1]-cy)*.14*amount*weight;
+   }
+   if(effect==='round_rect'||effect==='triangle'){
+     const dx=p[0]-cx,dy=p[1]-cy;
+     if(effect==='round_rect'){
+       p[0]+=(Math.sign(dx)*Math.pow(Math.abs(dx),.69)*.37-dx*.37)*amount*weight;
+       p[1]+=(Math.sign(dy)*Math.pow(Math.abs(dy),.69)*.30-dy*.30)*amount*weight;
+     }else{
+       const theta=Math.atan2(dy,dx)+Math.PI/2;
+       const period=Math.PI*2/3;
+       const phase=((theta%period)+period)%period-period/2;
+       const radius=clamp(.5/Math.max(.5,Math.cos(phase)),.5,1);
+       const delta=(radius-1)*amount*weight*.84;
+       p[0]+=dx*delta;p[1]+=dy*delta;
+     }
+   }
+   if(effect==='jagged'){
+     p[0]+=side*.075*amount*Math.sin(t*Math.PI*12)*weight;
+     p[1]+=.055*amount*Math.cos(t*Math.PI*8)*weight;
+   }
+   if(['upper_bold','lower_bold','split_material'].includes(effect)){
+     const strength=effect==='lower_bold'?
+       clamp((p[1]-.48)/.3,0,1):clamp((.62-p[1])/.3,0,1);
+     localWeights||=Array(points.length).fill(1);
+     localWeights[i]=(localWeights[i]??1)*(1+1.7*amount*strength*weight);
+     if(effect==='split_material'&&p[1]>.56){
+       skipLocal||=Array(points.length).fill(false);
+       if(Math.floor(t*17)%3===0)skipLocal[i]=true;
+     }
+   }
    if(local&&['thin','thicken','taper'].includes(effect)){
      localWeights||=Array(points.length).fill(1);
      localWeights[i]=(localWeights[i]??1)*
@@ -380,6 +440,7 @@ export function transformedComponent(component,rule,{char='A'}={}){
  if(effect==='dashes')dashed=true;
  if(effect==='fracture'&&!local)fractured=true;
  if(effect==='facet')faceted=true;
+ if(effect==='bubble')width*=1+amount*.8;
  if(effect==='thin'&&!local)width*=1-amount*.7;
  if(effect==='thicken'&&!local)width*=1+amount*1.3;
  if(effect==='taper'&&!local)width*=.55+amount*.48;
@@ -389,6 +450,7 @@ export function transformedComponent(component,rule,{char='A'}={}){
  if(effect==='open'&&!component.closed&&!local)fractured=true;
  return {...component,points,omit,dotted,dashed,fractured,faceted,
    width,open,invert,serifs,isTerm:isTerm||component.isTerm,amount,
+   bubble:effect==='bubble'||component.bubble,
    skipLocal,localWeights,localInverts};
 }
 
