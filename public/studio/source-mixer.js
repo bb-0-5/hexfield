@@ -173,6 +173,12 @@ export function mixSources(inputs,{width=WIDTH,height=HEIGHT,cycle=0,mode='auto'
   const cell=clamp(Math.floor(Math.min(width,height)/(5+cycle%4)),18,86);
   const ncols=Math.ceil(width/cell);
   let sampled=0,cut=0;
+  const useEdge=(buffer,index)=>{
+    const above=index>=width*4?index-width*4:index;
+    const left=index>=4?index-4:index;
+    return clamp((Math.abs(intensity(buffer,index)-intensity(buffer,above))+
+      Math.abs(intensity(buffer,index)-intensity(buffer,left)))*2,0,255);
+  };
   for(let y=0;y<height;y++){
     for(let x=0;x<width;x++){
       const i=(y*width+x)*4;
@@ -180,13 +186,7 @@ export function mixSources(inputs,{width=WIDTH,height=HEIGHT,cycle=0,mode='auto'
       const tile=(gy*ncols+gx+cycle+seed)%pool.length;
       const a=pool[tile];
       const b=pool[(tile+1+cycle%Math.max(1,pool.length))%pool.length];
-      let bi=i,pi=i,ai=i;
-      const useEdge=(buffer,index)=>{
-        const above=index>=width*4?index-width*4:index;
-        const left=index>=4?index-4:index;
-        return clamp((Math.abs(intensity(buffer,index)-intensity(buffer,above))+
-          Math.abs(intensity(buffer,index)-intensity(buffer,left)))*2,0,255);
-      };
+      let bi=i,ai=i;
       if(active==='relief'){
         const light=intensity(b.data,i);
         const shift=Math.round(((light-128)/128)*cell*.55);
@@ -198,8 +198,10 @@ export function mixSources(inputs,{width=WIDTH,height=HEIGHT,cycle=0,mode='auto'
         if(edge>65){bi=i;sampled++}
         else bi=(y*width+clamp(x+Math.round(Math.sin(y*.03+cycle)*cell*.4),0,width-1))*4;
       }
-      const l=intensity(prev,i),la=intensity(a.data,ai),lb=intensity(b.data,bi);
+      const la=intensity(a.data,ai);
+      const lb=active==='edges'?intensity(b.data,bi):0;
       const slice=(gx+gy*3+cycle)%4;
+      if(active==='cutaway'&&la<=135)cut++;
       for(let channel=0;channel<3;channel++){
         const va=a.data[ai+channel],vb=b.data[bi+channel],vp=prev[i+channel];
         let colour;
@@ -211,7 +213,6 @@ export function mixSources(inputs,{width=WIDTH,height=HEIGHT,cycle=0,mode='auto'
         }else if(active==='cutaway'){
           const background=la>135;
           colour=background?va*.78+vp*.22:vb*.63+vp*.37;
-          if(!background)cut++;
         }else if(active==='dissonance'){
           colour=channel===0?va*.84+vp*.16:
             channel===1?vp*.68+vb*.32:
