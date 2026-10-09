@@ -90,7 +90,18 @@ for(let pass=3;pass<=10;pass++){
   assert.ok(produced.at(-1).sources.includes('lettering'),
     'Pass '+pass+' must retain an independent lettering donor');
   assert.equal(produced.at(-1).recipe.parentId,produced.at(-2).recipe.id);
+  assert.notEqual(produced.at(-1).recipe.seed,produced.at(-2).recipe.seed,
+    'Generation '+pass+' must branch from the previous seed, not repeat it');
+  assert.ok(produced.at(-1).nonredundancy?.candidates>=2,
+    'Every generation must compare multiple actual rendered candidates');
+  assert.ok(Number.isFinite(produced.at(-1).nonredundancy?.complexity),
+    'Global W novelty must produce a structural complexity reading');
 }
+assert.ok(loop.state().globalMemory>=10,'Ten accepted passes must enter the shared memory');
+assert.ok(loop.state().donorGenerations.terrain>=1,
+ 'Terrain programs must mutate instead of restarting from scratch');
+assert.ok(loop.state().donorGenerations.lettering>=1,
+ 'Letter anatomy must develop a procedure lineage alongside the landscape');
 assert.ok(new Set(produced.map(p=>p.blend)).size>=4,'Auto mixing should rotate materially different renderers');
 loop.pause();
 assert.equal(loop.state().cycle,10);
