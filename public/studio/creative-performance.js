@@ -47,6 +47,22 @@ export function performancePlan({kind='logo',trials=[],anatomy=null,trace=null,r
    method:theme,seed:recipe?.seed??null
  };
 }
+function outlineSurvivors(ctx,items,alpha=1){
+ if(!items?.length)return;
+ ctx.save();ctx.strokeStyle='#afc9aa';ctx.fillStyle='#173428';
+ ctx.lineWidth=3;ctx.font='bold 13px Arial';ctx.setLineDash([7,5]);
+ for(const m of items){
+   const {x=0,y=0,w=0,h=0,age=0}=m;
+   ctx.globalAlpha=Math.min(1,alpha);
+   ctx.strokeRect(x,y,w,h);
+   ctx.setLineDash([]);
+   ctx.fillRect(x+4,y+4,Math.min(w,126),20);
+   ctx.fillStyle='#dceccf';
+   ctx.fillText('INHERITED / '+age,x+9,y+19);
+   ctx.fillStyle='#173428';ctx.setLineDash([7,5]);
+ }
+ ctx.restore();
+}
 function drawStrokes(ctx,parts,count,travel=0){
  const limit=Math.min(parts.length,Math.max(0,Math.ceil(count)));
  for(let i=0;i<limit;i++){
