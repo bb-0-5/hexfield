@@ -690,7 +690,10 @@ function bind(){
   $('export').addEventListener('click',()=>void download());
   $('blindStart').addEventListener('click',()=>void beginBlindTest());
   $('logoText').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();void paintFresh();}});
-  $('logoType').addEventListener('change',()=>{if(state.mode==='lettering')void paintFresh();});
+  $('logoType').addEventListener('change',()=>{
+    logoControls?.glossary();
+    if(state.mode==='lettering')void paintFresh();
+  });
   $('logoStyle').addEventListener('change',()=>{if(state.mode==='lettering')void paintFresh();});
   $('landscapeScene').addEventListener('change',()=>{if(state.mode==='landscape')void paintFresh();});
   $('landscapeMood').addEventListener('change',()=>{if(state.mode==='landscape')void paintFresh();});
@@ -713,7 +716,12 @@ function bind(){
   ruleStudio=initRuleStudio();
   logoControls=initAnatomyControls({
      onApply:applyEditedLogo,
-     getText:()=>$('logoText').value
+     getText:()=>{
+       const raw=cleanLogoText($('logoText').value);
+       if($('logoType').value==='wordmark')return raw;
+       return (raw.includes(' ')?raw.split(/\s+/).map(x=>x[0]||'').join(''):raw)
+         .slice(0,3).toUpperCase();
+     }
   });
   buildGallery();setMode('rules');updateBlindSummary();
   void restoreRemoteProcedures();
