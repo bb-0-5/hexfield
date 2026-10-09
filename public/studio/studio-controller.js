@@ -6,6 +6,8 @@ import {initImagination} from './imagination.js';
 import {initRuleStudio} from './rule-studio.js';
 import {initAnatomyControls} from './anatomy-controls.js';
 import {initLogoEvolution} from './logo-evolution.js';
+import {evolveSeed,assessCanvas,commitCanvas,rankNoveltyCandidates,
+  methodSignature,snapshotNoveltyMemory} from './nonredundancy.js';
 import {publishSource} from './source-mixer.js';
 import {LAWS,MARKS,makeRecipe as makeLawRecipe,mutateRecipe as mutateLawRecipe,
   applyRules as paintUnderLaw,noteRuleVerdict} from './rule-engine.js';
@@ -39,7 +41,7 @@ const state={
   collective:readJson(storage.shared,{landscape:{},lettering:{}}),
   pending:readJson(storage.votes,[]),
   evolution:readJson(storage.evolution,{landscape:{elites:[],rejected:[],focus:{}},lettering:{elites:[],rejected:[],focus:{}}}),
-  experiments:[],experimentRevision:0,currentVisual:null,comparisonReference:null,
+  experiments:[],experimentRevision:0,currentVisual:null,comparisonReference:null,nonredundancy:null,
   visual:readJson(storage.visual,{landscape:[],lettering:[]}),
   blindHistory:readJson(storage.blind,[]),blindCurrent:null,blindRevision:0,
 };
@@ -117,11 +119,13 @@ function selectGenome(mode,seed){
   possibilities.sort((a,b)=>b.score-a.score);
   return possibilities[0]?.genome || makeGenome(mode,seed);
 }
-function makeRecipe({parent=null,focus=null,genome=null,subjectChange=false}={}){
+function makeRecipe({parent=null,focus=null,genome=null,subjectChange=false,
+  evolutionSeed=null}={}){
   const seed=parent?.seed ?? rand(),mode=state.mode;
   let method=(focus==='constraint'&&parent?.genome)?structuredClone(parent.genome):
     genome || (parent?.genome
-    ? mutateGenome(parent.genome,focus||FOCI[Math.floor(rand()%FOCI.length)],seed,
+    ? mutateGenome(parent.genome,focus||FOCI[Math.floor(rand()%FOCI.length)],
+       Number.isFinite(evolutionSeed)?(evolutionSeed>>>0):evolveSeed(seed,parent.genome.generation+1,0,'studio-genome'),
        methodMemory(mode).elites.find(e=>programKey(e.genome)!==programKey(parent.genome))?.genome || null)
     :selectGenome(mode,seed));
   if(evaluateSurface(method).length)method=makeGenome(mode,seed);
@@ -157,6 +161,17 @@ function makeRecipe({parent=null,focus=null,genome=null,subjectChange=false}={})
     text:parent?.mode===mode?cleanLogoText(parent.text):cleanLogoText($('logoText').value),
     style:parent?.mode===mode?parent.style:selected('logoStyle',LETTER_STYLES,'style'),
     type:parent?.mode===mode?parent.type:LETTER_TYPES.includes($('logoType').value)?$('logoType').value:'wordmark'};
+}
+function studioMethod(recipe){
+ return methodSignature({
+   mode:recipe.mode,
+   genome:programKey(recipe.genome),
+   primary:recipe.constraint?.primary||recipe.anatomy?.rules?.[0]?.target||'',
+   secondary:recipe.constraint?.secondary||recipe.anatomy?.rules?.[0]?.operation||'',
+   mark:recipe.constraint?.mark||recipe.genome?.letterStroke||recipe.genome?.brush||'',
+   scene:recipe.scene||'',
+   text:recipe.text||'',style:recipe.style||'',type:recipe.type||''
+ });
 }
 function recordProcedure(recipe,liked){
   const g=recipe.genome;
@@ -350,6 +365,19 @@ async function paintRecipe(recipe,{newStudy=true}={}) {
       logoControls?.updateAfterRender(glyphResult,recipe);
       publishSource(state.canvas,'logo',recipe);
     }
+    // All renderers observe the SAME global visual nonredundancy memory:
+    // logos and terrain cannot silently create the same pixels forever.
+    const parentFp=state.nonredundancy?.fingerprint||null;
+    const observation=assessCanvas(state.canvas,{
+      mode:recipe.mode,method:studioMethod(recipe),parent:parentFp
+    });
+    state.nonredundancy={
+      ...observation,
+      ...commitCanvas(state.canvas,{
+        mode:recipe.mode,method:studioMethod(recipe),seed:recipe.seed,
+        parentId:recipe.parentMethod||null,evaluation:observation
+      })
+    };
     state.currentVisual=describeCanvas(state.canvas,recipe.mode);
     if(recipe.comparison&&descriptorValid(state.comparisonReference)){
       const delta=visualDistance(state.comparisonReference,state.currentVisual);
@@ -364,7 +392,8 @@ async function paintRecipe(recipe,{newStudy=true}={}) {
     }
     $('paintingOverlay').hidden=true;
     $('statusOrb').classList.remove('busy');
-    $('renderStatus').textContent='READY FOR YOUR VERDICT';
+    $('renderStatus').textContent=state.nonredundancy?.redundant?
+      'REPEATED VISUAL / TEST ANOTHER METHOD':'READY FOR YOUR VERDICT';
     disableVoting(false);
     setStatus('KEEP or REJECT this image. Rejection tests visibly different construction methods, not shuffled positions.');
   }catch(error){
@@ -376,31 +405,65 @@ async function paintRecipe(recipe,{newStudy=true}={}) {
 // showing the same visual arrangement with a different random seed.
 async function paintFresh(){
   clearExperiments();clearBlind();
-  const token=++state.experimentRevision,seed=rand();
-  const options=[],seen=state.visual[state.mode];
+  const token=++state.experimentRevision,
+    parent=state.recipe?.mode===state.mode?state.recipe:null,
+    // Inherit current seed and derive deterministic branches from it.
+    seed=parent?.seed??rand(),
+    options=[],seen=state.visual[state.mode];
   const limit=matchMedia('(max-width:730px)').matches?3:5;
   for(let i=0;i<limit;i++){
-    const recipe=makeRecipe({genome:selectGenome(state.mode,(seed+i*271828)>>>0)});
+    const branch=evolveSeed(seed,(parent?.genome?.generation||0)+state.sample+1,
+      i,'studio-fresh-'+state.mode);
+    const recipe=makeRecipe({
+      parent,genome:selectGenome(state.mode,branch),
+      evolutionSeed:branch
+    });
     try{
       const preview=await renderPreview(recipe,.12);
       if(token!==state.experimentRevision)return;
-      const novelty=seen.filter(x=>descriptorValid(x.visual)).length?
-        Math.min(...seen.slice(-45).filter(x=>descriptorValid(x.visual)).map(x=>visualDistance(preview.visual,x.visual))):1;
-      const score=genomeValue(state.mode,recipe.genome)*.14+
-        visualFeedbackScore(preview.visual,seen)+novelty*.95;
-      options.push({recipe,score,novelty});
+      const prior=seen.filter(x=>descriptorValid(x.visual)).slice(-45);
+      const visualNovelty=prior.length?Math.min(...prior.map(x=>
+        visualDistance(preview.visual,x.visual))):1;
+      const novelty=assessCanvas(preview.canvas,{
+        mode:recipe.mode,method:studioMethod(recipe),
+        parent:state.nonredundancy?.fingerprint||null
+      });
+      const score=genomeValue(state.mode,recipe.genome)*.12+
+        visualFeedbackScore(preview.visual,seen)+visualNovelty*.35+
+        novelty.score*2.6-(novelty.redundant?2:0);
+      options.push({recipe,score,novelty,visualNovelty});
     }catch(err){console.warn('New procedure preview failed:',err);}
     await pauseFrame();
   }
   if(token!==state.experimentRevision)return;
   options.sort((a,b)=>b.score-a.score);
-  const chosen=options[0]?.recipe ||makeRecipe();
+  const chosen=options[0]?.recipe||makeRecipe({parent});
   state.comparisonReference=null;
   return paintRecipe(chosen);
 }
-function varyMethod(){
-  const base=state.recipe?.mode===state.mode?structuredClone(state.recipe):null;
-  clearExperiments();clearBlind();state.comparisonReference=null;return paintRecipe(makeRecipe({parent:base,focus:FOCI[rand()%FOCI.length]}));
+async function varyMethod(){
+  const parent=state.recipe?.mode===state.mode?structuredClone(state.recipe):null;
+  clearExperiments();clearBlind();
+  state.comparisonReference=state.currentVisual;
+  if(!parent)return paintFresh();
+  const candidates=[];
+  for(let i=0;i<3;i++){
+    const branch=evolveSeed(parent.seed,
+      (parent.genome?.generation||0)+1,i,'studio-mutant-'+parent.mode);
+    const recipe=makeRecipe({parent,focus:FOCI[i%FOCI.length],
+      evolutionSeed:branch});
+    try{
+      const preview=await renderPreview(recipe,.14);
+      const novelty=assessCanvas(preview.canvas,{
+        mode:recipe.mode,method:studioMethod(recipe),
+        parent:state.nonredundancy?.fingerprint||null
+      });
+      candidates.push({recipe,novelty});
+    }catch(error){console.warn('Novelty counterfactual failed:',error);}
+  }
+  candidates.sort((a,b)=>b.novelty.score-a.novelty.score);
+  return paintRecipe(candidates[0]?.recipe||
+    makeRecipe({parent,focus:'structure',evolutionSeed:evolveSeed(parent.seed,1)}));
 }
 function updatePreference(recipe,liked){
   const features=recipe.mode==='landscape'?landscapeFeatures(recipe):letteringFeatures(recipe);
