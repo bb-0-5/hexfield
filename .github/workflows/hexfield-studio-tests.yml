@@ -29,5 +29,7 @@ jobs:
         run: npm install --no-save --no-package-lock skia-canvas@3.0.8
       - name: Verify executable Rule Studio and archive law engine
         run: node --experimental-default-type=module tests/studio-rules.test.mjs
+      - name: Test continuous renderer fusion and recursive abstraction
+        run: node --experimental-default-type=module tests/studio-abstraction-loop.test.mjs
       - name: Visual novelty and painting comparison
         run: node --experimental-default-type=module tests/studio-vision.test.mjs
