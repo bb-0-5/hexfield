@@ -11,6 +11,14 @@ export const ANATOMY={
   cross_stroke:['Cross stroke','Line crossing a stem'],
   bowl:['Bowl','Curved enclosing stroke'],counter:['Counter','Enclosed unpainted space'],
   aperture:['Aperture','Opening into the negative interior'],
+  eye:['Eye','Enclosed or partly enclosed space in a lowercase e'],
+  ball_terminal:['Ball terminal','Rounded enlargement at a free stroke tip'],
+  finial:['Finial','Tapered or shaped open end of a glyph stroke'],
+  beak:['Beak','Sharp, projecting terminal at an arm end'],
+  bracket:['Bracket','Curved transition between a serif and main stroke'],
+  ink_trap:['Ink trap','Deliberate notch at a meeting of strokes'],
+  hairline:['Hairline','Thinnest stroke in a contrast-based design'],
+  swash:['Swash','Exaggerated extension from a terminal'],
   shoulder:['Shoulder','Curved transition from a stem'],
   spine:['Spine','Main curving S-like stroke'],tail:['Tail','Projecting finishing stroke'],
   terminal:['Terminal','Free end of a stroke'],serif:['Serif','Finishing wedge or foot'],
@@ -142,8 +150,8 @@ const lower={
  d:()=>[L('ascender','.78,.13 .78,.86',1),A('bowl',.49,.63,.29,.23)],
  e:()=>[A('bowl',.49,.63,.32,.23,-PI*.19,PI*1.44),L('crossbar','.21,.62 .78,.62')],
  f:()=>[L('ascender','.46,.86 .48,.25'),A('shoulder',.63,.25,.20,.12,PI*.90,PI*1.92),L('cross_stroke','.23,.45 .75,.45')],
- g:()=>[A('bowl',.47,.59,.28,.19),L('descender','.75,.42 .75,.96'),
-        A('loop',.48,.98,.27,.15,-PI*.20,PI*.98)],
+ g:()=>[A('bowl',.47,.55,.28,.18),L('link','.71,.70 .58,.86'),
+        L('descender','.76,.42 .76,.95'),A('loop',.47,.99,.27,.14,-PI*.20,PI*.98)],
  h:()=>[L('ascender','.20,.13 .20,.86',-1),A('shoulder',.47,.60,.27,.20,PI,PI*2),L('stem','.74,.59 .74,.86',1)],
  i:()=>[L('stem','.50,.39 .50,.86'),A('dot',.50,.21,.07,.065)],
  j:()=>[L('descender','.65,.39 .65,1.0'),A('shoulder',.47,.99,.18,.14,0,PI),A('dot',.65,.21,.07,.065)],
@@ -184,6 +192,15 @@ export function glyphAnatomy(char){
  if(/[a-z]/.test(char))parts.add('x_height');
  if(COUNTERS.has(char))parts.add('counter');
  if(APERTURES.has(char))parts.add('aperture');
+ if(char==='e')parts.add('eye');
+ if('csCraef'.includes(char))parts.add('ball_terminal');
+ if('CScefars'.includes(char))parts.add('finial');
+ if('EFTZ'.includes(char))parts.add('beak');
+ if('SQRas'.includes(char))parts.add('swash');
+ if(components.some(c=>['stem','ascender','crossbar'].includes(c.part))){
+   parts.add('bracket');parts.add('ink_trap');
+ }
+ if(components.some(c=>['diagonal','crossbar','spine'].includes(c.part)))parts.add('hairline');
  if(SECTIONS.has(char))parts.add('overshoot');
  if(EXTENDERS.has(char))parts.add('ascender');
  if(DESCENDERS.has(char))parts.add('descender');
@@ -206,13 +223,17 @@ export function supportsPart(char,part){
 }
 export function applicableComponents(anatomy,target){
  if(target==='any')return anatomy.components;
- if(target==='counter'||target==='overshoot')
+ if(target==='counter'||target==='overshoot'||target==='eye')
    return anatomy.components.filter(c=>['bowl','loop','shoulder'].includes(c.part));
  if(target==='aperture')return anatomy.components.filter(c=>['bowl','spine','shoulder'].includes(c.part));
  if(target==='serif'||target==='sidebearing'||target==='cap_height'||target==='baseline'||
     target==='x_height'||target==='axis')
    return anatomy.components;
- if(target==='terminal')return anatomy.components.filter(c=>c.kind!=='curve'||!c.closed);
+ if(['terminal','ball_terminal','finial','beak','bracket','swash'].includes(target))
+   return anatomy.components.filter(c=>c.kind!=='curve'||!c.closed);
+ if(target==='hairline')
+   return anatomy.components.filter(c=>['diagonal','crossbar','cross_stroke','spine'].includes(c.part));
+ if(target==='ink_trap')return anatomy.components;
  if(target==='join')return anatomy.components;
  if(target==='apex'||target==='vertex')
    return anatomy.components.filter(c=>c.part==='diagonal');
@@ -263,13 +284,14 @@ export function componentMask(rule,char,index,component){
  return applicableComponents(an,rule.target).some(x=>x===component||x.part===component.part);
 }
 const LOCAL_REGIONS=new Set([
- 'terminal','serif','apex','vertex','join','baseline','cap_height','x_height',
+ 'terminal','serif','ball_terminal','finial','beak','bracket','swash','ink_trap',
+ 'apex','vertex','join','baseline','cap_height','x_height',
  'ascender','descender','sidebearing','overshoot'
 ]);
 export function anatomyZoneWeight(region,point,t){
  const [x,y]=point;
  const fade=(distance,radius)=>clamp(1-distance/radius,0,1);
- if(region==='terminal'||region==='serif')return Math.max(
+ if(['terminal','serif','ball_terminal','finial','beak','bracket','swash'].includes(region))return Math.max(
    fade(t,.24),fade(1-t,.24));
  if(region==='apex')return fade(Math.abs(y-.13),.32);
  if(region==='vertex')return fade(Math.abs(y-.86),.30);
@@ -280,7 +302,7 @@ export function anatomyZoneWeight(region,point,t){
  if(region==='descender')return clamp((y-.78)/.28,0,1);
  if(region==='sidebearing')return Math.max(fade(x,.34),fade(1-x,.34));
  if(region==='overshoot')return Math.max(fade(y,.18),fade(1-y,.16));
- if(region==='join')return fade(Math.abs(t-.5),.28);
+ if(region==='join'||region==='ink_trap')return fade(Math.abs(t-.5),.28);
  return 1;
 }
 export function transformedComponent(component,rule,{char='A'}={}){
@@ -309,7 +331,7 @@ export function transformedComponent(component,rule,{char='A'}={}){
  let skipLocal=Array.isArray(component.skipLocal)?component.skipLocal.slice():null;
  let localWeights=Array.isArray(component.localWeights)?component.localWeights.slice():null;
  let localInverts=Array.isArray(component.localInverts)?component.localInverts.slice():null;
- const isTerm=rule.target==='terminal'||rule.target==='serif';
+ const isTerm=['terminal','serif','ball_terminal','finial','beak','bracket','swash'].includes(rule.target);
  for(let i=0;i<points.length;i++){
    const p=points[i],t=i/Math.max(1,points.length-1);
    const original=[...p],weight=local?anatomyZoneWeight(rule.target,original,t):1;
