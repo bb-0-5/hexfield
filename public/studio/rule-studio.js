@@ -5,6 +5,7 @@
 import {SUBJECTS,LAWS,MARKS,REWORKS,makeRecipe,mutateRecipe,drawReality,applyRules,
   noteRuleVerdict,noteLineage,describeRecipe,buildRulePrompt,RULE_STORE} from './rule-engine.js';
 import {createAbstractionLoop} from './abstraction-loop.js';
+import {paintHeldMotifs,advanceMotifMemory,motifEvidence} from './motif-memory.js';
 import {createCreativePerformance} from './creative-performance.js';
 import {measureGoldenTaste,explainGolden,diagnoseGolden,
   compareGoldenTaste} from './golden-taste.js';
@@ -53,7 +54,8 @@ function persistCanvas(canvas,recipe,judged){
 }
 export function initRuleStudio(){
  optionMarkup();
- let current=null,upload=null,parentCanvas=null,realitySource=null,sequence=0;
+ let current=null,upload=null,parentCanvas=null,realitySource=null,
+   sequence=0,manualMotifs=[];
  const context=$('ruleArtwork').getContext('2d');
  const status=m=>text('ruleStatus',m);
  const theatre=createCreativePerformance({
@@ -155,6 +157,18 @@ export function initRuleStudio(){
    const metrics=applyRules(source,target,recipe,{
      iteration:recipe.generation,trace:true
    });
+   if(!revision)manualMotifs=[]; // A deliberate fresh canvas is a new chapter.
+   if(revision&&before&&!manualMotifs.length)
+     manualMotifs=advanceMotifMemory([],before,{
+       seed:before?.recipe?.seed||recipe.seed,cycle:1,parent:before
+     });
+   const held=revision?paintHeldMotifs(target,manualMotifs,{
+     cycle:recipe.generation,opacity:.96
+   }):{held:[],coverage:0};
+   const inherited=motifEvidence(manualMotifs);
+   if(revision)manualMotifs=advanceMotifMemory(manualMotifs,target,{
+     seed:recipe.seed,cycle:recipe.generation+1,parent:before
+   });
    const method=methodSignature({
      mode:'rule-studio',subject:recipe.subject,primary:recipe.primary,
      secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework
@@ -169,6 +183,7 @@ export function initRuleStudio(){
    current={recipe,canvas:target,judged:false,metrics,nonredundancy:W};parentCanvas=target;
    displayPhi(target);
    void theatre.play({kind:'rule',recipe,trace:metrics.trace,
+     survival:{held:held.held,available:manualMotifs.length},
      parent:before,final:target,duration:1900});
    $('ruleEmpty').hidden=true;
    $('ruleArtwork').hidden=false;
@@ -177,7 +192,8 @@ export function initRuleStudio(){
    text('ruleCaption',describeRecipe(recipe));
    text('ruleEvidence',metrics.strokes+' actual marks · '+metrics.skipped+
      ' omitted · '+(recipe.parentId?' CHILD OF '+recipe.parentId.slice(0,7):'ORIGINAL')+
-     (revision?' · PAINTED FROM PREVIOUS IMAGE':''));
+     (revision?' · PAINTED FROM PREVIOUS IMAGE · '+held.held.length+
+       ' physical old forms survived':''));
    status('W / global non-redundancy: '+(W.novelty*100).toFixed(1)+
      '% new against this studio, '+(W.globalNovelty*100).toFixed(1)+
      '% new globally, complexity '+(W.complexity*100).toFixed(1)+'%.'+
