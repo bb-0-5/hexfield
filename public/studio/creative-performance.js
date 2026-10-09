@@ -85,8 +85,10 @@ export function createCreativePerformance({host,canvas,name='theatre',statusElem
  const info=cx('div','creative-performance-meta',panel);
  const action=cx('span','creative-performance-action',info);
  const method=cx('span','creative-performance-method',info);
- const controls=cx('div','creative-performance-controls',host);
+ const controls=document.createElement('div');
+ controls.className='creative-performance-controls';
  controls.dataset.processControls=name;
+ host.insertAdjacentElement('afterend',controls);
  const replay=cx('button','creative-performance-replay',controls);
  replay.type='button';replay.textContent='↺ REPLAY THE MAKING';replay.disabled=true;
  const pause=cx('button','creative-performance-pause',controls);
@@ -203,8 +205,14 @@ export function createCreativePerformance({host,canvas,name='theatre',statusElem
  }
  function play(options={}){
    stop();
+   // Snapshot the chosen final frame before the persistent production canvas
+   // is reused for the next generation. REPLAY must replay history, never the
+   // already-overwritten future bitmap.
+   const finalCopy=document.createElement('canvas');
+   finalCopy.width=bounds.w;finalCopy.height=bounds.h;
+   if(options.final)finalCopy.getContext('2d').drawImage(options.final,0,0,bounds.w,bounds.h);
    const plan=performancePlan(options);
-   lastOptions={...options};
+   lastOptions={...options,final:finalCopy};
    if(options.reducedMotion||reduce()||document.hidden){
      log('STATIC STUDY / '+plan.method);
      return Promise.resolve('reduced-motion');
@@ -213,12 +221,13 @@ export function createCreativePerformance({host,canvas,name='theatre',statusElem
    return new Promise(resolve=>{
      timeline.replaceChildren();
      current={resolve,plan,duration:speed,parent:options.parent,
-       final:options.final,oldAnatomy:options.oldAnatomy,currentTrial:-1};
+       final:finalCopy,oldAnatomy:options.oldAnatomy,currentTrial:-1};
      overlay.width=bounds.w;overlay.height=bounds.h;
      elapsed=0;clockStart=performance.now();serial++;
      paused=false;panel.hidden=false;visible=true;
      replay.disabled=true;pause.disabled=false;skip.disabled=false;
      log('START / '+plan.method);
+     if(options.onPhase)options.onPhase('start',plan);
      raf=requestAnimationFrame(draw);
    });
  }
