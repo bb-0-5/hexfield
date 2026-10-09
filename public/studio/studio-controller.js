@@ -126,7 +126,9 @@ function selectGenome(mode,seed){
 }
 function makeRecipe({parent=null,focus=null,genome=null,subjectChange=false,
   evolutionSeed=null}={}){
-  const seed=parent?.seed ?? rand(),mode=state.mode;
+  const seed=Number.isFinite(evolutionSeed)?(evolutionSeed>>>0):
+    parent?evolveSeed(parent.seed,(parent.genome?.generation||0)+1,0,'studio-parent'):
+    rand(),mode=state.mode;
   let method=(focus==='constraint'&&parent?.genome)?structuredClone(parent.genome):
     genome || (parent?.genome
     ? mutateGenome(parent.genome,focus||FOCI[Math.floor(rand()%FOCI.length)],
@@ -137,16 +139,27 @@ function makeRecipe({parent=null,focus=null,genome=null,subjectChange=false,
   const base={version:2,mode,seed,genome:method,experiment:focus||'invent',
     parentMethod:parent?.genome?methodFingerprint(parent.genome):null};
   if(mode==='landscape'){
-    const scene=parent?.mode===mode?parent.scene:selected('landscapeScene',SCENES,'scene');
-    const mood=parent?.mode===mode?parent.mood:selected('landscapeMood',MOODS,'mood');
+    const chosenScene=$('landscapeScene').value;
+    const chosenMood=$('landscapeMood').value;
+    const autoScene=chosenScene==='surprise';
+    const autoMood=chosenMood==='surprise';
+    const scene=autoScene?
+      (parent?.mode===mode && state.sample%4!==0?parent.scene:SCENES[seed%SCENES.length]):
+      chosenScene;
+    const mood=autoMood?
+      (parent?.mode===mode && state.sample%3!==0?parent.mood:
+        MOODS[(seed>>>4)%MOODS.length]):
+      chosenMood;
     const enabled=$('landscapeConstraintOn')?.checked??false;
     const wantedLaw=$('landscapeConstraintLaw')?.value||'surprise';
     const wantedMark=$('landscapeConstraintMark')?.value||'surprise';
     let constraint=null;
     if(enabled){
       if(parent?.constraint){
-        constraint=focus==='constraint'?
-          mutateLawRecipe(parent.constraint,'law'):structuredClone(parent.constraint);
+        constraint=(focus==='constraint'||
+          (wantedLaw==='surprise'&&state.sample%3===0))?
+          mutateLawRecipe(parent.constraint,state.sample%5===0?'mark':'law',
+            'studio',seed):structuredClone(parent.constraint);
       }else{
         constraint=makeLawRecipe({subject:'coast',primary:wantedLaw,
           mark:wantedMark,seed,secondary:'none'});
@@ -155,8 +168,9 @@ function makeRecipe({parent=null,focus=null,genome=null,subjectChange=false,
       if(wantedMark!=='surprise')constraint.mark=wantedMark;
       constraint.enabled=true;
     }
-    return {...base,scene:subjectChange?SCENES.filter(v=>v!==scene)[rand()%(SCENES.length-1)]:scene,
-      mood,constraint};
+    const nextScene=subjectChange&&autoScene?
+      SCENES.filter(v=>v!==scene)[seed%(SCENES.length-1)]:scene;
+    return {...base,scene:nextScene,mood,constraint};
   }
   const anatomy=logoControls?.programForGenome(method.anatomy,!!parent) || method.anatomy;
   if(anatomy)method={...method,anatomy};
@@ -465,8 +479,10 @@ async function paintFresh(){
   for(let i=0;i<limit;i++){
     const branch=evolveSeed(seed,(parent?.genome?.generation||0)+state.sample+1,
       i,'studio-fresh-'+state.mode);
+    const radical=!parent||(i===limit-1&&state.sample%4===0);
     const recipe=makeRecipe({
-      parent,genome:selectGenome(state.mode,branch),
+      parent,focus:FOCI[i%FOCI.length],
+      genome:radical?selectGenome(state.mode,branch):null,
       evolutionSeed:branch
     });
     try{
@@ -484,7 +500,7 @@ async function paintFresh(){
         visualFeedbackScore(preview.visual,seen)+visualNovelty*.35+
         novelty.score*2.6-(novelty.redundant?2:0)+
         goldenPrior(golden,{mode:getGoldenMode()})*.95;
-      options.push({recipe,score,novelty,visualNovelty,golden});
+      options.push({recipe,score,novelty,visualNovelty,golden,preview});
     }catch(err){console.warn('New procedure preview failed:',err);}
     await pauseFrame();
   }
@@ -495,6 +511,17 @@ async function paintFresh(){
     return b.score-a.score;
   });
   const chosen=options[0]?.recipe||makeRecipe({parent});
+  // Show the real alternatives as an animation. The user no longer
+  // needs to micromanage three settings just to watch the painter think.
+  pendingProcessTrials=options.map(x=>({
+    canvas:x.preview?.canvas,
+    label:x.recipe.mode==='landscape'?
+      x.recipe.scene+' / '+x.recipe.mood+' / '+
+       (x.recipe.constraint?.primary||'unconstrained'):
+      (x.recipe.anatomy?.rules?.[0]?.target||'whole glyph')+' / '+
+       (x.recipe.anatomy?.rules?.[0]?.operation||'construct'),
+    score:x.score,golden:x.golden,selected:x.recipe===chosen
+  })).filter(x=>x.canvas);
   state.comparisonReference=null;
   return paintRecipe(chosen);
 }
