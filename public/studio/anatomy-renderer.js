@@ -40,8 +40,9 @@ function paintPart(ctx,item,points,scaleX,scaleY,originX,originY,baseWidth,ink,a
  const real=points.map(([x,y])=>[originX+x*scaleX,originY+y*scaleY]);
  const weight=baseWidth*(item.width||1);
  const colour=item.invert?accent:ink;
- ctx.save();ctx.lineJoin=(harsh||item.faceted)?'miter':'round';
- ctx.lineCap=harsh?'square':'round';ctx.strokeStyle=colour;ctx.fillStyle=colour;
+ ctx.save();ctx.lineJoin=item.bubble?'round':(harsh||item.faceted)?'miter':'round';
+ ctx.lineCap=item.bubble?'round':harsh?'square':'round';
+ ctx.strokeStyle=colour;ctx.fillStyle=colour;
  ctx.lineWidth=weight;
  if(item.dotted){
    const radius=Math.max(.8,weight*.55),skip=Math.max(1,Math.round(real.length/21));
