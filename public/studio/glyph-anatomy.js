@@ -262,13 +262,33 @@ export function componentMask(rule,char,index,component){
  const an=glyphAnatomy(char);
  return applicableComponents(an,rule.target).some(x=>x===component||x.part===component.part);
 }
+const LOCAL_REGIONS=new Set([
+ 'terminal','serif','apex','vertex','join','baseline','cap_height','x_height',
+ 'ascender','descender','sidebearing','overshoot'
+]);
+export function anatomyZoneWeight(region,point,t){
+ const [x,y]=point;
+ const fade=(distance,radius)=>clamp(1-distance/radius,0,1);
+ if(region==='terminal'||region==='serif')return Math.max(
+   fade(t,.24),fade(1-t,.24));
+ if(region==='apex')return fade(Math.abs(y-.13),.32);
+ if(region==='vertex')return fade(Math.abs(y-.86),.30);
+ if(region==='baseline')return fade(Math.abs(y-GUIDELINES.baseline),.20);
+ if(region==='cap_height')return fade(Math.abs(y-GUIDELINES.cap),.22);
+ if(region==='x_height')return fade(Math.abs(y-GUIDELINES.x),.22);
+ if(region==='ascender')return clamp((.43-y)/.28,0,1);
+ if(region==='descender')return clamp((y-.78)/.28,0,1);
+ if(region==='sidebearing')return Math.max(fade(x,.34),fade(1-x,.34));
+ if(region==='overshoot')return Math.max(fade(y,.18),fade(1-y,.16));
+ if(region==='join')return fade(Math.abs(t-.5),.28);
+ return 1;
+}
 export function transformedComponent(component,rule,{char='A'}={}){
- const effect=rule.operation;
- // A two-endpoint straight stem has no interior point to bend. Subdivide
- // before transforming so the midpoint genuinely moves while endpoints stay
- // anchored. Fractures and dashes also require intermediate segments.
+ const effect=rule.operation,local=LOCAL_REGIONS.has(rule.target);
+ // Bent stems and terminal-only rules must have interior control points;
+ // moving the two endpoints of a line isn't the same as bending a stroke.
  let points=component.points.map(p=>[...p]);
- if(['bend','fracture','dots','dashes','taper','open'].includes(effect)&&points.length<8){
+ if((local||['bend','fracture','dots','dashes','taper','open'].includes(effect))&&points.length<8){
    const dense=[];
    for(let j=1;j<points.length;j++){
      const a=points[j-1],b=points[j];
@@ -286,44 +306,64 @@ export function transformedComponent(component,rule,{char='A'}={}){
    fractured=!!component.fractured,faceted=!!component.faceted;
  let width=component.width||1,invert=!!component.invert,serifs=!!component.serifs,
    open=!!component.open;
+ let skipLocal=Array.isArray(component.skipLocal)?component.skipLocal.slice():null;
+ let localWeights=Array.isArray(component.localWeights)?component.localWeights.slice():null;
+ let localInverts=Array.isArray(component.localInverts)?component.localInverts.slice():null;
  const isTerm=rule.target==='terminal'||rule.target==='serif';
  for(let i=0;i<points.length;i++){
    const p=points[i],t=i/Math.max(1,points.length-1);
-   if(effect==='bend')p[0]+=side*.15*amount*Math.sin(Math.PI*t);
-   if(effect==='lift')p[1]-=.19*amount;
-   if(effect==='drop')p[1]+=.19*amount;
-   if(effect==='widen')p[0]+=(p[0]-.5)*amount*.32;
-   if(effect==='compress')p[0]-=(p[0]-.5)*amount*.28;
+   const original=[...p],weight=local?anatomyZoneWeight(rule.target,original,t):1;
+   if(effect==='bend')p[0]+=side*.19*amount*Math.sin(Math.PI*t)*weight;
+   if(effect==='lift')p[1]-=.21*amount*weight;
+   if(effect==='drop')p[1]+=.21*amount*weight;
+   if(effect==='widen')p[0]+=(p[0]-.5)*amount*.35*weight;
+   if(effect==='compress')p[0]-=(p[0]-.5)*amount*.30*weight;
    if(effect==='expand'){
-     p[0]+= (p[0]-cx)*amount*.31;
-     p[1]+= (p[1]-cy)*amount*.19;
+     p[0]+=(p[0]-cx)*amount*.34*weight;
+     p[1]+=(p[1]-cy)*amount*.21*weight;
    }
-   if(effect==='pinch')p[0]+=(cx-p[0])*amount*.46;
-   if(effect==='detach')p[0]+=side*amount*.18;
+   if(effect==='pinch')p[0]+=(cx-p[0])*amount*.46*weight;
+   if(effect==='detach')p[0]+=side*amount*.21*weight;
    if(effect==='rotate'){
-     const theta=amount*.47,dx=p[0]-cx,dy=p[1]-cy;
-     p[0]=cx+Math.cos(theta)*dx-Math.sin(theta)*dy;
-     p[1]=cy+Math.sin(theta)*dx+Math.cos(theta)*dy;
+     const theta=amount*.55,dx=p[0]-cx,dy=p[1]-cy;
+     const px=cx+Math.cos(theta)*dx-Math.sin(theta)*dy;
+     const py=cy+Math.sin(theta)*dx+Math.cos(theta)*dy;
+     p[0]+=weight*(px-p[0]);p[1]+=weight*(py-p[1]);
    }
-   if(effect==='shift_sidebearing')p[0]+=side*.13*amount;
-   if(effect==='open'&&component.closed)open=true;
+   if(effect==='shift_sidebearing')p[0]+=side*.15*amount*weight;
+   if(local&&['thin','thicken','taper'].includes(effect)){
+     localWeights||=Array(points.length).fill(1);
+     localWeights[i]=(localWeights[i]??1)*
+       (effect==='thin'?1-.68*amount*weight:
+       effect==='thicken'?1+1.2*amount*weight:
+       .9+.45*amount*weight);
+   }
+   if(local&&effect==='invert'){
+     localInverts||=Array(points.length).fill(false);
+     if(weight>.5)localInverts[i]=!localInverts[i];
+   }
+   if(local&&['omit','fracture','open'].includes(effect)){
+     skipLocal||=Array(points.length).fill(false);
+     if(weight>.55)skipLocal[i]=true;
+   }
  }
- if(effect==='omit')omit=true;
+ if(effect==='omit'&&!local)omit=true;
  if(effect==='dots')dotted=true;
  if(effect==='dashes')dashed=true;
- if(effect==='fracture')fractured=true;
+ if(effect==='fracture'&&!local)fractured=true;
  if(effect==='facet')faceted=true;
- if(effect==='thin')width*=1-amount*.7;
- if(effect==='thicken')width*=1+amount*1.3;
- if(effect==='taper')width*=.55+amount*.48;
- if(effect==='invert')invert=!invert;
+ if(effect==='thin'&&!local)width*=1-amount*.7;
+ if(effect==='thicken'&&!local)width*=1+amount*1.3;
+ if(effect==='taper'&&!local)width*=.55+amount*.48;
+ if(effect==='invert'&&!local)invert=!invert;
  if(effect==='serifs')serifs=true;
- if(effect==='open'&&!component.closed)fractured=true;
- // A requested serif or terminal edit acts on the stroke ends rather than
- // changing the entire interior of a stem or bowl.
+ if(effect==='open'&&component.closed&&!local)open=true;
+ if(effect==='open'&&!component.closed&&!local)fractured=true;
  return {...component,points,omit,dotted,dashed,fractured,faceted,
-   width,open,invert,serifs,isTerm:isTerm||component.isTerm,amount};
+   width,open,invert,serifs,isTerm:isTerm||component.isTerm,amount,
+   skipLocal,localWeights,localInverts};
 }
+
 export function compileAnatomyGlyph(char,index,program){
  const anatomy=glyphAnatomy(char);
  const commands=anatomy.components.map(component=>{
