@@ -25,14 +25,15 @@ export function nextAbstractRecipe(parent,{cycle=0,subject='abstract',lockLaw=fa
   law='surprise',secondary='none',mark='surprise'}={}){
  const options={subject:subject==='surprise'?'abstract':subject};
  let recipe;
- if(!parent)recipe=makeRecipe({
-   ...options,primary:law,secondary,mark,
-   rework:'abstract_masses',seed:(Math.random()*4294967295)>>>0
- });
- // The first picture uses all mark-making engines together unless the
- // painter explicitly locks an individual mark as a formal restriction.
- if(!lockLaw||mark==='surprise')recipe.mark='hybrid';
- else {
+ if(!parent){
+   recipe=makeRecipe({
+     ...options,primary:law,secondary,mark,
+     rework:'abstract_masses',seed:(Math.random()*4294967295)>>>0
+   });
+   // The first picture uses all mark-making engines together unless the
+   // painter explicitly locks an individual mark as a formal restriction.
+   if(!lockLaw||mark==='surprise')recipe.mark='hybrid';
+ }else{
    const focus=cycle%5===1?'mark':cycle%4===0?'law':'rework';
    recipe=mutateRecipe(parent,focus);
    recipe.rework=REWORK_SEQUENCE[cycle%REWORK_SEQUENCE.length];
