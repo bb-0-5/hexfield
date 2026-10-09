@@ -758,6 +758,19 @@
 #legacyRulesMount button:hover{background:#26445b}
 #legacyRuleStatus{font:10px/1.45 sans-serif;color:#abc4cc;margin:7px 0}
 
+
+/* Build 303: continuously combined renderer chains within the legacy archive. */
+#legacyRulesMount .legacy-loop-controls{padding:9px 7px;border:1px solid #315d66;
+  background:#0e1b27;display:flex;flex-direction:column;gap:5px}
+#legacyRulesMount .legacy-loop-controls>strong{font:800 10px/1.5 sans-serif;color:#8ae1df;letter-spacing:.08em}
+#legacyRulesMount .legacy-loop-controls>select{min-height:34px}
+#legacyRulesMount #legacyLoopStatus{color:#c8e9e2;font-size:10px;line-height:1.45;
+  overflow-wrap:anywhere;margin:7px 0 3px}
+#legacyLoopStrip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}
+#legacyLoopStrip figure{margin:0;padding:3px;background:#111b29;border:1px solid #36505f}
+#legacyLoopStrip img{width:100%;display:block;aspect-ratio:164/104;object-fit:cover}
+#legacyLoopStrip figcaption{font:8px/1.3 sans-serif;color:#b8d1d3;overflow-wrap:anywhere;padding:4px 2px}
+
 </style>
 </head>
 <body>
@@ -903,7 +916,7 @@
     </div>
   </details>
 
-  <details id="legacyRulesPanel"><summary>↯ RULE ENGINE 302 · FORBID / REWORK ↯</summary>
+  <details id="legacyRulesPanel"><summary>↯ RULE ENGINE 303 · CONTINUOUS / COMBINED ↯</summary>
   <div id="legacyRulesMount"><p>Loading executable visual laws…</p></div>
   <p class="note">The original archive generator is still underneath. Every new field is painted again under its chosen laws; you can recursively repaint its actual output. <a href="/">Open the full Rule Studio ↗</a></p>
 </details>
