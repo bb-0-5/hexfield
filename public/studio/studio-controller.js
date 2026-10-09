@@ -6,6 +6,8 @@ import {initImagination} from './imagination.js';
 import {initRuleStudio} from './rule-studio.js';
 import {initAnatomyControls} from './anatomy-controls.js';
 import {publishSource} from './source-mixer.js';
+import {LAWS,MARKS,makeRecipe as makeLawRecipe,mutateRecipe as mutateLawRecipe,
+  applyRules as paintUnderLaw,noteRuleVerdict} from './rule-engine.js';
 import {SCENES,MOODS,renderLandscape,landscapeDescription,landscapeFeatures} from './landscape.js';
 import {LETTER_STYLES,LETTER_TYPES,cleanLogoText,renderLettering,letteringDescription,letteringFeatures} from './lettering.js';
 import {FOCI,makeGenome,mutateGenome,sampleGenome,proposeExperiments,methodDescription,programKey,methodFingerprint,geneFeatures,methodDistance,evaluateSurface,randomFrom} from './evolution.js';
@@ -116,7 +118,8 @@ function selectGenome(mode,seed){
 }
 function makeRecipe({parent=null,focus=null,genome=null,subjectChange=false}={}){
   const seed=parent?.seed ?? rand(),mode=state.mode;
-  let method=genome || (parent?.genome
+  let method=(focus==='constraint'&&parent?.genome)?structuredClone(parent.genome):
+    genome || (parent?.genome
     ? mutateGenome(parent.genome,focus||FOCI[Math.floor(rand()%FOCI.length)],seed,
        methodMemory(mode).elites.find(e=>programKey(e.genome)!==programKey(parent.genome))?.genome || null)
     :selectGenome(mode,seed));
@@ -126,7 +129,24 @@ function makeRecipe({parent=null,focus=null,genome=null,subjectChange=false}={})
   if(mode==='landscape'){
     const scene=parent?.mode===mode?parent.scene:selected('landscapeScene',SCENES,'scene');
     const mood=parent?.mode===mode?parent.mood:selected('landscapeMood',MOODS,'mood');
-    return {...base,scene:subjectChange?SCENES.filter(v=>v!==scene)[rand()%(SCENES.length-1)]:scene,mood};
+    const enabled=$('landscapeConstraintOn')?.checked??false;
+    const wantedLaw=$('landscapeConstraintLaw')?.value||'surprise';
+    const wantedMark=$('landscapeConstraintMark')?.value||'surprise';
+    let constraint=null;
+    if(enabled){
+      if(parent?.constraint){
+        constraint=focus==='constraint'?
+          mutateLawRecipe(parent.constraint,'law'):structuredClone(parent.constraint);
+      }else{
+        constraint=makeLawRecipe({subject:'coast',primary:wantedLaw,
+          mark:wantedMark,seed,secondary:'none'});
+      }
+      if(wantedLaw!=='surprise')constraint.primary=wantedLaw;
+      if(wantedMark!=='surprise')constraint.mark=wantedMark;
+      constraint.enabled=true;
+    }
+    return {...base,scene:subjectChange?SCENES.filter(v=>v!==scene)[rand()%(SCENES.length-1)]:scene,
+      mood,constraint};
   }
   const anatomy=logoControls?.programForGenome(method.anatomy,!!parent) || method.anatomy;
   if(anatomy)method={...method,anatomy};
@@ -171,8 +191,10 @@ function clearExperiments(){
 const pauseFrame=()=>new Promise(resolve=>requestAnimationFrame(resolve));
 async function renderPreview(recipe,quality=.17){
   const canvas=document.createElement('canvas');canvas.width=390;canvas.height=241;
-  if(recipe.mode==='landscape')await renderLandscape(canvas,recipe,{animate:false,quality});
-  else renderLettering(canvas,recipe);
+  if(recipe.mode==='landscape'){
+    await renderLandscape(canvas,recipe,{animate:false,quality});
+    if(recipe.constraint?.enabled)paintUnderLaw(canvas,canvas,recipe.constraint);
+  }else renderLettering(canvas,recipe);
   return {canvas,visual:describeCanvas(canvas,recipe.mode)};
 }
 function voteEvidence(recipe,liked,visual,clientId){
@@ -314,6 +336,10 @@ async function paintRecipe(recipe,{newStudy=true}={}) {
         },
       });
       if(!ok)return;
+      if(recipe.constraint?.enabled){
+        $('paintingOverlay').textContent='ENFORCING '+recipe.constraint.primary.toUpperCase();
+        paintUnderLaw(state.canvas,state.canvas,recipe.constraint);
+      }
     }else{
       glyphResult=renderLettering(state.canvas,recipe);
     }
@@ -405,6 +431,8 @@ function vote(liked){
   updatePreference(recipe,liked);
   voteEvidence(recipe,liked,state.currentVisual,client_id);
   recordProcedure(recipe,liked);
+  if(recipe.mode==='landscape'&&recipe.constraint?.enabled)
+    noteRuleVerdict(recipe.constraint,liked);
   if(liked)rememberKeep(recipe);
   const features=recipe.mode==='landscape'?landscapeFeatures(recipe):letteringFeatures(recipe);
   state.pending.push({client_id,mode:recipe.mode,liked,recipe,features,
@@ -425,8 +453,10 @@ async function download(){
   const recipe=structuredClone(state.recipe),btn=$('export');btn.disabled=true;
   try{
     const canvas=document.createElement('canvas');canvas.width=2400;canvas.height=1480;
-    if(recipe.mode==='landscape')await renderLandscape(canvas,recipe,{animate:false});
-    else renderLettering(canvas,recipe);
+    if(recipe.mode==='landscape'){
+      await renderLandscape(canvas,recipe,{animate:false});
+      if(recipe.constraint?.enabled)paintUnderLaw(canvas,canvas,recipe.constraint);
+    }else renderLettering(canvas,recipe);
     let final=canvas;
     if(recipe.mode==='lettering' && recipe.type!=='wordmark'){
       const square=document.createElement('canvas');square.width=1480;square.height=1480;
@@ -664,6 +694,20 @@ function bind(){
   $('logoStyle').addEventListener('change',()=>{if(state.mode==='lettering')void paintFresh();});
   $('landscapeScene').addEventListener('change',()=>{if(state.mode==='landscape')void paintFresh();});
   $('landscapeMood').addEventListener('change',()=>{if(state.mode==='landscape')void paintFresh();});
+  $('landscapeConstraintLaw').innerHTML=
+    '<option value="surprise">Invent / learn a law</option>'+
+    Object.entries(LAWS).map(([id,label])=>'<option value="'+id+'">'+label+'</option>').join('');
+  $('landscapeConstraintMark').innerHTML=
+    '<option value="surprise">Evolve the drawing medium</option>'+
+    Object.entries(MARKS).map(([id,label])=>'<option value="'+id+'">'+label+'</option>').join('');
+  for(const id of ['landscapeConstraintLaw','landscapeConstraintMark','landscapeConstraintOn']){
+    $(id).addEventListener('change',()=>{if(state.mode==='landscape')void paintFresh();});
+  }
+  $('landscapeMutateLaw').addEventListener('click',()=>{
+    if(state.mode==='landscape'&&state.recipe?.mode==='landscape'){
+      clearExperiments();clearBlind();void paintRecipe(makeRecipe({parent:state.recipe,focus:'constraint'}));
+    }
+  });
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void syncVotes();});
   imagination=initImagination({getSession:acquireSession});
   ruleStudio=initRuleStudio();
