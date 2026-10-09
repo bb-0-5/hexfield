@@ -57,7 +57,8 @@ async function storedImagination(){
     db=await new Promise((resolve,reject)=>{
       const req=indexedDB.open('hexfield-imagination-images-v1');
       req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);
-      req.onupgradeneeded=()=>{ /* Avoid creating a second store on old user devices. */ };
+      req.onupgradeneeded=()=>{if(!req.result.objectStoreNames.contains('artwork'))
+        req.result.createObjectStore('artwork');};
     });
     if(!db.objectStoreNames.contains('artwork'))return null;
     const row=await new Promise((resolve,reject)=>{
