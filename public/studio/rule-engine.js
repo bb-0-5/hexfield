@@ -233,6 +233,16 @@ export function applyRules(source,target,recipe,options={}){
  const step=(abstract?20:recipe.mark==='cutout'?14:recipe.mark==='carve'||recipe.mark==='hybrid'?11:9);
  const back=getPixel(data,width,height,Math.max(1,width*.07),Math.max(1,height*.07));
  let strokes=0,skipped=0;
+ // Optional bounded process score: sample the ACTUAL marks the renderer
+ // executes, in actual rendering order. The theatre replays this score; it
+ // does not invent unrelated flying dots over a finished image.
+ const capture=options.trace===true,traceMarks=capture?[]:null;
+ const traceStride=Math.max(1,Math.ceil(
+   Math.ceil(width/step)*Math.ceil(height/step)/880
+ ));
+ const traceMark=item=>{
+   if(capture&&strokes%traceStride===0&&traceMarks.length<900)traceMarks.push(item);
+ };
  ctx.clearRect(0,0,width,height);
  ctx.fillStyle=negative?'#eee7d7':recipe.mark==='carve'?'#242c37':'#e5e0d3';
  ctx.fillRect(0,0,width,height);
@@ -277,29 +287,43 @@ export function applyRules(source,target,recipe,options={}){
      const length=clamp(step*.7,2,14);
      if(localMark==='dots'){
        const radius=clamp((1-luminosity)*step*.46+1,1,step*.5);
-       if(has('no_curves'))ctx.fillRect(tx-radius,ty-radius,radius*2,radius*2);
-       else {ctx.beginPath();ctx.arc(tx,ty,radius,0,Math.PI*2);ctx.fill();}
+       if(has('no_curves')){
+         ctx.fillRect(tx-radius,ty-radius,radius*2,radius*2);
+         traceMark({type:'rect',x:tx-radius,y:ty-radius,
+           a:radius*2,b:radius*2,color:role});
+       }else{
+         ctx.beginPath();ctx.arc(tx,ty,radius,0,Math.PI*2);ctx.fill();
+         traceMark({type:'circle',x:tx,y:ty,a:radius,color:role});
+       }
      }else if(localMark==='cutout'){
        // Flat, straight-sided masses — never trace realistic gradients.
        const tile=step*(has('no_shading')?1.15:.9);
        ctx.fillRect(tx,ty,tile,tile);
+       traceMark({type:'rect',x:tx,y:ty,a:tile,b:tile,color:role});
      }else if(localMark==='carve'){
        const tile=clamp(step*(.28+luminosity),1,step);
        // Carve through dark ground; no naturalistic photographic highlights.
-       ctx.fillRect(tx,ty,tile,has('no_curves')?tile:Math.max(2,tile*.4));
+       const barHeight=has('no_curves')?tile:Math.max(2,tile*.4);
+       ctx.fillRect(tx,ty,tile,barHeight);
+       traceMark({type:'rect',x:tx,y:ty,a:tile,b:barHeight,color:role});
      }else {
        ctx.lineWidth=localMark==='hatch'?clamp(step*.2,1,3):clamp(step*.36,2,5);
        const theta=localMark==='hatch'?-Math.PI*.3:(Math.floor(x/step+y/step)%3)*Math.PI/3;
-       ctx.beginPath();ctx.moveTo(tx-length*Math.cos(theta)*.5,ty-length*Math.sin(theta)*.5);
-       ctx.lineTo(tx+length*Math.cos(theta)*.5,ty+length*Math.sin(theta)*.5);
-       ctx.stroke();
+       const x1=tx-length*Math.cos(theta)*.5,y1=ty-length*Math.sin(theta)*.5;
+       const x2=tx+length*Math.cos(theta)*.5,y2=ty+length*Math.sin(theta)*.5;
+       ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+       traceMark({type:'line',x:x1,y:y1,a:x2,b:y2,
+         width:ctx.lineWidth,color:role});
      }
      strokes++;
    }
  }
  ctx.restore();
  return {strokes,skipped,cell:step,negativeSpace:negative,noCurvedMarks:has('no_curves'),
-  strictColourRemap:has('blue_for_red'),hybrid:recipe.mark==='hybrid',parentId:recipe.parentId};
+  strictColourRemap:has('blue_for_red'),hybrid:recipe.mark==='hybrid',
+  parentId:recipe.parentId,
+  trace:capture?{marks:traceMarks,total:strokes,step,background:negative?
+    '#eee7d7':recipe.mark==='carve'?'#242c37':'#e5e0d3'}:undefined};
 }
 export function validateRecipe(recipe){
  if(!recipe||!(recipe.subject in SUBJECTS)||!(recipe.primary in LAWS)||!(recipe.mark in MARKS))return false;
