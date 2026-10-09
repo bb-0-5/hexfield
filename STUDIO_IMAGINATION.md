@@ -59,3 +59,9 @@ loads JS modules into an isolated browser origin and verifies rejection
 reaches the next model request, rework sends pixels and both legacy modes work.
 This mock does not demonstrate production model quality. Verify the actual
 Cloudflare AI binding after deployment and test a real painting separately.
+
+## Build 301 — restore continuous experimentation
+
+A fixed **three-successful-paintings-per-visitor daily quota** prematurely blocked active users. The authenticated PostgreSQL claim and completion functions now allow **30 completed paintings and 45 attempts per visitor per UTC day**, while preserving the earlier **60-total-attempts-per-day sitewide safety ceiling**. This increases access for a visitor but does not raise the site's total allowed calls. Cloudflare's separate model allocation and availability still apply.
+
+The Worker records safe categorical inference failures (`MODEL_DAILY_LIMIT`, `MODEL_CAPACITY`, `MODEL_TIMEOUT`, `EMPTY_RESPONSE`, `MODEL_FAILED`) in owner-private claim rows; failed calls are not counted as completed paintings. It returns actionable errors instead of reporting each interruption as generic temporary capacity. The studio displays per-visitor and shared allowance. Canvas revision decoding has a deadline to prevent an indefinite loading state. The last painting remains saved locally. Repeated-request regression tests run on GitHub pushes.
