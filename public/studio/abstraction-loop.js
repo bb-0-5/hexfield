@@ -8,6 +8,9 @@ import {createSourceBank,mixSources,cloneCanvas} from './source-mixer.js';
 import {evolveSeed,rankNoveltyCandidates,commitCanvas,
   methodSignature,snapshotNoveltyMemory} from './nonredundancy.js';
 import {paintHeldMotifs,advanceMotifMemory,motifEvidence} from './motif-memory.js';
+import {extractStructuralIdea,paintInheritedIdeas,advanceStructuralIdeas,
+ heritageEvidence,judgeStructuralIdeas,selectBalancedCandidate} from './structural-heritage.js';
+import {getGoldenMode} from './golden-taste.js';
 export const REWORK_SEQUENCE=['abstract_masses','negative_repaint','misread','remove_strength'];
 const clamp=(n,a,b)=>Math.max(a,Math.min(n,b));
 const choice=(a,seed=1)=>a[(seed>>>0)%a.length];
@@ -84,14 +87,16 @@ export function createAbstractionLoop({
  let running=false,waiting=false,timer=null,activeStep=false;
  let cycle=0,seed=Math.floor(Math.random()*4294967295),last=null;
  let lastRecipe=null,config={},lastMix=null,lastError=null,lastAssessment=null;
- let stamps=[],stamp=0,forceFreshSources=true,motifs=[];
+ let stamps=[],stamp=0,forceFreshSources=true,motifs=[],ideas=[];
  const state=()=>({
    running,waiting,cycle,recipe:lastRecipe,
    sourceNames:lastMix?.sources||[],method:lastMix?.mode||null,
    lastError,nonredundancy:lastAssessment,golden:lastAssessment?.golden||null,
    globalMemory:snapshotNoveltyMemory().count,
    currentSeed:lastRecipe?.seed??seed,donorGenerations:bank.genomes(),
-   motifs:motifEvidence(motifs),
+   motifs:motifEvidence(motifs),ideas:heritageEvidence(ideas),
+   heritage:lastAssessment?.heritage||null,
+   threeWay:lastAssessment?.threeWay||null,
    history:stamps.map(x=>({...x})),
    waitingReason:waiting?'Page hidden':''
  });
@@ -109,7 +114,7 @@ export function createAbstractionLoop({
  }
  function reset(){
    pause();cycle=0;last=null;lastRecipe=null;lastMix=null;stamps=[];lastAssessment=null;
-   motifs=[];
+   motifs=[];ideas=[];
    seed=Math.floor(Math.random()*4294967295);
    bank.clear();forceFreshSources=true;status();
  }
@@ -130,6 +135,15 @@ export function createAbstractionLoop({
      if(!motifs.length&&previous)motifs=advanceMotifMemory([],previous,{
        seed:parentSeed,cycle,parent:previous
      });
+     if(!ideas.length&&previous){
+       const recovered=extractStructuralIdea(previous,{
+         seed:parentSeed,cycle:Math.max(0,cycle-1),
+         exclude:motifEvidence(motifs).slice(0,1)
+       })||extractStructuralIdea(previous,{
+         seed:parentSeed,cycle:Math.max(0,cycle-1)
+       });
+       if(recovered)ideas=[recovered];
+     }
      // The source bank refreshes from the current lineage seed. The
      // picture still has an external reference; the generator isn't reset.
      if(cycle===0||cycle%6===0||forceFreshSources){
@@ -173,30 +187,52 @@ export function createAbstractionLoop({
        // The new law governs the NEW marks; islands of actual previous
        // brushwork survive as archaeological material. Even wildly
        // different mixers cannot erase them just to score high W novelty.
-       const held=paintHeldMotifs(output,motifs,{cycle,opacity:.96});
+       const held=paintHeldMotifs(output,motifs,{cycle,opacity:.93});
+       // Geometry survives separately from the original pixels: it
+       // undergoes a NEW mark law and pigment material on each child.
+       const heritage=paintInheritedIdeas(output,ideas,{
+         seed:candidateSeed,cycle,recipe
+       });
        const method=methodSignature({mode:'abstraction',primary:recipe.primary,
          secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework,
          blend:mixed.mode,subject:recipe.subject});
-       candidates.push({canvas:output,recipe,mixed,metrics,held,method});
+       candidates.push({canvas:output,recipe,mixed,metrics,held,heritage,method});
        if(currentStamp!==stamp)return;
      }
-     const [best]=rankNoveltyCandidates(candidates,{
+     const evaluated=rankNoveltyCandidates(candidates,{
        mode:'abstraction',parent:previous
      });
-     const {canvas:output,recipe,mixed,metrics,assessment,golden,held}=best;
+     // None of these objectives may monopolize artistic judgement:
+     // W seeks novelty, φ seeks proportional harmony, H preserves a
+     // recognizable identity while its EXECUTED material evolves.
+     const best=selectBalancedCandidate(evaluated,{
+       strict:getGoldenMode()==='strict'
+     })||evaluated[0];
+     const {canvas:output,recipe,mixed,metrics,assessment,
+       golden,held,heritage,threeWay}=best;
      const novelty=visualDelta(previous,output);
      const stalled=cycle>2&&(assessment.redundant||novelty<.035);
      const recorded=commitCanvas(output,{mode:'abstraction',method:best.method,
        seed:recipe.seed,parentId:recipe.parentId,evaluation:assessment});
-     lastAssessment={...recorded,golden,candidates:candidates.length};
+     lastAssessment={...recorded,golden,
+       heritage:{score:heritage.score,coverage:heritage.coverage,
+         count:heritage.drawn.length},
+       threeWay,candidates:candidates.length};
      const survived=motifEvidence(motifs);
+     const inherited=heritageEvidence(ideas);
      motifs=advanceMotifMemory(motifs,output,{
        seed:recipe.seed,cycle:cycle+1,parent:previous
+     });
+     ideas=advanceStructuralIdeas(ideas,output,{
+       seed:recipe.seed,cycle:cycle+1,
+       source:previous||output,rendered:heritage
      });
      const result={canvas:output,recipe,cycle:cycle+1,metrics,
        blend:mixed.mode,sources:mixed.sources,novelty,stalled,
        survival:{held:survived,coverage:held.coverage,
          carried:held.held.length,available:motifEvidence(motifs).length},
+       heritage:{...heritage,ancestors:inherited,
+         living:heritageEvidence(ideas),tradeoff:threeWay},
        golden,nonredundancy:lastAssessment};
      last=output;lastRecipe=recipe;lastMix=mixed;cycle++;lastError=null;
      noteLineage(recipe);
@@ -207,7 +243,10 @@ export function createAbstractionLoop({
        globalNovelty:lastAssessment.globalNovelty,
        minSimilarity:lastAssessment.novelty,
        complexity:lastAssessment.complexity,
-       survivors:survived.length,heldCoverage:held.coverage});
+       survivors:survived.length,heldCoverage:held.coverage,
+       inheritedIdeas:heritage.drawn.length,heritageScore:heritage.score,
+       inheritedMaterials:heritage.drawn.map(x=>x.material),
+       W:threeWay.W,phi:threeWay.phi,H:threeWay.H});
      stamps=stamps.slice(-10);
      try{onFrame(result)}catch(error){onError(error)}
      status();
@@ -250,10 +289,15 @@ export function createAbstractionLoop({
    }
  }
  document.addEventListener('visibilitychange',onVisibility);
+ function feedback(liked){
+   ideas=judgeStructuralIdeas(ideas,!!liked);
+   status();
+   return heritageEvidence(ideas);
+ }
  function dispose(){
    pause();document.removeEventListener('visibilitychange',onVisibility);
    bank.clear();
  }
- return {start,pause,once,reset,configure,state,dispose,
+ return {start,pause,once,reset,configure,state,feedback,dispose,
    isRunning:()=>running,getLast:()=>last,getRecipe:()=>lastRecipe};
 }
