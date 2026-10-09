@@ -3,6 +3,7 @@
  * The old engine and historic museum remain reachable at /legacy.html.
  */
 import {initImagination} from './imagination.js';
+import {initRuleStudio} from './rule-studio.js';
 import {SCENES,MOODS,renderLandscape,landscapeDescription,landscapeFeatures} from './landscape.js';
 import {LETTER_STYLES,LETTER_TYPES,cleanLogoText,renderLettering,letteringDescription,letteringFeatures} from './lettering.js';
 import {FOCI,makeGenome,mutateGenome,sampleGenome,proposeExperiments,methodDescription,programKey,methodFingerprint,geneFeatures,methodDistance,evaluateSurface,randomFrom} from './evolution.js';
@@ -253,15 +254,18 @@ async function showExperiments(rejected){
 function disableVoting(value){$('keep').disabled=value;$('reject').disabled=value;}
 function setStatus(message){$('feedbackStatus').textContent=message;}
 function setMode(mode,{paint=true}={}){
-  if(!['imagination','landscape','lettering'].includes(mode))return;
+  if(!['rules','imagination','landscape','lettering'].includes(mode))return;
   clearExperiments();clearBlind();state.controller?.abort();state.mode=mode;
-  const imagining=mode==='imagination';
+  const imagining=mode==='imagination',ruling=mode==='rules';
+  $('ruleControls').hidden=!ruling;
+  $('ruleWorkspace').hidden=!ruling;
   $('imaginationControls').hidden=!imagining;
   $('imaginationWorkspace').hidden=!imagining;
-  $('proceduralWorkspace').hidden=imagining;
-  $('proceduralActions').hidden=imagining;
-  $('shelf').hidden=imagining;
+  $('proceduralWorkspace').hidden=imagining||ruling;
+  $('proceduralActions').hidden=imagining||ruling;
+  $('shelf').hidden=imagining||ruling;
   if(imagining)imagination.show();
+  if(ruling)ruleStudio?.show();
   $('landscapeControls').hidden=mode!=='landscape';
   $('letteringControls').hidden=mode!=='lettering';
   for(const el of document.querySelectorAll('[data-mode]')) {
@@ -270,7 +274,7 @@ function setMode(mode,{paint=true}={}){
   }
   $('generate').firstChild.textContent=mode==='landscape'?'PAINT SOMETHING ':'DESIGN A LOGO ';
   $('canvasWrap').classList.toggle('logo-surface',mode==='lettering');
-  if(imagining)return;
+  if(imagining||ruling)return;
   updateBlindSummary();
   if(paint)void paintFresh();
 }
@@ -613,7 +617,7 @@ function chooseBlind(index){
     Image distance: ${distance?.toFixed(3)??'unmeasured'}. This choice is a test result, not automatically counted as a general KEEP/REJECT vote.`;
   updateBlindSummary();
 }
-let imagination;
+let imagination,ruleStudio;
 function bind(){
   for(const btn of document.querySelectorAll('[data-mode]'))btn.addEventListener('click',()=>setMode(btn.dataset.mode));
   $('generate').addEventListener('click',()=>void paintFresh());
@@ -629,7 +633,8 @@ function bind(){
   $('landscapeMood').addEventListener('change',()=>{if(state.mode==='landscape')void paintFresh();});
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void syncVotes();});
   imagination=initImagination({getSession:acquireSession});
-  buildGallery();setMode('imagination');updateBlindSummary();
+  ruleStudio=initRuleStudio();
+  buildGallery();setMode('rules');updateBlindSummary();
   void restoreRemoteProcedures();
   if(state.pending.length)void syncVotes();
   void loadSharedTaste();
