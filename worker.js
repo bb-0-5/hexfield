@@ -1,4 +1,4 @@
-/* Hexfield 300: reliable visual imagination (Cloudflare Workers AI), separate from
+/* Hexfield 301: sustainable visual imagination (Cloudflare Workers AI), separate from
  * the historical fixed-landscape painter. No automatic/bystander inference.
  * Authenticated on the Supabase Data API before ANY GPU invocation; daily
  * inference caps enforced transactionally in PostgreSQL, across isolates.
@@ -53,6 +53,30 @@ function decodeBase64(b64){
   const bytes=Uint8Array.from(atob(b64),c=>c.charCodeAt(0));
   return bytes;
 }
+const modelFailure=(error)=>{
+  const details=String(error?.message||error||'').slice(0,500);
+  const code=String(error?.code||error?.status||'');
+  if(/3036|free allocation|neuron|daily (?:free|allocation)|exceed.*daily/i.test(details+' '+code))
+    return {code:'MODEL_DAILY_LIMIT',http:503,message:'Cloudflare Workers AI has exhausted its daily free allocation. This resets at 00:00 UTC. Your image studio quota is not the problem.'};
+  if(/3040|429|capacity|busy|overload|rate.?limit/i.test(details+' '+code))
+    return {code:'MODEL_CAPACITY',http:503,message:'Cloudflare image generation is temporarily at capacity. Try again shortly.'};
+  if(/timeout|time.?out|deadline|aborted/i.test(details+' '+code))
+    return {code:'MODEL_TIMEOUT',http:504,message:'The image model timed out. Please retry when the service is responsive.'};
+  if(/no image returned/i.test(details))
+    return {code:'EMPTY_RESPONSE',http:502,message:'The image model responded without a usable painting. Please retry.'};
+  return {code:'MODEL_FAILED',http:502,message:'The Cloudflare image model failed. The artist is still available; retry or use the procedural mode.'};
+};
+async function recordGenerationFailure(bearer,requestId,code){
+  try{
+    const res=await fetch(SUPABASE+'/rest/v1/rpc/fail_hexfield_imagination',{
+      method:'POST',
+      headers:{apikey:PUBLIC_KEY,authorization:bearer,'content-type':'application/json'},
+      body:JSON.stringify({p_request_id:requestId,p_code:code}),
+      signal:AbortSignal.timeout(5500)
+    });
+    if(!res.ok)console.warn('Could not record unsuccessful image attempt',res.status);
+  }catch(e){console.warn('Could not record image failure status',String(e).slice(0,150));}
+}
 async function apiImagination(request,env){
   if(!origins.has(request.headers.get('origin')))return data({error:'This action is available only from hexfield.org'},403);
   if(!env?.AI?.run)return data({error:'Image generation is not configured on this Worker.'},503);
@@ -72,6 +96,14 @@ async function apiImagination(request,env){
     return data({error:'Invalid image data'},400);
   const edit=!!body.edit && !!imageInput;
   if(!/^[a-f0-9-]{36}$/i.test(String(body.request_id||'')))return data({error:'Request ID missing'},400);
+  // Decode/validate an editing input BEFORE reserving any model attempt.
+  let inputBytes=null;
+  if(edit){
+    try{inputBytes=decodeBase64(imageInput);}
+    catch{return data({error:'The painting to revise could not be decoded. It did not use an attempt.'},400);}
+    if(inputBytes.length<50||inputBytes.length>800000)
+      return data({error:'Invalid painting size; no attempt was used.'},400);
+  }
   // The authenticated user's JWT is checked by PostgREST, not trusted merely
   // because it looks structurally correct. No AI requests without a DB claim.
   let budget;
@@ -89,10 +121,7 @@ async function apiImagination(request,env){
   const finalPrompt=edit?`Using input image 0 as the existing canvas, substantially rework the visual content, medium and composition following this direction: ${plan.prompt}`:plan.prompt;
   form.set('prompt',finalPrompt);
   form.set('width','1024');form.set('height','768');
-  if(edit){
-    try{const bytes=decodeBase64(imageInput);form.set('input_image_0',new Blob([bytes],{type:'image/png'}),'canvas.png');}
-    catch{return data({error:'Could not read the painting to revise'},400);}
-  }
+  if(edit)form.set('input_image_0',new Blob([inputBytes],{type:'image/png'}),'canvas.png');
   try{
     // Workers AI Klein 4B requires multipart stream with Content-Type boundary.
     const wrapped=new Response(form);
@@ -120,13 +149,12 @@ async function apiImagination(request,env){
     return data({image:'data:image/png;base64,'+encoded,title:plan.title,method:plan.method,
       prompt:finalPrompt,credits_remaining:remaining,model:IMAGE_MODEL});
   }catch(e){
-    const reason=String(e?.message||e||'unknown').slice(0,280);
-    console.error('Workers AI image inference failed',reason);
-    const throttled=/(429|rate.?limit|daily.?limit|quota|capacity|busy|unavailable|overload|1030)/i.test(reason);
-    return data({error:throttled
-      ? 'Cloudflare\'s image model is temporarily at capacity. Try again shortly; failed attempts do not consume completed paintings.'
-      : 'The image model could not finish this picture. Try again; the attempt will expire from your painting allowance.',
-      code:throttled?'MODEL_BUSY':'MODEL_FAILED',retryable:true},throttled?503:502);
+    const failure=modelFailure(e);
+    console.error('Workers AI image inference failed',
+      JSON.stringify({code:failure.code,reason:String(e?.message||e||'unknown').slice(0,280)}));
+    await recordGenerationFailure(bearer,body.request_id,failure.code);
+    return data({error:failure.message,code:failure.code,retryable:failure.code!=='MODEL_DAILY_LIMIT'},
+      failure.http);
   }
 }
 export default {
@@ -136,9 +164,13 @@ export default {
       if(request.method!=='POST')return data({error:'POST only'},405);
       return apiImagination(request,env);
     }
-    if(url.pathname==='/api/imagine/status')return data({ready:!!env?.AI?.run,model:IMAGE_MODEL,
-      completed_paintings_per_visitor_per_day:3,attempt_safety_cap_per_visitor_per_day:10,
-      site_attempt_cap_per_day:60,failed_reservation_minutes:3,mode:'explicit action only'});
+    if(url.pathname==='/api/imagine/status')return data({
+      configured:!!env?.AI?.run,model:IMAGE_MODEL,build:301,
+      completed_paintings_per_visitor_per_day:30,attempt_safety_cap_per_visitor_per_day:45,
+      site_attempt_cap_per_day:60,failed_reservation_minutes:3,
+      note:'Configuration status does not guarantee the external model is available.',
+      mode:'explicit action only'
+    });
     if(url.pathname==='/')url.pathname='/index.html';
     return env.ASSETS.fetch(new Request(url,request));
   }
