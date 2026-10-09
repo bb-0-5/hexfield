@@ -10,13 +10,15 @@
     "/rest/v1/rpc/sample_hexfield_signatures": "archive-read",
     "/rest/v1/hexfield_signatures": "archive-write",
     "/rest/v1/hexfield_sim_progress": "progress-read",
+    "/rest/v1/hexfield_taste_profiles": "private-taste-read",
   };
   globalThis.fetch = function hexfieldFetch(input, init = {}) {
     const url = typeof input === "string" ? input : input?.url;
     const path = typeof url === "string" && url.startsWith(API)
       ? new URL(url).pathname : "";
     const mode = routes[path];
-    if (!mode) return originalFetch(input, init);
+    const method = String(init?.method || (input instanceof Request ? input.method : "GET")).toUpperCase();
+    if (!mode || (mode === "private-taste-read" && method !== "GET")) return originalFetch(input, init);
     return (async () => {
       // Anonymous Supabase Auth is an authenticated RLS identity. The publishable
       // API key alone is NOT one, even if it was historically sent as a Bearer.
@@ -25,6 +27,13 @@
       headers.set("Authorization", "Bearer " + session.access_token);
       let target = url;
       if (mode === "archive-write") target = API + "/rest/v1/hexfield_render_signatures";
+      if (mode === "private-taste-read") {
+        const scoped = new URL(url);
+        // RLS enforces ownership too. This explicit filter prevents accidentally
+        // treating another visitor's first row as your model if a policy regresses.
+        scoped.searchParams.set("user_id", "eq." + session.user.id);
+        target = scoped.toString();
+      }
       const res = await originalFetch(target, { ...init, headers });
       if (!res.ok && (mode === "archive-write" || mode === "archive-read")) {
         console.warn("hexfield shared archive:", mode, "HTTP", res.status);
