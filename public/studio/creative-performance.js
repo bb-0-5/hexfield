@@ -194,6 +194,7 @@ export function createCreativePerformance({host,canvas,name='theatre',statusElem
        drawStrokes(ctx,data.oldAnatomy.hitMap,data.oldAnatomy.hitMap.length,phase/.16*20);
      }
      outlineSurvivors(ctx,plan.survivors,.95);
+     sketchInheritedIdeas(ctx,plan.ideas,.22);
      label('01 / FIND THE OLD FORM',plan.survivors.length?
        plan.survivors.length+' painted regions still living inside the new image':
        'These are the actual parent pixels and anatomical paths');
@@ -220,6 +221,7 @@ export function createCreativePerformance({host,canvas,name='theatre',statusElem
      if(movement<.13){
        mutedBase();fit(data.parent,.42*(1-movement/.13));
        outlineSurvivors(ctx,plan.survivors);
+       sketchInheritedIdeas(ctx,plan.ideas,.35);
        label('03 / UNDO A FORM',plan.survivors.length?
          'Old background fades; '+plan.survivors.length+' physical motifs remain':
          plan.method+' · subtracting the previous arrangement');
@@ -227,6 +229,7 @@ export function createCreativePerformance({host,canvas,name='theatre',statusElem
        const assembly=clamp((movement-.13)/.69,0,1);
        mutedBase();
        outlineSurvivors(ctx,plan.survivors,1-assembly*.6);
+       sketchInheritedIdeas(ctx,plan.ideas,assembly);
        if(plan.kind==='logo'&&plan.parts.length){
          drawStrokes(ctx,plan.parts,assembly*plan.parts.length);
          // Finished ink arrives *only where the selected geometry was
@@ -249,6 +252,7 @@ export function createCreativePerformance({host,canvas,name='theatre',statusElem
        mutedBase();
        fit(data.final,1);
        outlineSurvivors(ctx,plan.survivors,.35);
+       sketchInheritedIdeas(ctx,plan.ideas,1);
        label('05 / THE IDEA SURVIVES',plan.survivors.length?
          plan.survivors.length+' inherited fragments coexist with the newly constructed image':
          plan.method+' · now available for the next mutation');
