@@ -35,7 +35,7 @@ function sampleCurve(item){
  return sample;
 }
 function paintPart(ctx,item,points,scaleX,scaleY,originX,originY,baseWidth,ink,accent,{
-  harsh=false,guide=false,highlight=false}={}){
+  harsh=false,guide=false,highlight=false,accentShare=null}={}){
  if(item.omit||!points.length)return null;
  const real=points.map(([x,y])=>[originX+x*scaleX,originY+y*scaleY]);
  const weight=baseWidth*(item.width||1);
@@ -65,7 +65,8 @@ function paintPart(ctx,item,points,scaleX,scaleY,originX,originY,baseWidth,ink,a
      if(item.dashed&&Math.floor(t*20)%2===1)continue;
      const a=real[i-1],b=real[i];if(!a||!b)continue;
      ctx.lineWidth=weight*(item.localWeights?.[j]||1);
-     ctx.strokeStyle=item.localInverts?.[j]?accent:colour;
+     ctx.strokeStyle=item.localInverts?.[j]?accent:
+       (Number.isFinite(accentShare)&&t<accentShare?accent:colour);
      if(item.isTerm&&!item.localWeights&&item.amount)
        ctx.lineWidth=weight*(1-.20*t);
      // Deliberately draw each segment, rather than join a single font outline:
@@ -109,11 +110,19 @@ export function paintAnatomyWord(canvas,recipe={},options={}){
  wordWidth+=(letters.length-1)*tracking;
  let em=Math.min(425,(W-175)/Math.max(.8,wordWidth*.77));
  em=clamp(em,26,425);
- const xscale=em*.77,yscale=em*1.08;
+ const phi=recipe.phiComposition||null;
+ const xscale=em*.77*clamp(Number(phi?.widthScale)||1,.78,1.12);
+ const yscale=em*1.08*clamp(Number(phi?.heightScale)||1,.72,1.62);
  const actualW=xscale*wordWidth;
- const x0=Math.max(10,(W-actualW)/2);
- const top=(H-yscale*(GUIDELINES.baseline-GUIDELINES.cap))/2-yscale*GUIDELINES.cap;
- const baseWidth=em*face.weight;
+ const x0=clamp((W-actualW)/2+
+   clamp(Number(phi?.shiftX)||0,-.26,.26)*W,10,Math.max(10,W-actualW-10));
+ const desiredTop=(H-yscale*(GUIDELINES.baseline-GUIDELINES.cap))/2-
+   yscale*GUIDELINES.cap+clamp(Number(phi?.shiftY)||0,-.24,.24)*H;
+ const top=clamp(desiredTop,18-yscale*GUIDELINES.cap,
+   Math.max(18-yscale*GUIDELINES.cap,H-20-yscale*GUIDELINES.descent));
+ const baseWidth=em*face.weight*clamp(Number(phi?.weightScale)||1,.74,1.38);
+ const accentShare=Number.isFinite(phi?.accentShare)?
+   clamp(phi.accentShare,.08,.92):null;
  const guide=options.guide??program.guide;
  if(guide){
    ctx.save();ctx.strokeStyle='#a4aaa3';ctx.lineWidth=1;
@@ -166,7 +175,7 @@ export function paintAnatomyWord(canvas,recipe={},options={}){
      if(mode==='double'){
        paintPart(ctx,{...active,invert:true},pts,xscale,yscale,
          glyphStart+stroke*.65,localTop+stroke*.65,stroke*1.12,ink,accent,
-         {harsh:hard,guide:false,highlight:false});
+         {harsh:hard,guide:false,highlight:false,accentShare});
      }
      if(mode==='inline'||mode==='outline'){
        // Two *structural* strokes, never font shadows: cut the interior of
@@ -182,7 +191,7 @@ export function paintAnatomyWord(canvas,recipe={},options={}){
      const world=(mode==='inline'||mode==='outline')?
        pts.map(([px,py])=>[glyphStart+px*xscale,localTop+py*yscale]):
        paintPart(ctx,active,pts,xscale,yscale,
-         glyphStart,localTop,stroke,ink,accent,{harsh:hard,guide,highlight});
+         glyphStart,localTop,stroke,ink,accent,{harsh:hard,guide,highlight,accentShare});
      if((mode==='inline'||mode==='outline')&&guide&&world.length){
        ctx.save();ctx.strokeStyle=highlight?'#bb644a':'#789fa2';ctx.lineWidth=1;
        clipPath(ctx,world);ctx.stroke();ctx.restore();
@@ -238,7 +247,7 @@ export function paintAnatomyWord(canvas,recipe={},options={}){
    mutatedComponents:applied,hitMap,geometry:{
      cap:top+GUIDELINES.cap*yscale,baseline:top+GUIDELINES.baseline*yscale,
      xHeight:top+GUIDELINES.x*yscale,descender:top+GUIDELINES.descent*yscale,
-     em,tracking,x0,width:actualW}};
+     em,tracking,x0,width:actualW,phiComposition:phi}};
 }
 export function hitTestAnatomy(result,x,y,tolerance=20){
  if(!result?.hitMap)return null;
