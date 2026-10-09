@@ -11,11 +11,62 @@ const readHistory=()=>{try{const rows=JSON.parse(localStorage.getItem(HISTORY_KE
 const persist=rows=>{try{localStorage.setItem(HISTORY_KEY,JSON.stringify(rows.slice(-40)));}catch{}};
 function safeText(x,n=400){return String(x||'').slice(0,n).trim();}
 const noStore={cache:'no-store'};
+const PAINTING_DB='hexfield-imagination-images-v1';
+const openArtworkDB=()=>new Promise((resolve,reject)=>{
+  if(!('indexedDB' in window))return reject(Error('IndexedDB unavailable'));
+  const request=indexedDB.open(PAINTING_DB,1);
+  request.onupgradeneeded=()=>{if(!request.result.objectStoreNames.contains('artwork'))request.result.createObjectStore('artwork');};
+  request.onsuccess=()=>resolve(request.result);
+  request.onerror=()=>reject(request.error||Error('Painting storage unavailable'));
+});
+async function storeCurrentPainting(current){
+  try{
+    const db=await openArtworkDB();
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction('artwork','readwrite');
+      tx.objectStore('artwork').put(current,'latest');
+      tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
+      tx.onabort=()=>reject(tx.error);
+    });db.close();
+  }catch(error){console.info('Painting will remain in this tab only:',String(error).slice(0,130));}
+}
+async function restoreCurrentPainting(){
+  try{
+    const db=await openArtworkDB();
+    const picture=await new Promise((resolve,reject)=>{
+      const tx=db.transaction('artwork','readonly');
+      const req=tx.objectStore('artwork').get('latest');
+      req.onsuccess=()=>resolve(req.result||null);
+      req.onerror=()=>reject(req.error);
+    });db.close();return picture;
+  }catch{return null;}
+}
 
 export function initImagination({getSession}){
   let current=null,working=false,history=readHistory(),loadPromise=null,syncing=false;
   let lastCritique='';
   const uiStatus=(message)=>{$('imagineStatus').textContent=message;};
+  let quotaLoading=false;
+  async function refreshQuota(){
+    if(quotaLoading)return;
+    quotaLoading=true;
+    try{
+      const session=await getSession();
+      const response=await fetch(API+'/rest/v1/rpc/hexfield_imagination_remaining',{
+        method:'POST',cache:'no-store',
+        headers:{apikey:PUBLIC_KEY,authorization:'Bearer '+session.access_token,'Content-Type':'application/json'},
+        body:'{}',signal:AbortSignal.timeout(9000)
+      });
+      if(!response.ok)throw Error('quota status unavailable');
+      const info=await response.json();
+      const remaining=Number(info.paintings_remaining);
+      const retries=Number(info.retry_attempts_remaining);
+      if(Number.isFinite(remaining)&&Number.isFinite(retries))
+        $('imagineQuota').textContent=remaining+' completed paintings left today · '+
+          retries+' total attempts left'+(Number(info.in_progress)>0?' · '+info.in_progress+' painting(s) processing':'');
+    }catch(error){console.info('Could not read imagination quota:',String(error).slice(0,120));}
+    finally{quotaLoading=false;}
+  }
   const setBusy=(busy)=>{
     working=busy;
     for(const key of ['imaginePaint','imagineRevise','imagineExport','imagineKeep','imagineReject']){
@@ -98,14 +149,22 @@ export function initImagination({getSession}){
   }
   async function makePainting(edit=false){
     if(working)return;
-    setBusy(true);uiStatus('Investigating visual ideas. No landscape template is being reused.');
+    setBusy(true);uiStatus('Connecting to the image studio…');
+    const controller=new AbortController();
+    let deadline=null,progressTimer=null;
     try{
-      await fetchRemoteFeedback();
+      // The local feedback is sufficient to start painting. Never block GPU
+      // generation while a separate remote-history sync is stalled.
+      void fetchRemoteFeedback();
       const session=await getSession();
       const idea=safeText($('imagineIdea').value,360);
       const note=safeText($('imagineCritique').value,400);
       const image_b64=edit&&current?await smallCanvasB64(current.image):null;
+      uiStatus('The model is painting. This can take a minute — the page is still responsive.');
+      progressTimer=setTimeout(()=>uiStatus('Still generating the image. Your previous painting will be preserved if this attempt fails.'),35000);
+      deadline=setTimeout(()=>controller.abort(),115000);
       const response=await fetch('/api/imagine',{method:'POST',...noStore,
+        signal:controller.signal,
         headers:{'Content-Type':'application/json',authorization:'Bearer '+session.access_token},
         body:JSON.stringify({request_id:crypto.randomUUID(),idea,
           critique:edit?note||'Rework this composition substantially; do not just colour grade it.':note||lastCritique,
@@ -120,9 +179,22 @@ export function initImagination({getSession}){
       $('imagineCritique').value='';lastCritique='';
       document.querySelectorAll('[data-critique]').forEach(b=>b.classList.remove('selected'));
       updateCurrent();
-      uiStatus(`Made with a generative image model. ${result.credits_remaining} painting${result.credits_remaining===1?'':'s'} left today. Tell it what succeeded or failed.`);
-    }catch(error){uiStatus(safeText(error.message,280));}
-    finally{setBusy(false);updateCurrent();}
+      void storeCurrentPainting(current);
+      void refreshQuota();
+      uiStatus('Painting finished. '+result.credits_remaining+' successful painting(s) remaining today. Your previous work is saved in this browser.');
+    }catch(error){
+      const timedOut=controller.signal.aborted||error?.name==='AbortError';
+      uiStatus(timedOut
+        ? 'The image request took too long and was stopped. The painter is still available — please retry. Failed attempts do not count as completed paintings.'
+        : safeText(error.message||'The image service could not complete this painting.',300)+
+          ' Your previous painting is still here.');
+      void refreshQuota();
+    }
+    finally{
+      if(deadline!==null)clearTimeout(deadline);
+      if(progressTimer!==null)clearTimeout(progressTimer);
+      setBusy(false);updateCurrent();
+    }
   }
   function vote(liked){
     if(!current||working||current.judged)return;
@@ -157,6 +229,12 @@ export function initImagination({getSession}){
   }));
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void syncFeedback();});
   summariseHistory();updateCurrent();
+  void restoreCurrentPainting().then(saved=>{
+    if(current||!saved||typeof saved.image!=='string'||!saved.image.startsWith('data:image/'))return;
+    current=saved;updateCurrent();setBusy(false);
+    uiStatus('Restored your previous painting from this browser. You can keep it, critique it, export it or paint again.');
+  });
   void fetchRemoteFeedback().then(()=>syncFeedback());
+  void refreshQuota();
   return {show(){summariseHistory();},hide(){},getHistory:()=>history};
 }
