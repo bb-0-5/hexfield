@@ -14,9 +14,9 @@ globalThis.localStorage={
  setItem:(key,value)=>data.set(key,String(value))
 };
 const {
- extractStructuralIdea,paintInheritedIdeas,advanceStructuralIdeas,
+ extractStructuralIdea,paintInheritedIdeas,advanceStructuralIdeas,evolveContour,
  judgeStructuralIdeas,heritageEvidence,heritageTaste,
- selectBalancedCandidate,
+ rankBalancedCandidates,selectBalancedCandidate,
  HERITAGE_TTL,MAX_STRUCTURAL_IDEAS,SAMPLES,MATERIALS
 }=await import('../public/studio/structural-heritage.js');
 
@@ -35,6 +35,16 @@ assert.ok(shape.holes.length>=1,'The enclosed empty counter must survive separat
 assert.ok(shape.stats.aspect>.8&&shape.stats.aspect<2.1);
 assert.ok(shape.ink.startsWith('#'));
 assert.equal(shape.generation,0);
+assert.deepEqual(shape.rootOutline,shape.outline,
+ 'An actual measured root contour must remain an immutable resemblance anchor');
+const evolved=evolveContour(shape,112233);
+assert.ok(evolved?.outline?.length===SAMPLES);
+assert.ok(evolved.magnitude>.002&&evolved.magnitude<.12,
+ 'Contour must genuinely mutate, without losing its ancestry in a single step');
+assert.deepEqual(evolveContour(shape,112233),evolved,
+ 'Same seed and parent shape reproduce identical geometric descendants');
+assert.notDeepEqual(evolved.outline,shape.outline);
+assert.equal(evolved.preservesHoles,shape.holes.length);
 assert.deepEqual(extractStructuralIdea(parent,{region,seed:981,cycle:3}),shape,
  'Feature extraction must be deterministic for the same ancestor');
 assert.ok(!('image' in shape),'Structural genome must not secretly store an image bitmap');
@@ -83,6 +93,16 @@ for(let cycle=4;cycle<11;cycle++){
 }
 assert.ok(heritageEvidence(current).every(x=>x.generation>0));
 assert.ok(heritageEvidence(current).every(x=>typeof x.material==='string'));
+const descendant=current.find(x=>x.id===shape.id);
+assert.ok(descendant?.rootOutline?.length===SAMPLES,
+ 'Original shape must remain alongside the descendant in every generation');
+assert.deepEqual(descendant.rootOutline,shape.outline);
+assert.notDeepEqual(descendant.outline,shape.outline,
+ 'The inherited visual idea must actually develop geometric form over generations');
+const ancestorDrift=descendant.outline.reduce((a,p,i)=>a+
+ Math.hypot(p[0]-shape.outline[i][0],p[1]-shape.outline[i][1]),0)/SAMPLES;
+assert.ok(ancestorDrift>.002&&ancestorDrift<.22,
+ 'Evolution should remain related to the original form, not randomized beyond recognition');
 const boosted=judgeStructuralIdeas(current,true);
 assert.ok(boosted[0].trust>current[0].trust);
 assert.equal(heritageTaste().votes,1);
@@ -101,6 +121,13 @@ const stranger={canvas:fresh(),assessment:{score:.7,redundant:false},
 const choice=selectBalancedCandidate([stranger,mine]);
 assert.equal(choice.heritage.score,.95,'Heritage must meaningfully influence winner selection');
 assert.ok(choice.threeWay.W>0&&choice.threeWay.H>0&&choice.threeWay.phi>0);
+const fullyRanked=rankBalancedCandidates([mine,stranger]);
+assert.equal(fullyRanked.length,2);
+assert.ok(fullyRanked.every(x=>typeof x.threeWay?.W==='number'&&
+ typeof x.threeWay?.H==='number'&&typeof x.threeWay?.phi==='number'),
+ 'Explorer-mode candidate selection must never discard the computed three-way score');
+assert.equal(fullyRanked.find(x=>x===stranger),undefined,
+ 'Ranking returns scored copies rather than leaking undecorated original candidates');
 const qualified={...stranger,golden:{combined:.66,qualifies:true}};
 assert.equal(selectBalancedCandidate([mine,qualified],{strict:true}).golden.qualifies,true,
  'Strict golden constraints should retain their documented qualification priority');
