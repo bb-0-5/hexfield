@@ -8,3 +8,19 @@
 @media(max-width:1030px){.top-description{display:none}.masthead{justify-content:space-between}.product-frame{grid-template-columns:minmax(270px,315px) minmax(0,1fr);gap:24px}.vote-section{flex-wrap:wrap}.vote-actions{margin-left:auto}.controls h1{font-size:38px}.gallery{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:730px){.shell{padding:0 17px}.masthead{min-height:71px}.brand{font-size:25px}.archive-link{font-size:8px;padding:12px 10px;max-width:137px;white-space:normal;text-align:center}.product-frame{display:flex;flex-direction:column;gap:20px;padding:22px 0 26px}.controls{padding-top:0}.controls h1{font-size:38px;margin-bottom:12px}.intro{font-size:16px;max-width:unset;margin-bottom:20px}.mode-switch{margin-bottom:19px}.discipline-panel{min-height:unset}.control-help{display:none}.discipline-panel select,.discipline-panel input{margin-bottom:13px;min-height:45px}.action-generate{padding:18px}.studio-principle{display:none}.canvas-heading{padding:6px 2px 12px}.canvas-heading-text{font-size:9px}.canvas-wrap{border:5px solid #3a403b}.canvas-overlay{bottom:8px;left:9px;font-size:8px}.work-details{padding:16px 0 17px}.work-details p{font-size:17px}.work-details #renderStatus{font-size:8px}.vote-section{margin:16px 0 12px;gap:12px}.vote-description{max-width:unset;width:100%}.vote-description strong{font-size:21px}.vote-description span{font-size:11px}.vote-actions{width:100%;margin-left:0}.vote-button{flex:1;min-width:0}.feedback-line{text-align:left;font-size:10px}.shelf{padding:27px 0}.shelf-title{align-items:start}.shelf-title h2{font-size:27px}.shelf-title>p{display:none}.gallery{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.footer{flex-direction:column;font-size:9px;gap:9px}.footer div{gap:12px}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;animation:none!important}}
+
+/* Build 296: method discovery is an explicit choice, not an invisible shuffle. */
+.method-line{display:block;margin-top:8px;color:var(--gold);font:700 10px/1.4 var(--sans);letter-spacing:.08em}
+.experiments[hidden]{display:none}
+.experiments{border-top:1px solid var(--line);margin-top:20px;padding-top:22px}
+.experiments-title .small-label{color:var(--gold)}
+.experiments-title h2{font:normal 24px/1.16 var(--serif);margin:8px 0}
+.experiments-title p{font:13px/1.5 var(--sans);color:var(--dim);margin:0 0 16px;max-width:620px}
+.experiment-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}
+.experiment-card{display:flex;flex-direction:column;text-align:left;padding:7px 7px 12px;color:var(--ink);background:var(--panel);border:1px solid var(--line);min-width:0;gap:8px}
+.experiment-card:hover{border-color:var(--mint);background:#303b34}
+.experiment-card:focus-visible{outline:3px solid var(--gold)}
+.experiment-card img{display:block;width:100%;aspect-ratio:390/241;object-fit:cover;background:#566b6a}
+.experiment-card strong{font-size:10px;letter-spacing:.1em;color:var(--mint);font-weight:900;padding:0 5px}
+.experiment-card span{font:12px/1.3 var(--serif);color:var(--soft);padding:0 5px;overflow-wrap:anywhere}
+@media(max-width:730px){.experiments{margin-top:15px;padding-top:15px}.experiments-title h2{font-size:21px}.experiment-cards{gap:8px}.experiment-card{padding:5px 5px 10px}.experiment-card strong{font-size:9px}.experiment-card span{font-size:11px}.method-line{font-size:9px}}

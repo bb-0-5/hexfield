@@ -1,261 +1,352 @@
-/* Hexfield Studio 295 — entirely procedural landscape painting.
- * No sampled images, reference drawings, harvested strokes, or external assets.
- * A recipe and seed deterministically produce the same composition at any size.
+/* Hexfield 296: landscapes are executed from a mutable procedure graph.
+ * The grammar below is finite and validated, but its compositional expressions,
+ * layering, mark instructions and scene topology can evolve/crossover independently.
+ * This is not a hand-drawn reference library and not a shuffle of hill positions.
  */
-const WIDTH = 1200;
-const HEIGHT = 740;
-export const SCENES = ['mountains', 'coast', 'forest', 'plains', 'hills', 'lake'];
-export const MOODS = ['golden', 'mist', 'storm', 'twilight'];
-
-function randomFrom(seed) {
-  let n = Number(seed) >>> 0;
-  return () => {
-    n += 0x6d2b79f5;
-    let t = n;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-const between = (rng, lo, hi) => lo + (hi - lo) * rng();
-const choose = (rng, a) => a[Math.floor(rng() * a.length)];
-const clamp = (v, lo = 0, hi = 1) => Math.min(hi, Math.max(lo, v));
-const palettes = {
-  golden: {
-    sky: ['#354e6d', '#b58a82', '#f4c6a3'], earth: ['#80918c', '#607d6e', '#44584e', '#263f37'],
-    water: ['#637f88', '#b8a695'], light: '#ffe2a0', mist: '#fae5bf', ink: '#1a3433',
-  },
-  mist: {
-    sky: ['#5a7788', '#b6c4c5', '#e5dfd1'], earth: ['#a8b4ad', '#7d9b93', '#4d746d', '#314f4c'],
-    water: ['#8faeb2', '#cbd8ce'], light: '#fff2dc', mist: '#e9efea', ink: '#2d5554',
-  },
-  storm: {
-    sky: ['#283647', '#59677a', '#98a5a8'], earth: ['#738b8d', '#506b72', '#364f59', '#213842'],
-    water: ['#546c7d', '#9baaae'], light: '#e9dbb9', mist: '#b7bec0', ink: '#172d39',
-  },
-  twilight: {
-    sky: ['#272b50', '#735f82', '#d88c83'], earth: ['#85778b', '#64536d', '#403e59', '#282d49'],
-    water: ['#665e86', '#bd8995'], light: '#ffd4ba', mist: '#c4a4b6', ink: '#1f2745',
-  },
+import {randomFrom,makeGenome,methodDescription,evaluateSurface} from './evolution.js';
+export const SCENES=['mountains','coast','forest','plains','hills','lake'];
+export const MOODS=['golden','mist','storm','twilight'];
+const W=1200,H=740,PI=Math.PI;
+const palettes={
+ golden:{sky:['#1e4261','#8e9caa','#efbf9b'],land:['#cad4c5','#889f95','#66796c','#344a42','#203a34'],water:['#7797a5','#d2b3a5'],light:'#ffe9bd',mist:'#f5dbbc',shade:'#172d35'},
+ mist:{sky:['#829bad','#c5ced0','#f2e9d9'],land:['#c1c8c1','#8fa7a0','#779288','#4b7067','#365651'],water:['#84abae','#cedfd9'],light:'#fff0d3',mist:'#f2f4e7',shade:'#2a5555'},
+ storm:{sky:['#1a2d40','#55697c','#9da9ab'],land:['#a9b2b3','#83989b','#586c72','#304955','#203542'],water:['#476777','#9cbbc3'],light:'#ffe0b3',mist:'#bacbd1',shade:'#142937'},
+ twilight:{sky:['#222948','#726381','#e6a08b'],land:['#b0a0aa','#80758a','#685d77','#433c60','#28294b'],water:['#62607f','#b99ea9'],light:'#ffdeab',mist:'#d8afbf',shade:'#1e2341'}
 };
-function toRGB(hex) { const n = parseInt(hex.slice(1),16); return [(n >> 16)&255,(n >> 8)&255,n&255]; }
-function mixed(c1,c2,t) { const a=toRGB(c1),b=toRGB(c2); return `rgb(${a.map((v,i)=>Math.round(v*(1-t)+b[i]*t)).join(',')})`; }
-function alpha(hex, opacity) {const a=toRGB(hex);return `rgba(${a[0]},${a[1]},${a[2]},${opacity})`;}
-function hash01(n) { const a = Math.sin(n*127.1+78.233)*43758.5453; return a-Math.floor(a); }
-function smoothNoise(x, seed) {
-  const a = Math.floor(x),t=x-a,u=t*t*(3-2*t);
-  return (hash01(a+seed*17)*(1-u)+hash01(a+1+seed*17)*u)*2-1;
+const clamp=(x,a=0,b=1)=>Math.max(a,Math.min(b,x));
+const lerp=(a,b,t)=>a+(b-a)*t;
+const hash=(x,seed)=>{let v=Math.sin(x*127.1+seed*113.3)*43758.5453123;return v-Math.floor(v);};
+const noise=(x,seed)=>{let i=Math.floor(x),t=x-i;t=t*t*(3-2*t);return (lerp(hash(i,seed),hash(i+1,seed),t)*2-1);};
+const fbm=(x,seed)=>noise(x,seed)*.56+noise(x*2.18,seed+31)*.28+noise(x*5.63,seed+72)*.16;
+const triangle=x=>1-Math.abs(2*(x-Math.floor(x)) -1);
+function evalForm(n,x,seed,depth=0){
+ if(!n||depth>6)return 0;
+ const f=clamp(Number(n.f)||1,.2,12),t=x*f+(Number(n.p)||0);
+ switch(n.o){
+  case 'wave':return Math.sin(t*PI*2)*.72;
+  case 'fbm':return fbm(t*3,seed);
+  case 'ridge':return (1-Math.abs(fbm(t*3,seed))*2)*.95;
+  case 'terrace':return (Math.round(fbm(t*4,seed)*5)/5);
+  case 'dune':return .66*Math.cos(t*PI*2)+.28*Math.sin(t*PI*4+.4);
+  case 'peak':return Math.pow(Math.max(0,triangle(t)),3)*2-1;
+  case 'basin':return -Math.exp(-Math.pow(Math.sin(t*PI),2)*15)+.25;
+  case 'steps':return (Math.floor((Math.sin(t*PI*2)+1)*4)/4)-1;
+  case 'noise':return noise(t*15,seed)*.85;
+ }
+ const a=evalForm(n.a,t,seed+11,depth+1);
+ if(n.o==='fold')return 1-Math.abs(a)*2;
+ if(n.o==='bend')return Math.sin(a*PI*.9);
+ if(n.o==='carve')return Math.sign(a)*Math.pow(Math.abs(a),2);
+ if(n.o==='reverse')return -a;
+ if(n.o==='quantize')return Math.round(a*4)/4;
+ const b=evalForm(n.b,t*.73,seed+103,depth+1);
+ if(n.o==='add')return clamp((a+b)*.68,-1.6,1.6);
+ if(n.o==='blend')return lerp(a,b,.38);
+ if(n.o==='cut')return clamp(a-b*.85,-1.6,1.6);
+ if(n.o==='max')return Math.max(a,b);
+ if(n.o==='multiply')return a*b*1.2;
+ return 0;
 }
-function relief(x,seed,scale=1) {
-  return (smoothNoise(x*0.003*scale,seed)*.60 + smoothNoise(x*.010*scale,seed+5)*.28 + smoothNoise(x*.035*scale,seed+10)*.12);
+const rgb=hex=>{const n=parseInt(hex.replace('#',''),16)||0;return [(n>>16)&255,(n>>8)&255,n&255];};
+const mix=(a,b,t)=>{const c=rgb(a),d=rgb(b);return 'rgb('+c.map((v,i)=>Math.round(lerp(v,d[i],clamp(t)))).join(',')+')';};
+const rgba=(h,a)=>{const c=rgb(h);return `rgba(${c[0]},${c[1]},${c[2]},${clamp(a)})`;};
+const random=(r,lo,hi)=>lerp(lo,hi,r());
+const one=(r,list)=>list[Math.floor(r()*list.length)];
+function blob(ctx,x,y,rx,ry,color,alpha=1,angle=0){
+ ctx.save();ctx.translate(x,y);ctx.rotate(angle);ctx.globalAlpha=alpha;
+ ctx.fillStyle=color;ctx.beginPath();ctx.ellipse(0,0,rx,ry,0,0,2*PI);ctx.fill();ctx.restore();
 }
-function profile(x,layer,scene,seed,horizon) {
-  const t=layer/3;
-  const n=relief(x,seed+layer*101,1+t*.8);
-  if(scene==='mountains') {
-    const peak1=Math.max(0,1-Math.abs(x-(220+hash01(seed)*140))/380);
-    const peak2=Math.max(0,1-Math.abs(x-(740+hash01(seed+3)*120))/310);
-    return horizon+75+layer*82-n*(76+layer*16)-(peak1*(215-layer*28)+peak2*(155-layer*20));
-  }
-  if(scene==='coast') return horizon + 70+layer*83 - n*(38+layer*11) - Math.exp(-Math.pow((x-975)/245,2))*150*(layer===2 ? 1:0.4);
-  if(scene==='lake') return horizon+38+layer*82-n*(50+layer*8);
-  if(scene==='forest') return horizon-12+layer*99-n*(53+layer*4);
-  if(scene==='plains') return horizon+layer*90-n*(23+layer*7);
-  return horizon-6+layer*87-n*(54+layer*16);
+function path(ctx,points,color,width,alpha=1){
+ if(points.length<2)return;ctx.save();ctx.globalAlpha=alpha;
+ ctx.strokeStyle=color;ctx.lineWidth=width;ctx.lineCap='round';ctx.lineJoin='round';ctx.beginPath();
+ for(let i=0;i<points.length;i++){const [x,y]=points[i];if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
+ ctx.stroke();ctx.restore();
 }
-function ellipseBrush(ctx,x,y,rX,rY,col,opacity=1,angle=0) {
-  ctx.save();ctx.translate(x,y);ctx.rotate(angle);ctx.globalAlpha=opacity;ctx.fillStyle=col;
-  ctx.beginPath();ctx.ellipse(0,0,rX,rY,0,0,Math.PI*2);ctx.fill();ctx.restore();
+function background(ctx,seed,p,g,skyY,quality){
+ const r=randomFrom(seed^0x1357);
+ const c=ctx.createLinearGradient(0,0,W,H*(g.sky==='radial'?.8:1));
+ c.addColorStop(0,p.sky[0]);c.addColorStop(.56,p.sky[1]);c.addColorStop(1,p.sky[2]);
+ ctx.fillStyle=c;ctx.fillRect(0,0,W,H);
+ const lightX= W*(.48+.33*Math.sin(g.lightAngle)),lightY=skyY*(.18+.22*r());
+ const rad=ctx.createRadialGradient(lightX,lightY,8,lightX,lightY,340);
+ rad.addColorStop(0,rgba(p.light,.35));rad.addColorStop(.35,rgba(p.light,.14));rad.addColorStop(1,rgba(p.light,0));
+ ctx.fillStyle=rad;ctx.fillRect(lightX-340,lightY-340,680,680);
+ if(g.sky==='radial'||g.sky==='clouds')blob(ctx,lightX,lightY,26,25,p.light,.71);
+ if(g.sky==='flat')return;
+ const count=Math.floor((g.sky==='clouds'?110:g.sky==='veils'?140:g.sky==='bands'?55:90)*quality);
+ for(let i=0;i<count;i++){
+   const x=random(r,-220,W+220),y=random(r,6,skyY*.94);
+   const scale=g.sky==='bands'?random(r,80,270):g.sky==='veils'?random(r,60,210):random(r,18,100);
+   if(g.sky==='clouds') {
+     blob(ctx,x,y,scale,random(r,4,25),p.mist,random(r,.055,.22),random(r,-.12,.12));
+     if(i%4===0)blob(ctx,x+20,y-6,scale*.7,random(r,14,34),p.light,.065);
+   } else if(g.sky==='bands'){
+     path(ctx,[[x-scale,y+3],[x,y],[x+scale,y-random(r,1,16)]],p.mist,random(r,3,25),random(r,.04,.14));
+   } else if(g.sky==='veils'){
+     const bend=evalForm(g.detail,(x/W)+i*.031,seed+31);
+     path(ctx,[[x-scale,y+14],[x,y-14*bend],[x+scale,y+22*bend]],p.mist,random(r,2,19),random(r,.045,.17));
+   } else {
+     path(ctx,[[lightX,lightY],[x,y],[x+random(r,-80,80),y+random(r,5,40)]],p.light,random(r,.4,5),random(r,.016,.042));
+   }
+ }
 }
-function paintSky(ctx,seed,p,horizon,signal) {
-  const rng=randomFrom(seed ^ 0x13579ac);
-  const sky=ctx.createLinearGradient(0,0,0,HEIGHT);
-  sky.addColorStop(0,p.sky[0]);sky.addColorStop(.50,p.sky[1]);sky.addColorStop(1,p.sky[2]);
-  ctx.fillStyle=sky;ctx.fillRect(0,0,WIDTH,HEIGHT);
-  // Thin glowing atmosphere just over the horizon.
-  const glow=ctx.createLinearGradient(0,horizon-130,0,horizon+135);
-  glow.addColorStop(0,alpha(p.mist,0));glow.addColorStop(.46,alpha(p.mist,.28));glow.addColorStop(1,alpha(p.mist,0));
-  ctx.fillStyle=glow;ctx.fillRect(0,horizon-130,WIDTH,270);
-  const sunX=between(rng,WIDTH*.20,WIDTH*.82),sunY=between(rng,horizon*.2,horizon*.56);
-  const radial=ctx.createRadialGradient(sunX,sunY,8,sunX,sunY,260);
-  radial.addColorStop(0,alpha(p.light,.35));radial.addColorStop(.4,alpha(p.light,.12));radial.addColorStop(1,alpha(p.light,0));
-  ctx.fillStyle=radial;ctx.fillRect(sunX-260,sunY-260,520,520);
-  ellipseBrush(ctx,sunX,sunY,between(rng,22,37),between(rng,22,37),p.light,.8);
-  // Cloud banks composed of varied translucent elongated brush marks.
-  const clusters=12;
-  for(let i=0;i<clusters;i++){
-    if(signal?.aborted)return;
-    const x=between(rng,-100,WIDTH+50),y=between(rng,15,horizon*.76),extent=between(rng,85,260);
-    for(let j=0;j<10;j++) {
-      ellipseBrush(ctx,x+between(rng,-extent,extent),y+between(rng,-14,14),
-        between(rng,35,120),between(rng,2,12),p.mist,between(rng,.025,.13),between(rng,-.10,.10));
-    }
-  }
-  // Broad horizontal, irregular bands of painterly sky texture.
-  for(let i=0;i<110;i++) {
-    const x=between(rng,-30,WIDTH),y=between(rng,3,horizon);
-    ellipseBrush(ctx,x,y,between(rng,12,150),between(rng,.4,2.7),
-      rng()>.4?p.mist:p.sky[0],between(rng,.015,.075));
-  }
+function heightAt(u,layer,g,scene,seed){
+ const layers=clamp(Math.round(g.bands),2,5),t=layer/Math.max(1,layers-1);
+ const x=u*1.25-.12,offset=layer*.21;
+ const f=evalForm(g.terrain,x+offset,seed+layer*117);
+ const detail=evalForm(g.detail,x*1.7+offset,seed+layer*19)*.18;
+ const amplitude=(scene==='mountains'?190:scene==='plains'?38:scene==='forest'?86:scene==='coast'?88:128)*g.relief*(.9+t*.4);
+ let layout=0;
+ if(g.layout==='valley')layout=-Math.pow(Math.abs(u-.53)*2,.7)*.85;
+ else if(g.layout==='escarpment')layout=1.05*Math.tanh((u-.42)*11);
+ else if(g.layout==='sweep')layout=Math.sin((u*1.25+t*.55)*PI)*.75;
+ else if(g.layout==='basin')layout=Math.exp(-Math.pow((u-.5)*4,2))*.85;
+ else if(g.layout==='ridges')layout=Math.pow(Math.abs(Math.sin((u*2.8+t)*PI)),1.75)*.88;
+ else if(g.layout==='islands')layout=Math.pow(Math.max(0,Math.cos((u-.49)*PI*2.2)),3)*1.05;
+ const mountain=scene==='mountains'?52*Math.pow(Math.max(0,Math.cos(u*PI*3.4+layer)),4):0;
+ const base=H*g.horizon+16+layer*(scene==='mountains'?63:scene==='plains'?83:69);
+ return clamp(base - (f*.8+detail+layout*.75)*amplitude - mountain, H*.10, H*.98);
 }
-function fillRidge(ctx,fn,color) {
-  ctx.beginPath();ctx.moveTo(0,HEIGHT);
-  for(let x=0;x<=WIDTH+8;x+=8)ctx.lineTo(x,fn(x));
-  ctx.lineTo(WIDTH,HEIGHT);ctx.closePath();ctx.fillStyle=color;ctx.fill();
+function region(ctx,profile,color){
+ ctx.beginPath();ctx.moveTo(0,H);for(let x=0;x<=W+12;x+=12)ctx.lineTo(x,profile(x/W));
+ ctx.lineTo(W,H);ctx.closePath();ctx.fillStyle=color;ctx.fill();
 }
-function paintWater(ctx,rng,p,top) {
-  const sea=ctx.createLinearGradient(0,top,0,HEIGHT);
-  sea.addColorStop(0,p.water[1]);sea.addColorStop(.45,p.water[0]);sea.addColorStop(1,mixed(p.water[0],p.ink,.35));
-  ctx.fillStyle=sea;ctx.fillRect(0,top,WIDTH,HEIGHT-top);
-  // Thin horizontal reflections, progressively wider towards the viewer.
-  for(let i=0;i<790;i++) {
-    const x=between(rng,0,WIDTH),y=between(rng,top,HEIGHT),depth=(y-top)/(HEIGHT-top);
-    const width=between(rng,4,24+depth*67);
-    ctx.strokeStyle=alpha(rng()>.48?p.mist:p.ink,between(rng,.05,.25));
-    ctx.lineWidth=between(rng,.5,1.5+depth);
-    ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+width,y);ctx.stroke();
-  }
+function surfaceMark(ctx,x,y,dy,color,light,r,g,scale){
+ const n=clamp(scale*.4,.3,2.8),width=random(r,3,27)*g.brushSize*n;
+ const angle=Math.atan(dy);
+ if(g.brush==='contour'){
+   path(ctx,[[x-width,y+random(r,-2,2)],[x,y],[x+width,y+width*dy]],color,random(r,.5,3)*n,light);
+ }else if(g.brush==='hatch'){
+   for(let k=0;k<2;k++)path(ctx,[[x+k*5,y-8*n],[x+10*n+k*5,y+6*n]],color,random(r,.6,2)*n,light*.75);
+ }else if(g.brush==='mosaic'){
+   ctx.save();ctx.globalAlpha=light;ctx.fillStyle=color;
+   ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+width,y-3*n);ctx.lineTo(x+width*.85,y+7*n);ctx.lineTo(x-4*n,y+9*n);ctx.closePath();ctx.fill();ctx.restore();
+ }else if(g.brush==='knife'){
+   ctx.save();ctx.globalAlpha=light;ctx.translate(x,y);ctx.rotate(angle*.75);
+   ctx.fillStyle=color;ctx.fillRect(0,0,width*1.5,random(r,2,8)*n);ctx.restore();
+ }else if(g.brush==='wash'){
+   blob(ctx,x,y,width*1.2,random(r,6,23)*n,color,light*.45,angle*.5);
+ }else if(g.brush==='stipple'){
+   const radius=random(r,1.8,7)*n;blob(ctx,x,y,radius,radius*.76,color,light);
+   if(r()>.67)blob(ctx,x+radius*2,y-5*n,radius*.6,radius*.8,color,light*.5);
+ }
 }
-function paintGround(ctx,seed,p,scene,horizon,signal) {
-  const rng=randomFrom(seed ^ 0x918377);
-  const drawRidge = layer => {
-    const fn=x=>profile(x,layer,scene,seed,horizon);
-    const color=mixed(p.earth[layer],p.mist,[.22,.11,.05,0][layer]);
-    fillRidge(ctx,fn,color);
-    // Directional broken marks follow slopes instead of random canvas noise.
-    const n=layer===3?420:layer===2?160:75;
-    for(let i=0;i<n;i++) {
-      const x=between(rng,0,WIDTH),terrain=fn(x),y=terrain+between(rng,5,Math.max(7,(HEIGHT-terrain)*.79));
-      if(y>HEIGHT)continue;
-      const slope=(fn(Math.min(WIDTH,x+5))-fn(Math.max(0,x-5)))/10;
-      const len=between(rng,3,29)*(1+.15*layer);
-      ctx.strokeStyle=alpha(rng()>.65?p.mist:p.ink,between(rng,.035,.16));
-      ctx.lineWidth=between(rng,.6,2.9)*(1+.2*layer);
-      ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+len,y+len*slope*.45);ctx.stroke();
-    }
-    if(layer<2){
-      const g=ctx.createLinearGradient(0,horizon+layer*80-8,0,horizon+layer*80+110);
-      g.addColorStop(0,alpha(p.mist,0));g.addColorStop(.62,alpha(p.mist,.08));g.addColorStop(1,alpha(p.mist,0));
-      ctx.fillStyle=g;ctx.fillRect(0,horizon+layer*80-8,WIDTH,118);
-    }
-  };
-  if(scene==='coast') {
-    paintWater(ctx,rng,p,horizon+40);
-    // Layered headlands flank an open ocean; do not bury the water in terrain.
-    ctx.beginPath();ctx.moveTo(0,horizon+16);
-    ctx.bezierCurveTo(110,horizon+4,170,horizon+55,300,horizon+95);
-    ctx.bezierCurveTo(378,horizon+160,380,horizon+240,470,HEIGHT);
-    ctx.lineTo(0,HEIGHT);ctx.closePath();ctx.fillStyle=p.earth[2];ctx.fill();
-    ctx.beginPath();ctx.moveTo(WIDTH,horizon+55);
-    ctx.bezierCurveTo(1130,horizon+60,1090,horizon+101,1050,horizon+110);
-    ctx.bezierCurveTo(980,horizon+135,965,horizon+180,910,horizon+235);
-    ctx.lineTo(WIDTH,HEIGHT);ctx.closePath();ctx.fillStyle=mixed(p.earth[1],p.mist,.35);ctx.fill();
-    const islandX=between(rng,630,770);
-    ellipseBrush(ctx,islandX,horizon+44,between(rng,85,145),between(rng,10,19),p.earth[0],.74);
-    return;
-  }
-  if(scene==='lake') {
-    drawRidge(0);drawRidge(1);
-    paintWater(ctx,rng,p,horizon+128);
-    // Nearest shoreline only: keep the central water plane uninterrupted.
-    drawRidge(3);
-    return;
-  }
-  for(let layer=0;layer<4;layer++){
-    if(signal?.aborted)return;
-    drawRidge(layer);
-  }
+function land(ctx,seed,p,g,scene,signal,quality){
+ const r=randomFrom(seed^0x9ab),n=g.bands;
+ const watery=scene==='coast'||scene==='lake';
+ const waterY=H*(scene==='coast'?g.horizon+.045:g.horizon+.19);
+ let lastProfiles=[];
+ for(let layer=0;layer<n;layer++){
+   if(signal?.aborted)return;
+   // Water lies IN FRONT OF distant terrain, not behind filled foreground
+   // polygons. Paint the latter as banks after the water plane.
+   if(watery && (scene==='coast' || layer>=Math.min(2,n-1)))break;
+   const f=x=>heightAt(x,layer,g,scene,seed);
+   lastProfiles.push(f);
+   const col=mix(p.land[Math.min(4,Math.round(layer*4/(n-1)))],p.mist, (1-layer/n)*g.atmosphere*.35);
+   region(ctx,f,col);
+   const minMarks=layer===n-1?1150:layer===0?175:520;
+   const strokes=Math.floor(minMarks*quality);
+   for(let i=0;i<strokes;i++){
+     const x=random(r,0,W),yy=f(x/W),y=yy+random(r,7,Math.max(10,H-yy)*.82);
+     if(y>=H-2)continue;
+     const slope=(f(clamp(x/W+.008))-f(clamp(x/W-.008)))/20;
+     const sunDirection=Math.sin(g.lightAngle)*.25;
+     const lit=(slope<sunDirection)!==(g.lightAngle<0);
+     const tint=r()<.51 ? lit?p.mist:p.shade : layer%2?p.land[Math.min(layer,4)]:p.light;
+     const opacity=random(r,.055,.27)*(layer===n-1?1.13:.75);
+     surfaceMark(ctx,x,y,slope,tint,opacity,r,g,.52+layer/n);
+   }
+   const fog=ctx.createLinearGradient(0,f(.42)-40,0,f(.42)+145);
+   fog.addColorStop(0,rgba(p.mist,0));fog.addColorStop(.48,rgba(p.mist,g.atmosphere*(1-layer/n)*.13));fog.addColorStop(1,rgba(p.mist,0));
+   ctx.fillStyle=fog;ctx.fillRect(0,f(.42)-40,W,185);
+ }
+ if(watery){
+   const c=ctx.createLinearGradient(0,waterY,0,H);
+   c.addColorStop(0,p.water[1]);c.addColorStop(.62,p.water[0]);c.addColorStop(1,p.shade);
+   ctx.fillStyle=c;ctx.fillRect(0,waterY,W,H-waterY);
+   if(scene==='coast'){
+     // Shorelines and headlands come from a second structural operator, not
+     // from a hardcoded wave pasted over a fixed ground silhouette.
+     const leftLimit=W*(.22+Math.abs(evalForm(g.detail,.19,seed))*.16);
+     const rightLimit=W*(.77-Math.abs(evalForm(g.detail,.73,seed+44))*.15);
+     ctx.fillStyle=p.land[3];ctx.beginPath();ctx.moveTo(0,waterY-45);
+     for(let x=0;x<=leftLimit;x+=12){
+       const t=x/leftLimit;ctx.lineTo(x,waterY+9+t*t*H*.5+evalForm(g.terrain,t,seed+28)*30);
+     }
+     ctx.lineTo(leftLimit,H);ctx.lineTo(0,H);ctx.closePath();ctx.fill();
+     ctx.fillStyle=p.land[2];ctx.beginPath();ctx.moveTo(W,waterY-16);
+     for(let x=W;x>=rightLimit;x-=12){
+       const t=(W-x)/(W-rightLimit);ctx.lineTo(x,waterY+25+t*t*H*.42+evalForm(g.detail,t,seed+37)*24);
+     }
+     ctx.lineTo(rightLimit,H);ctx.lineTo(W,H);ctx.closePath();ctx.fill();
+     // Far off-shore geology is a small separate program result.
+     const ix=W*(.51+evalForm(g.terrain,.43,seed)*.17),iw=85+Math.abs(evalForm(g.detail,.81,seed))*95;
+     ctx.fillStyle=mix(p.land[0],p.mist,.28);
+     ctx.beginPath();ctx.moveTo(ix-iw,waterY+6);
+     for(let x=ix-iw;x<=ix+iw;x+=8){const u=(x-(ix-iw))/(2*iw);
+       ctx.lineTo(x,waterY+5-Math.max(0,Math.sin(u*PI))*random(r,12,40));}
+     ctx.lineTo(ix+iw,waterY+6);ctx.closePath();ctx.fill();
+   }else{
+     const shore=x=>heightAt(x,n-1,g,scene,seed);
+     lastProfiles.push(shore);region(ctx,shore,p.land[4]);
+   }
+   const marks=Math.floor(560*quality);
+   for(let i=0;i<marks;i++){
+     const x=random(r,0,W),y=random(r,waterY,H),depth=(y-waterY)/Math.max(1,H-waterY);
+     if(scene==='lake' && lastProfiles.length && y>lastProfiles.at(-1)(x/W)-6)continue;
+     const xsize=random(r,3,48)*(1+depth);
+     const color=r()>.58?p.light:p.shade;
+     const opacity=random(r,.04,.31);
+     if(g.water==='none')continue;
+     if(g.water==='blocks')surfaceMark(ctx,x,y,0,color,opacity,r,{...g,brush:'mosaic'},.8);
+     else if(g.water==='mirror')path(ctx,[[x,y],[x+xsize,y]],color,random(r,.4,2.2),opacity);
+     else path(ctx,[[x,y],[x+xsize/2,y+random(r,-2,2)],[x+xsize,y]],color,random(r,.6,2),opacity);
+   }
+ }
+ return lastProfiles;
 }
-function tree(ctx,x,y,s,rng,p,depth=0) {
-  const dark=mixed(p.ink,p.earth[depth?1:3],depth?.52:.18);
-  ctx.lineCap='round';ctx.strokeStyle=alpha(dark,.88);ctx.lineWidth=Math.max(.8,s*.09);
-  ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+s*.07,y-s*2.2);ctx.stroke();
-  const crown=y-s*2.07;
-  for(let i=0;i<7;i++){
-    ellipseBrush(ctx,x+between(rng,-s*.85,s*.95),crown+between(rng,-s*.9,s*.38),
-      between(rng,s*.35,s*.78),between(rng,s*.35,s*.7),
-      rng()>.44?dark:p.earth[depth?1:2],between(rng,.53,.92));
-  }
-  ellipseBrush(ctx,x+s*.15,crown-s*.48,s*.6,s*.29,p.mist,.10);
+function plant(ctx,x,y,s,r,p,g,scene){
+ const growth=g.growth;
+ if(growth==='none')return;
+ const base=scene==='forest'?p.land[3]:p.shade;
+ const tint=one(r,[p.shade,p.land[3],p.land[4]]);
+ if(growth==='grass'){
+   for(let i=0;i<5;i++)path(ctx,[[x,y],[x+random(r,-s,s)*.65,y-random(r,s*.6,s*1.8)]],tint,Math.max(.6,s*.035),random(r,.18,.5));
+   return;
+ }
+ if(growth==='spire'){
+   path(ctx,[[x,y],[x+random(r,-s*.1,s*.1),y-s*2.4]],base,Math.max(1.3,s*.12),.6);
+   for(let j=0;j<6;j++){
+     const high=y-s*2.2+j*s*.3,width=s*(.2+j*.09);
+     path(ctx,[[x,high-s*.25],[x-width,high+s*.2],[x+width,high+s*.2]],tint,Math.max(.7,s*.065),.62);
+   }
+   return;
+ }
+ const top=y-s*2.3,tx=x+random(r,-s*.22,s*.22);
+ path(ctx,[[x,y],[tx,top]],base,Math.max(.8,s*.10),.78);
+ if(growth==='fan'){
+   for(let i=0;i<9;i++){
+     const a=random(r,-PI*.88,-PI*.12),len=random(r,s*.5,s*1.5);
+     path(ctx,[[tx,top+s*.5],[tx+Math.cos(a)*len,top+s*.5+Math.sin(a)*len]],tint,random(r,1,3),.72);
+   }
+ } else {
+   let tips=[[tx,top+s*.2,0,s*1.1]];
+   for(let depth=0;depth<3;depth++){
+     const next=[];
+     for(const [bx,by,ang,len] of tips){
+       for(const side of [-1,1]){
+         const a=ang+side*random(r,.28,.81),length=len*random(r,.47,.69);
+         const ex=bx+Math.sin(a)*length,ey=by-Math.cos(a)*length;
+         path(ctx,[[bx,by],[ex,ey]],depth===0?base:tint,Math.max(.7,s*.06*(1-depth*.23)),.65);
+         if(depth<2)next.push([ex,ey,a,length]);
+         else blob(ctx,ex,ey,random(r,2,6),random(r,1.5,4),p.land[2],.42);
+       }
+     }
+     tips=next;
+   }
+ }
 }
-function vegetation(ctx,seed,p,scene,horizon,signal) {
-  if(!['forest','plains','hills','lake','mountains'].includes(scene))return;
-  const rng=randomFrom(seed ^ 0xa9de3b);
-  let count=scene==='forest'?125:scene==='plains'?17:scene==='mountains'?34:64;
-  for(let i=0;i<count;i++) {
-    if(signal?.aborted)return;
-    const x=between(rng,-15,WIDTH+15),layer=rng()>.55?3:2;
-    const base=profile(x,layer,scene,seed,horizon);
-    if(base<0||base>HEIGHT-12)continue;
-    const s=between(rng,5,scene==='forest'?24:17)*(layer===2?.65:1.15);
-    tree(ctx,x,base,s,rng,p,layer===2?1:0);
-  }
-  for(let i=0;i<220;i++){
-    const x=between(rng,0,WIDTH),y=between(rng,HEIGHT*.81,HEIGHT);
-    ctx.strokeStyle=alpha(rng()>.5?p.mist:p.ink,between(rng,.06,.23));
-    ctx.lineWidth=between(rng,.6,2.1);
-    ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+between(rng,-3,3),y-between(rng,3,13));ctx.stroke();
-  }
+function vegetation(ctx,seed,p,g,scene,signal,quality){
+ if(!['forest','plains','hills','lake','mountains'].includes(scene)||g.growth==='none')return;
+ const r=randomFrom(seed^0x48abc),count=Math.floor((scene==='forest'?116:scene==='plains'?15:scene==='mountains'?36:66)*quality);
+ for(let i=0;i<count;i++){
+   if(signal?.aborted)return;
+   const x=random(r,-20,W+20),depth=r()>.34?g.bands-1:g.bands-2;
+   const y=heightAt(clamp(x/W),depth,g,scene,seed),size=random(r,9,28)*(depth===g.bands-1?1:.58);
+   if(y<30||y>H*.94)continue;
+   plant(ctx,x,y,size,r,p,g,scene);
+ }
 }
-function foreground(ctx,seed,p,scene,horizon) {
-  const rng=randomFrom(seed ^ 0x13437d);
-  // Atmospheric glaze ties unlike strokes together.
-  const g=ctx.createLinearGradient(0,0,0,HEIGHT);
-  g.addColorStop(0,alpha(p.mist,.015));g.addColorStop(.72,alpha(p.mist,.04));g.addColorStop(1,alpha(p.ink,.09));
-  ctx.fillStyle=g;ctx.fillRect(0,0,WIDTH,HEIGHT);
-  if(scene==='coast') {
-    // A wedge of near shore and flashes of wet light.
-    ctx.beginPath();ctx.moveTo(0,HEIGHT);ctx.lineTo(0,HEIGHT*.72);
-    ctx.bezierCurveTo(180,HEIGHT*.68,290,HEIGHT*.87,520,HEIGHT);ctx.closePath();
-    ctx.fillStyle=p.earth[3];ctx.fill();
-    for(let i=0;i<125;i++){
-      const x=between(rng,0,470),y=between(rng,HEIGHT*.73,HEIGHT);
-      if(x>470*(y/HEIGHT-.63)*3)continue;
-      ellipseBrush(ctx,x,y,between(rng,2,18),between(rng,.5,2),p.mist,between(rng,.06,.31));
-    }
-  }
-  if(scene==='lake') {
-    for(let i=0;i<140;i++){
-      const x=between(rng,0,WIDTH),y=between(rng,horizon+140,HEIGHT*.88);
-      ctx.strokeStyle=alpha(p.mist,between(rng,.055,.23));ctx.lineWidth=.8;
-      ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+between(rng,4,40),y);ctx.stroke();
-    }
-  }
-  // Low-frequency fine grain at a scale independent of export size.
-  for(let i=0;i<520;i++){
-    const x=between(rng,0,WIDTH),y=between(rng,0,HEIGHT);
-    ellipseBrush(ctx,x,y,between(rng,.25,1.5),between(rng,.2,.8),p.mist,between(rng,.02,.10));
-  }
+// A mutable composition operation can change the *kind* of landscape
+// representation: a valley may acquire a perspective river, an escarpment a
+// great cliff, a basin a crater pool. These are not overlays of stored images.
+function compose(ctx,seed,p,g,scene,quality){
+ const r=randomFrom(seed^0x7c933),h=H*g.horizon;
+ if(g.layout==='valley' && scene!=='coast'){
+   const vx=W*(.35+.29*r()),start=h+random(r,35,105);
+   const waterish=scene==='lake'||scene==='forest'||r()>.55;
+   const col=waterish?p.water[0]:p.land[1];
+   ctx.save();ctx.globalAlpha=.86;ctx.fillStyle=col;ctx.beginPath();
+   ctx.moveTo(vx-4,start);
+   ctx.bezierCurveTo(vx-20,h+120,vx-W*.22,H*.70,vx-W*.31,H);
+   ctx.lineTo(vx+W*.30,H);ctx.bezierCurveTo(vx+W*.14,H*.69,vx+24,h+130,vx+4,start);
+   ctx.closePath();ctx.fill();ctx.restore();
+   for(let i=0;i<Math.floor(140*quality);i++){
+     const y=random(r,start,H),t=(y-start)/Math.max(1,H-start),mid=vx+Math.sin(t*PI*2)*W*.032;
+     const x=random(r,mid-t*W*.20,mid+t*W*.21);
+     path(ctx,[[x,y],[x+random(r,2,24)*(t+.15),y]],waterish?p.light:p.shade,random(r,.3,2),random(r,.05,.20));
+   }
+ } else if(g.layout==='escarpment'){
+   const left=g.lightAngle>0,edge=left?W*.38:W*.62;
+   const start=left?0:W,end=left?edge:edge;
+   const top=h*.28;
+   ctx.save();ctx.fillStyle=p.land[3];ctx.globalAlpha=.92;
+   ctx.beginPath();ctx.moveTo(start,top);
+   ctx.lineTo(end,top+random(r,60,120));
+   ctx.lineTo(end+(left?80:-80),H*.90);
+   ctx.lineTo(start,H);ctx.closePath();ctx.fill();ctx.restore();
+   for(let i=0;i<Math.floor(250*quality);i++){
+     const x=random(r,Math.min(start,end),Math.max(start,end)),y=random(r,top+145,H);
+     if((left&&x>edge+(y/H)*42)||(!left&&x<edge-(y/H)*42))continue;
+     const bend=evalForm(g.detail,y/H+i*.002,seed)*24;
+     path(ctx,[[x,y],[x+bend,y+random(r,6,41)]],r()>.5?p.mist:p.shade,random(r,.5,3.2),random(r,.065,.25));
+   }
+ } else if(g.layout==='basin' && scene!=='coast'){
+   const cx=W*(.38+.23*r()),cy=H*.82,rx=random(r,W*.25,W*.37),ry=random(r,54,116);
+   ctx.save();ctx.globalAlpha=.85;ctx.fillStyle=p.land[2];
+   ctx.beginPath();ctx.ellipse(cx,cy,rx+22,ry+20,0,0,2*PI);ctx.fill();
+   ctx.fillStyle=scene==='plains'?p.land[0]:p.water[0];
+   ctx.beginPath();ctx.ellipse(cx,cy,rx,ry,0,0,2*PI);ctx.fill();ctx.restore();
+   for(let i=0;i<Math.floor(95*quality);i++){
+     const x=random(r,cx-rx*.8,cx+rx*.8),rel=(x-cx)/rx;
+     const yy=cy+random(r,-1,1)*ry*Math.sqrt(Math.max(.1,1-rel*rel));
+     path(ctx,[[x,yy],[x+random(r,7,40),yy]],p.light,random(r,.4,1.8),random(r,.07,.22));
+   }
+ } else if(g.layout==='islands' && scene!=='coast' && scene!=='lake'){
+   // A lake/channel can arise in a surprising landscape, replacing foreground
+   // geometry with reflective negative space instead of endlessly stacking hills.
+   const y=H*.73;
+   ctx.save();ctx.fillStyle=p.water[0];ctx.globalAlpha=.74;
+   ctx.beginPath();ctx.moveTo(0,y+45);
+   for(let x=0;x<=W;x+=20)ctx.lineTo(x,y+evalForm(g.terrain,x/W,seed+811)*32);
+   ctx.lineTo(W,H*.93);
+   for(let x=W;x>=0;x-=20)ctx.lineTo(x,H*.92+evalForm(g.detail,x/W,seed+911)*22);
+   ctx.closePath();ctx.fill();ctx.restore();
+ }
 }
-
-function nextFrame() {return new Promise(resolve=>requestAnimationFrame(resolve));}
-export async function renderLandscape(canvas,recipe,{onProgress,signal,animate=true}={}) {
-  const seed=Number(recipe.seed)>>>0,scene=SCENES.includes(recipe.scene)?recipe.scene:'hills';
-  const mood=MOODS.includes(recipe.mood)?recipe.mood:'golden',p=palettes[mood];
-  const ctx=canvas.getContext('2d');
-  if(!ctx)throw new Error('2D canvas unavailable');
-  const W=canvas.width,H=canvas.height;
-  ctx.setTransform(W/WIDTH,0,0,H/HEIGHT,0,0);
-  const horizon=between(randomFrom(seed ^ 0x114),285,390);
-  const tasks=[
-    ['laying light',()=>paintSky(ctx,seed,p,horizon,signal)],
-    ['building distance',()=>paintGround(ctx,seed,p,scene,horizon,signal)],
-    ['finding detail',()=>vegetation(ctx,seed,p,scene,horizon,signal)],
-    ['finishing surface',()=>foreground(ctx,seed,p,scene,horizon)],
-  ];
-  for(let i=0;i<tasks.length;i++){
-    if(signal?.aborted)return false;
-    onProgress?.(tasks[i][0],i/tasks.length);
-    tasks[i][1]();
-    if(animate)await nextFrame();
-  }
-  if(signal?.aborted)return false;
-  onProgress?.('finished',1);
-  return true;
+function finalGlaze(ctx,seed,p,g,quality){
+ const r=randomFrom(seed^0xab451),count=Math.floor(300*quality);
+ for(let i=0;i<count;i++){
+   const x=random(r,0,W),y=random(r,0,H),col=r()>.38?p.mist:p.shade;
+   blob(ctx,x,y,random(r,.2,1.7),random(r,.2,1.5),col,random(r,.014,.055));
+ }
 }
-export function landscapeDescription(recipe) {
-  return `${recipe.mood} / ${recipe.scene}`;
+const nextFrame=()=>new Promise(resolve=>typeof requestAnimationFrame==='function'?requestAnimationFrame(resolve):setTimeout(resolve,0));
+export async function renderLandscape(canvas,recipe,{onProgress,signal,animate=true,quality=1}={}){
+ const g=recipe.genome || makeGenome('landscape',recipe.seed);
+ if(evaluateSurface(g).length)throw Error('Invalid painting procedure');
+ const scene=SCENES.includes(recipe.scene)?recipe.scene:'hills',mood=MOODS.includes(recipe.mood)?recipe.mood:'golden';
+ const p=palettes[mood],seed=Number(recipe.seed)>>>0,ctx=canvas.getContext('2d');
+ if(!ctx)throw Error('Canvas 2D is unavailable');
+ ctx.setTransform(canvas.width/W,0,0,canvas.height/H,0,0);ctx.clearRect(0,0,W,H);
+ const tasks=[['painting the atmosphere',()=>background(ctx,seed,p,g,H*g.horizon,quality)],
+   ['inventing the terrain',()=>land(ctx,seed,p,g,scene,signal,quality)],
+   ['testing the composition',()=>compose(ctx,seed,p,g,scene,quality)],
+   ['growing the foreground',()=>vegetation(ctx,seed,p,g,scene,signal,quality)],
+   ['finishing the brushwork',()=>finalGlaze(ctx,seed,p,g,quality)]];
+ for(let i=0;i<tasks.length;i++){
+   if(signal?.aborted)return false;
+   onProgress?.(tasks[i][0],i/tasks.length);tasks[i][1]();
+   if(animate)await nextFrame();
+ }
+ if(signal?.aborted)return false;
+ onProgress?.('finished',1);return true;
 }
-export function landscapeFeatures(recipe) {
-  return {scene:recipe.scene,mood:recipe.mood,discipline:'landscape'};
+export function landscapeDescription(recipe){
+ return `${recipe.mood} ${recipe.scene} · ${methodDescription(recipe.genome)}`;
 }
+export function landscapeFeatures(recipe){
+ const g=recipe.genome;return {scene:recipe.scene,mood:recipe.mood, ...(g?importGeneFeatures(g):{}),discipline:'landscape'};
+}
+import {geneFeatures as importGeneFeatures} from './evolution.js';
