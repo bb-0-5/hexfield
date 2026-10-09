@@ -352,8 +352,8 @@ export function heritageEvidence(ideas){
    shape:{aspect:x.stats.aspect,circularity:x.stats.circularity}
  }));
 }
-export function selectBalancedCandidate(candidates,{strict=false}={}){
- if(!candidates?.length)return null;
+export function rankBalancedCandidates(candidates,{strict=false}={}){
+ if(!candidates?.length)return [];
  const ranked=candidates.map(item=>{
    const novelty=clamp((item.assessment?.score||0)+.12);
    const harmony=clamp(item.golden?.combined||0);
@@ -368,5 +368,8 @@ export function selectBalancedCandidate(candidates,{strict=false}={}){
      return a.golden?.qualifies?-1:1;
    return b.threeWay.score-a.threeWay.score;
  });
- return ranked[0];
+ return ranked;
+}
+export function selectBalancedCandidate(candidates,options={}){
+ return rankBalancedCandidates(candidates,options)[0]||null;
 }
