@@ -162,6 +162,19 @@
             <p class="small-label">PARTS OF THIS WORD</p>
             <div id="logoAnatomyGlossary" class="glyph-glossary" aria-label="Anatomical glossary and applicability"></div>
           </section>
+          <details id="logoEvolutionPanel" class="logo-evolution-panel">
+            <summary>∞ CONTINUOUSLY MUTATE LETTER PARTS</summary>
+            <p class="glyph-help">Keep the actual word readable while its anatomical rules, construction, joins and strokes evolve. Every revision inherits its parent. Uses zero image-model requests.</p>
+            <label for="logoEvolutionSpeed">SECONDS BETWEEN LOGO EXPERIMENTS</label>
+            <select id="logoEvolutionSpeed"><option value="1800">1.8 — quick</option><option value="3500" selected>3.5 — steady</option><option value="6500">6.5 — slow</option></select>
+            <div class="logo-evolution-actions">
+              <button type="button" id="logoEvolutionStart">▶ CONTINUOUS LOGO EVOLUTION</button>
+              <button type="button" id="logoEvolutionStop" disabled>Ⅱ PAUSE</button>
+              <button type="button" id="logoEvolutionOnce">ONE MORE LETTERFORM</button>
+            </div>
+            <p id="logoEvolutionStatus" role="status" aria-live="polite">Ready to evolve glyph anatomy as a heritable visual program.</p>
+            <div id="logoEvolutionStrip" aria-label="Anatomical logo lineage"></div>
+          </details>
         </section>
         <div id="proceduralActions">
         <button type="button" class="action-generate" id="generate">PAINT SOMETHING <span aria-hidden="true">↗</span></button>
