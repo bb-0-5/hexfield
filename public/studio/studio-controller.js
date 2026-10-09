@@ -728,15 +728,38 @@ function chooseBlind(index){
 }
 let imagination,ruleStudio,logoControls,logoLoop;
 async function paintNextLogoGeneration(parent,focus){
-  const last=state.currentVisual;
-  const proposal=makeRecipe({parent,focus});
-  proposal.experiment='continuous-'+focus;
-  // This is genuine inheritance: mutateGenome() sees the previous glyph
-  // topology, not a newly sampled image or a different text prompt.
-  await paintRecipe(proposal);
+  const last=state.currentVisual,options=[];
+  // Use the CURRENT font genome and CURRENT seed to explore competing,
+  // heritable per-part edits before accepting one. Repeating an operation
+  // on a new seed is not enough: only the actual glyph geometry can
+  // demonstrate that it made a different painting.
+  for(let i=0;i<3;i++){
+    const branch=evolveSeed(parent.seed,
+      (parent.genome?.generation||0)+1,i,'letter-anatomy-'+focus);
+    const recipe=makeRecipe({parent,focus,evolutionSeed:branch});
+    recipe.experiment='continuous-'+focus;
+    try{
+      const preview=await renderPreview(recipe,.14);
+      const novelty=assessCanvas(preview.canvas,{
+        mode:'lettering',method:studioMethod(recipe),
+        parent:state.nonredundancy?.fingerprint||null
+      });
+      options.push({recipe,novelty});
+    }catch(error){console.warn('Logo anatomy candidate omitted:',error);}
+  }
+  options.sort((a,b)=>{
+    if(a.novelty.redundant!==b.novelty.redundant)
+      return a.novelty.redundant?1:-1;
+    return b.novelty.score-a.novelty.score;
+  });
+  const chosen=options[0]?.recipe||makeRecipe({parent,focus,
+    evolutionSeed:evolveSeed(parent.seed,parent.genome.generation+1,7,'letter-fallback')});
+  await paintRecipe(chosen);
   const diff=visualDistance(last,state.currentVisual);
-  proposal._measuredDistance=Number.isFinite(diff)?diff:null;
-  return proposal;
+  chosen._measuredDistance=Number.isFinite(diff)?diff:null;
+  chosen._globalNovelty=state.nonredundancy?.novelty??null;
+  chosen._testedCandidates=options.length;
+  return chosen;
 }
 function applyEditedLogo(program,why='edit'){
  logoLoop?.pause('editing selected letter part');
