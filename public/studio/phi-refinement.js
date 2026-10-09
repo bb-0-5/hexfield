@@ -46,6 +46,17 @@ export function refineGoldenRecipe(parent,index=0,{target='geometry'}={}){
    // the genotype's named anatomical laws or make one part disappear.
    candidate.genome.anatomy=structuredClone(parent.genome.anatomy);
    candidate.anatomy=structuredClone(parent.anatomy||parent.genome.anatomy);
+   if(candidate.anatomy?.enabled===false){
+     // A user deliberately chose native-font comparison mode; phi
+     // placement only affects the named-anatomy renderer. Mutate the
+     // native typeface's actual construction genome instead of pretending
+     // that a metadata-only layout change changed its pixels.
+     const focus=target==='geometry'?'structure':
+       target==='color'?'light':'surface';
+     const next=mutateGenome(parent.genome,focus,derived);
+     candidate.genome={...next,color:indexes[step],
+       anatomy:{...candidate.anatomy,enabled:false}};
+   }
  }else{
    // Landscape is already a full procedural world. Mutation changes
    // real geometry/light/surface construction, with no destructive pixel
