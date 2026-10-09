@@ -168,7 +168,12 @@ function materialOf(idea,seed,recipe){
  if(recipe?.mark==='dots')return 'dots';
  if(recipe?.mark==='hatch')return 'hatch';
  if(recipe?.mark==='cutout')return 'facets';
- return MATERIALS[(idea.age+(seed%MATERIALS.length))%MATERIALS.length];
+ const favourite=heritageTaste().habits.find(x=>x.weight>=1.4);
+ const fallback=MATERIALS[(idea.age+(seed%MATERIALS.length))%MATERIALS.length];
+ // The preferred material returns only occasionally: heritage must
+ // not suppress new experiments or conflict with locked drawing laws.
+ return favourite&&evolveSeed(seed,idea.age,2,'learned-habit')%4===0?
+   favourite.material:fallback;
 }
 function paintForm(ctx,idea,{width,height,seed,cycle,recipe}){
  const drift=evolveSeed(seed,idea.age+1,0,idea.id);
