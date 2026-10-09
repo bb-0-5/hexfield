@@ -263,8 +263,22 @@ export function componentMask(rule,char,index,component){
  return applicableComponents(an,rule.target).some(x=>x===component||x.part===component.part);
 }
 export function transformedComponent(component,rule,{char='A'}={}){
- const points=component.points.map(p=>[...p]);
- const amount=clamp(Number(rule.amount)||.55,.08,1),effect=rule.operation;
+ const effect=rule.operation;
+ // A two-endpoint straight stem has no interior point to bend. Subdivide
+ // before transforming so the midpoint genuinely moves while endpoints stay
+ // anchored. Fractures and dashes also require intermediate segments.
+ let points=component.points.map(p=>[...p]);
+ if(['bend','fracture','dots','dashes','taper','open'].includes(effect)&&points.length<8){
+   const dense=[];
+   for(let j=1;j<points.length;j++){
+     const a=points[j-1],b=points[j];
+     for(let i=0;i<16;i++){
+       const t=i/16;dense.push([a[0]*(1-t)+b[0]*t,a[1]*(1-t)+b[1]*t]);
+     }
+   }
+   dense.push([...points.at(-1)]);points=dense;
+ }
+ const amount=clamp(Number(rule.amount)||.55,.08,1);
  const cx=points.reduce((sum,p)=>sum+p[0],0)/points.length,
    cy=points.reduce((sum,p)=>sum+p[1],0)/points.length;
  const side=component.side||((cx>=.5)?1:-1);
