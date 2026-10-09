@@ -76,7 +76,12 @@
     event.preventDefault();
     event.stopImmediatePropagation();
     if (!testing) {
-      status("Print checkout is in Stripe testing. Live payment and delivery are not yet available.");
+      // The live path is intentionally NON-COMMERCE for Hexfield:
+      // customer downloads their PNG, buys from an independent AU printer,
+      // and the printer alone accepts payment, shipping details and returns.
+      const handoff = globalThis.HexfieldPrintHandoff;
+      if (handoff?.open) handoff.open("legacy");
+      else status("Australian printer handoff not loaded. Use EXPORT PNG.");
       return;
     }
     if (inFlight || !globalThis.__hexfield?.getCurrent?.()) return;
@@ -119,8 +124,9 @@
   document.addEventListener("DOMContentLoaded", () => {
     const btn = document.getElementById("buy");
     if (btn) {
-      btn.textContent = testing ? "STRIPE TEST CHECKOUT" : "PRINT ORDERS NOT YET LIVE";
-      btn.setAttribute("aria-label", testing ? "Test Stripe Checkout — no real payment" : "Live print sales are not available yet");
+      btn.textContent = testing ? "STRIPE TEST CHECKOUT" : "PRINT AT AN AUSTRALIAN PRINTER ↗";
+      btn.setAttribute("aria-label", testing ? "Test Stripe Checkout — no real payment" :
+        "Download the artwork and buy it directly from an independent Australian printer");
     }
     const params = new URLSearchParams(location.search);
     if (params.get("print_checkout") === "success") {
