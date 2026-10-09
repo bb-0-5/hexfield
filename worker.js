@@ -7,6 +7,7 @@ const SUPABASE = 'https://uiobhojjgtsvyzuzqqiy.supabase.co';
 const PUBLIC_KEY = 'sb_publishable_G6unWGHkbOkjAaRHhaq_8Q_j-1T4jA8';
 const IMAGE_MODEL = '@cf/black-forest-labs/flux-2-klein-4b';
 const TEXT_MODEL = '@cf/meta/llama-3.1-8b-instruct-fast';
+const PLAN_SCHEMA={type:'object',properties:{title:{type:'string'},method:{type:'string'},prompt:{type:'string'}},required:['title','method','prompt']};
 const origins = new Set(['https://hexfield.org','https://www.hexfield.org']);
 const data = (value,status=200)=> new Response(JSON.stringify(value),{
   status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}
@@ -37,9 +38,11 @@ async function planWithModel(env,{idea,history,critique,edit}){
   const user=JSON.stringify({requested_idea:idea||'Invent a landscape beyond traditional genres',most_recent_critique:critique,
     edit_image:edit,previous_human_feedback:evidence});
   try{
-    const answer=await env.AI.run(TEXT_MODEL,{messages:[{role:'system',content:system}, {role:'user',content:user}],max_tokens:450,temperature:.94});
-    const text=answer?.response || answer?.choices?.[0]?.message?.content || '';
-    return unpackModelPlan(text,idea,edit);
+    const answer=await env.AI.run(TEXT_MODEL,{messages:[{role:'system',content:system}, {role:'user',content:user}],
+      max_tokens:500,temperature:.82,response_format:{type:'json_schema',json_schema:PLAN_SCHEMA}});
+    // Models may return their structured response as a content string or a JSON object.
+    const output=answer?.choices?.[0]?.message?.content || answer?.response || '';
+    return unpackModelPlan(typeof output==='string'?output:JSON.stringify(output),idea,edit);
   }catch(error){console.warn('Art direction model unavailable; using direct image prompt:',String(error).slice(0,200));
     const dislikes=history.filter(item=>!item.liked).slice(-3).map(item=>item.critique||item.method).filter(Boolean).join('; ');
     const avoids=dislikes?` Earlier work failed because: ${dislikes}. Change the approach rather than repeating it.`:'';
@@ -83,7 +86,8 @@ async function apiImagination(request,env){
   }catch(e){console.warn('Quota RPC could not be reached',String(e).slice(0,200));return data({error:'The studio cannot verify its AI quota. No image was requested.'},503);}
   const plan=await planWithModel(env,{idea,history,critique,edit});
   const form=new FormData();
-  form.set('prompt',plan.prompt);
+  const finalPrompt=edit?`Using input image 0 as the existing canvas, substantially rework the visual content, medium and composition following this direction: ${plan.prompt}`:plan.prompt;
+  form.set('prompt',finalPrompt);
   form.set('width','1024');form.set('height','768');
   if(edit){
     try{const bytes=decodeBase64(imageInput);form.set('input_image_0',new Blob([bytes],{type:'image/png'}),'canvas.png');}
@@ -97,7 +101,7 @@ async function apiImagination(request,env){
     const encoded=output?.image || output?.result?.image;
     if(!encoded || typeof encoded!=='string')throw Error('No image returned');
     return data({image:'data:image/png;base64,'+encoded,title:plan.title,method:plan.method,
-      prompt:plan.prompt,credits_remaining:budget,model:IMAGE_MODEL});
+      prompt:finalPrompt,credits_remaining:budget,model:IMAGE_MODEL});
   }catch(e){console.error('Workers AI image inference failed',String(e).slice(0,300));
     return data({error:'The image model failed to create a painting. The daily budget may still count this attempt.'},502);
   }
