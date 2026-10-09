@@ -255,6 +255,7 @@ function disableVoting(value){$('keep').disabled=value;$('reject').disabled=valu
 function setStatus(message){$('feedbackStatus').textContent=message;}
 function setMode(mode,{paint=true}={}){
   if(!['rules','imagination','landscape','lettering'].includes(mode))return;
+  if(state.mode==='rules'&&mode!=='rules')ruleStudio?.hide();
   clearExperiments();clearBlind();state.controller?.abort();state.mode=mode;
   const imagining=mode==='imagination',ruling=mode==='rules';
   $('ruleControls').hidden=!ruling;
