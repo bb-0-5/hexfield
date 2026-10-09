@@ -53,7 +53,7 @@ export function createAbstractionLoop({
  let running=false,waiting=false,timer=null,activeStep=false;
  let cycle=0,seed=Math.floor(Math.random()*4294967295),last=null;
  let lastRecipe=null,config={},lastMix=null,lastError=null;
- let stamps=[],stamp=0,refreshStamp=0;
+ let stamps=[],stamp=0,forceFreshSources=true;
  const state=()=>({
    running,waiting,cycle,recipe:lastRecipe,
    sourceNames:lastMix?.sources||[],method:lastMix?.mode||null,
@@ -74,7 +74,7 @@ export function createAbstractionLoop({
  }
  function reset(){
    pause();cycle=0;last=null;lastRecipe=null;lastMix=null;stamps=[];seed=Math.floor(Math.random()*4294967295);
-   bank.clear();status();
+   bank.clear();forceFreshSources=true;status();
  }
  function configure(newConfig={}){
    config={...config,...newConfig};
@@ -93,10 +93,15 @@ export function createAbstractionLoop({
        secondary:config.secondary||'none',mark:config.mark||'surprise'});
      // Every 6th generation, rebuild the landscape / typography donors. Both
      // create their own new procedure trees, not just recolour an old image.
-     if(cycle===0||cycle%6===0){
+     if(cycle===0||cycle%6===0||forceFreshSources){
        const refreshSeed=(seed+Math.imul(cycle+1,2654435761))>>>0;
-       try{await bank.refresh(refreshSeed,recipe.subject,{force:true});}
-       catch(error){lastError='One renderer unavailable; using other sources: '+String(error.message||error).slice(0,120);}
+       try{
+         await bank.refresh(refreshSeed,recipe.subject,{force:true});
+         forceFreshSources=false;
+       }catch(error){
+         forceFreshSources=true;
+         lastError='One renderer unavailable: '+String(error.message||error).slice(0,120);
+       }
      }
      if(currentStamp!==stamp)return;
      const inputs=bank.sources(previous);
@@ -122,7 +127,10 @@ export function createAbstractionLoop({
      try{onFrame(result)}catch(error){onError(error)}
      status();
      if(stalled){
+       // Never leave the next cycle with only its parent. Rebuild REALITY,
+       // TERRAIN, and LETTERING before executing the next generation.
        bank.clear();
+       forceFreshSources=true;
        seed=(seed+0x9E3779B9)>>>0;
      }
    }catch(error){
