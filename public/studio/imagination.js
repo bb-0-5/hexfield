@@ -204,6 +204,7 @@ export function initImagination({getSession}){
     const feedback={id:crypto.randomUUID(),imageId:current.id,liked,thumb,idea:current.idea,
       prompt:current.prompt,method:current.method,critique,createdAt:new Date().toISOString(),synced:false};
     current.judged=true;
+    void storeCurrentPainting(current);
     history.push(feedback);history=history.slice(-40);persist(history);
     if(!liked)lastCritique=critique;
     summariseHistory();updateCurrent();void syncFeedback();
