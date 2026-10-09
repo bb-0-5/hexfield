@@ -204,6 +204,8 @@
             </div>
           </section>
           <button type="button" class="ghost-button" id="ruleSave" disabled>EXPORT RULE-BOUND PNG ↓</button>
+          <div class="au-print-cta"><button type="button" data-au-print="rules" class="ghost-button">PRINT THIS WITH AN AUSTRALIAN PRINTER ↗</button>
+            <p>Direct manufacturer checkout. Hexfield takes no money, orders or delivery details.</p></div>
           <h2 class="rule-gallery-heading">Continuous rework lineage</h2>
           <div id="ruleLoopHistory" class="rule-loop-history" aria-label="The last ten generations"></div>
           <h2 class="rule-gallery-heading">Kept experiments &amp; descendants</h2><div id="ruleGallery" class="rule-gallery"></div>
@@ -229,6 +231,8 @@
             <div class="imagine-buttons"><button class="vote-button reject" id="imagineReject" type="button">✕ REJECT</button><button class="vote-button keep" id="imagineKeep" type="button">♥ KEEP</button></div>
           </section>
           <div class="mini-actions imagination-more"><button type="button" class="ghost-button" id="imagineRevise" disabled>REWORK THIS CANVAS ↺</button><button type="button" class="ghost-button" id="imagineExport" disabled>EXPORT PNG ↓</button></div>
+          <div class="au-print-cta"><button type="button" data-au-print="imagination" class="ghost-button">PRINT THIS WITH AN AUSTRALIAN PRINTER ↗</button>
+            <p>Artwork download + independent Australian printer. Pay the printer directly.</p></div>
           <p class="feedback-line" id="imagineStatus" role="status" aria-live="polite">The model is ready for a new idea. Feedback influences future prompts, not its trained weights.</p>
           <div id="imagineHistory" class="imagination-history" aria-label="Recent decisions"></div>
         </section>
@@ -251,6 +255,8 @@
           </div>
         </section>
         <div class="feedback-line" role="status" aria-live="polite" id="feedbackStatus">No account required. Your votes belong to you.</div>
+        <div class="au-print-cta"><button type="button" data-au-print="studio" class="ghost-button">PRINT THIS WITH AN AUSTRALIAN PRINTER ↗</button>
+          <p>Hexfield generates the print-ready file; an Australian manufacturer sells, prints and ships it.</p></div>
         <section class="experiments" id="experiments" aria-label="Different painting method experiments" hidden>
           <div class="experiments-title"><span class="small-label">COUNTERFACTUAL STUDIES</span><h2 id="experimentHeading">WHAT SHOULD CHANGE?</h2><p>Same seed, same task. These images were rendered and compared with the rejected painting. A changed algorithm alone does not count as discovery.</p></div>
           <figure class="rejected-reference" id="rejectedReference" hidden><img id="rejectedSnapshot" alt="The rejected painting used as the comparison baseline"><figcaption>REJECTED ORIGINAL — ALL COUNTERFACTUALS RETAIN ITS SEED</figcaption></figure>
@@ -273,5 +279,6 @@
     </section>
     <footer class="footer"><span>HEXFIELD / IMAGINATION, CRITICISM, RETRY</span><div><a href="/legacy.html">EARLIER EXPERIMENTS &amp; MUSEUM ↗</a><span id="syncNote">LEARNING: LOCAL FIRST</span></div></footer>
   </div>
+  <script type="module" src="print-handoff.js"></script>
 </body>
 </html>
