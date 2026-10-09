@@ -6,6 +6,8 @@ import {SUBJECTS,LAWS,MARKS,REWORKS,makeRecipe,mutateRecipe,drawReality,applyRul
   noteRuleVerdict,noteLineage,describeRecipe,buildRulePrompt,RULE_STORE} from './rule-engine.js';
 import {createAbstractionLoop} from './abstraction-loop.js';
 import {publishSource} from './source-mixer.js';
+import {evolveSeed,rankNoveltyCandidates,assessCanvas,commitCanvas,
+  methodSignature,snapshotNoveltyMemory} from './nonredundancy.js';
 const $=id=>document.getElementById(id);
 const GALLERY='hexfield.rule-studio.gallery.v1';
 const CURRENT='hexfield.rule-studio.current.v1';
@@ -76,7 +78,7 @@ export function initRuleStudio(){
    getParent:()=>current?.canvas||null,
    getUploaded:()=>upload,
    onFrame(result){
-     const {canvas,recipe,cycle,metrics,blend,sources,novelty}=result;
+     const {canvas,recipe,cycle,metrics,blend,sources,novelty,nonredundancy}=result;
      context.clearRect(0,0,960,600);context.drawImage(canvas,0,0,960,600);
      current={recipe,canvas,judged:false,metrics};
      parentCanvas=canvas;
@@ -88,7 +90,9 @@ export function initRuleStudio(){
        ' marks / '+metrics.skipped+' removed / '+blend.toUpperCase()+
        ' / '+sources.join(' + ')+' / visual change '+(novelty*100).toFixed(1)+'%');
      status('Reabstracting generation '+cycle+
-       '. The LAST image is now the parent for the NEXT painting.');
+       '. Shared novelty '+((nonredundancy?.novelty||0)*100).toFixed(1)+
+       '%, structural complexity '+((nonredundancy?.complexity||0)*100).toFixed(1)+
+       '%. Last painting is the next reference.');
      if(cycle%4===0){persistCanvas(canvas,recipe,false);publishSource(canvas,'rules',recipe);}
    },
    onState(info){
@@ -99,6 +103,9 @@ export function initRuleStudio(){
      text('ruleLoopStatus',(info.running?'LIVE':'PAUSED')+' / '+info.cycle+
        ' passes / blending: '+(info.method||'evolving')+' / renderers: '+sources+
        (info.waiting?' / suspended while page is hidden':'')+
+       (info.nonredundancy?' / GLOBAL W novelty '+
+         (info.nonredundancy.novelty*100).toFixed(1)+
+         '% · complexity '+(info.nonredundancy.complexity*100).toFixed(1)+'%':'')+
        (info.lastError?' / '+info.lastError:''));
      showLoopHistory(info.history||[]);
    },
@@ -106,10 +113,20 @@ export function initRuleStudio(){
  });
  function present(recipe,source,revision=false){
    if(!source)throw Error('No input picture to constrain');
-   const target=canvasOf();
+   const before=current?.canvas||null,target=canvasOf();
    const metrics=applyRules(source,target,recipe,{iteration:recipe.generation});
+   const method=methodSignature({
+     mode:'rule-studio',subject:recipe.subject,primary:recipe.primary,
+     secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework
+   });
+   const analysis=assessCanvas(target,{
+     mode:'rule-studio',method,parent:before
+   });
+   const W=commitCanvas(target,{
+     mode:'rule-studio',method,seed:recipe.seed,parentId:recipe.parentId,evaluation:analysis
+   });
    context.clearRect(0,0,960,600);context.drawImage(target,0,0);
-   current={recipe,canvas:target,judged:false,metrics};parentCanvas=target;
+   current={recipe,canvas:target,judged:false,metrics,nonredundancy:W};parentCanvas=target;
    $('ruleEmpty').hidden=true;
    $('ruleArtwork').hidden=false;
    $('ruleKeep').disabled=false;$('ruleReject').disabled=false;$('ruleReworkBtn').disabled=false;
@@ -118,7 +135,10 @@ export function initRuleStudio(){
    text('ruleEvidence',metrics.strokes+' actual marks · '+metrics.skipped+
      ' omitted · '+(recipe.parentId?' CHILD OF '+recipe.parentId.slice(0,7):'ORIGINAL')+
      (revision?' · PAINTED FROM PREVIOUS IMAGE':''));
-   status('Constraint engine executed the laws on the pixels. No image-model inference was needed.');
+   status('W / global non-redundancy: '+(W.novelty*100).toFixed(1)+
+     '% new against this studio, '+(W.globalNovelty*100).toFixed(1)+
+     '% new globally, complexity '+(W.complexity*100).toFixed(1)+'%.'+
+     (W.redundant?' Repeated image: try a new law.':''));
    noteLineage(recipe);persistCanvas(target,recipe,false);
    publishSource(target,'rules',recipe);
    return current;
@@ -143,9 +163,26 @@ export function initRuleStudio(){
  }
  async function paintFresh(){
    try{
-     const recipe=makeRecipe(selections()),source=await sourceFor(recipe);
-     realitySource=source;
-     present(recipe,source);
+     const values=selections(),sourceSeed=current?.recipe?.seed??Math.floor(Math.random()*4294967295);
+     const options=[];
+     for(let i=0;i<3;i++){
+       const derived=evolveSeed(sourceSeed,(current?.recipe?.generation||0)+1,i,'rule-paint');
+       const recipe=makeRecipe({...values,seed:derived,
+         parentId:current?.recipe?.id||null,
+         generation:(current?.recipe?.generation||0)+1});
+       const source=await sourceFor(recipe),candidate=canvasOf();
+       applyRules(source,candidate,recipe,{iteration:recipe.generation});
+       const method=methodSignature({
+         mode:'rule-studio',subject:recipe.subject,primary:recipe.primary,
+         secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework
+       });
+       options.push({recipe,source,canvas:candidate,method});
+     }
+     const [chosen]=rankNoveltyCandidates(options,{
+       mode:'rule-studio',parent:current?.canvas||null
+     });
+     realitySource=chosen.source;
+     present(chosen.recipe,chosen.source);
    }catch(error){status(safe(error.message));}
  }
  function child(focus){
@@ -172,7 +209,9 @@ export function initRuleStudio(){
    if(!current){status('Paint a parent picture before reworking.');return;}
    const ancestor=current.recipe;
    const opts=selections();
-   const next=makeRecipe({...opts,parentId:ancestor.id,generation:ancestor.generation+1,seed:ancestor.seed});
+   const next=makeRecipe({...opts,parentId:ancestor.id,
+     generation:ancestor.generation+1,
+     seed:evolveSeed(ancestor.seed,ancestor.generation+1,0,'rule-rework')});
    if(next.rework==='none')next.rework='abstract_masses';
    const prior=current.canvas;
    realitySource=prior;
