@@ -6,12 +6,12 @@ const request=(body,origin=site,authorization=bearer)=>new Request(site+'/api/im
   method:'POST',headers:{origin,authorization,'content-type':'application/json'},body:JSON.stringify(body)
 });
 const originalFetch=globalThis.fetch;
-let quotaCalls=0,aiCalls=[];
+let quotaCalls=0,completionCalls=0,aiCalls=[];
 globalThis.fetch=async (url,options)=>{
-  assert.ok(String(url).includes('rpc/claim_hexfield_imagination'));
   assert.equal(options.headers.apikey.startsWith('sb_publishable_'),true);
-  quotaCalls++;
-  return Response.json(2);
+  if(String(url).includes('rpc/claim_hexfield_imagination')){quotaCalls++;return Response.json(2);}
+  if(String(url).includes('rpc/complete_hexfield_imagination')){completionCalls++;return Response.json(1);}
+  throw Error('Unexpected remote request '+url);
 };
 const environment={AI:{async run(model,input){aiCalls.push({model,input});
   if(model.includes('llama-3.1-8b'))return {response:'{"title":"The copper salt flats","method":"impasto applied with a palette knife rather than digital gradients","prompt":"A vast salt flat through crystalline dust, viewed from ground level. Thick palette-knife oil paint, angular impasto pigment, fading eerie storm cloud formations, warm rusty colour on rough canvas."}'};
@@ -29,20 +29,28 @@ try{
   assert.equal(response.status,200);
   const result=await response.json();
   assert.equal(result.title,'The copper salt flats');
-  assert.equal(result.credits_remaining,2);
+  assert.equal(result.credits_remaining,1);
   assert.equal(result.image,'data:image/png;base64,SU1BR0VEQVRB');
   assert.ok(result.prompt.includes('palette-knife'));
-  assert.equal(quotaCalls,1);assert.equal(aiCalls.length,2);
+  assert.equal(quotaCalls,1);assert.equal(completionCalls,1);assert.equal(aiCalls.length,2);
   const edited=await worker.fetch(request({request_id:crypto.randomUUID(),idea:'A moonlit marsh',edit:true,
     image_b64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4////fwAJ+wP9UKIh+AAAAABJRU5ErkJggg=='}),environment);
   assert.equal(edited.status,200);
-  assert.equal(aiCalls.length,4);
+  assert.equal(aiCalls.length,4);assert.equal(completionCalls,2);
   const malformed=await worker.fetch(request({request_id:crypto.randomUUID(),edit:true,image_b64:'!!invalid!!'}),environment);
   assert.equal(malformed.status,400);
   assert.equal(quotaCalls,2,'Invalid inputs must not spend credits');
+  // A failed model call should return an actionable error, NOT finalize a
+  // successful painting. The reservation expires in PostgreSQL.
+  const failedEnv={AI:{async run(model){if(model.includes('llama'))return {response:'{}'};throw Error('AI service 429 rate limit');}}};
+  const before=completionCalls;
+  const failed=await worker.fetch(request({request_id:crypto.randomUUID()}),failedEnv);
+  assert.equal(failed.status,503);
+  assert.equal((await failed.json()).code,'MODEL_BUSY');
+  assert.equal(completionCalls,before);
   const unavailable=await worker.fetch(request({request_id:crypto.randomUUID()}),{ASSETS:{fetch(){}}});
   assert.equal(unavailable.status,503);
   const status=await worker.fetch(new Request(site+'/api/imagine/status'),environment);
   assert.equal((await status.json()).ready,true);
-  console.log('Worker security, bounded quota, image model and editing tests passed.');
+  console.log('Worker security, completed-image quota, model failures and editing tests passed.');
 }finally{globalThis.fetch=originalFetch;}
