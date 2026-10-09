@@ -90,6 +90,35 @@ export function initRuleStudio(){
      el.append(img,caption);root.append(el);
    }
  }
+ function showHeritage(ideas=[]){
+   const root=$('ruleGenealogy');
+   if(!root)return;
+   root.replaceChildren();
+   for(const gene of ideas.slice(0,2)){
+     const panel=document.createElement('figure');
+     panel.className='heritage-specimen';
+     const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+     svg.setAttribute('viewBox','0 0 100 75');
+     svg.setAttribute('aria-label','Actual sampled inherited contour '+gene.id);
+     svg.setAttribute('role','img');
+     const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+     const d=(gene.outline||[]).map((point,i)=>
+       (i?'L':'M')+(4+point[0]*92).toFixed(1)+' '+
+       (4+point[1]*66).toFixed(1)).join(' ')+' Z';
+     path.setAttribute('d',d);
+     path.setAttribute('fill','none');
+     path.setAttribute('stroke','#c2dca2');
+     path.setAttribute('stroke-width','2.5');
+     path.setAttribute('stroke-linejoin','round');
+     svg.append(path);panel.append(svg);
+     const info=document.createElement('figcaption');
+     info.textContent='HERITAGE '+gene.generation+
+       ' / '+gene.name+' / '+gene.material+
+       ' / AGE '+gene.age+'/'+gene.ttl+
+       ' / preference '+gene.trust.toFixed(2);
+     panel.append(info);root.append(panel);
+   }
+ }
  function loopOptions(){
    return {speed:Number($('ruleLoopSpeed').value)||3000,
      mixMode:$('ruleMixMode').value,
@@ -140,6 +169,7 @@ export function initRuleStudio(){
      $('ruleLoopStop').disabled=!info.running;
      $('ruleLoopOnce').disabled=info.running;
      const visible=info.motifs||[],genomes=info.ideas||[];
+     showHeritage(genomes);
      const survivorStatus=$('ruleSurvivors');
      if(survivorStatus){
        survivorStatus.textContent='SURVIVING IDEAS / '+visible.length+
