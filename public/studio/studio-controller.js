@@ -7,6 +7,7 @@ import {initRuleStudio} from './rule-studio.js';
 import {initAnatomyControls} from './anatomy-controls.js';
 import {initLogoEvolution} from './logo-evolution.js';
 import {createCreativePerformance} from './creative-performance.js';
+import {measureGoldenTaste,goldenPrior,explainGolden,getGoldenMode,setGoldenMode} from './golden-taste.js';
 import {evolveSeed,assessCanvas,commitCanvas,rankNoveltyCandidates,
   methodSignature,snapshotNoveltyMemory} from './nonredundancy.js';
 import {publishSource} from './source-mixer.js';
@@ -43,7 +44,7 @@ const state={
   pending:readJson(storage.votes,[]),
   evolution:readJson(storage.evolution,{landscape:{elites:[],rejected:[],focus:{}},lettering:{elites:[],rejected:[],focus:{}}}),
   experiments:[],experimentRevision:0,currentVisual:null,comparisonReference:null,
-  nonredundancy:null,lastGlyphMeta:null,
+  nonredundancy:null,lastGlyphMeta:null,goldenTaste:null,
   visual:readJson(storage.visual,{landscape:[],lettering:[]}),
   blindHistory:readJson(storage.blind,[]),blindCurrent:null,blindRevision:0,
 };
@@ -395,6 +396,9 @@ async function paintRecipe(recipe,{newStudy=true}={}) {
         parentId:recipe.parentMethod||null,evaluation:observation
       })
     };
+    state.goldenTaste=measureGoldenTaste(state.canvas,{mode:recipe.mode});
+    const φ=$('studioGoldenEvidence');
+    if(φ){φ.textContent='φ×φ / '+explainGolden(state.goldenTaste);φ.dataset.qualifies=String(state.goldenTaste.qualifies);}
     state.currentVisual=describeCanvas(state.canvas,recipe.mode);
     if(recipe.comparison&&descriptorValid(state.comparisonReference)){
       const delta=visualDistance(state.comparisonReference,state.currentVisual);
@@ -843,6 +847,8 @@ function applyEditedLogo(program,why='edit'){
  void paintRecipe(recipe,{newStudy:why!=='visibility'});
 }
 function bind(){
+  $('phiTasteMode').value=getGoldenMode();
+  $('phiTasteMode').addEventListener('change',()=>setGoldenMode($('phiTasteMode').value));
   for(const btn of document.querySelectorAll('[data-mode]'))btn.addEventListener('click',()=>setMode(btn.dataset.mode));
   $('generate').addEventListener('click',()=>{
     if(state.mode==='lettering')logoLoop?.pause('new logo requested');
