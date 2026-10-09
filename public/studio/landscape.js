@@ -363,9 +363,16 @@ export async function renderLandscape(canvas,recipe,{onProgress,signal,animate=t
  onProgress?.('finished',1);return true;
 }
 export function landscapeDescription(recipe){
- return `${recipe.mood} ${recipe.scene} · ${methodDescription(recipe.genome)}`;
+ const law=recipe.constraint?.enabled?
+   ' · LAW '+recipe.constraint.primary+' / '+recipe.constraint.mark:'';
+ return `${recipe.mood} ${recipe.scene} · ${methodDescription(recipe.genome)}${law}`;
 }
 export function landscapeFeatures(recipe){
- const g=recipe.genome;return {scene:recipe.scene,mood:recipe.mood, ...(g?importGeneFeatures(g):{}),discipline:'landscape'};
+ const g=recipe.genome;
+ return {scene:recipe.scene,mood:recipe.mood,...(g?importGeneFeatures(g):{}),
+   ...(recipe.constraint?.enabled?{
+     constraint:recipe.constraint.primary,
+     constrainedMark:recipe.constraint.mark
+   }:{}),discipline:'landscape'};
 }
 import {geneFeatures as importGeneFeatures} from './evolution.js';
