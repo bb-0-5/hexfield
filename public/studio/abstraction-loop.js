@@ -5,6 +5,8 @@
  */
 import {makeRecipe,mutateRecipe,applyRules,noteLineage,LAWS,MARKS} from './rule-engine.js';
 import {createSourceBank,mixSources,cloneCanvas} from './source-mixer.js';
+import {evolveSeed,rankNoveltyCandidates,commitCanvas,
+  methodSignature,snapshotNoveltyMemory} from './nonredundancy.js';
 export const REWORK_SEQUENCE=['abstract_masses','negative_repaint','misread','remove_strength'];
 const clamp=(n,a,b)=>Math.max(a,Math.min(n,b));
 const choice=a=>a[Math.floor(Math.random()*a.length)];
@@ -21,25 +23,32 @@ export function visualDelta(a,b){
    (Math.abs(x[i]-y[i])+Math.abs(x[i+1]-y[i+1])+Math.abs(x[i+2]-y[i+2]))/765;
  return dist/(w*h);
 }
-export function nextAbstractRecipe(parent,{cycle=0,subject='abstract',lockLaw=false,
+export function nextAbstractRecipe(parent,{cycle=0,branch=0,seed=null,
+  subject='abstract',lockLaw=false,
   law='surprise',secondary='none',mark='surprise'}={}){
  const options={subject:subject==='surprise'?'abstract':subject};
  let recipe;
  if(!parent){
    recipe=makeRecipe({
      ...options,primary:law,secondary,mark,
-     rework:'abstract_masses',seed:(Math.random()*4294967295)>>>0
+     rework:'abstract_masses',seed:Number.isFinite(seed)?seed:
+       (Math.random()*4294967295)>>>0
    });
    // The first picture uses all mark-making engines together unless the
    // painter explicitly locks an individual mark as a formal restriction.
    if(!lockLaw||mark==='surprise')recipe.mark='hybrid';
  }else{
    const focus=cycle%5===1?'mark':cycle%4===0?'law':'rework';
-   recipe=mutateRecipe(parent,focus);
-   recipe.rework=REWORK_SEQUENCE[cycle%REWORK_SEQUENCE.length];
+   const nextSeed=Number.isFinite(seed)?seed:
+     evolveSeed(parent.seed,cycle+1,branch,'abstract');
+   recipe=mutateRecipe(parent,focus,'studio',nextSeed);
+   recipe.seed=nextSeed;
+   recipe.rework=REWORK_SEQUENCE[(cycle+branch)%REWORK_SEQUENCE.length];
    recipe.parentId=parent.id;
    recipe.generation=(parent.generation||0)+1;
-   if(cycle%9===0)recipe.seed=((parent.seed>>>0)+cycle*9973)>>>0;
+   // Every procedure mutation and renderer sampler now uses a branch of
+   // the existing seed, not a fresh random draw or a fixed repeated seed.
+   recipe.seed=nextSeed;
    if(lockLaw&&law!=='surprise'){recipe.primary=law;recipe.secondary=secondary==='none'?'none':secondary;}
    if(lockLaw&&mark!=='surprise')recipe.mark=mark;
    else if(recipe.rework!=='remove_strength' && cycle%5!==0)
@@ -69,12 +78,13 @@ export function createAbstractionLoop({
  const bank=createSourceBank({width,height,getArchive,getUploaded,getParent});
  let running=false,waiting=false,timer=null,activeStep=false;
  let cycle=0,seed=Math.floor(Math.random()*4294967295),last=null;
- let lastRecipe=null,config={},lastMix=null,lastError=null;
+ let lastRecipe=null,config={},lastMix=null,lastError=null,lastAssessment=null;
  let stamps=[],stamp=0,forceFreshSources=true;
  const state=()=>({
    running,waiting,cycle,recipe:lastRecipe,
    sourceNames:lastMix?.sources||[],method:lastMix?.mode||null,
-   lastError,history:stamps.map(x=>({...x})),
+   lastError,nonredundancy:lastAssessment,globalMemory:snapshotNoveltyMemory().count,
+   currentSeed:lastRecipe?.seed??seed,history:stamps.map(x=>({...x})),
    waitingReason:waiting?'Page hidden':''
  });
  const status=()=>onState(state());
@@ -90,7 +100,8 @@ export function createAbstractionLoop({
    status();
  }
  function reset(){
-   pause();cycle=0;last=null;lastRecipe=null;lastMix=null;stamps=[];seed=Math.floor(Math.random()*4294967295);
+   pause();cycle=0;last=null;lastRecipe=null;lastMix=null;stamps=[];lastAssessment=null;
+   seed=Math.floor(Math.random()*4294967295);
    bank.clear();forceFreshSources=true;status();
  }
  function configure(newConfig={}){
@@ -105,15 +116,13 @@ export function createAbstractionLoop({
    const currentStamp=stamp;
    try{
      const previous=last||getParent();
-     const recipe=nextAbstractRecipe(lastRecipe,{cycle,subject:config.subject||'abstract',
-       lockLaw:!!config.lockLaw,law:config.law||'surprise',
-       secondary:config.secondary||'none',mark:config.mark||'surprise'});
-     // Every 6th generation, rebuild the landscape / typography donors. Both
-     // create their own new procedure trees, not just recolour an old image.
+     const parentSeed=lastRecipe?.seed??seed;
+     const baseSeed=evolveSeed(parentSeed,cycle+1,0,'abstraction-parent');
+     // The source bank refreshes from the current lineage seed. The
+     // picture still has an external reference; the generator isn't reset.
      if(cycle===0||cycle%6===0||forceFreshSources){
-       const refreshSeed=(seed+Math.imul(cycle+1,2654435761))>>>0;
        try{
-         await bank.refresh(refreshSeed,recipe.subject,{force:true});
+         await bank.refresh(baseSeed,config.subject||'abstract',{force:true});
          forceFreshSources=false;
        }catch(error){
          forceFreshSources=true;
@@ -123,23 +132,51 @@ export function createAbstractionLoop({
      if(currentStamp!==stamp)return;
      const inputs=bank.sources(previous);
      if(!inputs.length)throw Error('No renderer produced an image');
-     const mixed=mixSources(inputs,{width,height,cycle,seed,
-       mode:config.mixMode||'auto'});
-     const output=freshCanvas(width,height);
-     const metrics=applyRules(mixed.canvas,output,recipe,{iteration:cycle});
-     if(currentStamp!==stamp)return;
+     const candidates=[];
+     // Compare rendered consequences, not just method strings. Bound attempts
+     // to three to stay responsive on Android. Hold manually locked laws.
+     for(let attempt=0;attempt<3;attempt++){
+       const candidateSeed=evolveSeed(baseSeed,cycle+1,attempt,'render-branch');
+       const recipe=nextAbstractRecipe(lastRecipe,{
+         cycle,branch:attempt,seed:candidateSeed,subject:config.subject||'abstract',
+         lockLaw:!!config.lockLaw,law:config.law||'surprise',
+         secondary:config.secondary||'none',mark:config.mark||'surprise'
+       });
+       const mixed=mixSources(inputs,{
+         width,height,
+         cycle:cycle+attempt*2,
+         seed:candidateSeed,
+         mode:config.mixMode||'auto'
+       });
+       const output=freshCanvas(width,height);
+       const metrics=applyRules(mixed.canvas,output,recipe,{iteration:cycle+attempt});
+       const method=methodSignature({mode:'abstraction',primary:recipe.primary,
+         secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework,
+         blend:mixed.mode,subject:recipe.subject,parents:recipe.parentId||''});
+       candidates.push({canvas:output,recipe,mixed,metrics,method});
+       if(currentStamp!==stamp)return;
+     }
+     const [best]=rankNoveltyCandidates(candidates,{
+       mode:'abstraction',parent:previous
+     });
+     const {canvas:output,recipe,mixed,metrics,assessment}=best;
      const novelty=visualDelta(previous,output);
-     // A monotonous feedback loop gets a new reality/terrain source next pass.
-     // This is a mechanical novelty guard, not an aesthetic quality score.
-     const stalled=cycle>2&&novelty<.035;
+     const stalled=cycle>2&&(assessment.redundant||novelty<.035);
+     const recorded=commitCanvas(output,{mode:'abstraction',method:best.method,
+       seed:recipe.seed,parentId:recipe.parentId,evaluation:assessment});
+     lastAssessment={...recorded,candidates:candidates.length};
      const result={canvas:output,recipe,cycle:cycle+1,metrics,
-       blend:mixed.mode,sources:mixed.sources,novelty,stalled};
+       blend:mixed.mode,sources:mixed.sources,novelty,stalled,
+       nonredundancy:lastAssessment};
      last=output;lastRecipe=recipe;lastMix=mixed;cycle++;lastError=null;
      noteLineage(recipe);
      const frame=freshCanvas(164,104);frame.getContext('2d').drawImage(output,0,0,164,104);
      stamps.push({cycle,thumb:frame.toDataURL('image/webp',.60),
-       id:recipe.id,parentId:recipe.parentId,
-       mark:recipe.mark,law:recipe.primary,blend:mixed.mode,novelty});
+       id:recipe.id,parentId:recipe.parentId,seed:recipe.seed,
+       mark:recipe.mark,law:recipe.primary,blend:mixed.mode,novelty,
+       globalNovelty:lastAssessment.globalNovelty,
+       minSimilarity:lastAssessment.novelty,
+       complexity:lastAssessment.complexity});
      stamps=stamps.slice(-10);
      try{onFrame(result)}catch(error){onError(error)}
      status();
@@ -148,7 +185,8 @@ export function createAbstractionLoop({
        // TERRAIN, and LETTERING before executing the next generation.
        bank.clear();
        forceFreshSources=true;
-       seed=(seed+0x9E3779B9)>>>0;
+       // Even stagnation recovery continues the current seed's lineage.
+       seed=evolveSeed(recipe.seed,cycle+1,7,'novelty-reseed');
      }
    }catch(error){
      lastError=String(error.message||error).slice(0,240);
