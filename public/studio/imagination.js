@@ -61,9 +61,15 @@ export function initImagination({getSession}){
       const info=await response.json();
       const remaining=Number(info.paintings_remaining);
       const retries=Number(info.retry_attempts_remaining);
-      if(Number.isFinite(remaining)&&Number.isFinite(retries))
-        $('imagineQuota').textContent=remaining+' completed paintings left today · '+
-          retries+' total attempts left'+(Number(info.in_progress)>0?' · '+info.in_progress+' painting(s) processing':'');
+      const site=Number(info.site_attempts_remaining);
+      if(Number.isFinite(remaining)&&Number.isFinite(retries)){
+        const exhausted=remaining<1||retries<1||site<1;
+        const quotaMessage=remaining+' paintings available today · '+retries+' attempts available'+
+          (Number.isFinite(site)?' · '+site+' shared studio attempts available':'')+
+          (Number(info.in_progress)>0?' · '+info.in_progress+' in progress':'');
+        $('imagineQuota').textContent=exhausted?
+          quotaMessage+' · Budget resets at 00:00 UTC.':quotaMessage;
+      }
     }catch(error){console.info('Could not read imagination quota:',String(error).slice(0,120));}
     finally{quotaLoading=false;}
   }
@@ -142,7 +148,12 @@ export function initImagination({getSession}){
   }
   async function smallCanvasB64(image){
     const pic=new Image();pic.src=image;
-    await new Promise((resolve,reject)=>{if(pic.complete&&pic.naturalWidth)return resolve();pic.onload=resolve;pic.onerror=reject;});
+    await new Promise((resolve,reject)=>{
+      if(pic.complete&&pic.naturalWidth)return resolve();
+      const timer=setTimeout(()=>reject(Error('The earlier painting could not be decoded in time. Try a new painting instead.')),9000);
+      pic.onload=()=>{clearTimeout(timer);resolve();};
+      pic.onerror=()=>{clearTimeout(timer);reject(Error('The earlier painting could not be read. Try a new painting instead.'));};
+    });
     const c=document.createElement('canvas');c.width=448;c.height=336;
     c.getContext('2d').drawImage(pic,0,0,448,336);
     return c.toDataURL('image/png').split(',')[1];
@@ -181,13 +192,15 @@ export function initImagination({getSession}){
       updateCurrent();
       void storeCurrentPainting(current);
       void refreshQuota();
-      uiStatus('Painting finished. '+result.credits_remaining+' successful painting(s) remaining today. Your previous work is saved in this browser.');
+      uiStatus('Painting finished. '+result.credits_remaining+' painting(s) remaining today. The image is saved in this browser.');
     }catch(error){
       const timedOut=controller.signal.aborted||error?.name==='AbortError';
-      uiStatus(timedOut
-        ? 'The image request took too long and was stopped. The painter is still available — please retry. Failed attempts do not count as completed paintings.'
-        : safeText(error.message||'The image service could not complete this painting.',300)+
-          ' Your previous painting is still here.');
+      let detail=timedOut?
+        'This image request timed out. Your previous painting is safe. You can retry.' :
+        safeText(error.message||'The image service could not complete this painting.',300);
+      if(!timedOut)detail+=' Your previous painting is safe.';
+      // The status line is a visible diagnostic, not an indefinite spinner.
+      uiStatus(detail);
       void refreshQuota();
     }
     finally{
