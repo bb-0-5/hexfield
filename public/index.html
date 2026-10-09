@@ -23,7 +23,7 @@
     </header>
     <div class="product-frame">
       <aside class="controls" aria-label="Studio controls">
-        <p class="eyebrow">STUDIO / 303</p>
+        <p class="eyebrow">STUDIO / 304</p>
         <h1>Make something<br><em>worth keeping.</em></h1>
         <p class="intro">A painter that can imagine unfamiliar places and techniques. Your criticism changes what it attempts next.</p>
         <fieldset class="mode-switch" aria-label="Choose an artistic discipline">
@@ -121,9 +121,34 @@
           <p id="logoHelp" class="control-help">Real, readable letters. Up to 24 characters.</p>
           <label for="logoType">DESIGN TYPE</label>
           <select id="logoType"><option value="wordmark">Wordmark</option><option value="monogram">Monogram</option><option value="emblem">Emblem</option></select>
-          <label for="logoStyle">THE LOOK</label>
-          <select id="logoStyle"><option value="surprise">Surprise me</option><option value="geometric">Geometric</option><option value="minimal">Minimal</option><option value="heavy">Heavy</option><option value="elegant">Elegant</option><option value="experimental">Experimental</option></select>
-          <p class="control-help">Letter construction and joining procedures evolve, while the text stays readable.</p>
+          <label for="logoStyle">FONT CONSTRUCTION FAMILY</label>
+          <select id="logoStyle"><option value="anatomy" selected>Procedural anatomy / editable letters</option><option value="geometric">Geometric anatomy</option><option value="minimal">Minimal anatomy</option><option value="heavy">Heavy anatomy</option><option value="elegant">Elegant anatomy</option><option value="experimental">Experimental anatomy</option><option value="surprise">Surprise me</option></select>
+          <section id="logoAnatomyPanel" class="glyph-editor" aria-label="Glyph anatomy constraint editor">
+            <p class="small-label">LETTER ANATOMY / NAME EVERY PART</p>
+            <p class="glyph-help">Rules modify actual named strokes and negative-space regions, not a style prompt. Tap a letter stroke in the canvas to select its anatomy.</p>
+            <label class="glyph-switch"><input type="checkbox" id="logoAnatomyEnabled" checked> Construct letters from mutable named parts</label>
+            <label class="glyph-switch"><input type="checkbox" id="logoAnatomyGuide"> Show anatomy guides and targeted strokes</label>
+            <label class="glyph-switch"><input type="checkbox" id="logoAnatomyLock"> Lock this part-rule during mutations</label>
+            <div class="glyph-fields">
+              <label for="logoGlyphScope">WHICH LETTER</label>
+              <select id="logoGlyphScope"><option value="all">All applicable letters</option></select>
+              <label for="logoAnatomyPart">ANATOMICAL PART / REGION</label>
+              <select id="logoAnatomyPart"></select>
+              <label for="logoAnatomyEffect">REQUIRED TRANSFORMATION</label>
+              <select id="logoAnatomyEffect"></select>
+              <label for="logoAnatomyAmount">FORCE / <output id="logoAmountValue">65%</output></label>
+              <input id="logoAnatomyAmount" type="range" min="0.1" max="1" step="0.05" value="0.65">
+            </div>
+            <div class="glyph-actions">
+              <button type="button" id="logoAnatomyApply">APPLY RULE TO GLYPHS ↗</button>
+              <button type="button" id="logoAnatomyMutate">MUTATE THIS PART ↺</button>
+              <button type="button" id="logoAnatomyStack">STACK ONE MORE LAW +</button>
+              <button type="button" id="logoAnatomyUndo">UNDO LAST LAW</button>
+            </div>
+            <p id="logoAnatomyStatus" class="glyph-status" role="status" aria-live="polite">Try moving H's crossbar without moving its stems.</p>
+            <p class="small-label">PARTS OF THIS WORD</p>
+            <div id="logoAnatomyGlossary" class="glyph-glossary" aria-label="Anatomical glossary and applicability"></div>
+          </section>
         </section>
         <div id="proceduralActions">
         <button type="button" class="action-generate" id="generate">PAINT SOMETHING <span aria-hidden="true">↗</span></button>
