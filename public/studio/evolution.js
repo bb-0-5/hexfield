@@ -3,6 +3,8 @@
  * Their typed operation trees can replace subtrees, recombine and change their
  * rendering grammar. A seed controls sampling, not the painting method.
  */
+import {ANATOMY,PART_OPERATIONS,ANATOMY_PRESETS,editAnatomyProgram,
+  mutateAnatomyProgram} from './glyph-anatomy.js';
 export const FOCI = ['structure', 'surface', 'light'];
 export const LAND_STROKES = ['contour', 'hatch', 'mosaic', 'knife', 'wash', 'stipple'];
 export const SKY_METHODS = ['clouds', 'veils', 'bands', 'radial', 'flat'];
@@ -58,7 +60,8 @@ export function treeDepth(t) {return !t?0:1+Math.max(treeDepth(t.a),treeDepth(t.
 export function programKey(g) {
   if(!g || !g.kind)return 'missing';
   const ops = g.kind==='landscape' ? [g.layout,g.brush,g.sky,g.growth,...treeOps(g.terrain),...treeOps(g.detail)] :
-    [g.letterForm,g.letterStroke,g.letterFrame,g.joint,g.terminal];
+    [g.letterForm,g.letterStroke,g.letterFrame,g.joint,g.terminal,
+      ...(g.anatomy?.rules||[]).flatMap(r=>[r.target,r.operation,r.glyph])];
   return [g.kind, ...ops].join('|');
 }
 // Full method identity includes numeric parameters and nested node structure.
@@ -78,7 +81,9 @@ export function geneFeatures(g) {
   if(!g || !g.kind)return {};
   return g.kind==='landscape'
     ? {terrain:dominantOp(g.terrain),brush:g.brush,sky:g.sky,layout:g.layout,growth:g.growth}
-    : {construction:g.letterForm,stroke:g.letterStroke,frame:g.letterFrame,joint:g.joint};
+    : {construction:g.letterForm,stroke:g.letterStroke,frame:g.letterFrame,
+       joint:g.joint,anatomyPart:g.anatomy?.rules?.[0]?.target||'none',
+       anatomyLaw:g.anatomy?.rules?.[0]?.operation||'none'};
 }
 export function makeGenome(kind='landscape', seed=1) {
   const r=randomFrom(seed);
@@ -88,6 +93,10 @@ export function makeGenome(kind='landscape', seed=1) {
     terminal:choice(r,['round','square','serif']),angle:+number(r,-.1,.1).toFixed(2),
     track:+number(r,.015,.14).toFixed(2),mass:+number(r,.65,1.28).toFixed(2),
     color:+number(r,0,1).toFixed(2),generation:0,origin:'invented',
+    anatomy:editAnatomyProgram(null,{seed,rules:[] ,rule:(()=>{
+       const presets=Object.values(ANATOMY_PRESETS);
+       return presets[Math.floor(r()*presets.length)];
+    })()}),
   };
   return {
     v:1,kind:'landscape',terrain:makeTree(r,2),detail:makeTree(r,1),
@@ -126,6 +135,9 @@ export function mutateGenome(parent,focus,seed,mate=null) {
       return mutateGenome(g,choice(r,FOCI),seed+419,mate);
     }
   } else {
+    g.anatomy=mutateAnatomyProgram(g.anatomy||editAnatomyProgram(null),seed+331,{
+       mate:mate?.kind==='lettering'?mate.anatomy:null
+    });
     if(focus==='structure'||focus==='wild') {
       mutateProperty(g,r,'letterForm',LETTER_FORMS);
       mutateProperty(g,r,'joint',['discrete','ligature','shared']);
@@ -166,7 +178,7 @@ export function proposeExperiments(parent,seed,nearby=[]) {
 }
 export function methodDescription(g){
   if(!g)return 'an untested painting method';
-  if(g.kind==='lettering')return `${g.letterForm} construction · ${g.letterStroke} strokes · ${g.joint} joins`;
+  if(g.kind==='lettering')return `${g.anatomy?.rules?.[0]?.target||'whole glyph'}:${g.anatomy?.rules?.[0]?.operation||'unconstrained'} · ${g.letterForm} construction · ${g.letterStroke} strokes · ${g.joint} joins`;
   return `${g.layout} composition · ${dominantOp(g.terrain)} landform · ${g.brush} brushwork`;
 }
 export function evaluateSurface(g) {
@@ -176,7 +188,17 @@ export function evaluateSurface(g) {
     if(treeDepth(g.terrain)>5||treeDepth(g.detail)>5)violations.push('procedure exceeds depth limit');
     if(!LAYOUTS.includes(g.layout)||!LAND_STROKES.includes(g.brush)||!SKY_METHODS.includes(g.sky))violations.push('unknown landscape operator');
   }
-  if(g?.kind==='lettering'&&!LETTER_STROKES.includes(g.letterStroke))violations.push('unknown lettering operator');
+  if(g?.kind==='lettering'){
+    if(!LETTER_STROKES.includes(g.letterStroke))violations.push('unknown lettering operator');
+    if(g.anatomy){
+      if(!Array.isArray(g.anatomy.rules)||g.anatomy.rules.length>3)
+        violations.push('anatomy law count exceeds cap');
+      else if(g.anatomy.rules.some(q=>
+        !(q.target in ANATOMY)&&q.target!=='any'||!(q.operation in PART_OPERATIONS)||
+        !Number.isFinite(q.amount)||q.amount<.08||q.amount>1))
+        violations.push('unknown anatomy operator or invalid strength');
+    }
+  }
   return violations;
 }
 export function sampleGenome(pool,kind,seed){
