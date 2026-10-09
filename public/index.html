@@ -23,18 +23,49 @@
     </header>
     <div class="product-frame">
       <aside class="controls" aria-label="Studio controls">
-        <p class="eyebrow">STUDIO / 301</p>
+        <p class="eyebrow">STUDIO / 302</p>
         <h1>Make something<br><em>worth keeping.</em></h1>
         <p class="intro">A painter that can imagine unfamiliar places and techniques. Your criticism changes what it attempts next.</p>
         <fieldset class="mode-switch" aria-label="Choose an artistic discipline">
           <legend class="small-label">01 / CHOOSE A DISCIPLINE</legend>
           <div class="segment">
-            <button class="mode-option active" type="button" data-mode="imagination" aria-pressed="true">IMAGINE</button>
+            <button class="mode-option active" type="button" data-mode="rules" aria-pressed="true">RULES</button>
+            <button class="mode-option" type="button" data-mode="imagination" aria-pressed="false">IMAGINE</button>
             <button class="mode-option" type="button" data-mode="landscape" aria-pressed="false">PROCEDURAL</button>
             <button class="mode-option" type="button" data-mode="lettering" aria-pressed="false">LOGOS</button>
           </div>
         </fieldset>
-        <section id="imaginationControls" class="discipline-panel" aria-label="Real model-backed painting controls">
+        <section id="ruleControls" class="discipline-panel" aria-label="Executable visual constraints">
+          <label for="ruleSubject">REALITY ANCHOR / SUBJECT</label>
+          <select id="ruleSubject"></select>
+          <label for="rulePrimary">PRIMARY LAW / MUST OBEY</label>
+          <select id="rulePrimary"></select>
+          <label for="ruleSecondary">SECONDARY LAW</label>
+          <select id="ruleSecondary"></select>
+          <label for="ruleMark">MARK-MAKING / HOW THE PAINT EXISTS</label>
+          <select id="ruleMark"></select>
+          <label for="ruleRework">REWORK / NEW REFERENCE</label>
+          <select id="ruleRework"></select>
+          <label for="ruleReference">START FROM</label>
+          <select id="ruleReference">
+            <option value="reality">Geometric reality study (no AI credits)</option>
+            <option value="imagined">Last IMAGINE painting</option>
+            <option value="file">Upload my own reference</option>
+            <option value="last">Last Rule Studio output</option>
+          </select>
+          <label for="ruleFile">OR LOAD A REFERENCE IMAGE</label>
+          <input type="file" id="ruleFile" accept="image/*">
+          <p class="control-help">Rules are enforced by a local canvas painter. No curves means no curved marks; negative space erases objects. Your output can become the next input.</p>
+          <button type="button" class="action-generate" id="rulePaint">PAINT UNDER THESE LAWS ↗</button>
+          <div class="mini-actions rule-mini">
+            <button id="ruleNewLaw" type="button" class="ghost-button">SAME SUBJECT / NEW LAW</button>
+            <button id="ruleNewSubject" type="button" class="ghost-button">SAME LAW / NEW SUBJECT</button>
+            <button id="ruleNewMark" type="button" class="ghost-button">CHANGE THE MARK SYSTEM</button>
+          </div>
+          <button id="ruleReworkBtn" type="button" class="ghost-button" disabled>REABSTRACT &amp; REPAINT PREVIOUS ↺</button>
+          <p class="model-budget">No model inference required. Law preferences and past revisions are shared with the archive's constrained generator in this browser.</p>
+        </section>
+        <section id="imaginationControls" class="discipline-panel" aria-label="Real model-backed painting controls" hidden>
           <label for="imagineIdea">WHAT SHOULD IT IMAGINE?</label>
           <textarea id="imagineIdea" rows="4" maxlength="360" placeholder="Leave blank and let the artist invent a landscape—or ask for a strange place, a memory, a mood, a technique…"></textarea>
           <p class="control-help">An image model proposes a completely new picture. Dislikes change the next idea and painting method, not just object positions.</p>
@@ -79,7 +110,26 @@
         <div class="studio-principle"><span>OUR RULE</span><p>A real painting needs a new visual idea, not another variation of the same picture.</p></div>
       </aside>
       <main class="workspace" aria-label="Artwork and feedback">
-        <section id="imaginationWorkspace" class="imaginary-workspace" aria-label="Visual imagination studio">
+        <section id="ruleWorkspace" aria-label="Executable rule-bound paintings">
+          <div class="canvas-heading"><div><span class="status-orb"></span><span class="canvas-heading-text">RULE STUDIO / LAWS BEFORE STYLE</span></div><span class="work-number">REALITY → CONSTRAINT → REWORK</span></div>
+          <div class="rule-frame">
+            <div id="ruleEmpty" class="imagine-empty"><strong>A painting that must obey its laws.</strong><span>Try a ball without curves, paint only negative space, or force symmetrical lines to bend apart. Or use an AI image as the starting reality.</span></div>
+            <canvas id="ruleArtwork" width="960" height="600" hidden aria-label="Constrained generative painting"></canvas>
+          </div>
+          <div class="work-details"><div><span class="small-label">THE EXECUTED METHOD</span><p id="ruleCaption">Not a style prompt: actual drawing operations.</p><small id="ruleEvidence" class="method-line">Awaiting a rule.</small></div></div>
+          <p class="feedback-line" id="ruleStatus" role="status" aria-live="polite">Ready to test a new visual law.</p>
+          <section class="imagine-decision rule-vote">
+            <label for="ruleCritique" class="small-label">WHAT FAILED? (e.g., same strokes / bad rule / too realistic)</label>
+            <textarea id="ruleCritique" rows="2" maxlength="230" placeholder="The law is good but the mark-making is repetitive…"></textarea>
+            <div class="imagine-buttons">
+              <button type="button" class="vote-button reject" id="ruleReject" disabled>✕ REJECT THIS METHOD</button>
+              <button type="button" class="vote-button keep" id="ruleKeep" disabled>♥ KEEP METHOD</button>
+            </div>
+          </section>
+          <button type="button" class="ghost-button" id="ruleSave" disabled>EXPORT RULE-BOUND PNG ↓</button>
+          <h2 class="rule-gallery-heading">Kept experiments &amp; descendants</h2><div id="ruleGallery" class="rule-gallery"></div>
+        </section>
+        <section id="imaginationWorkspace" class="imaginary-workspace" aria-label="Visual imagination studio" hidden>
           <div class="canvas-heading"><div><span class="status-orb"></span><span class="canvas-heading-text">THE ARTIST'S IMAGINATION / VISUAL MODEL</span></div><span class="work-number">ORIGINAL WORK · NOT A TEMPLATE</span></div>
           <div class="imagination-frame" id="imaginationFrame">
             <div id="imagineEmpty" class="imagine-empty"><strong>Something it hasn't painted before.</strong><span>Give it an idea, or let it invent one. Nothing is rendered until you ask.</span></div>
