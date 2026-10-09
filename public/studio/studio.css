@@ -248,3 +248,28 @@
  .phi-taste-panel>details{padding:10px}
  .phi-live-evidence{font-size:10px}
 }
+
+/* BUILD 310 — instrument panel hidden until invited. The work moves itself. */
+.artist-autonomy-note{font:12px/1.55 var(--sans,Arial,sans-serif);color:#c4dac7;
+  border-left:3px solid #b2ce9a;padding:6px 10px;background:#1d2d25;
+  margin:0 0 12px}
+.advanced-configuration{margin:7px 0 17px;border:1px solid #567163;
+  background:#1c2822;padding:9px 11px;overflow:hidden}
+.advanced-configuration>summary{cursor:pointer;font:800 10px/1.45 var(--sans,Arial,sans-serif);
+  letter-spacing:.04em;color:#c3e0c2;list-style-position:inside}
+.advanced-configuration[open]>summary{margin-bottom:13px;
+  padding-bottom:9px;border-bottom:1px solid #466153}
+.advanced-configuration>label{display:block;margin:11px 0 6px}
+.advanced-configuration>select,.advanced-configuration>input[type=file]{width:100%;min-height:42px}
+.advanced-configuration .control-help{display:block;font-size:11px;line-height:1.5}
+.advanced-configuration .rule-inline{display:flex;align-items:center;gap:9px}
+.surviving-ideas{background:#233b2d;border-left:3px solid #e2b67d;
+ padding:9px 10px;font:11px/1.5 var(--sans,Arial,sans-serif);
+ color:#e5eac9;letter-spacing:.01em;margin:10px 0 4px}
+.rule-interventions>.mini-actions{margin:12px 0}
+.rule-interventions .ghost-button{margin-bottom:8px}
+@media(max-width:730px){
+ .advanced-configuration{padding:10px 9px}
+ .artist-autonomy-note{display:block;font-size:11px}
+ .surviving-ideas{font-size:10px}
+}
