@@ -17,10 +17,11 @@ const componentTitle=item=>{
 const cx=(tag,className,parent)=>{
   const el=document.createElement(tag);el.className=className;parent.append(el);return el;
 };
-export function performancePlan({kind='logo',trials=[],anatomy=null,trace=null,recipe=null,survival=null}={}){
+export function performancePlan({kind='logo',trials=[],anatomy=null,trace=null,recipe=null,survival=null,heritage=null}={}){
  const parts=Array.isArray(anatomy?.hitMap)?anatomy.hitMap:[];
  const marks=Array.isArray(trace?.marks)?trace.marks:[];
  const survivors=Array.isArray(survival?.held)?survival.held:[];
+ const ideas=Array.isArray(heritage?.drawn)?heritage.drawn:[];
  const decisions=(Array.isArray(trials)?trials:[]).slice(0,PLAN_LIMIT)
   .filter(x=>x?.canvas&&x.canvas.width&&x.canvas.height)
   .map((x,i)=>({
@@ -36,9 +37,10 @@ export function performancePlan({kind='logo',trials=[],anatomy=null,trace=null,r
    kind:kind==='logo'?'logo':'rule',
    tests:decisions,
    parts,
-   marks,survivors,
+   marks,survivors,ideas,tradeoff:heritage?.tradeoff||null,
    phaseLabels:[
      {key:'remember',label:'REMEMBER / the previous work'},
+     ...(ideas.length?[{key:'inherit',label:'RECONSTRUCT / same shape, different material'}]:[]),
      ...decisions.map((d,i)=>({key:'test-'+i,label:d.title+' · '+d.detail})),
      {key:'undo',label:'REMOVE / '+theme},
      {key:'construct',label:'REMAKE / '+theme},
