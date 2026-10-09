@@ -4,6 +4,7 @@
  * Deterministic descendant seeds are derived from the current seed.
  * This is a novelty guard and complexity proxy, NOT an aesthetic oracle.
  */
+import {measureGoldenTaste,goldenPrior,getGoldenMode} from './golden-taste.js';
 export const NOVELTY_STORAGE='hexfield.global-nonredundancy.v1';
 export const OBSERVATION_LIMIT=84;
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -172,18 +173,26 @@ export function snapshotNoveltyMemory(){
    modes:[...new Set(m.records.map(r=>r.mode))],
    last:m.records.at(-1)||null};
 }
-export function rankNoveltyCandidates(candidates,{mode='global',parent=null}={}){
- // The caller owns the candidate canvases. No data is committed until a
- // finalist is selected, so rejected probes don't pollute the memory.
+export function rankNoveltyCandidates(candidates,{mode='global',parent=null,
+  goldenMode=getGoldenMode()}={}){
+ // The caller owns the candidate canvases. Neither scores nor trial images
+ // are recorded before the chosen candidate has been rendered in full.
+ // Golden geometry, color proportions and color↔structure coupling are
+ // separate, observable constraints; W novelty remains a second objective.
  const ranked=candidates.map((candidate,index)=>{
    const assessment=assessCanvas(candidate.canvas,
      {mode,method:candidate.method||'',parent,history:candidate.history});
-   return {...candidate,index,assessment};
+   const golden=measureGoldenTaste(candidate.canvas,{mode});
+   const weighted=assessment.score+
+     goldenPrior(golden,{mode:goldenMode})*.60;
+   return {...candidate,index,assessment,golden,weighted};
  });
  ranked.sort((a,b)=>{
+   if(goldenMode==='strict'&&a.golden.qualifies!==b.golden.qualifies)
+     return a.golden.qualifies?-1:1;
    if(a.assessment.redundant!==b.assessment.redundant)
      return a.assessment.redundant?1:-1;
-   return b.assessment.score-a.assessment.score;
+   return b.weighted-a.weighted;
  });
  return ranked;
 }
