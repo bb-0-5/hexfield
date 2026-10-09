@@ -145,7 +145,8 @@ export function extractStructuralIdea(canvas,{seed=1,cycle=0,region=null,
    ...Object.fromEntries(Object.entries(rect).map(([k,v])=>[k,cn(v)])),
    id,sourceId:ancestorId||id,ancestorId,generation:0,
    seed:seed>>>0,born:cycle,age:0,ttl:HERITAGE_TTL,
-   outline:form.points,holes:form.holes,
+   outline:form.points,rootOutline:form.points.map(point=>[...point]),
+   holes:form.holes,
    ink:rgbHex(color.map(v=>v/group.length)),material:'original',trust:0,
    confidence:clamp(.45*Math.min(1,form.edge/52)+.55*clamp(form.occupancy/.6)),
    stats:{occupancy:+form.occupancy.toFixed(4),
@@ -175,6 +176,39 @@ function materialOf(idea,seed,recipe){
  return favourite&&evolveSeed(seed,idea.age,2,'learned-habit')%4===0?
    favourite.material:fallback;
 }
+// A gene's contour itself evolves, not just its ink or brush. Movement is
+// smoothly varying along the ordered outline, and every descendant is
+// tethered to the originally measured geometry to prevent random drift
+// destroying its identity. Only the ACCEPTED candidate becomes the parent.
+export function evolveContour(idea,seed=1){
+ const ancestor=idea?.rootOutline||idea?.outline;
+ const current=idea?.outline;
+ if(!Array.isArray(current)||current.length!==SAMPLES||
+    !Array.isArray(ancestor)||ancestor.length!==SAMPLES)return null;
+ const phase=evolveSeed(seed,idea.generation+1,1,idea.id)/4294967296*Math.PI*2;
+ const frequency=(evolveSeed(seed,idea.generation+1,2,idea.id)%3)+2;
+ const amplitude=.025+(evolveSeed(seed,idea.generation+1,3,idea.id)%26)/1000;
+ const result=[];
+ let displacement=0;
+ for(let i=0;i<SAMPLES;i++){
+   const [x,y]=current[i],root=ancestor[i];
+   const t=i*2*Math.PI/SAMPLES;
+   const pulse=Math.sin(t*frequency+phase)*.7+
+     Math.sin(t*(frequency+2)-phase*.6)*.3;
+   // Low-frequency radial displacement. The shape can inflate, pinch or
+   // shift its outer contour without teleporting individual points.
+   const dx=x-.5,dy=y-.5,r=Math.max(.15,Math.hypot(dx,dy));
+   const nx=clamp(.78*x+.22*root[0]+dx/r*amplitude*pulse,-.06,1.06);
+   const ny=clamp(.78*y+.22*root[1]+dy/r*amplitude*pulse,-.06,1.06);
+   result.push([cn(nx),cn(ny)]);
+   displacement+=Math.hypot(nx-x,ny-y);
+ }
+ return {outline:result,
+   magnitude:+(displacement/SAMPLES).toFixed(4),
+   inheritedFrom:idea.id,
+   preservesHoles:idea.holes?.length||0
+ };
+}
 function paintForm(ctx,idea,{width,height,seed,cycle,recipe}){
  const drift=evolveSeed(seed,idea.age+1,0,idea.id);
  const scale=1+((drift%21)-10)/100;
@@ -182,7 +216,9 @@ function paintForm(ctx,idea,{width,height,seed,cycle,recipe}){
    dy=(((drift>>>16)%17)-8)*.0024*height;
  const x=idea.x*width+dx,y=idea.y*height+dy,
    w=idea.w*width*scale,h=idea.h*height*scale;
- const points=idea.outline.map(p=>[x+p[0]*w,y+p[1]*h]);
+ const evolved=evolveContour(idea,seed);
+ const nextOutline=evolved?.outline||idea.outline;
+ const points=nextOutline.map(p=>[x+p[0]*w,y+p[1]*h]);
  const material=materialOf(idea,seed,recipe);
  const hue=(hueOf(idea.ink)+(cycle%5)*137.507764)%360;
  const color=recipe?.primary==='blue_for_red'&&(hue<60||hue>330)?
@@ -255,10 +291,12 @@ function paintForm(ctx,idea,{width,height,seed,cycle,recipe}){
    id:idea.id,ancestorId:idea.ancestorId,sourceId:idea.sourceId,
    generation:idea.generation+1,
    material,was:idea.material,age:idea.age,trust:idea.trust,
-   name:idea.name,outline:points,x,y,w,h,
+   name:idea.name,outline:points,nextOutline,x,y,w,h,
+   geometryChange:evolved?.magnitude||0,
    holes:idea.holes.length,color,topology:'closed',
    fidelity:clamp(1-Math.abs(1-scale)*1.7-
-     Math.abs(dx)/width-Math.abs(dy)/height)
+     Math.abs(dx)/width-Math.abs(dy)/height-
+     (evolved?.magnitude||0)*1.5)
  };
 }
 function changedPixels(before,after,item){
@@ -306,6 +344,8 @@ export function advanceStructuralIdeas(ideas,accepted,{seed=1,cycle=0,
    const found=rendered?.drawn?.find(x=>x.id===idea.id);
    return {...idea,age:idea.age+1,generation:idea.generation+1,
      material:found?.material||idea.material,
+     outline:found?.nextOutline||idea.outline,
+     rootOutline:idea.rootOutline||idea.outline.map(point=>[...point]),
      trust:clamp(idea.trust+((found?.visibleChange||0)>.03?.035:0),-2,2)
    };
  });
