@@ -78,9 +78,23 @@ await waitGeneration(2);
 assert.ok(produced[1].sources.includes('parent'),'Second pass must use output of first pass');
 assert.equal(produced[1].recipe.parentId,produced[0].recipe.id);
 assert.ok(produced[1].novelty>0,'Recursive rework must modify pixels');
+// Regression: a novelty reset used to clear the donor bank and leave the
+// experiment painting nothing except its own previous canvas.
+for(let pass=3;pass<=10;pass++){
+  loop.once({mixMode:'auto',speed:1500,subject:'coast'});
+  await waitGeneration(pass);
+  assert.ok(produced.at(-1).sources.includes('reality'),
+    'Pass '+pass+' must retain a reality donor after a novelty reset');
+  assert.ok(produced.at(-1).sources.includes('terrain'),
+    'Pass '+pass+' must retain a terrain donor');
+  assert.ok(produced.at(-1).sources.includes('lettering'),
+    'Pass '+pass+' must retain an independent lettering donor');
+  assert.equal(produced.at(-1).recipe.parentId,produced.at(-2).recipe.id);
+}
+assert.ok(new Set(produced.map(p=>p.blend)).size>=4,'Auto mixing should rotate materially different renderers');
 loop.pause();
-assert.equal(loop.state().cycle,2);
+assert.equal(loop.state().cycle,10);
 assert.equal(loop.state().running,false);
-assert.equal(loop.state().history.length,2);
+assert.equal(loop.state().history.length,10);
 loop.dispose();
 console.log('All available renderers actually mixed, outputs changed across methods, recursive parent and pause verified.');
