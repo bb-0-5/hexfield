@@ -38,6 +38,17 @@ export function nextAbstractRecipe(parent,{cycle=0,subject='abstract',lockLaw=fa
    if(cycle%9===0)recipe.seed=((parent.seed>>>0)+cycle*9973)>>>0;
    if(lockLaw&&law!=='surprise'){recipe.primary=law;recipe.secondary=secondary==='none'?'none':secondary;}
    if(lockLaw&&mark!=='surprise')recipe.mark=mark;
+   if(recipe.rework==='remove_strength'){
+     if(lockLaw&&mark!=='surprise'){
+       // The user explicitly locked the brush. Do a subtractive rebuild
+       // rather than silently violating that lock.
+       recipe.rework='negative_repaint';
+     }else{
+       recipe.forbiddenMark=parent.mark;
+       if(recipe.mark===parent.mark)
+         recipe.mark=choice(Object.keys(MARKS).filter(x=>x!==parent.mark));
+     }
+   }
  }
  if(recipe.primary===recipe.secondary)recipe.secondary='none';
  if(!(recipe.primary in LAWS))recipe.primary=choice(Object.keys(LAWS));
