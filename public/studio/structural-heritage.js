@@ -323,6 +323,21 @@ export function advanceStructuralIdeas(ideas,accepted,{seed=1,cycle=0,
  return next.slice(-MAX_STRUCTURAL_IDEAS);
 }
 export function judgeStructuralIdeas(ideas,liked){
+ const preferences=heritageTaste();
+ const weights={...preferences.weights};
+ for(const gene of ideas||[]){
+   const material='material:'+(gene.material||'original');
+   const shape='shape:'+(gene.holes?.length?'counter':
+     gene.stats?.circularity>.49?'round':'angular');
+   for(const key of [material,shape]){
+     weights[key]=+clamp((weights[key]||0)+(liked?.42:-.50),-8,8).toFixed(2);
+   }
+ }
+ try{
+   localStorage.setItem(HERITAGE_PREFERENCE_KEY,JSON.stringify({
+     v:1,weights,votes:preferences.votes+1
+   }));
+ }catch{}
  return (ideas||[]).map(x=>({...x,trust:clamp(x.trust+(liked?.35:-.45),-2,2)}))
    .filter(x=>x.trust>-1.35);
 }
