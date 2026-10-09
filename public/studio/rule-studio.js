@@ -114,7 +114,8 @@ export function initRuleStudio(){
      path.setAttribute('stroke-linejoin','round');
      svg.append(path);panel.append(svg);
      const info=document.createElement('figcaption');
-     info.textContent='HERITAGE '+gene.generation+
+     info.textContent=(gene.recalled?'RETURNED '+gene.recalled+'× / ':'HERITAGE / ')+
+       'generation '+gene.generation+
        ' / '+gene.name+' / '+gene.material+
        ' / AGE '+gene.age+'/'+gene.ttl+
        ' / preference '+gene.trust.toFixed(2);
@@ -181,6 +182,7 @@ export function initRuleStudio(){
          ' ancestral pixel islands · '+genomes.length+
          ' independently reconstructable shape genes'+
          (genomes.length?' / '+genomes.map(g=>
+           (g.recalled?'RETURNED IDEA '+g.recalled+'× ':'')+
            g.name+' #'+g.generation+' '+g.material).join(' · '):'')+
          ' · KEEP or REJECT teaches which lineage to retain.';
      }
