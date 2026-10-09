@@ -24,7 +24,8 @@ export const LAWS = {
 };
 export const MARKS = {
   dashes:'Short separated strokes',dots:'Discrete points',hatch:'Directional hatching',
-  cutout:'Flat cut-paper quadrilaterals',carve:'Subtractive marks in a dark ground'
+  cutout:'Flat cut-paper quadrilaterals',carve:'Subtractive marks in a dark ground',
+  hybrid:'Hybrid field: all five mark-making renderers in one painting'
 };
 export const REWORKS = {
   none:'No rework',abstract_masses:'Reabstract into coarse tonal masses',
@@ -219,7 +220,7 @@ export function applyRules(source,target,recipe,options={}){
  const has=id=>laws.includes(id);
  const abstract=recipe.rework==='abstract_masses',misread=recipe.rework==='misread';
  const negative=has('negative_space')||recipe.rework==='negative_repaint';
- const step=(abstract?20:recipe.mark==='cutout'?14:recipe.mark==='carve'?11:9);
+ const step=(abstract?20:recipe.mark==='cutout'?14:recipe.mark==='carve'||recipe.mark==='hybrid'?11:9);
  const back=getPixel(data,width,height,Math.max(1,width*.07),Math.max(1,height*.07));
  let strokes=0,skipped=0;
  ctx.clearRect(0,0,width,height);
@@ -249,26 +250,36 @@ export function applyRules(source,target,recipe,options={}){
      const colour=remap(rgb,recipe,x,y,width,height);
      const luminosity=(colour[0]*.2126+colour[1]*.7152+colour[2]*.0722)/255;
      if(has('density_contrast')&&random()<luminosity*.58){skipped++;continue;}
-     const role=recipe.mark==='carve'?(luminosity>.48?'#eee9d9':'#202936'):
+     // A hybrid canvas really uses ALL FIVE distinct mark renderers. The
+     // dominant mark changes by spatial region and generation. This is not
+     // a single renderer recolouring one scene; the final stroke primitives
+     // themselves vary within the same picture.
+     const markTypes=['dashes','dots','hatch','cutout','carve'];
+     const bx=Math.floor(x/Math.max(32,step*(6+(recipe.seed%4))));
+     const by=Math.floor(y/Math.max(32,step*(5+(recipe.seed%3))));
+     const localMark=recipe.mark==='hybrid'?
+       markTypes[((bx+by*3+(Number(options.iteration)||0))%markTypes.length+markTypes.length)%markTypes.length]:
+       recipe.mark;
+     const role=localMark==='carve'?(luminosity>.48?'#eee9d9':'#202936'):
        'rgb('+colour.map(z=>Math.round(z)).join(',')+')';
      ctx.fillStyle=role;ctx.strokeStyle=role;
      const tx=x+dx,ty=y;
      const length=clamp(step*.7,2,14);
-     if(recipe.mark==='dots'){
+     if(localMark==='dots'){
        const radius=clamp((1-luminosity)*step*.46+1,1,step*.5);
        if(has('no_curves'))ctx.fillRect(tx-radius,ty-radius,radius*2,radius*2);
        else {ctx.beginPath();ctx.arc(tx,ty,radius,0,Math.PI*2);ctx.fill();}
-     }else if(recipe.mark==='cutout'){
+     }else if(localMark==='cutout'){
        // Flat, straight-sided masses — never trace realistic gradients.
        const tile=step*(has('no_shading')?1.15:.9);
        ctx.fillRect(tx,ty,tile,tile);
-     }else if(recipe.mark==='carve'){
+     }else if(localMark==='carve'){
        const tile=clamp(step*(.28+luminosity),1,step);
        // Carve through dark ground; no naturalistic photographic highlights.
        ctx.fillRect(tx,ty,tile,has('no_curves')?tile:Math.max(2,tile*.4));
      }else {
-       ctx.lineWidth=recipe.mark==='hatch'?clamp(step*.2,1,3):clamp(step*.36,2,5);
-       const theta=recipe.mark==='hatch'?-Math.PI*.3:(Math.floor(x/step+y/step)%3)*Math.PI/3;
+       ctx.lineWidth=localMark==='hatch'?clamp(step*.2,1,3):clamp(step*.36,2,5);
+       const theta=localMark==='hatch'?-Math.PI*.3:(Math.floor(x/step+y/step)%3)*Math.PI/3;
        ctx.beginPath();ctx.moveTo(tx-length*Math.cos(theta)*.5,ty-length*Math.sin(theta)*.5);
        ctx.lineTo(tx+length*Math.cos(theta)*.5,ty+length*Math.sin(theta)*.5);
        ctx.stroke();
@@ -277,7 +288,7 @@ export function applyRules(source,target,recipe,options={}){
    }
  }
  return {strokes,skipped,cell:step,negativeSpace:negative,noCurvedMarks:has('no_curves'),
-  strictColourRemap:has('blue_for_red'),parentId:recipe.parentId};
+  strictColourRemap:has('blue_for_red'),hybrid:recipe.mark==='hybrid',parentId:recipe.parentId};
 }
 export function validateRecipe(recipe){
  if(!recipe||!(recipe.subject in SUBJECTS)||!(recipe.primary in LAWS)||!(recipe.mark in MARKS))return false;
