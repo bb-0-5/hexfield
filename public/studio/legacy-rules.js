@@ -7,6 +7,7 @@ import {LAWS,MARKS,REWORKS,makeRecipe,mutateRecipe,applyRules,
   noteRuleVerdict,noteLineage} from './rule-engine.js';
 import {createAbstractionLoop} from './abstraction-loop.js';
 import {publishSource} from './source-mixer.js';
+import {measureGoldenTaste,explainGolden} from './golden-taste.js';
 import {evolveSeed,rankNoveltyCandidates,assessCanvas,commitCanvas,
   methodSignature} from './nonredundancy.js';
 const $=id=>document.getElementById(id);
@@ -80,10 +81,12 @@ if(stage&&raw&&mount){
      constrained.getContext('2d').drawImage(result.canvas,0,0,880,200);
      constrained.style.display='block';
      current={recipe:result.recipe,output:shot(constrained),judged:false};
+     const golden=result.golden||measureGoldenTaste(constrained,{mode:'archive'});
      status('GEN '+result.cycle+' / '+result.blend+' / '+result.sources.join(' + ')+
        ' / '+result.metrics.strokes+' marks / global novelty '+
        ((result.nonredundancy?.globalNovelty||0)*100).toFixed(1)+
-       '% / complexity '+((result.nonredundancy?.complexity||0)*100).toFixed(1)+'%');
+       '% / complexity '+((result.nonredundancy?.complexity||0)*100).toFixed(1)+'%' +
+       ' / '+explainGolden(golden));
      if(result.cycle%4===0)publishSource(constrained,'archive',result.recipe);
    },
    onState(state){
@@ -124,9 +127,10 @@ if(stage&&raw&&mount){
    current={recipe,output:shot(constrained),judged:false,nonredundancy:W};
    noteLineage(recipe);
    publishSource(constrained,'archive',recipe);
+   const golden=measureGoldenTaste(constrained,{mode:'archive'});
    status('EXECUTED '+metrics.strokes+' constrained marks, '+metrics.skipped+
      ' forbidden/negative-space marks. '+recipe.primary+' / '+recipe.mark+
-     ' / global W novelty '+(W.globalNovelty*100).toFixed(1)+
+     ' / '+explainGolden(golden)+' / global W novelty '+(W.globalNovelty*100).toFixed(1)+
      '%; structure '+(W.complexity*100).toFixed(1)+'%'+
      (W.redundant?' / repeated image — mutate the law':'')+
      (recipe.parentId?' / child of '+recipe.parentId.slice(0,7):''));
