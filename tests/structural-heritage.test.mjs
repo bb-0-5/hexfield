@@ -107,13 +107,13 @@ assert.ok(ancestorDrift>.002&&ancestorDrift<.22,
 const boosted=judgeStructuralIdeas(current,true);
 assert.ok(boosted[0].trust>current[0].trust);
 assert.equal(heritageTaste().votes,1);
-const signatures=rememberedSignatures();
-assert.ok(signatures.length>=1&&signatures.length<=HERITAGE_LIBRARY_LIMIT,
+const storedSignatures=rememberedSignatures();
+assert.ok(storedSignatures.length>=1&&storedSignatures.length<=HERITAGE_LIBRARY_LIMIT,
  'KEEP makes a bounded, browser-local visual signature library');
-const archived=JSON.stringify(signatures);
+const archived=JSON.stringify(storedSignatures);
 assert.ok(!archived.includes('data:image')&&!archived.includes('base64'),
  'Learned visual identity saves only editable geometric descriptions, not image files');
-assert.deepEqual(signatures[0].rootOutline,shape.outline,
+assert.deepEqual(storedSignatures[0].rootOutline,shape.outline,
  'The original root shape remains retrievable after approval');
 const recalled=recallStructuralIdea({seed:612,cycle:28});
 assert.ok(recalled&&recalled.id===shape.id);
