@@ -248,7 +248,21 @@ export function createAbstractionLoop({
        seed:recipe.seed,cycle:cycle+1,
        source:previous||output,rendered:heritage
      });
-     const result={canvas:output,recipe,cycle:cycle+1,metrics,
+     // The creative process is itself a moving artwork: exhibit the
+     // ACTUAL rendered alternatives and why one was adopted. Small
+     // downscaled canvases cap mobile memory and prevent preview images
+     // from becoming hidden background renders or paid model requests.
+     const trials=ranked.map(entry=>{
+       const preview=freshCanvas(320,200);
+       preview.getContext('2d').drawImage(entry.canvas,0,0,320,200);
+       return {canvas:preview,
+         label:entry.mixed.mode+' / '+entry.recipe.primary+
+           ' / '+entry.recipe.mark+' / H '+
+           Math.round(entry.threeWay.H*100)+'%',
+         score:entry.threeWay.score,golden:entry.golden,
+         selected:entry===best};
+     });
+     const result={canvas:output,recipe,cycle:cycle+1,metrics,trials,
        blend:mixed.mode,sources:mixed.sources,novelty,stalled,
        survival:{held:survived,coverage:held.coverage,
          carried:held.held.length,available:motifEvidence(motifs).length},
