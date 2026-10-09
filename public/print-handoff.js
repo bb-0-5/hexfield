@@ -88,8 +88,16 @@ async function prepare(){
      name:'hexfield-archive-'+chosen+'.png'};
  }
  if(mode==='rules'){
-   if($('ruleArtwork')?.hidden)throw Error('Generate a painting in RULES first.');
-   return {...await pngCanvas($('ruleArtwork')),name:'hexfield-rules-print.png'};
+   const raw=$('ruleArtwork');
+   if(!raw||raw.hidden)throw Error('Generate a painting in RULES first.');
+   // PosterFactory rejects files with either dimension below 1000 pixels.
+   // Pixel resizing is only compatibility; it never invents print detail.
+   const resized=document.createElement('canvas');
+   resized.width=2400;resized.height=1500;
+   const ctx=resized.getContext('2d');ctx.imageSmoothingEnabled=true;
+   ctx.imageSmoothingQuality='high';ctx.drawImage(raw,0,0,resized.width,resized.height);
+   return {...await pngCanvas(resized),sourceWidth:raw.width,sourceHeight:raw.height,
+     name:'hexfield-rules-print.png'};
  }
  if(mode==='imagination'){
    const img=$('imaginePicture');
@@ -121,9 +129,12 @@ async function handOff(key){
    setStatus('Preparing actual artwork PNG for direct purchase at '+supplier.name+'…');
    const artwork=await prepare();
    saveFile(artwork);
-   const low=Math.min(artwork.width||0,artwork.height||0)<1600;
+   const low=Math.min(artwork.sourceWidth||artwork.width||0,
+     artwork.sourceHeight||artwork.height||0)<1600;
    setStatus('PNG saved: '+artwork.name+' · '+artwork.width+' × '+artwork.height+
-     ' pixels.\n'+(low?'Small pixel dimensions: choose a modest print size and check the printer’s resolution warning.\n':'')+
+     ' pixels.\n'+(artwork.sourceWidth?'Note: enlarged from '+artwork.sourceWidth+
+     ' × '+artwork.sourceHeight+' pixels, which does not add original detail.\n':'')+
+     (low?'Source detail is limited: choose a modest print size and check the printer’s resolution warning.\n':'')+
      'Upload this PNG at '+supplier.name+'. They will show their prices, take payment and ship.');
    if(tab&&!tab.closed)tab.location.replace(supplier.url);
    else{
