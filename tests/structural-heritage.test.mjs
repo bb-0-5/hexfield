@@ -113,14 +113,18 @@ assert.ok(storedSignatures.length>=1&&storedSignatures.length<=HERITAGE_LIBRARY_
 const archived=JSON.stringify(storedSignatures);
 assert.ok(!archived.includes('data:image')&&!archived.includes('base64'),
  'Learned visual identity saves only editable geometric descriptions, not image files');
-assert.deepEqual(storedSignatures[0].rootOutline,shape.outline,
- 'The original root shape remains retrievable after approval');
-const recalled=recallStructuralIdea({seed:612,cycle:28});
+const approvedRoot=storedSignatures.find(signature=>signature.id===shape.id);
+assert.ok(approvedRoot,'The approved original should be present even if newer candidates were also kept');
+assert.deepEqual(approvedRoot.rootOutline,shape.outline,
+ 'The first sampled contour must survive independent of ordering');
+const except=storedSignatures.filter(signature=>signature.id!==shape.id)
+  .map(signature=>signature.id);
+const recalled=recallStructuralIdea({seed:612,cycle:28,exclude:except});
 assert.ok(recalled&&recalled.id===shape.id);
 assert.equal(recalled.age,0);
 assert.equal(recalled.recalled,1);
 assert.ok(recalled.generation>=7,'Remembered signatures retain generational ancestry');
-assert.deepEqual(recallStructuralIdea({seed:612,cycle:28}),recalled,
+assert.deepEqual(recallStructuralIdea({seed:612,cycle:28,exclude:except}),recalled,
  'An autonomous return of a learned idea is deterministic for the same seed');
 rememberStructuralIdeas(Array(11).fill(current[0]).map((g,i)=>({...g,id:'saved-'+i})));
 assert.ok(rememberedSignatures().length<=HERITAGE_LIBRARY_LIMIT,
