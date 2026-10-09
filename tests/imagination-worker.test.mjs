@@ -6,11 +6,12 @@ const request=(body,origin=site,authorization=bearer)=>new Request(site+'/api/im
   method:'POST',headers:{origin,authorization,'content-type':'application/json'},body:JSON.stringify(body)
 });
 const originalFetch=globalThis.fetch;
-let quotaCalls=0,completionCalls=0,aiCalls=[];
+let quotaCalls=0,completionCalls=0,failureCalls=0,aiCalls=[];
 globalThis.fetch=async (url,options)=>{
   assert.equal(options.headers.apikey.startsWith('sb_publishable_'),true);
   if(String(url).includes('rpc/claim_hexfield_imagination')){quotaCalls++;return Response.json(2);}
-  if(String(url).includes('rpc/complete_hexfield_imagination')){completionCalls++;return Response.json(1);}
+  if(String(url).includes('rpc/complete_hexfield_imagination')){completionCalls++;return Response.json(29);}
+  if(String(url).includes('rpc/fail_hexfield_imagination')){failureCalls++;return new Response(null,{status:204});}
   throw Error('Unexpected remote request '+url);
 };
 const environment={AI:{async run(model,input){aiCalls.push({model,input});
@@ -29,7 +30,7 @@ try{
   assert.equal(response.status,200);
   const result=await response.json();
   assert.equal(result.title,'The copper salt flats');
-  assert.equal(result.credits_remaining,1);
+  assert.equal(result.credits_remaining,29);
   assert.equal(result.image,'data:image/png;base64,SU1BR0VEQVRB');
   assert.ok(result.prompt.includes('palette-knife'));
   assert.equal(quotaCalls,1);assert.equal(completionCalls,1);assert.equal(aiCalls.length,2);
@@ -40,17 +41,35 @@ try{
   const malformed=await worker.fetch(request({request_id:crypto.randomUUID(),edit:true,image_b64:'!!invalid!!'}),environment);
   assert.equal(malformed.status,400);
   assert.equal(quotaCalls,2,'Invalid inputs must not spend credits');
-  // A failed model call should return an actionable error, NOT finalize a
-  // successful painting. The reservation expires in PostgreSQL.
+  // Failure is classified, logged to the user's private quota history and
+  // does not consume a successful painting.
   const failedEnv={AI:{async run(model){if(model.includes('llama'))return {response:'{}'};throw Error('AI service 429 rate limit');}}};
   const before=completionCalls;
   const failed=await worker.fetch(request({request_id:crypto.randomUUID()}),failedEnv);
   assert.equal(failed.status,503);
-  assert.equal((await failed.json()).code,'MODEL_BUSY');
-  assert.equal(completionCalls,before);
+  assert.equal((await failed.json()).code,'MODEL_CAPACITY');
+  assert.equal(completionCalls,before);assert.equal(failureCalls,1);
+  const dailyEnv={AI:{async run(model){if(model.includes('llama'))return {response:'{}'};throw Error('Cloudflare Workers AI 3036: used free daily neuron allocation');}}};
+  const daily=await worker.fetch(request({request_id:crypto.randomUUID()}),dailyEnv);
+  assert.equal(daily.status,503);
+  const exhausted=await daily.json();
+  assert.equal(exhausted.code,'MODEL_DAILY_LIMIT');
+  assert.equal(exhausted.retryable,false);
+  assert.equal(failureCalls,2);
+  // No accidental three-painting application limit: quotas are enforced only
+  // by PostgreSQL. An approved fourth request can still paint.
+  for(let k=0;k<3;k++){
+    const again=await worker.fetch(request({request_id:crypto.randomUUID(),idea:'Experiment '+k}),environment);
+    assert.equal(again.status,200);
+    assert.equal((await again.json()).credits_remaining,29);
+  }
+  assert.equal(completionCalls,5);
   const unavailable=await worker.fetch(request({request_id:crypto.randomUUID()}),{ASSETS:{fetch(){}}});
   assert.equal(unavailable.status,503);
   const status=await worker.fetch(new Request(site+'/api/imagine/status'),environment);
-  assert.equal((await status.json()).ready,true);
-  console.log('Worker security, completed-image quota, model failures and editing tests passed.');
+  const info=await status.json();
+  assert.equal(info.configured,true);
+  assert.equal(info.completed_paintings_per_visitor_per_day,30);
+  assert.equal(info.site_attempt_cap_per_day,60);
+  console.log('Worker security, 4+ image attempts, provider error diagnostics and bounded site budget tests passed.');
 }finally{globalThis.fetch=originalFetch;}
