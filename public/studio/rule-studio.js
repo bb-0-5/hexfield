@@ -6,6 +6,8 @@ import {SUBJECTS,LAWS,MARKS,REWORKS,makeRecipe,mutateRecipe,drawReality,applyRul
   noteRuleVerdict,noteLineage,describeRecipe,buildRulePrompt,RULE_STORE} from './rule-engine.js';
 import {createAbstractionLoop} from './abstraction-loop.js';
 import {paintHeldMotifs,advanceMotifMemory,motifEvidence} from './motif-memory.js';
+import {extractStructuralIdea,paintInheritedIdeas,advanceStructuralIdeas,
+ heritageEvidence,judgeStructuralIdeas} from './structural-heritage.js';
 import {createCreativePerformance} from './creative-performance.js';
 import {measureGoldenTaste,explainGolden,diagnoseGolden,
   compareGoldenTaste} from './golden-taste.js';
@@ -55,7 +57,7 @@ function persistCanvas(canvas,recipe,judged){
 export function initRuleStudio(){
  optionMarkup();
  let current=null,upload=null,parentCanvas=null,realitySource=null,
-   sequence=0,manualMotifs=[];
+   sequence=0,manualMotifs=[],manualIdeas=[],lastOrigin='manual';
  const context=$('ruleArtwork').getContext('2d');
  const status=m=>text('ruleStatus',m);
  const theatre=createCreativePerformance({
@@ -136,6 +138,7 @@ export function initRuleStudio(){
      const {canvas,recipe,cycle,metrics,blend,sources,novelty,nonredundancy,
        survival,heritage}=result;
      const before=current?.canvas||null;
+     lastOrigin='loop';
      context.clearRect(0,0,960,600);context.drawImage(canvas,0,0,960,600);
      current={recipe,canvas,judged:false,metrics};
      parentCanvas=canvas;
@@ -197,7 +200,13 @@ export function initRuleStudio(){
    const metrics=applyRules(source,target,recipe,{
      iteration:recipe.generation,trace:true
    });
-   if(!revision)manualMotifs=[]; // A deliberate fresh canvas is a new chapter.
+   if(!revision){manualMotifs=[];manualIdeas=[];} // New chapter.
+   if(revision&&before&&!manualIdeas.length){
+     const recovered=extractStructuralIdea(before,{
+       seed:current?.recipe?.seed||recipe.seed,cycle:Math.max(0,recipe.generation-1)
+     });
+     if(recovered)manualIdeas=[recovered];
+   }
    if(revision&&before&&!manualMotifs.length)
      manualMotifs=advanceMotifMemory([],before,{
        seed:before?.recipe?.seed||recipe.seed,cycle:1,parent:before
@@ -206,9 +215,21 @@ export function initRuleStudio(){
      cycle:recipe.generation,opacity:.96
    }):{held:[],coverage:0};
    const inherited=motifEvidence(manualMotifs);
-   if(revision)manualMotifs=advanceMotifMemory(manualMotifs,target,{
-     seed:recipe.seed,cycle:recipe.generation+1,parent:before
-   });
+   // Reconstruct the same contour using the new law's geometry and
+   // pigment method. The previous raster island remains independent.
+   const hereditary=revision?paintInheritedIdeas(target,manualIdeas,{
+     seed:recipe.seed,cycle:recipe.generation,recipe
+   }):{drawn:[],score:0,coverage:0};
+   if(revision){
+     manualMotifs=advanceMotifMemory(manualMotifs,target,{
+       seed:recipe.seed,cycle:recipe.generation+1,parent:before
+     });
+     manualIdeas=advanceStructuralIdeas(manualIdeas,target,{
+       seed:recipe.seed,cycle:recipe.generation+1,
+       source:before,rendered:hereditary
+     });
+   }
+   lastOrigin='manual';
    const method=methodSignature({
      mode:'rule-studio',subject:recipe.subject,primary:recipe.primary,
      secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework
@@ -222,9 +243,11 @@ export function initRuleStudio(){
    context.clearRect(0,0,960,600);context.drawImage(target,0,0);
    current={recipe,canvas:target,judged:false,metrics,nonredundancy:W};parentCanvas=target;
    displayPhi(target);
+   showHeritage(heritageEvidence(manualIdeas));
    void theatre.play({kind:'rule',recipe,trace:metrics.trace,
      survival:{held:held.held,available:manualMotifs.length},
-     parent:before,final:target,duration:1900});
+     heritage:{...hereditary,tradeoff:null},
+     parent:before,final:target,duration:2100});
    $('ruleEmpty').hidden=true;
    $('ruleArtwork').hidden=false;
    $('ruleKeep').disabled=false;$('ruleReject').disabled=false;$('ruleReworkBtn').disabled=false;
@@ -233,7 +256,8 @@ export function initRuleStudio(){
    text('ruleEvidence',metrics.strokes+' actual marks · '+metrics.skipped+
      ' omitted · '+(recipe.parentId?' CHILD OF '+recipe.parentId.slice(0,7):'ORIGINAL')+
      (revision?' · PAINTED FROM PREVIOUS IMAGE · '+held.held.length+
-       ' physical old forms survived':''));
+       ' physical old forms survived · '+hereditary.drawn.length+
+       ' structural ideas reconstructed':''));
    status('W / global non-redundancy: '+(W.novelty*100).toFixed(1)+
      '% new against this studio, '+(W.globalNovelty*100).toFixed(1)+
      '% new globally, complexity '+(W.complexity*100).toFixed(1)+'%.'+
@@ -332,7 +356,11 @@ export function initRuleStudio(){
    if(!current||current.judged)return;
    const critique=safe($('ruleCritique').value,230);
    noteRuleVerdict(current.recipe,liked,critique);
-   loop.feedback(liked);
+   if(lastOrigin==='loop')loop.feedback(liked);
+   else{
+     manualIdeas=judgeStructuralIdeas(manualIdeas,liked);
+     showHeritage(heritageEvidence(manualIdeas));
+   }
    current.judged=true;
    $('ruleKeep').disabled=true;$('ruleReject').disabled=true;
    persistCanvas(current.canvas,current.recipe,true);
