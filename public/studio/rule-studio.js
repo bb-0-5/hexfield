@@ -136,15 +136,17 @@ export function initRuleStudio(){
    getUploaded:()=>upload,
    onFrame(result){
      const {canvas,recipe,cycle,metrics,blend,sources,novelty,nonredundancy,
-       survival,heritage}=result;
+       survival,heritage,trials}=result;
      const before=current?.canvas||null;
      lastOrigin='loop';
      context.clearRect(0,0,960,600);context.drawImage(canvas,0,0,960,600);
      current={recipe,canvas,judged:false,metrics};
      parentCanvas=canvas;
      displayPhi(canvas);
+     const duration=Math.min(2450,Math.max(1050,
+       (Number($('ruleLoopSpeed').value)||3000)-260));
      void theatre.play({kind:'rule',recipe,trace:metrics.trace,
-       survival,heritage,parent:before,final:canvas,duration:2400});
+       survival,heritage,trials,parent:before,final:canvas,duration});
      $('ruleArtwork').hidden=false;$('ruleEmpty').hidden=true;
      $('ruleKeep').disabled=false;$('ruleReject').disabled=false;
      $('ruleReworkBtn').disabled=false;$('ruleSave').disabled=false;
