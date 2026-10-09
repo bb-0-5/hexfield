@@ -8,6 +8,48 @@ import {findMotifRegion} from './motif-memory.js';
 export const HERITAGE_TTL=16,MAX_STRUCTURAL_IDEAS=2,SAMPLES=40;
 export const MATERIALS=['outline','facets','dots','hatch','negative','spokes'];
 export const HERITAGE_PREFERENCE_KEY='hexfield.visual-gene-taste.v1';
+export const HERITAGE_LIBRARY_KEY='hexfield.visual-signatures.v1';
+export const HERITAGE_LIBRARY_LIMIT=4;
+export function rememberedSignatures(){
+ try{
+   const parsed=JSON.parse(localStorage.getItem(HERITAGE_LIBRARY_KEY)||'{}');
+   if(parsed?.v!==1||!Array.isArray(parsed.ideas))return [];
+   return parsed.ideas.slice(0,HERITAGE_LIBRARY_LIMIT).filter(idea=>
+     typeof idea.id==='string'&&idea.outline?.length===SAMPLES&&
+     idea.rootOutline?.length===SAMPLES&&idea.ink?.startsWith('#')&&
+     Array.isArray(idea.holes)&&idea.stats);
+ }catch{return [];}
+}
+export function rememberStructuralIdeas(ideas,{automatic=false}={}){
+ const previous=rememberedSignatures();
+ for(const idea of ideas||[]){
+   if(idea?.outline?.length!==SAMPLES)continue;
+   if(automatic&&(idea.generation<6||idea.trust<0))continue;
+   const entry={
+     ...idea,
+     rootOutline:idea.rootOutline||idea.outline.map(p=>[...p]),
+     savedAtGeneration:idea.generation,
+     recalled:Number(idea.recalled)||0,
+     // Saved geometry and palette, never an image file.
+     age:0,ttl:HERITAGE_TTL
+   };
+   const existing=previous.findIndex(x=>x.id===entry.id);
+   if(existing>=0)previous.splice(existing,1);
+   previous.unshift(entry);
+ }
+ const kept=previous.slice(0,HERITAGE_LIBRARY_LIMIT);
+ try{localStorage.setItem(HERITAGE_LIBRARY_KEY,JSON.stringify({v:1,ideas:kept}));}catch{}
+ return kept;
+}
+export function recallStructuralIdea({seed=1,cycle=0,exclude=[]}={}){
+ const pool=rememberedSignatures().filter(g=>!exclude.includes(g.id));
+ if(!pool.length)return null;
+ const chosen=pool[evolveSeed(seed,cycle+1,0,'visual-signature')%pool.length];
+ return {...structuredClone(chosen),age:0,born:cycle,ttl:HERITAGE_TTL,
+   recalled:(chosen.recalled||0)+1,
+   trust:clamp(chosen.trust-.08,-2,2)};
+}
+
 export function heritageTaste(){
  try{
    const value=JSON.parse(localStorage.getItem(HERITAGE_PREFERENCE_KEY)||'{}');
@@ -353,6 +395,15 @@ export function advanceStructuralIdeas(ideas,accepted,{seed=1,cycle=0,
    const first=extractStructuralIdea(source,{seed,cycle:Math.max(0,cycle-1)});
    if(first)next=[first];
  }
+ // Older accepted lineages become durable local visual signatures.
+ // Once an idea naturally expires, remembered ancestors can appear again
+ // in a different generation without recreating the original bitmap.
+ if(cycle>0&&cycle%8===0)rememberStructuralIdeas(next,{automatic:true});
+ if(cycle>0&&cycle%11===0&&next.length<MAX_STRUCTURAL_IDEAS){
+   const returning=recallStructuralIdea({seed,cycle,
+     exclude:next.map(x=>x.id)});
+   if(returning)next.push(returning);
+ }
  if(cycle>0&&cycle%4===0&&next.length<MAX_STRUCTURAL_IDEAS){
    const born=extractStructuralIdea(accepted,{seed,cycle,
      ancestorId:next.at(-1)?.id||null,
@@ -363,6 +414,14 @@ export function advanceStructuralIdeas(ideas,accepted,{seed=1,cycle=0,
  return next.slice(-MAX_STRUCTURAL_IDEAS);
 }
 export function judgeStructuralIdeas(ideas,liked){
+ if(liked)rememberStructuralIdeas(ideas);
+ else{
+   // A rejected lineage is not preserved as a future signature.
+   const bad=new Set((ideas||[]).map(x=>x.id));
+   const safe=rememberedSignatures().filter(x=>!bad.has(x.id));
+   try{localStorage.setItem(HERITAGE_LIBRARY_KEY,
+     JSON.stringify({v:1,ideas:safe}));}catch{}
+ }
  const preferences=heritageTaste();
  const weights={...preferences.weights};
  for(const gene of ideas||[]){
@@ -385,6 +444,7 @@ export function heritageEvidence(ideas){
  return (ideas||[]).map(x=>({
    id:x.id,sourceId:x.sourceId,ancestorId:x.ancestorId,
    generation:x.generation,age:x.age,ttl:x.ttl,material:x.material,
+   recalled:Number(x.recalled)||0,
    trust:+x.trust.toFixed(3),name:x.name,
    confidence:+x.confidence.toFixed(3),
    x:x.x,y:x.y,w:x.w,h:x.h,holes:x.holes.length,
