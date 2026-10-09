@@ -7,7 +7,9 @@ import {initRuleStudio} from './rule-studio.js';
 import {initAnatomyControls} from './anatomy-controls.js';
 import {initLogoEvolution} from './logo-evolution.js';
 import {createCreativePerformance} from './creative-performance.js';
-import {measureGoldenTaste,goldenPrior,explainGolden,getGoldenMode,setGoldenMode} from './golden-taste.js';
+import {measureGoldenTaste,goldenPrior,explainGolden,getGoldenMode,setGoldenMode,
+  diagnoseGolden,compareGoldenTaste} from './golden-taste.js';
+import {refineGoldenRecipe,PHI_BRANCHES} from './phi-refinement.js';
 import {evolveSeed,assessCanvas,commitCanvas,rankNoveltyCandidates,
   methodSignature,snapshotNoveltyMemory} from './nonredundancy.js';
 import {publishSource} from './source-mixer.js';
@@ -333,13 +335,13 @@ function setMode(mode,{paint=true}={}){
 async function paintRecipe(recipe,{newStudy=true}={}) {
   // Preserve the actual parent image and its previously named anatomical
   // geometry before the production canvas is overwritten by the next child.
-  const parentImage=(recipe.mode==='lettering'&&state.recipe?.mode==='lettering'&&!state.working)?
+  const parentImage=(state.recipe?.mode===recipe.mode&&!state.working)?
     document.createElement('canvas'):null;
   if(parentImage){
     parentImage.width=state.canvas.width;parentImage.height=state.canvas.height;
     parentImage.getContext('2d').drawImage(state.canvas,0,0);
   }
-  const oldGlyphMeta=state.lastGlyphMeta;
+  const oldGlyphMeta=state.lastGlyphMeta,oldGolden=state.goldenTaste;
   const processTrials=pendingProcessTrials;
   pendingProcessTrials=null;
   logoTheatre?.stop();
@@ -398,7 +400,14 @@ async function paintRecipe(recipe,{newStudy=true}={}) {
     };
     state.goldenTaste=measureGoldenTaste(state.canvas,{mode:recipe.mode});
     const φ=$('studioGoldenEvidence');
-    if(φ){φ.textContent='φ×φ / '+explainGolden(state.goldenTaste);φ.dataset.qualifies=String(state.goldenTaste.qualifies);}
+    if(φ){
+      const delta=compareGoldenTaste(oldGolden,state.goldenTaste);
+      const diagnosis=diagnoseGolden(state.goldenTaste);
+      φ.textContent='φ×φ / '+explainGolden(state.goldenTaste)+
+        (delta&&!delta.first?' / '+delta.description:'')+
+        ' / NEXT: '+diagnosis.instruction;
+      φ.dataset.qualifies=String(state.goldenTaste.qualifies);
+    }
     state.currentVisual=describeCanvas(state.canvas,recipe.mode);
     if(recipe.comparison&&descriptorValid(state.comparisonReference)){
       const delta=visualDistance(state.comparisonReference,state.currentVisual);
@@ -420,10 +429,10 @@ async function paintRecipe(recipe,{newStudy=true}={}) {
         ' · DERIVED SEED '+(recipe.seed>>>0);
     }
     $('paintingOverlay').hidden=true;
-    if(recipe.mode==='lettering'&&logoTheatre){
+    if((recipe.mode==='lettering'||processTrials?.length)&&logoTheatre){
       $('renderStatus').textContent='PERFORMING THE CREATIVE PROCESS';
       await logoTheatre.play({
-        kind:'logo',recipe,
+        kind:recipe.mode==='lettering'?'logo':'rule',recipe,
         parent:parentImage,oldAnatomy:oldGlyphMeta,
         trials:processTrials||[],
         final:state.canvas,anatomy:glyphResult,
@@ -488,6 +497,91 @@ async function paintFresh(){
   const chosen=options[0]?.recipe||makeRecipe({parent});
   state.comparisonReference=null;
   return paintRecipe(chosen);
+}
+// Revisions are actually rendered and judged before any chosen artwork
+// replaces its parent. Golden rules are constructive pressure, not an
+// after-the-fact visual grade attached to a random unchanged logo.
+async function refineGolden(){
+ if(state.working||state.refining){
+   $('phiRefineFeedback').textContent='The current painting/refinement is still being made.';
+   return;
+ }
+ const parent=state.recipe;
+ if(!parent||!['lettering','landscape'].includes(parent.mode)){
+   $('phiRefineFeedback').textContent='Choose LOGOS or LANDSCAPES and paint a study first.';
+   return;
+ }
+ if(getGoldenMode()==='off'){
+   $('phiRefineFeedback').textContent='Taste is set to OBSERVE. Switch to GUIDE or STRICT to steer the painter.';
+   return;
+ }
+ state.refining=true;
+ $('phiRefine').disabled=true;
+ clearExperiments();clearBlind();
+ const token=++state.experimentRevision;
+ const last=state.goldenTaste||measureGoldenTaste(state.canvas,{mode:parent.mode});
+ const diagnosed=diagnoseGolden(last);
+ const trials=[];
+ const count=globalThis.matchMedia?.('(max-width:730px)').matches?5:PHI_BRANCHES;
+ const feedback=$('phiRefineFeedback');
+ try{
+   for(let i=0;i<count;i++){
+     if(token!==state.experimentRevision)return;
+     feedback.textContent='φ SEEK / '+(i+1)+' of '+count+
+       ' actual studies · correcting '+diagnosed.target.toUpperCase()+
+       ' · testing geometry AND palette before committing.';
+     const recipe=refineGoldenRecipe(parent,i,{target:diagnosed.target});
+     try{
+       const preview=await renderPreview(recipe,.13);
+       if(token!==state.experimentRevision)return;
+       const golden=measureGoldenTaste(preview.canvas,{mode:recipe.mode});
+       const novelty=assessCanvas(preview.canvas,{
+         mode:recipe.mode,method:studioMethod(recipe),
+         parent:state.nonredundancy?.fingerprint||null
+       });
+       const score=goldenPrior(golden,{mode:getGoldenMode()})+
+         novelty.score*.35-(novelty.redundant?.3:0);
+       trials.push({recipe,preview,golden,novelty,score});
+       if(golden.qualifies&&getGoldenMode()==='strict'&&trials.length>=3)
+         break; // no need to consume every branch after a qualifying result.
+     }catch(error){console.warn('φ counterfactual not available:',error);}
+     await pauseFrame();
+   }
+   if(token!==state.experimentRevision)return;
+   if(!trials.length){
+     feedback.textContent='No counterfactual could render on this device; the original remains untouched.';
+     return;
+   }
+   trials.sort((a,b)=>{
+     if(getGoldenMode()==='strict'&&a.golden.qualifies!==b.golden.qualifies)
+       return a.golden.qualifies?-1:1;
+     return b.score-a.score;
+   });
+   const winner=trials[0];
+   const candidates=trials.slice().sort((a,b)=>a.recipe.goldenRefinement.step-
+     b.recipe.goldenRefinement.step);
+   pendingProcessTrials=candidates.map(item=>({
+     canvas:item.preview.canvas,
+     label:'φ '+item.recipe.goldenRefinement.step+
+       ' / G '+Math.round(item.golden.geometry*100)+
+       ' C '+Math.round(item.golden.color*100),
+     score:item.score,golden:item.golden,
+     selected:item===winner
+   }));
+   state.comparisonReference=state.currentVisual;
+   await paintRecipe(winner.recipe);
+   if(token!==state.experimentRevision)return;
+   const evaluated=state.goldenTaste;
+   const comparison=compareGoldenTaste(last,evaluated);
+   feedback.textContent='TESTED '+trials.length+' seed-derived studies · '+
+     (evaluated?.qualifies?'φ-QUALIFIED':'CANDIDATE / not yet φ-qualified')+
+     ' · '+(comparison?.description||'')+
+     ' · '+diagnoseGolden(evaluated).instruction;
+ }catch(error){
+   feedback.textContent='φ refinement could not complete: '+String(error.message||error).slice(0,160);
+ }finally{
+   state.refining=false;$('phiRefine').disabled=false;
+ }
 }
 async function varyMethod(){
   const parent=state.recipe?.mode===state.mode?structuredClone(state.recipe):null;
@@ -867,6 +961,7 @@ function applyEditedLogo(program,why='edit'){
 function bind(){
   $('phiTasteMode').value=getGoldenMode();
   $('phiTasteMode').addEventListener('change',()=>setGoldenMode($('phiTasteMode').value));
+  $('phiRefine').addEventListener('click',()=>void refineGolden());
   for(const btn of document.querySelectorAll('[data-mode]'))btn.addEventListener('click',()=>setMode(btn.dataset.mode));
   $('generate').addEventListener('click',()=>{
     if(state.mode==='lettering')logoLoop?.pause('new logo requested');
