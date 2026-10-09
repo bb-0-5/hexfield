@@ -124,12 +124,13 @@ function scoreSamples(samples,mode='landscape'){
  // placement affected the silhouette. Compare chroma overlap with structural
  // weight, and the same chroma field shifted around the canvas as an ablation.
  // This explicitly distinguishes good ratios from good RELATIONSHIPS.
- let overlap=0,shifted=0,focused=0,unfocused=0;
+ let overlap=0,shifted=0,reverseShift=0,focused=0,unfocused=0;
  const shiftX=Math.max(1,Math.round(W*GOLD_MINOR)),shiftY=Math.max(1,Math.round(H*GOLD));
  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
    const i=y*W+x,from=((y+shiftY)%H)*W+(x+shiftX)%W;
    overlap+=shape[i]*pigment[i];
    shifted+=shape[i]*pigment[from];
+   reverseShift+=shape[from]*pigment[i];
    // Golden composition points, not only the overall total at the frame
    // boundary. Color and shape should reinforce those intersections.
    const fx=Math.min(Math.abs(x/W-GOLD),Math.abs(x/W-GOLD_MINOR));
@@ -143,11 +144,17 @@ function scoreSamples(samples,mode='landscape'){
    pigment.reduce((v,x)=>v+x*x,0)
  )||1;
  const overlapNorm=clamp(overlap/maxProduct);
- const delta=(overlap-shifted)/(maxProduct||1); // signed counterfactual effect
+ const colorOnGeometry=(overlap-shifted)/(maxProduct||1);
+ const geometryOnColor=(overlap-reverseShift)/(maxProduct||1);
+ const delta=(colorOnGeometry+geometryOnColor)*.5;
  const goldenPointSupport=unfocused?focused/unfocused:0;
+ // Reciprocal counterfactuals: move colour over unchanged shape, then
+ // move the shape over unchanged colours. Neither score can hide inside
+ // an averaged "colour harmony" number: retain BOTH signed effects.
  const coupling=clamp(pigmentEnergy*energy*(
-   .36*overlapNorm+.32*clamp(.5+delta*.9)+
-   .32*phiFit(goldenPointSupport,.23)
+   .29*overlapNorm+.235*clamp(.5+colorOnGeometry*.9)+
+   .235*clamp(.5+geometryOnColor*.9)+
+   .24*phiFit(goldenPointSupport,.23)
  ));
  // Both dimensions are independent prerequisites; compensating a colour
  // failure with perfect geometry is explicitly disallowed.
@@ -175,6 +182,9 @@ function scoreSamples(samples,mode='landscape'){
    interaction:{
      alignment:+overlapNorm.toFixed(4),
      ablatedAlignment:+clamp(shifted/maxProduct).toFixed(4),
+     reverseAblatedAlignment:+clamp(reverseShift/maxProduct).toFixed(4),
+     colorOnGeometry:+colorOnGeometry.toFixed(4),
+     geometryOnColor:+geometryOnColor.toFixed(4),
      effect:+delta.toFixed(4),
      goldenPointSupport:+goldenPointSupport.toFixed(4),
      verdict:delta>.025?'colour reinforces structure':
@@ -216,7 +226,10 @@ export function explainGolden(s){
  return 'G '+pct(s.geometry)+' / C '+pct(s.color)+
    ' / X '+pct(s.coupling)+' / combined '+pct(s.combined)+
    ' · '+relation+' interaction ('+
-   (s.interaction.effect>=0?'+':'')+s.interaction.effect.toFixed(3)+
+   'colour→geometry '+(s.interaction.colorOnGeometry>=0?'+':'')+
+   s.interaction.colorOnGeometry.toFixed(3)+', '+
+   'geometry→colour '+(s.interaction.geometryOnColor>=0?'+':'')+
+   s.interaction.geometryOnColor.toFixed(3)+
    ') · '+(s.qualifies?'φ-qualified study':'φ-constraints not all satisfied');
 }
 export function rankGoldenCandidates(candidates,{mode='guide',
