@@ -348,6 +348,7 @@ export function heritageEvidence(ideas){
    trust:+x.trust.toFixed(3),name:x.name,
    confidence:+x.confidence.toFixed(3),
    x:x.x,y:x.y,w:x.w,h:x.h,holes:x.holes.length,
+   outline:x.outline,
    shape:{aspect:x.stats.aspect,circularity:x.stats.circularity}
  }));
 }
