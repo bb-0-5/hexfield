@@ -25,5 +25,7 @@ jobs:
         run: node --experimental-default-type=module tests/imagination-worker.test.mjs
       - name: Evolving painting procedures
         run: node --experimental-default-type=module tests/studio-evolution.test.mjs
+      - name: Install Canvas test renderer
+        run: npm install --no-save --no-package-lock skia-canvas@3.0.8
       - name: Visual novelty and painting comparison
         run: node --experimental-default-type=module tests/studio-vision.test.mjs
