@@ -4,7 +4,8 @@
  * An experiment changes its glyph-making procedure, not merely its position.
  */
 import {makeGenome,randomFrom,methodDescription,evaluateSurface} from './evolution.js';
-export const LETTER_STYLES=['geometric','minimal','heavy','elegant','experimental'];
+import {paintAnatomyWord} from './anatomy-renderer.js';
+export const LETTER_STYLES=['anatomy','geometric','minimal','heavy','elegant','experimental'];
 export const LETTER_TYPES=['wordmark','monogram','emblem'];
 const W=1200,H=740,PI=Math.PI;
 const FONTS={
@@ -72,6 +73,15 @@ function drawGlyph(ctx,glyph,atY,size,params){
 export function renderLettering(canvas,recipe){
  const g=recipe.genome || makeGenome('lettering',recipe.seed);
  if(evaluateSurface(g).length)throw Error('Invalid letter construction procedure');
+ // A font is now a collection of named mutable parts rather than a
+ // single opaque fillText call. The legacy native typeface is still
+ // available explicitly by disabling the anatomy program.
+ const anatomy=recipe.anatomy??g.anatomy;
+ if(anatomy?.enabled!==false && (anatomy || recipe.style==='anatomy')){
+   return paintAnatomyWord(canvas,{...recipe,genome:g,anatomy},{
+      guide:!!(recipe.showAnatomyGuides??anatomy?.guide)
+   });
+ }
  const text=cleanLogoText(recipe.text),style=LETTER_STYLES.includes(recipe.style)?recipe.style:'geometric';
  const type=LETTER_TYPES.includes(recipe.type)?recipe.type:'wordmark';
  const word=(type==='wordmark'?text:monoOf(text)).toUpperCase(),ctx=canvas.getContext('2d');
@@ -123,6 +133,9 @@ export function renderLettering(canvas,recipe){
  }
  return {text,letters:word,style,type,method:methodDescription(g)};
 }
-export function letteringDescription(recipe){return `${cleanLogoText(recipe.text)} · ${methodDescription(recipe.genome)}`;}
+export function letteringDescription(recipe){
+ const first=(recipe.anatomy||recipe.genome?.anatomy)?.rules?.[0];
+ return `${cleanLogoText(recipe.text)} · ${first?first.target+' '+first.operation+' · ':''}${methodDescription(recipe.genome)}`;
+}
 import {geneFeatures} from './evolution.js';
 export function letteringFeatures(recipe){return {style:recipe.style,type:recipe.type,...(recipe.genome?geneFeatures(recipe.genome):{}),discipline:'lettering'};}
