@@ -224,3 +224,27 @@
 @media(prefers-reduced-motion:reduce){
  .creative-performance-panel{display:none!important}
 }
+
+/* 308 / two independent φ taste systems, plus their measured interaction. */
+.phi-taste-panel{margin:12px 0 17px;border:1px solid #8b966b;background:#233024}
+.phi-taste-panel>details{padding:9px 13px 13px}
+.phi-taste-panel summary{cursor:pointer;color:#dfe9c4;
+ font:900 11px/1.45 var(--sans,Arial,sans-serif);letter-spacing:.08em}
+.phi-taste-panel p{font:12px/1.55 var(--sans,Arial,sans-serif);
+ color:#d3d7c5;overflow-wrap:anywhere;margin:11px 0}
+.phi-taste-panel label{display:block;font:800 10px var(--sans,Arial,sans-serif);
+ color:#dfe9c4;margin:14px 0 8px}
+.phi-taste-panel select{display:block;width:100%;max-width:100%;min-height:43px;
+ margin:0 0 10px;font-size:12px}
+.phi-taste-panel .phi-conditions{font-size:11px;color:#deb989;line-height:1.55}
+.phi-taste-panel .phi-taste-status{background:#17241b;border-left:2px solid #d7b27b;
+ padding:9px;font-size:11px;color:#d4e6cf}
+.phi-live-evidence{display:block;line-height:1.45;font:10px/1.55 var(--sans,Arial,sans-serif);
+ color:#a6c7af;overflow-wrap:anywhere;padding:7px 10px;
+ background:#17231d;border-left:3px solid #b4b37b;margin:7px 0}
+.phi-live-evidence[data-qualifies="true"]{color:#ccebc4;border-color:#b8d88c}
+.phi-live-evidence[data-qualifies="false"]{color:#e1c89b;border-color:#b4865b}
+@media(max-width:730px){
+ .phi-taste-panel>details{padding:10px}
+ .phi-live-evidence{font-size:10px}
+}
