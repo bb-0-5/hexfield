@@ -66,7 +66,8 @@ export function makeRecipe(input={}){
    subject:allowed(input.subject,SUBJECTS,chooseWeighted(keys(SUBJECTS),'subject',rng)),
    primary,secondary:secondary===primary?'none':secondary,
    mark,rework,created:Date.now(),seed:Number.isFinite(input.seed)?input.seed:(Math.random()*4294967295)>>>0,
-   generation:clamp(Number(input.generation)||0,0,32)
+   // The rework lineage can continue beyond thirty-two revisions.
+   generation:clamp(Number(input.generation)||0,0,1000000)
  };
  return recipe;
 }
