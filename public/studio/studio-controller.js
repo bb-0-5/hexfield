@@ -516,6 +516,8 @@ async function refineGolden(){
    return;
  }
  state.refining=true;
+ logoLoop?.pause('φ refinement is testing a bounded set of designs');
+ logoTheatre?.stop();
  $('phiRefine').disabled=true;
  clearExperiments();clearBlind();
  const token=++state.experimentRevision;
