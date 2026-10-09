@@ -228,6 +228,7 @@ export function applyRules(source,target,recipe,options={}){
  ctx.fillRect(0,0,width,height);
  ctx.lineCap='butt';ctx.lineJoin='bevel';
  const random=seeded(recipe.seed+(Number(options.iteration)||0)*997);
+ const markTypes=['dashes','dots','hatch','cutout','carve'];
  for(let y=0;y<height;y+=step){
    for(let x=0;x<width;x+=step){
      const order=Math.floor(y/step)*Math.ceil(width/step)+Math.floor(x/step);
@@ -254,7 +255,6 @@ export function applyRules(source,target,recipe,options={}){
      // dominant mark changes by spatial region and generation. This is not
      // a single renderer recolouring one scene; the final stroke primitives
      // themselves vary within the same picture.
-     const markTypes=['dashes','dots','hatch','cutout','carve'];
      const bx=Math.floor(x/Math.max(32,step*(6+(recipe.seed%4))));
      const by=Math.floor(y/Math.max(32,step*(5+(recipe.seed%3))));
      const localMark=recipe.mark==='hybrid'?
