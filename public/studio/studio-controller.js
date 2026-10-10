@@ -318,7 +318,9 @@ async function showExperiments(rejected){
 function disableVoting(value){$('keep').disabled=value;$('reject').disabled=value;}
 function setStatus(message){$('feedbackStatus').textContent=message;}
 function setMode(mode,{paint=true}={}){
-  if(!['rules','imagination','landscape','lettering'].includes(mode))return;
+  // There is only one visible production canvas. Terrain, typography and
+  // imagination are source procedures, not selectable alternate screens.
+  if(mode!=='rules')return;
   if(state.mode==='rules'&&mode!=='rules')ruleStudio?.hide();
   if(state.mode==='lettering'&&mode!=='lettering'){
     logoLoop?.pause('switched modes');logoTheatre?.stop();
@@ -1033,8 +1035,27 @@ function bind(){
     }
   });
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void syncVotes();});
-  imagination=initImagination({getSession:acquireSession});
+  imagination=initImagination({getSession:acquireSession,
+    onImage:image=>ruleStudio?.takeImagined(image)});
   ruleStudio=initRuleStudio();
+  // Model-backed source generation is opt-in and never opens a second view.
+  const slot=$('ruleModelPromptSlot');
+  if(slot){
+    const idea=$('imagineIdea');
+    slot.append(idea);
+    idea.rows=2;
+    idea.placeholder='An optional new reference for this painting…';
+  }
+  const modelButton=$('ruleImagine');
+  modelButton?.addEventListener('click',async()=>{
+    modelButton.disabled=true;
+    modelButton.textContent='IMAGINING A SOURCE…';
+    try{await imagination.paint();}
+    finally{
+      modelButton.disabled=false;
+      modelButton.textContent='IMAGINE SOURCE / MODEL REQUEST ↗';
+    }
+  });
   logoTheatre=createCreativePerformance({
     host:$('canvasWrap'),canvas:$('artwork'),
     name:'letterforms',statusElement:$('renderStatus')
