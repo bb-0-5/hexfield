@@ -35,7 +35,7 @@ const B=paintWordsOnCanvas(wordB,'HEXFIELD',{recipe,seed:31});
 assert.ok(A.painted&&A.count>900&&A.count<360*220*.3,
  'Actual letters must cover enough pixels to be visible in the painting');
 assert.ok(A.fontSize>=18,'CSS Canvas font must not silently reset to 10px');
-assert.match(A.font,/^(?:italic )?8(?:50|900) \d+px /,
+assert.match(A.font,/^(?:normal |italic )?8(?:50|900) \d+px /,
  'Font shorthand must be weight, size then family, not size then weight');
 assert.deepEqual(A.bounds,B.bounds);
 assert.equal(diff(wordA,wordB).mean,0,'Word deposition must be deterministic');
