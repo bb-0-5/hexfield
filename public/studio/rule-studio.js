@@ -186,6 +186,8 @@ export function initRuleStudio(){
    width:960,height:600,
    getParent:()=>current?.canvas||null,
    getParentRecipe:()=>current?.recipe||null,
+   getArchive:()=>archiveCanvas,
+   postProcess:(output,recipe,metrics)=>compositeWords(output,recipe,metrics),
    getUploaded:()=>upload,
    onFrame(result){
      const {canvas,recipe,cycle,metrics,blend,sources,novelty,nonredundancy,
@@ -194,7 +196,9 @@ export function initRuleStudio(){
      lastOrigin='loop';
      context.clearRect(0,0,960,600);context.drawImage(canvas,0,0,960,600);
      current={recipe,canvas,judged:false,metrics};
+     unlettered=result.composite?.clean||null;
      parentCanvas=canvas;
+     unlettered=cleanCopy(canvas);
      displayPhi(canvas);
      const duration=Math.min(2450,Math.max(1050,
        (Number($('ruleLoopSpeed').value)||3000)-260));
@@ -303,6 +307,8 @@ export function initRuleStudio(){
        source:before,rendered:hereditary
      });
    }
+   unlettered=cleanCopy(target);
+   compositeWords(target,recipe,metrics);
    lastOrigin='manual';
    const method=methodSignature({
      mode:'rule-studio',subject:recipe.subject,primary:recipe.primary,
@@ -356,6 +362,11 @@ export function initRuleStudio(){
      throw Error('Generate a picture in IMAGINE first or select a different reference source.');
    }
    if(origin==='last'&&current)return current.canvas;
+   if(origin==='archive'){
+     const frame=await readArchive();
+     if(frame)return frame;
+     throw Error('Paint in EXPERIMENTAL ENGINE before importing its reference.');
+   }
    const reality=canvasOf();drawReality(reality,recipe.subject,recipe.seed);return reality;
  }
  function selections(){
