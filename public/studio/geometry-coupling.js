@@ -38,7 +38,11 @@ export function chooseGeometryRelation(seed=1,generation=0,prior=null,branch=1){
  // A disliked parent can no longer lock an entire lineage into a bad collision.
  if(branch===0&&GEOMETRY_RELATIONS.includes(prior)&&
    (scores[prior]||0)>-2)return prior;
- const candidate=GEOMETRY_RELATIONS.map((method,i)=>({
+ // Strong repeated REJECT must exclude the parent from its conservation
+ // trial, rather than accidentally re-elect it on a weighted redraw.
+ const available=branch===0&&GEOMETRY_RELATIONS.includes(prior)&&
+   (scores[prior]||0)<=-2?GEOMETRY_RELATIONS.filter(m=>m!==prior):GEOMETRY_RELATIONS;
+ const candidate=available.map((method,i)=>({
    method,weight:.5+Math.exp(limit(scores[method]||0,-8,8)*.24)+
       (method===prior ? .6 : 0),index:i
  }));
