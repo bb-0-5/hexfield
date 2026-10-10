@@ -60,10 +60,12 @@ for(let i=1;i<artifacts.length;i++)
 assert.ok(differences>=3,
  'Changing typography grammars must change true art pixels, not labels');
 const layer=readFileSync('public/studio/word-surface.js','utf8');
+const vectors=readFileSync('public/studio/vector-letterforms.js','utf8');
 const loop=readFileSync('public/studio/abstraction-loop.js','utf8');
-assert.match(layer,/glyphTraits\(genome,ch,i\)/);
-assert.match(layer,/trait\.top:trait\.bottom/);
-assert.match(layer,/trait\.bubble/);
+assert.match(layer,/constructVectorLetters\(text,w,h,bounds,choice\)/);
+assert.match(vectors,/glyphTraits\(genome,char,i\)/);
+assert.match(vectors,/function strokeWeight\(style,trait\)/);
+assert.match(vectors,/\.20\*trait\.bubble/);
 assert.match(loop,/recipe\.typeGenome=evolveTypeGenome\(inheritedRecipe\?\.typeGenome/);
 assert.ok(loop.includes('const composite=postProcess(output,recipe,metrics'),
  'Mutation must be painted BEFORE the W/phi/H ranking');

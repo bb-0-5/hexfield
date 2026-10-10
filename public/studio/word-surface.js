@@ -7,9 +7,10 @@
 import {applyRules,makeRecipe} from './rule-engine.js';
 import {coupleWordGeometry,chooseGeometryRelation} from './geometry-coupling.js';
 import {validDirtyTiles} from './dirty-tiles.js';
-import {glyphTraits,typeGenome,validTypeGenome} from './type-genome.js';
+import {typeGenome,validTypeGenome} from './type-genome.js';
+import {constructVectorLetters} from './vector-letterforms.js';
 import {validDesignGenome,newDesignGenome,designBounds,paintDesignAccent} from './design-genome.js';
-import {assessGlyphMask,repairGlyphMask} from './type-legibility.js';
+import {repairGlyphMask} from './type-legibility.js';
 const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
 const create=(w,h)=>{const c=document.createElement('canvas');c.width=w;c.height=h;return c;};
 const lum=(data,i)=>(.2126*data[i]+.7152*data[i+1]+.0722*data[i+2])/255;
@@ -84,134 +85,9 @@ function chooseBand(before,w,h,seed){
   scored.sort((a,b)=>a.activity-b.activity);
   return {top:scored[0].top,height};
 }
+// Constructed alphabet geometry replaces the raster-distortion font generator.
 function buildMask(text,w,h,bounds,choice){
-  const mask=create(w,h),ctx=mask.getContext('2d',{willReadFrequently:true});
-  const skeleton=create(w,h),base=skeleton.getContext('2d',{willReadFrequently:true});
-  ctx.fillStyle='#fff';ctx.textBaseline='middle';ctx.textAlign='left';
-  base.fillStyle='#fff';base.textBaseline='middle';base.textAlign='left';
-  const letters=[...text],maxWidth=w*(bounds.widthRatio||.92);
-  const genome=choice.type;
-  const bubble=genome.grammar==='bubble'||genome.grammar==='rounded';
-  const block=genome.grammar==='block'||genome.grammar==='architectural';
-  let size=Math.min(bounds.height*.77,w/Math.max(2,letters.length*.49));
-  // Actual heavyweight glyph outlines are the source of the mutation.
-  // Do not sample a randomly chosen thin or italic face for display copy.
-  const font=px=>(bubble?'700 system-ui':block?'900 sans-serif':
-    choice.family.face.replace(/900/,'850'))
-    .replace(/(700|850|900)/, '$1 '+Math.max(10,Math.round(px))+'px');
-  const metrics=px=>{
-    ctx.font=font(px);
-    const glyphs=letters.map((ch,i)=>{
-      const shape=glyphTraits(genome,ch,i);
-      return {ch,i,shape,advance:ctx.measureText(ch).width*shape.width};
-    });
-    const tracking=px*(genome.tracking+(bubble?.05:0));
-    return {glyphs,tracking,total:glyphs.reduce((v,g)=>v+g.advance,0)+
-      Math.max(0,glyphs.length-1)*tracking};
-  };
-  let layout=metrics(size);
-  while(size>10&&layout.total>maxWidth){size*=.92;layout=metrics(size);}
-  base.font=font(size);
-  const scale=Math.min(1,maxWidth/Math.max(1,layout.total)),
-    centerY=bounds.top+bounds.height*.52,
-    left=(bounds.centerX??w*.5)-layout.total*scale*.5;
-  const owner=new Int16Array(w).fill(-1),parts=[];
-  let at=0;
-  for(const glyph of layout.glyphs){
-    const x0=left+at*scale,x1=x0+glyph.advance*scale;
-    parts.push({x0,x1,char:glyph.ch,shape:glyph.shape,
-      top:Math.max(0,centerY-size*.73),
-      bottom:Math.min(h,centerY+size*.73)});
-    ctx.save();ctx.translate(x0,centerY);
-    ctx.scale(scale*glyph.shape.width,1);
-    ctx.transform(1,0,glyph.shape.slant,1,0,0);
-    // Give the round family a clearly inflated silhouette; sharp block
-    // lettering is intentionally flatter and square by comparison.
-    const stroke=bubble?Math.min(size*.19,
-      size*(.13+glyph.shape.bubble*.28)):
-      block?Math.max(1,size*.033):
-      Math.min(size*.11,Math.max(1,size*glyph.shape.outline));
-    ctx.lineWidth=stroke;
-    ctx.lineJoin=bubble?'round':block?'miter':'round';
-    ctx.miterLimit=block?2.5:1.2;
-    ctx.strokeStyle='#fff';
-    ctx.strokeText(glyph.ch,0,0);
-    ctx.fillText(glyph.ch,0,0);
-    ctx.restore();
-    // Reference is the exact un-mutated glyph skeleton at identical
-    // coordinates. It is not an OCR guess or a second final text layer.
-    base.save();base.translate(x0,centerY);
-    base.scale(scale*glyph.shape.width,1);
-    base.transform(1,0,glyph.shape.slant,1,0,0);
-    base.fillText(glyph.ch,0,0);base.restore();
-    at+=glyph.advance+layout.tracking;
-  }
-  // Every letter owns its own top and bottom morphology, including its
-  // true irregular width, bubble, split, slant and stem thickness.
-  // Attribution is a single O(width * letters) preprocessing pass.
-  for(let i=0;i<parts.length;i++){
-    const item=parts[i],lo=Math.max(0,Math.floor(item.x0-size*.10)),
-      hi=Math.min(w,Math.ceil(item.x1+size*.10));
-    for(let x=lo;x<hi;x++)owner[x]=i;
-  }
-  const old=ctx.getImageData(0,0,w,h).data;
-  const pixels=new Uint8ClampedArray(w*h),
-    stride=Math.max(2,Math.round(size*.22));
-  const minY=Math.max(0,bounds.top-8),maxY=Math.min(h,bounds.top+bounds.height+9);
-  for(let y=minY;y<maxY;y++){
-    const row=y*w,group=Math.floor((y-bounds.top)/stride),
-      phase=(y-bounds.top)/Math.max(1,bounds.height);
-    for(let x=0;x<w;x++){
-      const part=owner[x]>=0?parts[owner[x]]:null;
-      const trait=part?.shape;
-      let shift=0;
-      switch(choice.index){
-        case 0:shift=Math.sin((y-bounds.top)/Math.max(2,size)*7)*size*.008;break;
-        case 1:shift=phase<.47?-size*.009:size*.009;break;
-        case 2:shift=((group&1)?-1:1)*size*.014;break;
-        case 3:shift=-size*.007;break;
-        case 4:shift=((group+Math.floor(x/Math.max(4,size*.4)))&1)?size*.009:-size*.009;break;
-        case 5:shift=Math.sin(x/Math.max(3,size*.21))*size*.012;break;
-        case 6:shift=((group%3)-1)*size*.013;break;
-        default:shift=Math.sin((y-bounds.top)/Math.max(2,size*.24))*size*.007;
-      }
-      // This is a structural upper/lower split on EACH glyph, not a
-      // uniformly tinted stock-font string.
-      // Bubble and block should read as actual designed typography, not
-      // letters sliced into vibrating horizontal bands.
-      if(bubble||block)shift=0;
-      else if(trait)shift+=(phase<.48?-1:1)*trait.split*size;
-      const sx=Math.round(x-shift);
-      if(sx<0||sx>=w)continue;
-      let value=old[(row+sx)*4+3];
-      const weight=trait?(phase<.48?trait.top:trait.bottom):1;
-      // Controlled round or square stroke dilation, NOT accidental half
-      // glyph erasure; thin counters survive because expansion is capped.
-      const expansion=trait?
-        Math.max(0,Math.min(4,Math.round(size*(trait.bubble*.13+
-          Math.max(0,weight-1)*.026)))):0;
-      const legacy=0;
-      for(let d=1;d<=Math.max(expansion,legacy);d++){
-        if(sx+d<w)value=Math.max(value,old[(row+sx+d)*4+3]);
-        if(sx-d>=0)value=Math.max(value,old[(row+sx-d)*4+3]);
-        if(d<=expansion&&y+d<h)
-          value=Math.max(value,old[((y+d)*w+sx)*4+3]);
-        if(d<=expansion&&y-d>=0)
-          value=Math.max(value,old[((y-d)*w+sx)*4+3]);
-      }
-      if(weight<1)value=Math.round(255*Math.pow(value/255,1+(1-weight)*2));
-      // Material texture may still change, but it never punches random
-      // holes through the character skeleton or obliterates letter counters.
-      pixels[row+x]=value;
-    }
-  }
-  const baseline=base.getImageData(0,0,w,h).data;
-  const reference=new Uint8ClampedArray(w*h);
-  for(let p=0;p<reference.length;p++)reference[p]=baseline[p*4+3];
-  const corrected=repairGlyphMask(reference,pixels,w,h,parts);
-  return {pixels:corrected.pixels,core:reference,size,font:ctx.font,parts,
-    typeLegibility:corrected.evidence,
-    anatomy:genome.grammar+'/'+genome.root+' / '+genome.generation};
+ return constructVectorLetters(text,w,h,bounds,choice);
 }
 export function paintWordsOnCanvas(canvas,words,{
   recipe=null,seed=1,iteration=0,sourceCanvas=null,relation=null,dirtyTiles=null
@@ -237,6 +113,8 @@ export function paintWordsOnCanvas(canvas,words,{
   const before=accented?og.getImageData(0,0,w,h).data:initial;
   const built=buildMask(text,w,h,bounds,choice);
   const {pixels:letters,size,font,parts,anatomy}=built;
+  const vectorGlyphs=built.vectorGlyphs;
+  const fallbackGlyphs=built.fallbackGlyphs;
   const cores=built.core;
   const letterQuality=[built.typeLegibility];
   // A single optional pipe-delimited input supports a real headline, detail
@@ -357,8 +235,9 @@ export function paintWordsOnCanvas(canvas,words,{
       ornament:design.ornament,activity:bounds.activity??null},
     chromaticFraction:count?chromatic/count:0,
     bounds:{x:Math.round(w*.04),y:bounds.top,w:Math.round(w*.92),h:bounds.height},
-    mark:rule.mark,method:choice.name,face:choice.family.name,fontSize:Math.round(size),font,
+    mark:rule.mark,method:'vector-'+choice.type.grammar,face:'HEXFIELD VECTOR',fontSize:Math.round(size),font,
     typeAnatomy:anatomy,glyphs:glyphCount,
+    vectorGlyphs,fallbackGlyphs,construction:built.construction,
     palette:layers.map(hex),marks:marks.strokes,interaction:coupled.stats,
     inkDirection:brightGround?'dark-on-light':'light-on-dark',
     rimPixels,coherentInk:true,
