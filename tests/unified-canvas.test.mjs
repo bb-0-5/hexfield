@@ -85,8 +85,8 @@ assert.match(studio,/ruleStudio\?\.autoStart\(\)/,
  'Autonomous painting must begin at page load without a button');
 assert.match(rule,/loop\.start\(loopOptions\(\)\)/,
  'The painter must execute continuous abstraction, not a one-time poster');
-assert.match(rule,/stored===null\?'HEXFIELD'/,
- 'New visitors receive visible default typography unless they explicitly clear it');
+assert.match(rule,/stored===null\?'':String\(stored\)/,
+ 'The artist must not impose HEXFIELD lettering until the visitor types it');
 const code=readFileSync('public/app.js','utf8');
 assert.match(code,/addEventListener\("click", \(\) => changeSeed\(false\)\)/);
 assert.doesNotMatch(code,/location\.replace\(url\.toString\(\)\)/,
