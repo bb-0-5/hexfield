@@ -111,7 +111,7 @@
             </div>
             <p id="ruleLoopStatus" class="model-budget" role="status" aria-live="polite">Ready. Start to combine all available renderers into an evolving picture.</p>
             <p id="ruleSurvivors" class="surviving-ideas" aria-live="polite">SURVIVING IDEAS / Found shapes will linger across generations, with new ones arriving as others fade.</p>
-            <div id="ruleGenealogy" class="heritage-gallery" aria-label="Heritable geometric ideas: their shape, age and new material"></div>
+            
           </section>
           <details class="advanced-configuration rule-interventions">
             <summary>OPTIONAL / INTERRUPT THE PAINTER'S DECISIONS</summary>
@@ -122,7 +122,7 @@
           </div>
           <button id="ruleReworkBtn" type="button" class="ghost-button" disabled>REABSTRACT &amp; REPAINT PREVIOUS ↺</button>
           </details>
-          <p class="model-budget">No model inference required. Law preferences and past revisions are shared with the archive's constrained generator in this browser.</p>
+          <p class="model-budget">All processes collaborate locally. Image-model sources require an explicit request.</p>
         </section>
         <section id="imaginationControls" class="discipline-panel" aria-label="Real model-backed painting controls" hidden>
           <label for="imagineIdea">WHAT SHOULD IT IMAGINE?</label>
@@ -132,7 +132,7 @@
           <p class="model-budget">Up to <strong>30 finished paintings</strong> per visitor daily, subject to the shared 60-attempt studio budget and Cloudflare's model availability. Failed attempts won't count as finished paintings. All quotas reset at 00:00 UTC. No automatic generation or Stripe.</p>
           <p class="model-budget" id="imagineQuota" role="status" aria-live="polite">Checking the painting allowance…</p>
         </section>
-        <section id="landscapeControls" class="discipline-panel" aria-label="Landscape painting controls">
+        <section id="landscapeControls" class="discipline-panel" aria-label="Internal terrain donor settings" hidden>
           <p class="artist-autonomy-note">The painter invents the place, lighting and method. Override them only if you want.</p>
           <details class="advanced-configuration">
             <summary>OPTIONAL / CHOOSE A PLACE OR LIGHTING</summary>
@@ -238,7 +238,7 @@
             <div id="ruleEmpty" class="imagine-empty"><strong>A painting that must obey its laws.</strong><span>Try a ball without curves, paint only negative space, or force symmetrical lines to bend apart. Or use an AI image as the starting reality.</span></div>
             <canvas id="ruleArtwork" width="960" height="600" hidden aria-label="Constrained generative painting"></canvas>
           </div>
-          <div class="work-details"><div><span class="small-label">THE EXECUTED METHOD</span><p id="ruleCaption">Not a style prompt: actual drawing operations.</p><small id="ruleEvidence" class="method-line">Awaiting a rule.</small></div></div>
+          <div class="work-details"><div><span class="small-label">THE PROCESS</span><p id="ruleCaption">Not a style prompt: actual drawing operations.</p><small id="ruleEvidence" class="method-line">Awaiting a rule.</small></div></div>
           <p class="feedback-line" id="ruleStatus" role="status" aria-live="polite">Ready to test a new visual law.</p>
           <div id="ruleGoldenEvidence" class="phi-live-evidence" role="status" aria-live="polite">φ × φ / Awaiting a Rule Studio image.</div>
 
@@ -252,10 +252,13 @@
               <button type="button" class="vote-button keep" id="ruleKeep" disabled>♥ KEEP METHOD</button>
             </div>
           </section>
+          <details class="advanced-configuration"><summary>EXPORT &amp; INDEPENDENT AUSTRALIAN PRINT</summary>
           <button type="button" class="ghost-button" id="ruleSave" disabled>EXPORT RULE-BOUND PNG ↓</button>
           <div class="au-print-cta"><button type="button" data-au-print="rules" class="ghost-button">PRINT THIS WITH AN AUSTRALIAN PRINTER ↗</button>
             <p>Direct manufacturer checkout. Hexfield takes no money, orders or delivery details.</p></div>
+          </details>
           <details class="advanced-configuration"><summary>SHOW CREATIVE HISTORY / SURVIVING FORMS</summary>
+          <div id="ruleGenealogy" class="heritage-gallery" aria-label="Heritable geometric ideas: their shape, age and new material"></div>
           <h2 class="rule-gallery-heading">Continuous rework lineage</h2>
           <div id="ruleLoopHistory" class="rule-loop-history" aria-label="The last ten generations"></div>
           <h2 class="rule-gallery-heading">Kept experiments &amp; descendants</h2><div id="ruleGallery" class="rule-gallery"></div>
