@@ -36,10 +36,21 @@
             <p id="ruleWordsStatus" class="control-help" aria-live="polite">Words share pigment and movement with the picture. The painter chooses their lettering.</p>
           </div>
             <div class="rule-loop-buttons">
-              
+              <button type="button" id="ruleChangeStyle" class="action-generate">↻ CHANGE STYLE</button>
+              <button type="button" id="ruleRepeatStyle" class="ghost-button" disabled title="Same source, seed, and exact executable style">REPEAT STYLE</button>
               <button type="button" id="ruleLoopStop" class="ghost-button">Ⅱ PAUSE / RESUME</button>
             </div>
           </div>
+          <div class="style-control-rail" aria-label="How abstract should the painting be?">
+            <label for="ruleAbstractionLevel">ABSTRACTION</label>
+            <select id="ruleAbstractionLevel" aria-describedby="ruleAbstractionHelp">
+              <option value="gentle" selected>LOW · recognisable subject</option>
+              <option value="balanced">MEDIUM · reinterpret</option>
+              <option value="wild">HIGH · dissolve and reabstract</option>
+            </select>
+            <span id="ruleAbstractionHelp">LOW preserves the original subject and turns off destructive reabstraction.</span>
+          </div>
+          <p id="ruleStyleStatus" class="model-budget" role="status" aria-live="polite">INK DRAWING · LOW abstraction · Change Style tests the SAME reference with different real paint rules.</p>
           <p id="ruleHeroStatus" class="hero-process-status" role="status" aria-live="polite">INITIALISING THE PAINTER · NO BUTTONS REQUIRED</p>
           <div class="work-details"><div><span class="small-label">THE PROCESS</span><p id="ruleCaption">Not a style prompt: actual drawing operations.</p><small id="ruleEvidence" class="method-line">Awaiting a rule.</small></div></div>
           <p class="feedback-line" id="ruleStatus" role="status" aria-live="polite">Ready to test a new visual law.</p>
