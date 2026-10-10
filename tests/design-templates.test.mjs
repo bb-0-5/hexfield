@@ -65,7 +65,7 @@ for(const purpose of DESIGN_PURPOSES){
  assert.ok(one.typeAnatomy.includes('split'));
  if(purpose!=='art'){
   assert.equal(one.text,input,'Source copy is kept verbatim; no fake promotion generated');
-  assert.equal(one.glyphs,input.replace(/\s*\|\s*/g,'').length,
+  assert.equal(one.glyphs,input.split('|').map(s=>s.trim()).join('').length,
    'Headline/detail/CTA have independently executed real glyphs');
   assert.ok(one.design.activity!==null);
   const region=designBounds(pixels(image()),W,H,genome,904);
