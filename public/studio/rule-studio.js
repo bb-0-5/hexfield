@@ -199,7 +199,7 @@ export function initRuleStudio(){
    getUploaded:()=>upload,
    onFrame(result){
      const {canvas,recipe,cycle,metrics,blend,sources,novelty,nonredundancy,
-       survival,heritage,trials,derivation,objectMemory,renderBudget}=result;
+       survival,heritage,trials,derivation,objectMemory,renderBudget,dirty}=result;
      const before=current?.canvas||null;
      lastOrigin='loop';
      context.clearRect(0,0,960,600);context.drawImage(canvas,0,0,960,600);
@@ -236,6 +236,9 @@ export function initRuleStudio(){
          (objectMemory?.stable||0)+' stable, '+(objectMemory?.reused||0)+' reused)'+
        ' / FULL '+(renderBudget?.full||0)+' from '+(renderBudget?.predicted||0)+
        ' cheap trials; saved '+(renderBudget?.fullAvoided||0)+' full passes'+
+       (dirty?.partial?' / SPARSE '+Math.round(dirty.coverage*100)+
+         '% repainted / '+dirty.skippedTiles+' tiles preserved / '+
+         dirty.omittedRuleCells+' mark cells bypassed':' / GLOBAL PASS')+
        ' / visual change '+(novelty*100).toFixed(1)+
        '% / '+(survival?.carried||0)+' original-pixel islands / '+
        (heritage?.drawn?.length||0)+' reconstructed shape identities'+
@@ -251,7 +254,10 @@ export function initRuleStudio(){
        ' φ '+Math.round((heritage?.tradeoff?.phi||0)*100)+
        ' H '+Math.round((heritage?.tradeoff?.H||0)*100)+
        ' · '+(objectMemory?.matched||0)+' recognized shapes'+
-       ' · '+(renderBudget?.fullAvoided||0)+' full render(s) skipped.');
+       ' · '+(renderBudget?.fullAvoided||0)+' full render(s) skipped'+
+       (dirty?.partial?' · '+dirty.skippedTiles+
+         ' clean tiles skipped ('+Math.round((1-dirty.coverage)*100)+
+         '% surface conserved).':'.'));
      if(cycle%4===0){persistCanvas(canvas,recipe,false);publishSource(canvas,'rules',recipe);}
    },
    onState(info){
@@ -272,6 +278,8 @@ export function initRuleStudio(){
          ' · '+(info.objects?.length||0)+' identifiable regions · '+
          (info.objects?.filter(x=>x.stable).length||0)+' stable'+
          ' · '+(info.renderBudget?.fullAvoided||0)+' full candidate render(s) avoided'+
+         (info.dirtyStats?.partial?' · LOCAL / '+
+           info.dirtyStats.skippedTiles+' clean tiles kept':' · GLOBAL REPAINT')+
          ' · KEEP or REJECT teaches which lineage to retain.';
      }
      const sources=info.sourceNames?.length?info.sourceNames.join(' + '):'not rendered yet';
