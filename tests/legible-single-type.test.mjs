@@ -103,9 +103,9 @@ assert.notDeepEqual(samples[0],samples[2],
 const loop=readFileSync('public/studio/abstraction-loop.js','utf8');
 const ui=readFileSync('public/studio/rule-studio.js','utf8');
 const html=readFileSync('public/index.html','utf8');
-assert.match(html,/id="ruleTypeMode"/);
-assert.match(html,/value="bubble"/);
-assert.match(html,/value="block"/);
+assert.match(html,/RESEED \/ ART \+ TYPE/);
+assert.doesNotMatch(html,/id="ruleTypeMode"/);
+assert.match(ui,/reseedProfile\(reseedCount\)/);
 assert.match(loop,/wordSafeSources\(bank\.sources\(previous\),!!getWords\(\)\)/);
 assert.match(loop,/lastClean=composite\?\.clean\|\|null/);
 assert.match(loop,/const scenePlate=composite\?\.clean\|\|output/);
