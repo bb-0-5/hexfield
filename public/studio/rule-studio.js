@@ -77,7 +77,7 @@ export function initRuleStudio(){
  }catch{}
  try{
   const stored=localStorage.getItem(wordKey);
-  $('ruleWords').value=stored===null?'HEXFIELD':String(stored).slice(0,48);
+  $('ruleWords').value=stored===null?'HEXFIELD':String(stored).slice(0,96);
  }catch{$('ruleWords').value='HEXFIELD';}
  // This is a LIVE canvas before any expensive new render begins.
  drawReality($('ruleArtwork'),'abstract',(Date.now()^0x318)>>>0);
@@ -369,7 +369,7 @@ export function initRuleStudio(){
      if(result.composite?.typeAnatomy)text('ruleWordsStatus',
        'EVOLVING GLYPHS / '+result.composite.typeAnatomy+
        ' · '+result.composite.glyphs+' independently formed characters'+
-       (result.designEvolution?.purpose!=='art'?
+       (result.designEvolution?.purpose&&result.designEvolution.purpose!=='art'?
          ' · '+result.designEvolution.purpose.toUpperCase()+
          ' / '+result.designEvolution.selectedLayout+
          ' / readability '+Math.round(result.designEvolution.legibility*100)+'%':'')
