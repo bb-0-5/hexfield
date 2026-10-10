@@ -141,7 +141,10 @@ export function initRuleStudio(){
        progress.phase==='working'?'BRUSHES EXECUTING ON LIVE CANVAS':
        progress.phase==='candidate'?'COMPLETE CANDIDATE / JUDGING':
        progress.phase==='accepted'?'SELECTED / ACTUAL ARTWORK':
-       progress.phase==='composition-vote'?
+       progress.phase==='living-identity'?
+          (progress.kind==='form'?'LIVING FORM / CARRYING ITS PAST':
+           'LIVING COLOUR / ADAPTING ITS PALETTE'):
+        progress.phase==='composition-vote'?
           'COMPOSITION / '+(progress.accepted?'VISUAL ALLIANCE ACCEPTED':'NEIGHBOURS VETOED A CHANGE'):
        progress.phase==='region'?'SELF-CRITIQUE / '+
          (progress.verdict==='REWORK'?'REVISING WEAK MARKS':'KEEPING SUCCESSFUL MARKS'):
@@ -152,7 +155,9 @@ export function initRuleStudio(){
        progress.done+'/'+progress.total+
        (progress.phase==='working'?' painted brush rows / '+
          progress.strokes+' real strokes':' actual strokes & contours')+
-       (progress.phase==='composition-vote'?' / '+progress.from+' → '+
+       (progress.phase==='living-identity'?' / ROOT '+progress.root+
+          ' / '+progress.form:'')+
+        (progress.phase==='composition-vote'?' / '+progress.from+' → '+
          progress.to+' / votes '+progress.done+'/'+progress.total+
          ' / Δ '+Number(progress.vote||0).toFixed(3):'')+
        (progress.phase==='region'?' · '+progress.region+' / '+progress.mark+
@@ -251,7 +256,9 @@ export function initRuleStudio(){
          completedRows:event.progress?.completedRows,
          rows:event.progress?.rows,strokes:event.progress?.strokes,
          attempt:event.attempt});
-     }else if(event.type==='regional-decision'){
+     }else if(event.type==='identity'){
+        live.livingIdentity({painting:event.canvas,change:event.change});
+      }else if(event.type==='regional-decision'){
        live.regionalDecision({painting:event.canvas,decision:event.decision});
      }else if(event.type==='composition-vote'){
        live.compositionVote({painting:event.canvas,
@@ -303,7 +310,11 @@ export function initRuleStudio(){
        ' / '+sources.join(' + ')+
        (derivation?' / DERIVATION '+derivation.method.toUpperCase()+
          ' / '+Math.round(derivation.retained*100)+'% retained frame':'')+
-       ' / COMPOSITION '+(result.composition?.attempts||0)+' negotiated ('+
+       ' / LIVING ROOT '+(result.identity?.root||'unformed')+
+          ' / '+(result.identity?.anchors?.length||0)+' enduring forms'+
+          ' / '+(result.identity?.forms||0)+' actual pixel echoes'+
+          ' / '+(result.identity?.pigments||0)+' pigment evolutions'+
+        ' / COMPOSITION '+(result.composition?.attempts||0)+' negotiated ('+
          (result.composition?.accepted||0)+' alliances adopted)'+
        ' / REGIONAL TASTE '+(result.regional?.reviews||0)+' tested ('+
          (result.regional?.revised||0)+' revised, '+
@@ -368,6 +379,8 @@ export function initRuleStudio(){
          ' · '+(info.renderBudget?.fullAvoided||0)+' full candidate render(s) avoided'+
          ' · '+(info.regionMemory?.cells?.length||0)+' local aesthetic memories'+
          ' · '+(info.composition?.treaties||0)+' composition treaties'+
+          ' · '+(info.identity?.root||'new')+' evolving visual root'+
+          ' · '+(info.identity?.anchors?.length||0)+' enduring form signatures'+
          (info.dirtyStats?.partial?' · LOCAL / '+
            info.dirtyStats.skippedTiles+' clean tiles kept':' · GLOBAL REPAINT')+
          ' · KEEP or REJECT teaches which lineage to retain.';

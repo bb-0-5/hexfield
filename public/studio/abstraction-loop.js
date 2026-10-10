@@ -8,6 +8,8 @@ import {createSourceBank,mixSources,cloneCanvas,prepareMixSamples} from './sourc
 import {planDirtyTiles,shouldUseLocalRender} from './dirty-tiles.js';
 import {renderPlan,recordRenderTime,yieldToBrowser} from './render-governor.js';
 import {renderRuleLive} from './live-rule-execution.js';
+import {createVisualIdentity,loadVisualIdentity,saveVisualIdentity,
+ adoptVisualIdentity,identitySafeguards,inheritVisualIdentity} from './living-identity.js';
 import {negotiateComposition,createCompositionMemory,
   loadCompositionMemory,saveCompositionMemory,
   updateCompositionMemory} from './composition-negotiation.js';
@@ -109,6 +111,7 @@ export function createAbstractionLoop({
  let objects=loadObjectRegistry(),renderBudget=null,dirtyStats=null;
  let performanceHistory={emaMs:0,samples:0},lastFrameMs=0,stage='idle';
  let regionMemory=loadRegionMemory(),lastRegionDecisions=[];
+ let identity=loadVisualIdentity(),lastIdentityEffect=null;
  let compositionMemory=loadCompositionMemory(),lastComposition=null;
  void loadObjectRegistryFromDB().then(saved=>{
   if(saved?.objects?.length&&!objects.objects.length&&cycle===0)objects=saved;
@@ -130,6 +133,13 @@ export function createAbstractionLoop({
    renderBudget,dirtyStats,lastFrameMs,
    regionMemory:{generation:regionMemory.generation,
      cells:Object.values(regionMemory.cells).map(x=>({...x}))},
+   identity:{root:identity.root,generation:identity.generation,
+     colors:(identity.palette||[]).map(c=>[...c]),
+     anchors:(identity.anchors||[]).map(a=>({
+       id:a.id,box:{...a.box},age:a.age,vitality:a.vitality})),
+     relations:(identity.relations||[]).map(r=>({...r})),
+     retained:identity.retained,adaptations:identity.adaptations,
+     lastEffect:lastIdentityEffect?{...lastIdentityEffect}:null},
    lastRegionDecisions:lastRegionDecisions.map(x=>({
      id:x.region.id,verdict:x.verdict,mark:x.mark,
      improvement:x.improvement
@@ -162,6 +172,8 @@ export function createAbstractionLoop({
    motifs=[];ideas=[];dirtyStats=null;performanceHistory={emaMs:0,samples:0};
    lastFrameMs=0;stage='idle';regionMemory=createRegionMemory();
    lastRegionDecisions=[];saveRegionMemory(regionMemory);
+   identity=createVisualIdentity();lastIdentityEffect=null;
+   try{localStorage.removeItem('hexfield.visual-identity.325');}catch{}
    compositionMemory=createCompositionMemory();
    lastComposition=null;saveCompositionMemory(compositionMemory);
    seed=Math.floor(Math.random()*4294967295);
@@ -403,12 +415,25 @@ export function createAbstractionLoop({
          generation:cycle,opacity:.74,max:3
        });
        if(partial)painter.restore();
+       // Each child inherits a bounded selection of genuine parent pixels
+       // and the low-plasticity pigment personality of its chosen lineage.
+       // These constraints are applied BEFORE independent region critique.
+       if(!await checkpoint('Evolving persistent visual identity'))return;
+       const continuity=inheritVisualIdentity(output,previous,identity,{
+         cycle:identity.generation+1,locked:!!config.lockLaw,
+         dirtyTiles:partial?tilePlan.tiles:null,
+         onStep:change=>process({type:'identity',canvas:output,
+           change,cycle,attempt})
+       });
+       metrics.identity={root:continuity.root,forms:continuity.forms,
+         pigments:continuity.pigmentRegions,coverage:continuity.coverage};
+       const recognized=[...objects.objects,...identitySafeguards(identity)];
        // The painting tests local variants of the REAL executed ink before
        // global W / phi / H judging. Different regions develop distinct taste.
        if(!await checkpoint('Auditing live painted regions'))return;
        const regional=auditRegions({
          canvas:output,source:mixed.canvas,parent:previous,recipe,
-         cycle:regionMemory.generation+1,attempt,memory:regionMemory,objects:objects.objects,
+         cycle:regionMemory.generation+1,attempt,memory:regionMemory,objects:recognized,
          dirtyTiles:partial?tilePlan.tiles:null,
          // A user-explicit brush lock is a hard formal constraint.
          // Region self-critique must not silently violate it.
@@ -427,7 +452,7 @@ export function createAbstractionLoop({
        if(!await checkpoint('Composition / local consensus'))return;
        const composition=negotiateComposition({
          canvas:output,parent:previous,memory:regionMemory,
-         compositionMemory,objects:objects.objects,
+         compositionMemory,identity,objects:recognized,
          cycle:compositionMemory.generation+1,attempt,
          dirtyTiles:partial?tilePlan.tiles:null,
          locked:!!config.lockLaw,
@@ -455,7 +480,9 @@ export function createAbstractionLoop({
          application:derivation?.method||'new',
          markProgram:metrics.invented.stamps?recipe.markProgram.signature:'',
          interaction:composite?.interaction?.relation||''});
-       candidates.push({canvas:output,recipe,mixed,metrics,held,heritage,stable,derivation,composite,method,attempt,dirty:tilePlan,regional,composition});
+       candidates.push({canvas:output,recipe,mixed,metrics,held,heritage,
+         stable,derivation,composite,method,attempt,dirty:tilePlan,
+         regional,composition,continuity});
        if(currentStamp!==stamp)return;
      }
      if(!await checkpoint('Judging actual paintings'))return;
@@ -485,6 +512,18 @@ export function createAbstractionLoop({
        ranked.find(x=>x.mixed.mode===expected)||goal:goal;
      const {canvas:output,recipe,mixed,metrics,assessment,
        golden,held,heritage,threeWay,derivation,composite}=best;
+     // Only the globally accepted image may change durable identity.
+     // Rejected paint trials cannot become ancestors of future generations.
+     identity=adoptVisualIdentity(identity,output,{
+       generation:identity.generation+1,
+       composition:best.composition?.decision||null
+     });
+     lastIdentityEffect=best.continuity||null;
+     identity.retained=Math.min(100000,(identity.retained||0)+
+       (best.continuity?.forms||0));
+     identity.adaptations=Math.min(100000,(identity.adaptations||0)+
+       (best.continuity?.pigmentRegions||0));
+     saveVisualIdentity(identity);
      lastRegionDecisions=best.regional?.decisions||[];
      regionMemory=updateRegionMemory(regionMemory,lastRegionDecisions,
        regionMemory.generation+1);
@@ -519,7 +558,10 @@ export function createAbstractionLoop({
           revised:best.regional?.revisions||0,
           kept:best.regional?.kept||0},
         composition:{attempts:best.composition?.attempts||0,
-          accepted:best.composition?.accepted||0}};
+          accepted:best.composition?.accepted||0},
+        identity:{root:identity.root,generation:identity.generation,
+          forms:best.continuity?.forms||0,
+          pigmentRegions:best.continuity?.pigmentRegions||0}};
      const survived=motifEvidence(motifs);
      const inherited=heritageEvidence(ideas);
      // Extract once on the winning FULL image; rejected trials are discarded.
@@ -565,6 +607,15 @@ export function createAbstractionLoop({
        heritage:{...heritage,ancestors:inherited,
          living:heritageEvidence(ideas),tradeoff:threeWay},
        golden,nonredundancy:lastAssessment,renderBudget,dirty:dirtyStats,
+       identity:{root:identity.root,generation:identity.generation,
+         anchors:identity.anchors.map(a=>({
+           id:a.id,box:{...a.box},age:a.age,vitality:a.vitality})),
+         paletteBands:identity.palette.length,
+         relations:identity.relations.map(r=>({...r})),
+         forms:best.continuity?.forms||0,
+         pigments:best.continuity?.pigmentRegions||0,
+         accumulatedForms:identity.retained,
+         accumulatedPigments:identity.adaptations},
        composition:{attempts:best.composition?.attempts||0,
          accepted:best.composition?.accepted||0,
          decision:lastComposition?{
@@ -614,6 +665,8 @@ export function createAbstractionLoop({
         cachedObjectReuses:best.stable?.reused||0,
         regionsReviewed:best.regional?.reviews||0,
         regionsReworked:best.regional?.revisions||0,
+        livingRoot:identity.root,
+        identityForms:best.continuity?.forms||0,
         compositionTreaties:Object.keys(compositionMemory.treaties).length,
         compositionAccepted:best.composition?.accepted||0,
         previewTrials:renderBudget.predicted,fullRenders:renderBudget.full,

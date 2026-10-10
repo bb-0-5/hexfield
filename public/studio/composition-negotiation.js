@@ -62,7 +62,7 @@ export function pairCoherence(a,b){
   pigmentDifference:round(diff),edgeRatio:round(edgeRatio)};
 }
 export function selectNegotiation({canvas,memory,compositionMemory=null,
- objects=[],cycle=0,attempt=0,dirtyTiles=null,locked=false}={}){
+ identity=null,objects=[],cycle=0,attempt=0,dirtyTiles=null,locked=false}={}){
  if(!canvas?.getContext||locked||
    Array.isArray(dirtyTiles)&&dirtyTiles.length)return null;
  const regions=regionRects(canvas.width,canvas.height,{grid:3}),
@@ -88,8 +88,13 @@ export function selectNegotiation({canvas,memory,compositionMemory=null,
    const previous=compositionMemory?.treaties?.[follower.rect.id];
    const antiLoop=previous?.from===leader.rect.id?
      Math.min(.16,(previous.count||0)*.035):0;
+   // A previously accepted visual relationship may persist, but earns
+   // only a small preference—neighbour consent is still compulsory.
+   const kinship=(identity?.relations||[]).find(x=>
+     x.from===leader.rect.id&&x.to===follower.rect.id);
+   const familiar=kinship?Math.min(.06,.018*Math.sqrt(kinship.count)):0;
    const priority=need*.52+leadership*.3+
-     (1-self.score)*.18-antiLoop+
+     (1-self.score)*.18-antiLoop+familiar+
      ((cycle*7+attempt*11+follower.rect.row*3+leader.rect.column)%13)*.00001;
    ranked.push({leader,follower,score:priority,
     pair:self,leadership,need});
@@ -189,10 +194,10 @@ function trialCanvas(canvas,rect,patch){
  return candidate;
 }
 export function negotiateComposition({canvas,parent=null,memory,
- compositionMemory=createCompositionMemory(),objects=[],cycle=0,
+ compositionMemory=createCompositionMemory(),identity=null,objects=[],cycle=0,
  attempt=0,dirtyTiles=null,locked=false,onDecision=()=>{},
  makeInfluence=proposeInfluence,threshold=.003,grade=scoreRegion}={}){
- const option=selectNegotiation({canvas,memory,compositionMemory,
+ const option=selectNegotiation({canvas,memory,compositionMemory,identity,
   objects,cycle,attempt,dirtyTiles,locked});
  if(!option)return {attempts:0,accepted:0,decision:null};
  const {leader,follower}=option,rect=follower.rect;
