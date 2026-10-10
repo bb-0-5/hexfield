@@ -448,7 +448,9 @@ export function createAbstractionLoop({
        const recall=attemptRediscovery({
          canvas:output,parent:previous,identity,memory:creativeMemory,
          generation:creativeMemory.generation+1,
-         locked:!!config.lockLaw,
+         // One genuinely evaluated historical proposal per generation,
+         // even if the quality governor paints multiple full finalists.
+         locked:!!config.lockLaw||finalIndex>0,
          dirtyTiles:partial?tilePlan.tiles:null,
          onTrial:change=>process({
            type:'creative-recall',canvas:output,change,cycle,attempt
