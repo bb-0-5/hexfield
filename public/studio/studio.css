@@ -353,3 +353,59 @@
  #ruleControls .rule-loop-buttons #ruleLoopStop{flex:1 1 76px}
  #ruleWorkspace .rule-vote .imagine-buttons{gap:6px}
 }
+
+
+/* Build 318 / one living artwork appears FIRST (both DOM and visual order).
+   Input and one Pause/Resume action follow it. All configuration is secondary.
+   Never hide the canvas while the renderer prepares its next frame. */
+.product-frame{display:flex;flex-direction:column;gap:16px;padding-top:10px}
+.product-frame>.workspace{order:0;min-width:0}
+.product-frame>.controls{order:1;min-width:0;padding:8px 0 20px;
+  display:flex;flex-direction:column;max-width:none}
+#ruleWorkspace{width:100%;max-width:1140px;margin:0 auto}
+#ruleWorkspace .rule-frame{width:100%;border-width:6px;aspect-ratio:8/5;
+  max-height:72svh;background:#202b25}
+.canvas-word-rail{display:flex;gap:12px;align-items:flex-start;
+  margin:11px 0 6px;background:#202823;padding:12px}
+.canvas-word-rail .unified-studio-input{flex:1 1 50%;min-width:0;
+  padding:0;margin:0;display:flex;flex-direction:column}
+.canvas-word-rail .unified-studio-input label{font:800 10px/1.5 var(--sans);
+  letter-spacing:.09em;color:var(--mint);margin:0 0 5px}
+.canvas-word-rail .unified-studio-input input{font:800 clamp(16px,2.2vw,23px)/1.2 var(--sans);
+  letter-spacing:.04em;background:#27372f;color:var(--ink);
+  border:1px solid #779b7c;min-height:50px;padding:10px 12px;margin:0}
+.canvas-word-rail .unified-studio-input .control-help{font:11px/1.4 var(--sans);
+  margin:5px 0 0;color:#c0d2c4;display:block;max-height:42px;overflow:hidden}
+.canvas-word-rail .rule-loop-buttons{flex:0 0 min(30%,205px);display:flex;min-height:50px}
+.canvas-word-rail .rule-loop-buttons #ruleLoopStop{width:100%;flex:1;
+  font-size:12px;letter-spacing:.055em;border:1px solid #71957b;
+  background:#28392f;color:#d2efd4;min-height:50px}
+#ruleHeroStatus{margin:4px 0 11px;color:#c3e2bf;font:800 10px/1.5 var(--sans);
+ letter-spacing:.065em}
+#ruleWorkspace .rule-vote{margin:10px 0}
+#ruleControls{min-height:0}
+#ruleControls>.abstraction-control>.rule-loop-buttons{display:none}
+#ruleControls .abstraction-control{border:1px solid #374e40}
+#ruleControls>p.model-budget{margin:7px 0}
+#ruleControls #ruleSurvivors{font-size:11px}
+.product-frame>.controls>.intro{max-width:680px}
+@media(max-width:730px){
+  .product-frame{gap:9px;padding:8px 0 25px}
+  #ruleWorkspace .canvas-heading{padding:7px 1px 10px}
+  #ruleWorkspace .canvas-heading-text{font-size:10px}
+  #ruleWorkspace .work-number{font-size:8px}
+  #ruleWorkspace .rule-frame{max-height:none;border-width:3px;aspect-ratio:8/5}
+  .canvas-word-rail{padding:9px 8px;margin:8px 0 3px;gap:7px}
+  .canvas-word-rail .unified-studio-input{flex:1 1 65%}
+  .canvas-word-rail .unified-studio-input input{font-size:16px;min-height:48px;padding:8px}
+  .canvas-word-rail .unified-studio-input label{font-size:9px}
+  .canvas-word-rail .unified-studio-input .control-help{font-size:9px;
+    margin-top:5px;max-height:28px}
+  .canvas-word-rail .rule-loop-buttons{flex:0 0 99px}
+  .canvas-word-rail .rule-loop-buttons #ruleLoopStop{font-size:10px;min-height:48px}
+  #ruleHeroStatus{font-size:9px;margin:4px 0}
+  .product-frame>.controls{padding:15px 0 0;border-top:1px solid #415a46}
+  .product-frame>.controls>h1{font-size:28px;margin-bottom:8px}
+  .product-frame>.controls>.intro{font-size:13px;margin-bottom:8px}
+  #ruleControls .abstraction-control{margin:6px 0}
+}
