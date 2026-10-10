@@ -110,8 +110,9 @@ function drawPaths(ctx,character){
  return true;
 }
 const alpha=c=>{
- const {width:w,height:h}=c,data=c.getContext('2d',{willReadFrequently:true})
-  .getImageData(0,0,c.width,c.height);
+ const {width:w,height:h}=c;
+ const {data}=c.getContext('2d',{willReadFrequently:true})
+  .getImageData(0,0,w,h);
  const mask=new Uint8ClampedArray(w*h);
  for(let i=0;i<mask.length;i++)mask[i]=data[i*4+3];
  return mask;
