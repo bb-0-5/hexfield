@@ -40,7 +40,7 @@ export function chooseGeometryRelation(seed=1,generation=0,prior=null,branch=1){
    (scores[prior]||0)>-2)return prior;
  const candidate=GEOMETRY_RELATIONS.map((method,i)=>({
    method,weight:.5+Math.exp(limit(scores[method]||0,-8,8)*.24)+
-      (method===prior?.6:0),index:i
+      (method===prior ? .6 : 0),index:i
  }));
  const sum=candidate.reduce((n,x)=>n+x.weight,0);
  let n=(s/4294967296)*sum;
