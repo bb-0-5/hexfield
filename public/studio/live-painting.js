@@ -152,6 +152,16 @@ export function createLivingPainting({
     strokes,attempt,live:true};
   onPhase({...stats});
  }
+ // Present the actual region decision DURING the unfinished candidate
+ // search. This is a real local rerender, not a retrospective annotation.
+ function regionalDecision({painting,decision}={}){
+  if(!painting?.getContext||!decision)return;
+  stop({finalize:false});exact(painting);
+  stats={phase:'region',done:1,total:1,live:true,
+    verdict:decision.verdict,region:decision.region.id,
+    improvement:decision.improvement,mark:decision.mark};
+  onPhase({...stats});
+ }
  function completedCandidate({painting,words='',attempt=0}={}){
   if(!painting?.getContext)return;
   stop({finalize:false});exact(painting);
@@ -251,6 +261,6 @@ export function createLivingPainting({
    raf=requestFrame(frame);
   });
  }
- return {preview,work,completedCandidate,accept,commit,stop,
+ return {preview,work,regionalDecision,completedCandidate,accept,commit,stop,
   getState:()=>({...stats})};
 }
