@@ -70,6 +70,8 @@ jobs:
         run: node --experimental-default-type=module tests/regional-judgement.test.mjs
       - name: Verify 324 composition negotiation and precise single-region pixel protection
         run: node --experimental-default-type=module tests/composition-negotiation.test.mjs
+      - name: Verify 325 living visual roots, real-pixel form carriers and gradual pigment adaptation
+        run: node --experimental-default-type=module tests/living-identity.test.mjs
 
       - name: Guard global renderer non-redundancy and evolving-seed genealogy
         run: node --experimental-default-type=module tests/global-nonredundancy.test.mjs
