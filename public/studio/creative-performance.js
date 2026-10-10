@@ -104,6 +104,11 @@ function drawMark(ctx,mark){
  if(type==='rect')ctx.fillRect(x,y,a,b);
  else if(type==='circle'){ctx.beginPath();ctx.arc(x,y,Math.max(.5,a),0,Math.PI*2);ctx.fill();}
  else if(type==='line'){ctx.lineWidth=mark.width||2;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(a,b);ctx.stroke();}
+ else if(type==='polygon'&&Array.isArray(mark.points)&&mark.points.length>=3){
+   ctx.beginPath();ctx.moveTo(...mark.points[0]);
+   for(const p of mark.points.slice(1))ctx.lineTo(...p);
+   ctx.closePath();ctx.fill();
+ }
  ctx.restore();
 }
 export function createCreativePerformance({host,canvas,name='theatre',statusElement=null}={}){

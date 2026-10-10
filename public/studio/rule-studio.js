@@ -5,6 +5,7 @@
 import {SUBJECTS,LAWS,MARKS,REWORKS,makeRecipe,mutateRecipe,drawReality,applyRules,
   noteRuleVerdict,noteLineage,describeRecipe,buildRulePrompt,RULE_STORE} from './rule-engine.js';
 import {createAbstractionLoop} from './abstraction-loop.js';
+import {deriveBetweenFrames} from './frame-derivation.js';
 import {paintHeldMotifs,advanceMotifMemory,motifEvidence} from './motif-memory.js';
 import {extractStructuralIdea,paintInheritedIdeas,advanceStructuralIdeas,
  heritageEvidence,judgeStructuralIdeas} from './structural-heritage.js';
@@ -87,7 +88,9 @@ export function initRuleStudio(){
      img.alt='Abstract generation '+item.cycle;
      const caption=document.createElement('figcaption');
      caption.textContent='#'+item.cycle+' / '+item.blend+' / '+item.law+
-      ' / '+item.mark+' · '+(item.survivors||0)+' pixels held'+
+      ' / '+item.mark+' / '+(item.derivedBy||'fresh')+
+       ' · '+Math.round((item.retained||0)*100)+'% frame retained · '+
+       (item.survivors||0)+' pixels held'+
       ' · '+(item.inheritedIdeas||0)+' shape genes';
      el.append(img,caption);root.append(el);
    }
@@ -137,7 +140,7 @@ export function initRuleStudio(){
    getUploaded:()=>upload,
    onFrame(result){
      const {canvas,recipe,cycle,metrics,blend,sources,novelty,nonredundancy,
-       survival,heritage,trials}=result;
+       survival,heritage,trials,derivation}=result;
      const before=current?.canvas||null;
      lastOrigin='loop';
      context.clearRect(0,0,960,600);context.drawImage(canvas,0,0,960,600);
@@ -154,7 +157,10 @@ export function initRuleStudio(){
      text('ruleCaption',describeRecipe(recipe));
      text('ruleEvidence','GENERATION '+cycle+' / '+metrics.strokes+
        ' marks / '+metrics.skipped+' removed / '+blend.toUpperCase()+
-       ' / '+sources.join(' + ')+' / visual change '+(novelty*100).toFixed(1)+
+       ' / '+sources.join(' + ')+
+       (derivation?' / DERIVATION '+derivation.method.toUpperCase()+
+         ' / '+Math.round(derivation.retained*100)+'% retained frame':'')+
+       ' / visual change '+(novelty*100).toFixed(1)+
        '% / '+(survival?.carried||0)+' original-pixel islands / '+
        (heritage?.drawn?.length||0)+' reconstructed shape identities'+
        (heritage?.drawn?.length?' / '+heritage.drawn.map(x=>
@@ -204,6 +210,18 @@ export function initRuleStudio(){
    const metrics=applyRules(source,target,recipe,{
      iteration:recipe.generation,trace:true
    });
+   if(revision&&before){
+     const derived=deriveBetweenFrames(before,target,{
+       seed:recipe.seed,cycle:recipe.generation,
+       method:current?.recipe?.application
+     });
+     recipe.application=derived.method;
+     const ink=target.getContext('2d');
+     ink.save();ink.setTransform(1,0,0,1,0,0);
+     ink.drawImage(derived.canvas,0,0,target.width,target.height);ink.restore();
+     metrics.derivation=derived.method;
+     metrics.retained=derived.retained;
+   }
    if(!revision){manualMotifs=[];manualIdeas=[];} // New chapter.
    if(revision&&before&&!manualIdeas.length){
      const recovered=extractStructuralIdea(before,{

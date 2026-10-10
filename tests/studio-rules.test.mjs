@@ -14,7 +14,7 @@ globalThis.document={createElement(tag){assert.equal(tag,'canvas');return new Ca
 const {LAWS,MARKS,makeRecipe,mutateRecipe,drawReality,applyRules,
  noteRuleVerdict,noteLineage,buildRulePrompt,validateRecipe,RULE_STORE}=await import('../public/studio/rule-engine.js');
 assert.ok(Object.keys(LAWS).length>=10&&Object.keys(MARKS).length>=6);
-assert.ok(MARKS.hybrid.includes('all five'));
+assert.ok(MARKS.hybrid.includes('derived'));
 const input=new Canvas(224,128);const g=input.getContext('2d');
 g.fillStyle='#ff1010';g.fillRect(0,0,224,128);
 const recipe=makeRecipe({subject:'sphere',primary:'blue_for_red',mark:'cutout',seed:19});
