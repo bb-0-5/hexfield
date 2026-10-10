@@ -4,7 +4,7 @@
  * Explicit start/stop. Never invokes a paid image model automatically.
  */
 import {makeRecipe,mutateRecipe,applyRules,noteLineage,LAWS,MARKS,SUBJECTS,ruleTaste} from './rule-engine.js';
-import {createSourceBank,mixSources,cloneCanvas,prepareMixSamples} from './source-mixer.js';
+import {createSourceBank,mixSources,cloneCanvas,prepareMixSamples,wordSafeSources} from './source-mixer.js';
 import {planDirtyTiles,shouldUseLocalRender} from './dirty-tiles.js';
 import {renderPlan,recordRenderTime,yieldToBrowser} from './render-governor.js';
 import {renderRuleLive} from './live-rule-execution.js';
@@ -119,7 +119,7 @@ export function createAbstractionLoop({
 }={}){
  const bank=createSourceBank({width,height,getArchive,getUploaded,getParent,getWords});
  let running=false,waiting=false,timer=null,activeStep=false;
- let cycle=0,seed=Math.floor(Math.random()*4294967295),last=null;
+ let cycle=0,seed=Math.floor(Math.random()*4294967295),last=null,lastClean=null;
  let lastRecipe=null,config={},lastMix=null,lastError=null,lastAssessment=null;
  let stamps=[],stamp=0,forceFreshSources=true,motifs=[],ideas=[];
  let objects=loadObjectRegistry(),renderBudget=null,dirtyStats=null;
@@ -195,7 +195,7 @@ export function createAbstractionLoop({
    status();
  }
  function reset(){
-   pause();cycle=0;last=null;lastRecipe=null;lastMix=null;stamps=[];lastAssessment=null;
+   pause();cycle=0;last=null;lastClean=null;lastRecipe=null;lastMix=null;stamps=[];lastAssessment=null;
    motifs=[];ideas=[];dirtyStats=null;performanceHistory={emaMs:0,samples:0};
    lastFrameMs=0;stage='idle';regionMemory=createRegionMemory();
    lastRegionDecisions=[];saveRegionMemory(regionMemory);
@@ -231,7 +231,10 @@ export function createAbstractionLoop({
    try{
      // Give the initial visible canvas a genuine browser paint opportunity.
      if(!await checkpoint('Preparing painter'))return;
-     const previous=last||getParent();
+     // The accepted visible painting has type, but the next SOURCE must
+     // be the immutable, pre-type plate. Otherwise previous letters leak
+     // through abstraction, generating an accumulating second word.
+     const previous=(getWords()?lastClean:null)||last||getParent();
      process({type:'begin',parent:previous,cycle});
      const inheritedRecipe=lastRecipe||(previous?getParentRecipe():null);
      const parentSeed=inheritedRecipe?.seed??seed;
@@ -270,7 +273,7 @@ export function createAbstractionLoop({
      }
      if(currentStamp!==stamp)return;
      if(!await checkpoint('Preparing source materials'))return;
-     const inputs=bank.sources(previous);
+     const inputs=wordSafeSources(bank.sources(previous),!!getWords());
      if(!inputs.length)throw Error('No renderer produced an image');
      const candidates=[];
      const localAllowed=shouldUseLocalRender({
@@ -338,7 +341,8 @@ export function createAbstractionLoop({
        // The text has a surviving formal ancestry independent of its font.
        // Only the globally accepted candidate becomes a type parent.
        recipe.typeGenome=evolveTypeGenome(inheritedRecipe?.typeGenome,{
-         seed:candidateSeed,cycle,branch:attempt,gentle:subtle
+         seed:candidateSeed,cycle,branch:attempt,gentle:subtle,
+         mode:config.typeMode||'auto'
        });
        recipe.purpose=config.purpose||'art';
        recipe.designGenome=evolveDesignGenome(inheritedRecipe?.designGenome,{
@@ -619,7 +623,10 @@ export function createAbstractionLoop({
        golden,held,heritage,threeWay,derivation,composite}=best;
      // Only the globally accepted image may change durable identity.
      // Rejected paint trials cannot become ancestors of future generations.
-     identity=adoptVisualIdentity(identity,output,{
+     // Carry visual memory from CLEAN material, never from the glyph
+     // stamp that is recomposed once at the end of every generation.
+     const scenePlate=composite?.clean||output;
+     identity=adoptVisualIdentity(identity,scenePlate,{
        generation:identity.generation+1,
        composition:best.composition?.decision||null
      });
@@ -627,7 +634,7 @@ export function createAbstractionLoop({
      // An identity can become a tradition, lose relevance, be forgotten,
      // and later return from its tiny real-pixel sampled material signature.
      // Only a GLOBALLY ACCEPTED painting is permitted to revise this memory.
-     const settled=settleCreativeMemory(creativeMemory,identity,output,{
+     const settled=settleCreativeMemory(creativeMemory,identity,scenePlate,{
        generation:identity.generation,recall:best.recall
      });
      creativeMemory=settled.memory;
@@ -683,16 +690,16 @@ export function createAbstractionLoop({
      const survived=motifEvidence(motifs);
      const inherited=heritageEvidence(ideas);
      // Extract once on the winning FULL image; rejected trials are discarded.
-     objects=updateObjectRegistry(objects.objects,output,{
+     objects=updateObjectRegistry(objects.objects,scenePlate,{
        generation:cycle+1,priorId:objects.nextId,
        wordBounds:composite?.bounds||null,
        relation:composite?.interaction?.relation||null
      });
      if(cycle%3===0||objects.stable>0)saveObjectRegistry(objects);
-     motifs=advanceMotifMemory(motifs,output,{
+     motifs=advanceMotifMemory(motifs,scenePlate,{
        seed:recipe.seed,cycle:cycle+1,parent:previous
      });
-     ideas=advanceStructuralIdeas(ideas,output,{
+     ideas=advanceStructuralIdeas(ideas,scenePlate,{
        seed:recipe.seed,cycle:cycle+1,
        source:previous||output,rendered:heritage
      });
@@ -775,7 +782,8 @@ export function createAbstractionLoop({
         objectMemory:{count:objects.objects.length,stable:objects.stable,
           matched:objects.matched,extracted:objects.extracted,
           reused:best.stable?.reused||0}};
-     last=output;lastRecipe=recipe;lastMix=mixed;cycle++;lastError=null;
+     last=output;lastClean=composite?.clean||null;
+     lastRecipe=recipe;lastMix=mixed;cycle++;lastError=null;
      noteLineage(recipe);
      const frame=freshCanvas(164,104);frame.getContext('2d').drawImage(output,0,0,164,104);
      stamps.push({cycle,thumb:frame.toDataURL('image/webp',.60),
@@ -859,6 +867,7 @@ export function createAbstractionLoop({
  function adoptCanvas(canvas,recipe){
    if(!canvas?.getContext||!recipe)return false;
    last=cloneCanvas(canvas,width,height);
+   lastClean=cloneCanvas(canvas,width,height);
    lastRecipe=structuredClone(recipe);
    lastMix=null;seed=recipe.seed>>>0;
    bank.clear();forceFreshSources=true;

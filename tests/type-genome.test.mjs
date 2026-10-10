@@ -9,7 +9,8 @@ const {typeGenome,evolveTypeGenome,glyphTraits,validTypeGenome,
  TYPE_GRAMMARS}=await import('../public/studio/type-genome.js');
 const {paintWordsOnCanvas}=await import('../public/studio/word-surface.js');
 const {makeRecipe}=await import('../public/studio/rule-engine.js');
-assert.equal(TYPE_GRAMMARS.length,4);
+assert.equal(TYPE_GRAMMARS.length,6);
+assert.ok(TYPE_GRAMMARS.includes('bubble')&&TYPE_GRAMMARS.includes('block'));
 const original=typeGenome(3321,'rounded');
 assert.ok(validTypeGenome(original));
 assert.notDeepEqual(glyphTraits(original,'H',0),glyphTraits(original,'E',1));
