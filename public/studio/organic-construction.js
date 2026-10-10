@@ -181,6 +181,23 @@ export function buildOrganicStages({final,sketch=null,parent=null,trace=null,
    (part.type==='gesture'?0:12)+
    ((Math.round(cx)*17+Math.round(cy)*7)%19)*.013;
  };
+ // A featureless or nearly uniform manually painted surface has no
+ // contour or mark trace. Still reveal its REAL pigment organically rather
+ // than instantly replacing the whole image with a finished rectangle.
+ // These are explicitly surface washes, not claimed executable mark traces.
+ if(!marks.length&&!contours.length){
+  for(let row=0;row<3;row++)for(let col=0;col<5;col++){
+   const x=(col+.5)*final.width/5,y=(row+.5)*final.height/3,
+    rx=final.width*.18,ry=final.height*.26;
+   const loop=Array.from({length:28},(_,i)=>{
+    const theta=i/28*Math.PI*2;
+    return [x+Math.cos(theta)*rx,y+Math.sin(theta)*ry];
+   });
+   contours.push({type:'contour',group:'surface-wash',loops:[loop],
+    bounds:{x:x-rx,y:y-ry,w:rx*2,h:ry*2},
+    cells:0,palette:'uniform'});
+  }
+ }
  const stages=[...marks,...contours].sort((a,b)=>order(a)-order(b));
  const erases=parent&&sketch?
   extractRasterContours(sketch,{maxContours:10,mask:dirty})
