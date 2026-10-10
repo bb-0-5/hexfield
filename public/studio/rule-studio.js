@@ -264,7 +264,7 @@ export function initRuleStudio(){
  }
  function loopOptions(){
    return {speed:Number($('ruleLoopSpeed').value)||3000,
-     style:styleId,
+     style:styleId,autoStyle:true,
      abstraction:$('ruleAbstractionLevel').value,
      mixMode:$('ruleMixMode').value,
      lockLaw:$('ruleLockLaw').checked,
@@ -333,6 +333,7 @@ export function initRuleStudio(){
      // when the user chooses to change only its brushwork.
      styleToken++;styleAnchor=null;styleLast=null;
      $('ruleRepeatStyle').disabled=true;
+     if(recipe.styleId){styleId=recipe.styleId;rememberStyle();}
      current={recipe,canvas,judged:false,metrics};
      unlettered=result.composite?.clean||null;
      if(result.composite?.interaction){
@@ -354,7 +355,11 @@ export function initRuleStudio(){
      if(recipe.styleId)text('ruleStyleStatus',styleCaption({
        style:recipe.styleId,abstraction:recipe.abstractionLevel||'gentle',
        seed:recipe.seed
-     })+' · automatic evolution within this executable painting style.');
+     })+(result.styleAudition?.auto?
+       ' · AUTONOMOUS TECHNIQUE AUDITION · '+
+       result.styleAudition.considered.map(id=>styleById(id).name).join(' / ')+
+       ' · '+result.styleAudition.reason.replaceAll('-',' ').toUpperCase():
+       ' · manual executable painting style.'));
      text('ruleEvidence','GENERATION '+cycle+' / '+metrics.strokes+
        ' marks / '+metrics.skipped+' removed / '+blend.toUpperCase()+
        (metrics.invented?.stamps?' / INVENTED '+metrics.invented.stamps+
@@ -534,6 +539,9 @@ export function initRuleStudio(){
      mode:'rule-studio',method,seed:recipe.seed,parentId:recipe.parentId,evaluation:analysis
    });
    current={recipe,canvas:target,judged:false,metrics,nonredundancy:W};parentCanvas=target;
+   // A manually accepted painting is the next parent of the live evolution,
+   // NOT the previous auto-generated picture still cached inside the loop.
+   loop.adoptCanvas(unlettered||target,recipe);
    displayPhi(target);
    showHeritage(heritageEvidence(manualIdeas));
    if(prepared)live.accept({final:target,candidates:1});
@@ -679,7 +687,7 @@ export function initRuleStudio(){
      })+' · SAME ARTWORK AND SEED · PHYSICAL OUTLINES PRESERVED ('+
        Math.round((preserved.meanRetention||0)*100)+'% source retention) · '+
        'REPEAT reproduces pixels with unchanged words. '+
-       'Use PAUSE / RESUME for continuous painting in this style.');
+       'Use PAUSE / RESUME to audition new techniques on this artwork.');
    }catch(error){
      status('Style change could not paint: '+safe(error.message||error));
    }finally{
