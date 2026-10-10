@@ -327,9 +327,15 @@ export function createAbstractionLoop({
        interaction:composite?.interaction||null,
        derivation:derivation?{method:derivation.method,
          retained:derivation.retained,interwoven:derivation.interwoven,
-         changed:derivation.changed}:null,candidates:candidates.length};
+         changed:derivation.changed}:null,candidates:candidates.length,
+        preflight:renderBudget};
      const survived=motifEvidence(motifs);
      const inherited=heritageEvidence(ideas);
+     // Extract once on the winning FULL image; rejected trials are discarded.
+     objects=updateObjectRegistry(objects.objects,output,{
+       generation:cycle+1,priorId:objects.nextId
+     });
+     if(cycle%3===0||objects.stable>0)saveObjectRegistry(objects);
      motifs=advanceMotifMemory(motifs,output,{
        seed:recipe.seed,cycle:cycle+1,parent:previous
      });
@@ -341,21 +347,23 @@ export function createAbstractionLoop({
      // ACTUAL rendered alternatives and why one was adopted. Small
      // downscaled canvases cap mobile memory and prevent preview images
      // from becoming hidden background renders or paid model requests.
-     const trials=ranked.map(entry=>{
+     const trials=proposals.map(plan=>{
+       const actual=ranked.find(entry=>entry.attempt===plan.attempt);
        const preview=freshCanvas(320,200);
-       preview.getContext('2d').drawImage(entry.canvas,0,0,320,200);
+       preview.getContext('2d').drawImage(
+         actual?.canvas||plan.preview,0,0,320,200);
        return {canvas:preview,
-         label:(entry.derivation?.method||'fresh')+' / '+
-           entry.mixed.mode+' / '+entry.recipe.primary+
-           ' / '+entry.recipe.mark+
-           (entry.metrics.invented.stamps?' / MADE '+
-             entry.recipe.markProgram.sources.join('×')+' → '+
-             entry.recipe.markProgram.operations.map(x=>x.type).join('+'):'')+
-           (entry.composite?.interaction?' / COLLISION '+entry.composite.interaction.relation:'')+
-           ' / H '+
-           Math.round(entry.threeWay.H*100)+'%',
-         score:entry.threeWay.score,golden:entry.golden,
-         selected:entry===best};
+         label:plan.application+' / '+plan.mode+' / '+plan.recipe.primary+
+           ' / '+plan.recipe.mark+
+           ' / '+(actual?'FINALIST':'COARSE SCREEN')+
+           ' / '+(actual?.composite?.interaction?.relation||plan.recipe.wordRelation)+
+           ' / φ '+Math.round(
+             (actual?.threeWay?.phi??plan.preflight.golden.combined)*100)+'%',
+         score:actual?.threeWay?.score??plan.preflight.score,
+         golden:actual?.golden??plan.preflight.golden,
+         fidelity:actual?'full':'preview',
+         selected:actual===best
+       };
      });
      const result={canvas:output,recipe,cycle:cycle+1,metrics,trials,
        blend:mixed.mode,derivation,composite,sources:mixed.sources,novelty,stalled,
@@ -363,7 +371,10 @@ export function createAbstractionLoop({
          carried:held.held.length,available:motifEvidence(motifs).length},
        heritage:{...heritage,ancestors:inherited,
          living:heritageEvidence(ideas),tradeoff:threeWay},
-       golden,nonredundancy:lastAssessment};
+       golden,nonredundancy:lastAssessment,renderBudget,
+        objectMemory:{count:objects.objects.length,stable:objects.stable,
+          matched:objects.matched,extracted:objects.extracted,
+          reused:best.stable?.reused||0}};
      last=output;lastRecipe=recipe;lastMix=mixed;cycle++;lastError=null;
      noteLineage(recipe);
      const frame=freshCanvas(164,104);frame.getContext('2d').drawImage(output,0,0,164,104);
@@ -385,7 +396,10 @@ export function createAbstractionLoop({
        survivors:survived.length,heldCoverage:held.coverage,
        inheritedIdeas:heritage.drawn.length,heritageScore:heritage.score,
        inheritedMaterials:heritage.drawn.map(x=>x.material),
-       W:threeWay.W,phi:threeWay.phi,H:threeWay.H});
+       W:threeWay.W,phi:threeWay.phi,H:threeWay.H,
+        objectCount:objects.objects.length,stableObjects:objects.stable,
+        cachedObjectReuses:best.stable?.reused||0,
+        previewTrials:renderBudget.predicted,fullRenders:renderBudget.full});
      stamps=stamps.slice(-10);
      try{onFrame(result)}catch(error){onError(error)}
      status();
@@ -431,6 +445,9 @@ export function createAbstractionLoop({
  function invalidateSources(){forceFreshSources=true;status();}
  function feedback(liked){
    ideas=judgeStructuralIdeas(ideas,!!liked);
+   objects.objects=rememberObjectVerdict(objects.objects,!!liked,
+     lastRecipe?.wordRelation);
+   saveObjectRegistry(objects);
    status();
    return heritageEvidence(ideas);
  }
