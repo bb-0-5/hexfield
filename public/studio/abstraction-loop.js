@@ -8,6 +8,7 @@ import {createSourceBank,mixSources,cloneCanvas,prepareMixSamples} from './sourc
 import {planDirtyTiles,shouldUseLocalRender} from './dirty-tiles.js';
 import {renderPlan,recordRenderTime,yieldToBrowser} from './render-governor.js';
 import {renderRuleLive} from './live-rule-execution.js';
+import {conserveComposition,previewRestyling} from './style-preservation.js';
 import {applyStyleRecipe,styleById,styleReference,
   ABSTRACTION_LEVELS} from './style-presets.js';
 import {createCreativeMemory,loadCreativeMemory,saveCreativeMemory,
@@ -270,7 +271,7 @@ export function createAbstractionLoop({
      const localAllowed=shouldUseLocalRender({
        cycle,previous,inherited:inheritedRecipe,words:getWords(),
        donorsRefreshed,
-       forceFull:!!config.forceFull||!!(config.lockLaw&&(
+       forceFull:!!config.forceFull||!!config.style||!!(config.lockLaw&&(
          (config.law&&config.law!=='surprise'&&
            config.law!==inheritedRecipe?.primary)||
          (config.mark&&config.mark!=='surprise'&&
@@ -392,6 +393,7 @@ export function createAbstractionLoop({
          dirtyTiles:partial?tilePlan.tiles:null
        });
        const output=freshCanvas(width,height);
+       const progressCanvas=subtle?freshCanvas(width,height):null;
        // The candidate's real ink appears on screen WHILE brush rows
        // execute. We do not reconstruct a recorded performance afterward.
        const drawn=await renderRuleLive(mixed.canvas,output,recipe,{
@@ -403,14 +405,32 @@ export function createAbstractionLoop({
          },
          rowsPerTurn:mobile?4:3,
          isCancelled:()=>currentStamp!==stamp||document.hidden,
-         onProgress:progress=>process({
-           type:'painting',canvas:output,cycle,
-           attempt,total:finalists.length,finalIndex,
-           progress,recipe
-         })
+         onProgress:progress=>{
+           if(progressCanvas){
+             previewRestyling(previous||mixed.canvas,output,progressCanvas,{
+               completedRows:progress.completedRows,cell:recipe.rework==='abstract_masses'?20:
+                 recipe.mark==='cutout'?14:
+                 recipe.mark==='carve'||recipe.mark==='hybrid'?11:9,
+               level:config.abstraction
+             });
+           }
+           process({
+             type:'painting',canvas:progressCanvas||output,cycle,
+             attempt,total:finalists.length,finalIndex,
+             progress,recipe
+           });
+         }
        });
        if(drawn.cancelled||currentStamp!==stamp)return;
        const metrics=drawn.metrics;
+       // Changing the technique no longer means erasing the composition:
+       // genuine prior pigment and outlines steer each locally-painted pass.
+       const preservation=conserveComposition(previous||mixed.canvas,
+         output,{level:config.abstraction||'wild'});
+       metrics.preservedStructure=preservation;
+       if(preservation.applied)process({
+         type:'structure-retained',canvas:output,cycle,attempt,preservation
+       });
        if(!await checkpoint('Composing image materials'))return;
        // Derive a real intermediate image from the accepted parent and proposal.
        // This applied process competes alongside source mixers and mark laws.
@@ -453,7 +473,7 @@ export function createAbstractionLoop({
        // These constraints are applied BEFORE independent region critique.
        if(!await checkpoint('Evolving persistent visual identity'))return;
        const continuity=inheritVisualIdentity(output,previous,identity,{
-         cycle:identity.generation+1,locked:!!config.lockLaw,
+         cycle:identity.generation+1,locked:!!config.lockLaw||subtle,
          dirtyTiles:partial?tilePlan.tiles:null,
          onStep:change=>process({type:'identity',canvas:output,
            change,cycle,attempt})
@@ -469,7 +489,7 @@ export function createAbstractionLoop({
          generation:creativeMemory.generation+1,
          // One genuinely evaluated historical proposal per generation,
          // even if the quality governor paints multiple full finalists.
-         locked:!!config.lockLaw||finalIndex>0,
+         locked:!!config.lockLaw||subtle||finalIndex>0,
          dirtyTiles:partial?tilePlan.tiles:null,
          onTrial:change=>process({
            type:'creative-recall',canvas:output,change,cycle,attempt
@@ -493,7 +513,7 @@ export function createAbstractionLoop({
          dirtyTiles:partial?tilePlan.tiles:null,
          // A user-explicit brush lock is a hard formal constraint.
          // Region self-critique must not silently violate it.
-         maxReviews:config.lockLaw&&config.mark&&
+         maxReviews:subtle?0:config.lockLaw&&config.mark&&
            config.mark!=='surprise'?0:mobile?1:
            Math.max(1,Math.floor(2/finalists.length)),
          onDecision:(decision,painting)=>process({
@@ -511,7 +531,7 @@ export function createAbstractionLoop({
          compositionMemory,identity,objects:recognized,
          cycle:compositionMemory.generation+1,attempt,
          dirtyTiles:partial?tilePlan.tiles:null,
-         locked:!!config.lockLaw,
+         locked:!!config.lockLaw||subtle,
          onDecision:(decision,painting)=>process({
            type:'composition-vote',canvas:painting,decision,cycle,attempt
          })
