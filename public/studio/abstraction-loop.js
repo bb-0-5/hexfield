@@ -532,6 +532,7 @@ export function createAbstractionLoop({
      lastError=String(error.message||error).slice(0,240);
      onError(error);status();
    }finally{
+     if(!committed)process({type:'cancel'});
      activeStep=false;
      if(!running)stage='paused';
      // Only an explicitly interrupted frame gets a quick retry. Renderer
