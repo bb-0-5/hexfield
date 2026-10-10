@@ -111,5 +111,5 @@ assert.match(loop,/lastClean=composite\?\.clean\|\|null/);
 assert.match(loop,/const scenePlate=composite\?\.clean\|\|output/);
 assert.match(ui,/clean:plate\?\.toDataURL/);
 assert.match(ui,/loop\.adoptCanvas\(unlettered,current\.recipe\)/);
-assert.match(ui,/\$\('ruleTypeMode'\)\.addEventListener\('change'/);
+assert.match(ui,/typeMode:'auto'/);
 console.log('332: bubble/block real outlines, strong contrast, clean-parent autorecomposition, no duplicated glyph donors, old genome compatibility and deterministic reproducibility PASS');
