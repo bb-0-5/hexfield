@@ -19,6 +19,7 @@ globalThis.localStorage={
 globalThis.Image=Image;
 const {mixSources,cloneCanvas,publishSource,CROSS_STUDIO_KEYS}=await import('../public/studio/source-mixer.js');
 const {createAbstractionLoop,visualDelta}=await import('../public/studio/abstraction-loop.js');
+const {validMarkProgram}=await import('../public/studio/mark-program.js');
 const {setGoldenMode}=await import('../public/studio/golden-taste.js');
 // This test exercises deliberate application/mixer exploration. Strict φ
 // qualification precedence is verified independently in golden tests.
