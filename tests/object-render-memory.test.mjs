@@ -69,7 +69,7 @@ const beforeMove=registry.objects.map(o=>o.id);
 const moved=updateObjectRegistry(registry.objects,scene(3),{
  generation:6,priorId:registry.nextId
 });
-assert.ok(moved.matched>=1,'Slight drift must not reset every object's identity');
+assert.ok(moved.matched>=1,"Slight drift must not reset every object\'s identity");
 assert.ok(moved.objects.some(o=>beforeMove.includes(o.id)));
 assert.ok(moved.objects.every(o=>o.area>0&&o.area<.62));
 const proposals=[
