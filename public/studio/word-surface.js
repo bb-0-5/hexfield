@@ -88,9 +88,14 @@ function buildMask(text,w,h,bounds,choice){
   ctx.fillStyle='#fff';ctx.textBaseline='middle';ctx.textAlign='left';
   const letters=[...text],maxWidth=w*(bounds.widthRatio||.92);
   const genome=choice.type;
+  const bubble=genome.grammar==='bubble'||genome.grammar==='rounded';
+  const block=genome.grammar==='block'||genome.grammar==='architectural';
   let size=Math.min(bounds.height*.77,w/Math.max(2,letters.length*.49));
-  const font=px=>choice.family.face.replace(/900/,
-    String(choice.index===1?900:850)+' '+Math.max(10,Math.round(px))+'px');
+  // Actual heavyweight glyph outlines are the source of the mutation.
+  // Do not sample a randomly chosen thin or italic face for display copy.
+  const font=px=>(bubble?'900 system-ui':block?'900 sans-serif':
+    choice.family.face.replace(/900/,'900'))
+    .replace(/900/,'900 '+Math.max(10,Math.round(px))+'px');
   const metrics=px=>{
     ctx.font=font(px);
     const glyphs=letters.map((ch,i)=>{
@@ -114,7 +119,14 @@ function buildMask(text,w,h,bounds,choice){
     ctx.save();ctx.translate(x0,centerY);
     ctx.scale(scale*glyph.shape.width,1);
     ctx.transform(1,0,glyph.shape.slant,1,0,0);
-    ctx.fillText(glyph.ch,0,0);ctx.restore();
+    const stroke=Math.min(size*.13,Math.max(1,size*glyph.shape.outline));
+    ctx.lineWidth=stroke;
+    ctx.lineJoin=bubble?'round':block?'miter':'round';
+    ctx.miterLimit=block?2.5:1.2;
+    ctx.strokeStyle='#fff';
+    ctx.strokeText(glyph.ch,0,0);
+    ctx.fillText(glyph.ch,0,0);
+    ctx.restore();
     at+=glyph.advance+layout.tracking;
   }
   // Every letter owns its own top and bottom morphology, including its
@@ -137,14 +149,14 @@ function buildMask(text,w,h,bounds,choice){
       const trait=part?.shape;
       let shift=0;
       switch(choice.index){
-        case 0:shift=Math.sin((y-bounds.top)/Math.max(2,size)*7)*size*.07;break;
-        case 1:shift=phase<.47?-size*.036:size*.04;break;
-        case 2:shift=((group&1)?-1:1)*size*.105;break;
-        case 3:shift=((Math.floor(x/Math.max(3,size*.20))+group)%7===0)?w:-size*.025;break;
-        case 4:shift=((group+Math.floor(x/Math.max(4,size*.4)))&1)?size*.047:-size*.043;break;
-        case 5:shift=Math.sin(x/Math.max(3,size*.21))*size*.053;break;
-        case 6:shift=((group%3)-1)*size*.08;break;
-        default:shift=Math.sin((y-bounds.top)/Math.max(2,size*.24))*size*.023;
+        case 0:shift=Math.sin((y-bounds.top)/Math.max(2,size)*7)*size*.008;break;
+        case 1:shift=phase<.47?-size*.009:size*.009;break;
+        case 2:shift=((group&1)?-1:1)*size*.014;break;
+        case 3:shift=-size*.007;break;
+        case 4:shift=((group+Math.floor(x/Math.max(4,size*.4)))&1)?size*.009:-size*.009;break;
+        case 5:shift=Math.sin(x/Math.max(3,size*.21))*size*.012;break;
+        case 6:shift=((group%3)-1)*size*.013;break;
+        default:shift=Math.sin((y-bounds.top)/Math.max(2,size*.24))*size*.007;
       }
       // This is a structural upper/lower split on EACH glyph, not a
       // uniformly tinted stock-font string.
@@ -153,11 +165,12 @@ function buildMask(text,w,h,bounds,choice){
       if(sx<0||sx>=w)continue;
       let value=old[(row+sx)*4+3];
       const weight=trait?(phase<.48?trait.top:trait.bottom):1;
+      // Controlled round or square stroke dilation, NOT accidental half
+      // glyph erasure; thin counters survive because expansion is capped.
       const expansion=trait?
-        Math.max(0,Math.min(7,Math.round(size*(trait.bubble*.28+
-          Math.max(0,weight-1)*.043)))):0;
-      const legacy=(choice.index===0||choice.index===1&&phase<.5)?
-        Math.max(1,Math.round(size*.018)):0;
+        Math.max(0,Math.min(4,Math.round(size*(trait.bubble*.13+
+          Math.max(0,weight-1)*.026)))):0;
+      const legacy=0;
       for(let d=1;d<=Math.max(expansion,legacy);d++){
         if(sx+d<w)value=Math.max(value,old[(row+sx+d)*4+3]);
         if(sx-d>=0)value=Math.max(value,old[(row+sx-d)*4+3]);
@@ -167,10 +180,8 @@ function buildMask(text,w,h,bounds,choice){
           value=Math.max(value,old[((y-d)*w+sx)*4+3]);
       }
       if(weight<1)value=Math.round(255*Math.pow(value/255,1+(1-weight)*2));
-      if(choice.index===6&&((y+Math.floor(x*.22))%
-        Math.max(4,Math.round(size*.12))===0))value=Math.round(value*.25);
-      if(choice.index===3&&x%Math.max(7,Math.round(size*.42))<size*.043)
-        value=Math.round(value*.10);
+      // Material texture may still change, but it never punches random
+      // holes through the character skeleton or obliterates letter counters.
       pixels[row+x]=value;
     }
   }
@@ -223,6 +234,10 @@ export function paintWordsOnCanvas(canvas,words,{
     seed,relation:selectedRelation,bounds,size
   });
   const mask=coupled.mask,scene=coupled.scene;
+  // We retain readable foreground cores even when a scene edge negotiates
+  // a weave or carve. New pixels outside the original outline still flow.
+  for(let p=0;p<mask.length;p++)
+    if(letters[p]>200)mask[p]=Math.max(mask[p],Math.round(letters[p]*.94));
   const colours=palette(before,w,h,choice);
   const rule=recipe?.mark?{...recipe,seed:seed>>>0}:
     makeRecipe({subject:'abstract',primary:'no_shading',mark:'hybrid',seed:seed>>>0});
@@ -249,17 +264,19 @@ export function paintWordsOnCanvas(canvas,words,{
       const role=(stripe+((choice.key>>>5)%3)+Math.floor(y/Math.max(5,size*.3)))%3;
       const band=layers[role],beforeLight=lum(scene,i);
       const materialLight=lum(pigment,i);
-      const hueColor=band.map((v,ch)=>clamp(Math.round(v*.82+pigment[i+ch]*.18),0,255));
-      // Source-sensitive contrast is achieved by luminance, not greyscaling.
-      const bright=beforeLight<.46?1.18:.83;
-      ink=hueColor.map(v=>clamp(Math.round(v*bright+(materialLight-.5)*27),0,255));
+      // Resolve a genuine luminance contrast BEFORE applying chromatic ink.
+      // Previous independent pigments could closely match local background,
+      // making text almost invisible even though the mask was valid.
+      const inkHue=hue(band)??(choice.key%360);
+      const strong=rgbOf(inkHue,.94,beforeLight>.52?.14:.86);
+      ink=strong.map(v=>clamp(Math.round(v+(materialLight-.5)*9),0,255));
       count++;
       if(Math.max(...ink)-Math.min(...ink)>48)chromatic++;
       contrast+=Math.abs(beforeLight-(ink[0]*.2126+ink[1]*.7152+
         ink[2]*.0722)/255);
     }
     for(let ch=0;ch<3;ch++)d[i+ch]=coverage>0?
-      Math.round(scene[i+ch]*(1-coverage*.94)+ink[ch]*coverage*.94):scene[i+ch];
+      Math.round(scene[i+ch]*(1-coverage*.995)+ink[ch]*coverage*.995):scene[i+ch];
     d[i+3]=255;
   }
   const target=canvas.getContext('2d');
