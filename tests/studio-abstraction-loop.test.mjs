@@ -56,12 +56,14 @@ for(const method of ['cutaway','dissonance','relief','edges']){
 }
 assert.ok(publishSource(q.canvas,'archive',{id:'abc',parentId:null,primary:'blue_for_red',mark:'hatch'}));
 assert.ok(kv.get(CROSS_STUDIO_KEYS.archive),'Archive result is shared across pages');
-const produced=[],errors=[];
+const produced=[],errors=[],processEvents=[];
 const loop=createAbstractionLoop({
  width:240,height:145,
  getArchive:()=>supplies[4].canvas,
  getParent:()=>produced.at(-1)?.canvas||null,
- onFrame:x=>produced.push(x),
+ onFrame:x=>{produced.push(x);processEvents.push({type:'accepted-frame'});},
+ onProcess:e=>processEvents.push({type:e.type,progress:e.progress?
+   {completedRows:e.progress.completedRows,strokes:e.progress.strokes}:null}),
  onError:err=>errors.push(err.message||String(err))
 });
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -75,6 +77,15 @@ async function waitGeneration(target){
 }
 loop.once({mixMode:'quilt',subject:'sphere',speed:1500});
 await waitGeneration(1);
+assert.ok(processEvents.some(e=>e.type==='painting'&&e.progress?.strokes>0),
+ 'A real brush row must be displayed WHILE the full candidate is rendered');
+assert.ok(processEvents.some(e=>e.type==='candidate-painted'),
+ 'Actual lettering and material must appear before candidate judgement');
+assert.ok(processEvents.indexOf(processEvents.find(e=>e.type==='painting'))<
+ processEvents.findIndex(e=>e.type==='accepted-frame'),
+ 'The live production canvas must exhibit executed ink BEFORE choosing the winner');
+assert.ok(produced[0].liveExecution?.drawnBeforeSelection,
+ 'The accepted result must identify real incremental execution, not playback');
 assert.ok(produced[0].sources.includes('terrain'),'Procedural terrain must be rendered into the first pass');
 assert.ok(produced[0].sources.includes('lettering'),'Lettering renderer must participate in the first pass');
 assert.ok(produced[0].sources.includes('archive'),'Historic archive canvas must participate');

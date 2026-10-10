@@ -142,6 +142,30 @@ export function createLivingPainting({
   stats={phase:'sketch',done:trial+1,total,tiles:0};
   onPhase({...stats});
  }
+ // This is actual uncompleted work produced by applyRulesSteps. Unlike
+ // organic commit(), the strokes are not recomposed from finished pixels.
+ function work({painting,completedRows=0,rows=0,strokes=0,attempt=0}={}){
+  if(!painting?.getContext)return;
+  stop({finalize:false});
+  exact(painting);
+  stats={phase:'working',done:completedRows,total:rows,
+    strokes,attempt,live:true};
+  onPhase({...stats});
+ }
+ function completedCandidate({painting,words='',attempt=0}={}){
+  if(!painting?.getContext)return;
+  stop({finalize:false});exact(painting);
+  stats={phase:'candidate',done:1,total:1,attempt,
+    words,live:true};
+  onPhase({...stats});
+ }
+ function accept({final,candidates=0}={}){
+  if(!final?.getContext)return;
+  stop({finalize:false});exact(final);
+  stats={phase:'accepted',done:candidates,total:candidates,
+    live:true};
+  onPhase({...stats});
+ }
  function commit({parent=null,final=null,trace=null,wordBounds=null,
   objects=[],dirtyTiles=null,duration=1350}={}){
   stop({finalize:false});
@@ -227,5 +251,6 @@ export function createLivingPainting({
    raf=requestFrame(frame);
   });
  }
- return {preview,commit,stop,getState:()=>({...stats})};
+ return {preview,work,completedCandidate,accept,commit,stop,
+  getState:()=>({...stats})};
 }

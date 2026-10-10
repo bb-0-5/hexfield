@@ -138,16 +138,20 @@ export function initRuleStudio(){
    canvas:$('ruleArtwork'),
    onPhase:progress=>{
      const label=progress.phase==='sketch'?'TESTING A REAL CANDIDATE':
+       progress.phase==='working'?'BRUSHES EXECUTING ON LIVE CANVAS':
+       progress.phase==='candidate'?'COMPLETE CANDIDATE / JUDGING':
+       progress.phase==='accepted'?'SELECTED / ACTUAL ARTWORK':
        progress.phase==='reconsider'?'ERASING A REJECTED IDEA':
        progress.phase==='construct'?'PAINTING REAL MARKS & CONTOURS':
        'THE NEW PAINTING SURVIVES';
      text('ruleHeroStatus','● '+label+' · '+
-       progress.done+'/'+progress.total+' actual strokes & contours'+
+       progress.done+'/'+progress.total+
+       (progress.phase==='working'?' painted brush rows / '+
+         progress.strokes+' real strokes':' actual strokes & contours')+
        (progress.erased?' · '+progress.erased+' discarded regions':'')+
        (progress.wordLast?' · letters emerge last':''));
    }
  });
- let adoptTiles=null;
  let lastPhi=null;
  function displayPhi(canvas){
    const s=measureGoldenTaste(canvas,{mode:'rule-studio'});
@@ -233,8 +237,17 @@ export function initRuleStudio(){
      else if(event.type==='preview'){
        live.preview({painting:event.canvas,parent:event.parent,
          trial:event.attempt,total:event.total});
-     }else if(event.type==='adopt')adoptTiles=event.dirtyTiles||null;
-     else if(event.type==='cancel'){
+     }else if(event.type==='painting'){
+       live.work({painting:event.canvas,
+         completedRows:event.progress?.completedRows,
+         rows:event.progress?.rows,strokes:event.progress?.strokes,
+         attempt:event.attempt});
+     }else if(event.type==='candidate-painted'){
+       live.completedCandidate({painting:event.canvas,words:event.words,
+         attempt:event.attempt});
+     }else if(event.type==='decision'){
+       live.accept({final:event.canvas,candidates:event.candidates});
+     }else if(event.type==='cancel'){
        live.stop({finalize:true});
        if(current?.canvas){
          context.clearRect(0,0,960,600);
@@ -257,14 +270,10 @@ export function initRuleStudio(){
      }
      parentCanvas=canvas;
      displayPhi(canvas);
-     // No opaque animation mask: real winner pixels materialise in stages
-     // directly in the same visible production canvas.
-     const duration=Math.min(1800,Math.max(650,
-       (Number($('ruleLoopSpeed').value)||3000)*.42));
-     void live.commit({parent:before,final:canvas,trace:metrics.trace,
-       wordBounds:result.composite?.bounds||null,
-       objects:loop.state().objects,dirtyTiles:adoptTiles,duration});
-     adoptTiles=null;
+     // The winning image was ACTUALLY painted, row by row, while the
+     // creative search was running. No after-the-fact animation here.
+     live.accept({final:canvas,candidates:
+       result.liveExecution?.considered||result.nonredundancy?.candidates||1});
      $('ruleArtwork').hidden=false;$('ruleEmpty').hidden=true;
      $('ruleKeep').disabled=false;$('ruleReject').disabled=false;
      $('ruleReworkBtn').disabled=false;$('ruleSave').disabled=false;
