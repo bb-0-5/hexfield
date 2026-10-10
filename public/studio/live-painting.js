@@ -124,7 +124,8 @@ export function createLivingPainting({
   if(raf){cancelFrame(raf);raf=0;}
   if(active){
    if(finalize)exact(active.final);
-   active=null;
+   const resolve=active.resolve;active=null;
+   resolve?.({reason:'interrupted'});
   }
   stats={...stats,phase:'idle'};
  }
@@ -134,7 +135,7 @@ export function createLivingPainting({
   exact(parent||painting);
   // Actual evaluated low-res sketch is shown directly in the same canvas,
   // while residual old form remains visible under the painter's sketch.
-  ctx.save();ctx.globalAlpha=parent?.width?.72:1;
+  ctx.save();ctx.globalAlpha=parent?.width ? .72 : 1;
   ctx.drawImage(painting,0,0,canvas.width,canvas.height);
   ctx.restore();
   stats={phase:'sketch',done:trial+1,total,tiles:0};
