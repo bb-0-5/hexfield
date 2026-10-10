@@ -273,7 +273,7 @@ export function applyRules(source,target,recipe,options={}){
      const colour=remap(rgb,recipe,x,y,width,height);
      const luminosity=(colour[0]*.2126+colour[1]*.7152+colour[2]*.0722)/255;
      if(has('density_contrast')&&random()<luminosity*.58){skipped++;continue;}
-     // A hybrid canvas really uses ALL FIVE distinct mark renderers. The
+     // A hybrid canvas combines the five original and ten new procedures. The
      // dominant mark changes by spatial region and generation. This is not
      // a single renderer recolouring one scene; the final stroke primitives
      // themselves vary within the same picture.
