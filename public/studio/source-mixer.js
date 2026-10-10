@@ -7,6 +7,7 @@ import {renderLandscape,SCENES,MOODS} from './landscape.js';
 import {renderLettering} from './lettering.js';
 import {makeGenome,mutateGenome} from './evolution.js';
 import {evolveSeed} from './nonredundancy.js';
+import {validDirtyTiles,tilesCoverage} from './dirty-tiles.js';
 
 export const SOURCE_KEYS = [
   'parent','reality','terrain','lettering','logo','archive','imagination','upload','kept'
@@ -177,14 +178,26 @@ const hash=(x,y,seed)=>{
   n^=n>>>13;n=Math.imul(n,1274126177);return (n^(n>>>16))>>>0;
 };
 const intensity=(data,i)=>Math.round(data[i]*.2126+data[i+1]*.7152+data[i+2]*.0722);
-export function mixSources(inputs,{width=WIDTH,height=HEIGHT,cycle=0,mode='auto',seed=1}={}){
+// Donor snapshots are immutable within ONE evaluation step. Sharing their
+// extracted RGBA buffers across candidate renderings avoids decoding 4–10
+// full-image sources twice. No persistent stale-source cache is introduced.
+export function prepareMixSamples(inputs,{width=WIDTH,height=HEIGHT}={}){
+ const usable=(inputs||[]).filter(s=>s?.canvas?.getContext).slice(0,10);
+ if(!usable.length)throw Error('No valid rendered sources');
+ return usable.map(({name,canvas})=>{
+   const sheet=cloneCanvas(canvas,width,height),
+     context=sheet.getContext('2d',{willReadFrequently:true});
+   return {name,data:context.getImageData(0,0,width,height).data};
+ });
+}
+export function mixSources(inputs,{width=WIDTH,height=HEIGHT,cycle=0,
+ mode='auto',seed=1,prepared=null,dirtyTiles=null}={}){
   if(!Array.isArray(inputs)||inputs.length<1)throw Error('Mixer requires at least one rendered source');
   const usable=inputs.filter(s=>s?.canvas?.getContext).slice(0,10);
   if(!usable.length)throw Error('No valid rendered sources');
-  const sample=usable.map(({name,canvas})=>{
-    const sheet=cloneCanvas(canvas,width,height),context=sheet.getContext('2d',{willReadFrequently:true});
-    return {name,data:context.getImageData(0,0,width,height).data};
-  });
+  const sample=prepared||prepareMixSamples(usable,{width,height});
+  if(!sample.length||sample.some(x=>x.data?.length!==width*height*4))
+    throw Error('Invalid prepared mix sample dimensions');
   // Ensure the recursive previous frame and every available renderer have a
   // real chance to influence the picture. This is not a mode-selection lottery.
   const parent=sample.find(s=>s.name==='parent')||sample[0];
@@ -193,6 +206,8 @@ export function mixSources(inputs,{width=WIDTH,height=HEIGHT,cycle=0,mode='auto'
   const canvas=canvasOf(width,height);
   const ctx=canvas.getContext('2d'),out=ctx.createImageData(width,height);
   const d=out.data,prev=parent.data;
+  const partial=validDirtyTiles(dirtyTiles,width,height);
+  if(partial)d.set(prev); // outside dirty region never gets recomposited
   const pool=donors.length?donors:[parent];
   const cell=clamp(Math.floor(Math.min(width,height)/(5+cycle%4)),18,86);
   const ncols=Math.ceil(width/cell);
@@ -203,8 +218,13 @@ export function mixSources(inputs,{width=WIDTH,height=HEIGHT,cycle=0,mode='auto'
     return clamp((Math.abs(intensity(buffer,index)-intensity(buffer,above))+
       Math.abs(intensity(buffer,index)-intensity(buffer,left)))*2,0,255);
   };
+  let processedPixels=0;
   for(let y=0;y<height;y++){
-    for(let x=0;x<width;x++){
+    const ranges=partial?dirtyTiles.filter(t=>y>=t.y&&y<t.y+t.h)
+      .map(t=>[t.x,t.x+t.w]):[[0,width]];
+    if(!ranges.length)continue;
+    for(const [x0,x1] of ranges)for(let x=x0;x<x1;x++){
+      processedPixels++;
       const i=(y*width+x)*4;
       const gx=Math.floor(x/cell),gy=Math.floor(y/cell);
       const tile=(gy*ncols+gx+cycle+seed)%pool.length;
@@ -256,5 +276,8 @@ export function mixSources(inputs,{width=WIDTH,height=HEIGHT,cycle=0,mode='auto'
   }
   ctx.putImageData(out,0,0);
   return {canvas,mode:active,sources:sample.map(s=>s.name),
-    stats:{pixels:width*height,cutPixels:cut,edgePixels:sampled,donorCount:pool.length}};
+    stats:{pixels:width*height,processedPixels,
+      savedPixels:width*height-processedPixels,
+      partial:!!partial,coverage:partial?tilesCoverage(dirtyTiles,width,height):1,
+      cutPixels:cut,edgePixels:sampled,donorCount:pool.length}};
 }
