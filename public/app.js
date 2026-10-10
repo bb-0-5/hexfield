@@ -131,9 +131,12 @@ async function refreshForNewHexfieldBuild() {
         const registrations = await navigator.serviceWorker.getRegistrations?.() || [];
         await Promise.all(registrations.map((registration) => registration.unregister()));
       }
-      url.searchParams.set("build", String(available));
-      location.replace(url.toString());
-      return true;
+      // Never navigate away from a live painting because a deployment arrived.
+       // The original automatic reload restarted the first archive render.
+       const badge = document.getElementById("buildBadge");
+       if (badge) badge.textContent = "build " + HEXFIELD_BUILD +
+         " · update " + available + " available when reopened";
+       return false;
     }
   } catch {}
   finally { clearTimeout(timeout); buildCheckInFlight = false; }
@@ -46487,7 +46490,9 @@ function applyFormat() {
 $("go").addEventListener("click", () => { counter = 0; brushReseed++; pendingAction = "generate"; generate(); });
 $("again").addEventListener("click", () => { counter++; pendingAction = "vary"; generate(); });
 $("perturbNow").addEventListener("click", perturb);
-$("reseedNow").addEventListener("click", changeSeed);
+// A direct listener receives MouseEvent, which is truthy. That had
+// incorrectly classified a human CHANGE SEED click as an AUTO reseed.
+$("reseedNow").addEventListener("click", () => changeSeed(false));
 $("captureLogo").addEventListener("click", () => { captureLiveLogoLoop(); });
 
 /* Reading is immediate; drawing waits for a pause.
