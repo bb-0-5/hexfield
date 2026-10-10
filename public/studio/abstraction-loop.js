@@ -335,7 +335,8 @@ export function createAbstractionLoop({
        if(partial)painter.restore();
        // The word is painted into each competing canvas BEFORE its W/φ/H
        // analysis, so word-and-image composition belongs to the same artwork.
-       const composite=postProcess(output,recipe,metrics,{cycle,branch:attempt});
+       const composite=postProcess(output,recipe,metrics,{cycle,branch:attempt,
+         dirtyTiles:partial?tilePlan.tiles:null});
        const method=methodSignature({mode:'abstraction',primary:recipe.primary,
          secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework,
          blend:mixed.mode,subject:recipe.subject,
