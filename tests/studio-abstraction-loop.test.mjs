@@ -82,6 +82,9 @@ loop.once({mixMode:'dissonance',subject:'sphere',speed:1500});
 await waitGeneration(2);
 assert.ok(produced[1].sources.includes('parent'),'Second pass must use output of first pass');
 assert.equal(produced[1].recipe.parentId,produced[0].recipe.id);
+assert.ok(validMarkProgram(produced[1].recipe.markProgram));
+assert.equal(produced[1].recipe.markProgram.parentId,produced[0].recipe.markProgram.id);
+assert.equal(produced[1].recipe.markProgram.rootId,produced[0].recipe.markProgram.rootId);
 assert.ok(produced[1].novelty>0,'Recursive rework must modify pixels');
 assert.ok(produced[1].derivation?.retained>=0,
   'The second frame must be physically derived from the first frame');
