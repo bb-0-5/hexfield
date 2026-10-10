@@ -91,11 +91,11 @@ export function planDirtyTiles(previous,proposal,{
    mode:'local-application',reason:'bounded measured scene change'};
 }
 export function shouldUseLocalRender({cycle=0,previous=null,inherited=null,
- words='',donorsRefreshed=false,forceFull=false}={}){
+ words='',textChanged=false,donorsRefreshed=false,forceFull=false}={}){
  // Global composition changes (new donors, first frame, edited text,
  // explicit full reset) MUST NOT be represented as a valid partial update.
  return !!previous?.getContext&&!!inherited&&
-   cycle>=1&&cycle%4===1&&!words&&
+   cycle>=1&&cycle%4===1&&!textChanged&&
    !donorsRefreshed&&!forceFull;
 }
 export function sameOutsideDirty(canvas,parent,tiles){
