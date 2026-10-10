@@ -164,6 +164,15 @@ export function createLivingPainting({
  }
  // Real neighbourhood vote while candidate pixels are being computed,
  // never a fake overlay. Copy only the current tested canvas.
+ // True inherited pixels/pigment are already in the unfinished candidate.
+ // Show them on the same production canvas before other ideas compete.
+ function livingIdentity({painting,change}={}){
+  if(!painting?.getContext||!change)return;
+  stop({finalize:false});exact(painting);
+  stats={phase:'living-identity',done:1,total:1,live:true,
+    kind:change.type,root:change.root,form:change.id};
+  onPhase({...stats});
+ }
  function compositionVote({painting,decision}={}){
   if(!painting?.getContext||!decision)return;
   stop({finalize:false});exact(painting);
@@ -272,6 +281,6 @@ export function createLivingPainting({
    raf=requestFrame(frame);
   });
  }
- return {preview,work,regionalDecision,compositionVote,completedCandidate,accept,commit,stop,
+ return {preview,work,regionalDecision,compositionVote,livingIdentity,completedCandidate,accept,commit,stop,
   getState:()=>({...stats})};
 }
