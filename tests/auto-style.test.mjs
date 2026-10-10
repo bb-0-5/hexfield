@@ -93,4 +93,6 @@ assert.match(loop,/lastRecipe=structuredClone\(recipe\)/);
 assert.match(ui,/style:styleId,autoStyle:true/);
 assert.match(ui,/loop\.adoptCanvas\(unlettered\|\|target,recipe\)/);
 assert.match(ui,/result\.styleAudition\.considered/);
+assert.match(ui,/useNewReference\?\s*await sourceFor\(sourceRecipe\)/,
+ 'Explicit upload and archive switches must take precedence over cached prior art');
 console.log('329: automatic executable technique variety, W/phi/H safety, bounded mobile allocation, and real manual-to-auto rebasing PASS');
