@@ -51,6 +51,9 @@ assert.equal(chosen.length,2);
 assert.notEqual(chosen[0].id,chosen[1].id);
 const mark=alternativeRegionalMark({mark:'hybrid'},{cycle:1,region:chosen[0]});
 assert.ok(mark&&mark!=='hybrid');
+assert.equal(alternativeRegionalMark({mark:'hybrid'},{
+ cycle:2,attempt:0,region:chosen[0],preferred:'hatch'}),'hatch',
+ 'Successful prior local marks should influence this region in future generations');
 const recipe=makeRecipe({seed:128,subject:'abstract',
  mark:'hybrid',primary:'no_curves'});
 const first=artwork(),before=artwork();
