@@ -3,6 +3,7 @@
  * ONLY authentic pixels from the accepted, evaluated full painting.
  * No opaque theatre, fabricated brushes, or secondary visible canvas.
  */
+import {buildOrganicStages,revealOrganic} from './organic-construction.js';
 export const CONSTRUCTION_TILE=32;
 const clamp=(n,lo,hi)=>Math.max(lo,Math.min(hi,Number(n)||0));
 const centerInside=(box,x,y)=>!!box&&x>=box.x&&y>=box.y&&
@@ -145,56 +146,83 @@ export function createLivingPainting({
   objects=[],dirtyTiles=null,duration=1350}={}){
   stop({finalize:false});
   if(!final?.width)return Promise.resolve({reason:'missing final'});
-  // On the very first auto-generated painting, there is no accepted
-  // parent yet. Construct from the authentic preview currently displayed,
-  // rather than instantly replacing it with a completed full-size picture.
-  let base=parent;
-  if(!base?.getContext){
-   base=document.createElement('canvas');
-   base.width=canvas.width;base.height=canvas.height;
-   base.getContext('2d').drawImage(canvas,0,0);
-  }
+  // The previously tested REAL sketch is what we erase while changing
+  // our mind. We never paint fake trial marks or mutate the accepted parent.
+  const sketch=document.createElement('canvas');
+  sketch.width=canvas.width;sketch.height=canvas.height;
+  sketch.getContext('2d').drawImage(canvas,0,0);
+  const base=parent?.getContext?parent:sketch;
   const plan=constructionPlan({width:canvas.width,height:canvas.height,
    parent:base,final,trace,wordBounds,objects,dirtyTiles});
+  const organic=buildOrganicStages({
+   parent:parent?.getContext?parent:null,
+   sketch,final,trace,wordBounds,objects,dirtyTiles
+  });
   const my=sequence;
   if(reducedMotion()||typeof document!=='undefined'&&document.hidden||
-    !plan.total){
+    !organic.total){
    exact(final);
-   stats={phase:'complete',done:plan.total,total:plan.total,tiles:plan.total};
+   stats={phase:'complete',done:organic.total,total:organic.total,
+     tiles:plan.total,gestures:organic.gestures.length,
+     contours:organic.contours.length};
    onPhase({...stats});
-   return Promise.resolve({reason:'instant',plan});
+   return Promise.resolve({reason:'instant',plan,organic});
   }
-  exact(base);
+  // Erasing the actual rejected study only occurs if a parent exists.
+  // With no parent, the authentic first preview becomes the initial surface.
+  if(!parent?.getContext)exact(sketch);
   const begin=clock();
   const targetMs=clamp(duration,240,4500);
+  const undoFraction=parent?.getContext&&organic.erases.length?.19:0;
   return new Promise(resolve=>{
-   active={final,resolve,plan};
+   active={final,resolve,plan,organic};
+   let cleaned=false,erased=0,lastDone=0;
    const frame=now=>{
     if(my!==sequence||!active)return;
     const progress=clamp((now-begin)/targetMs,0,1);
-    // Prioritize actual changed material without fragmenting into so many
-    // slow RAF callbacks that the automatic painting falls behind.
-    const desired=Math.min(plan.total,Math.max(1,
-      Math.ceil(plan.total*(progress<1?
-        progress*progress*(3-2*progress):1))));
-    const done=stats.phase==='construct'?stats.done:0;
-    paintConstructionSlice(canvas,final,plan.tiles,done,desired);
-    stats={phase:'construct',done:desired,total:plan.total,
-      tiles:plan.total,markHits:plan.marks,
-      inherited:plan.inherited,lettering:plan.lettering,
-      skipped:plan.skipped};
-    if(desired!==done)onPhase({...stats});
+    if(progress<undoFraction){
+     // Discard the currently visible REAL rough study by recovering actual
+     // prior pixels inside traced colour contours. Not a rectangle reveal.
+     const desired=Math.min(organic.erases.length,Math.max(1,
+      Math.ceil(organic.erases.length*progress/undoFraction)));
+     revealOrganic(canvas,base,organic.erases,erased,desired,{dirtyTiles});
+     erased=desired;
+     stats={phase:'reconsider',done:erased,total:organic.erases.length,
+       tiles:plan.total,gestures:organic.gestures.length,
+       contours:organic.contours.length,erased};
+     if(erased>0)onPhase({...stats});
+    }else{
+     if(!cleaned){
+      // Every discarded candidate is fully removed before adopting ink.
+      // Preserved objects still originate only from the accepted parent.
+      exact(base);cleaned=true;
+     }
+     const fraction=clamp((progress-undoFraction)/
+      Math.max(.0001,1-undoFraction),0,1);
+     const eased=fraction*fraction*(3-2*fraction);
+     const desired=Math.min(organic.total,Math.max(1,
+       Math.ceil(organic.total*eased)));
+     revealOrganic(canvas,final,organic.stages,lastDone,desired,{dirtyTiles});
+     lastDone=desired;
+     stats={phase:'construct',done:desired,total:organic.total,
+       tiles:plan.total,gestures:organic.gestures.length,
+       contours:organic.contours.length,erased:organic.erases.length,
+       wordLast:organic.word};
+     if(desired>0)onPhase({...stats});
+    }
     if(progress>=1){
-     // An exact full-frame final copy fixes colour interpolation and any
-     // global effect not localizable by the trace/word/object heuristics.
+     // Exact fully evaluated source is authoritative, always.
      exact(final);
-     stats={...stats,phase:'complete',done:plan.total};
+     stats={...stats,phase:'complete',done:organic.total,
+       total:organic.total};
      active=null;raf=0;
      onPhase({...stats});
-     resolve({reason:'completed',plan});
+     resolve({reason:'completed',plan,organic});
     }else raf=requestFrame(frame);
    };
-   stats={phase:'construct',done:0,total:plan.total,tiles:plan.total};
+   stats={phase:'construct',done:0,total:organic.total,
+     tiles:plan.total,gestures:organic.gestures.length,
+     contours:organic.contours.length};
    onPhase({...stats});
    raf=requestFrame(frame);
   });

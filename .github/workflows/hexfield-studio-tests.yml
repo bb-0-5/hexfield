@@ -62,6 +62,8 @@ jobs:
         run: node --experimental-default-type=module tests/render-governor.test.mjs
       - name: Verify 320 real single-canvas mark construction and exact final image
         run: node --experimental-default-type=module tests/live-painting.test.mjs
+      - name: Verify 321 organic brush strokes, erasure and faithful live pigment boundaries
+        run: node --experimental-default-type=module tests/organic-construction.test.mjs
 
       - name: Guard global renderer non-redundancy and evolving-seed genealogy
         run: node --experimental-default-type=module tests/global-nonredundancy.test.mjs
