@@ -510,18 +510,7 @@ export function createAbstractionLoop({
          retained:derivation.retained,interwoven:derivation.interwoven,
          changed:derivation.changed}:null,candidates:candidates.length,
         preflight:renderBudget,dirty:dirtyStats,
-        composition:{attempts:best.composition?.attempts||0,
-         accepted:best.composition?.accepted||0,
-         decision:lastComposition?{
-           from:lastComposition.from,to:lastComposition.to,
-           accepted:lastComposition.accepted,
-           scoreBefore:lastComposition.before.score,
-           scoreAfter:lastComposition.after.score,
-           supporters:lastComposition.supporters,
-           opponents:lastComposition.opponents,
-           vote:lastComposition.vote,method:lastComposition.method,
-           coverage:lastComposition.coverage
-         }:null},
+
        regional:{reviews:best.regional?.reviews||0,
           revised:best.regional?.revisions||0,
           kept:best.regional?.kept||0},
@@ -572,6 +561,18 @@ export function createAbstractionLoop({
        heritage:{...heritage,ancestors:inherited,
          living:heritageEvidence(ideas),tradeoff:threeWay},
        golden,nonredundancy:lastAssessment,renderBudget,dirty:dirtyStats,
+       composition:{attempts:best.composition?.attempts||0,
+         accepted:best.composition?.accepted||0,
+         decision:lastComposition?{
+           from:lastComposition.from,to:lastComposition.to,
+           accepted:lastComposition.accepted,
+           scoreBefore:lastComposition.before.score,
+           scoreAfter:lastComposition.after.score,
+           supporters:lastComposition.supporters,
+           opponents:lastComposition.opponents,
+           vote:lastComposition.vote,method:lastComposition.method,
+           coverage:lastComposition.coverage
+         }:null},
        regional:{reviews:best.regional?.reviews||0,
          revised:best.regional?.revisions||0,
          kept:best.regional?.kept||0,
