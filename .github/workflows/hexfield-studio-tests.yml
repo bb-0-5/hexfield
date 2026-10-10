@@ -94,6 +94,9 @@ jobs:
       - name: Verify 333 glyph counter repair, legibility arbitration and all reseed profiles
         run: node --experimental-default-type=module tests/type-legibility-reseed.test.mjs
 
+      - name: Verify 334 art-first canvas, graphic coherence and real bubble rim pixels
+        run: node --experimental-default-type=module tests/art-direction-reset.test.mjs
+
       - name: Guard global renderer non-redundancy and evolving-seed genealogy
         run: node --experimental-default-type=module tests/global-nonredundancy.test.mjs
       - name: Verify component-level font anatomy and mutable logo geometry
