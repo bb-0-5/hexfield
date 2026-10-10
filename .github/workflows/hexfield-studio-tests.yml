@@ -41,6 +41,8 @@ jobs:
         run: node --experimental-default-type=module tests/studio-rules.test.mjs
       - name: Verify Build 313 mark application and frame derivation
         run: node --experimental-default-type=module tests/mark-derivation.test.mjs
+      - name: Verify Build 314 invented gesture procedures and 24 generations
+        run: node --experimental-default-type=module tests/invented-mark-programs.test.mjs
       - name: Guard global renderer non-redundancy and evolving-seed genealogy
         run: node --experimental-default-type=module tests/global-nonredundancy.test.mjs
       - name: Verify component-level font anatomy and mutable logo geometry
