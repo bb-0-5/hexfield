@@ -4,7 +4,8 @@
  * Explicit start/stop. Never invokes a paid image model automatically.
  */
 import {makeRecipe,mutateRecipe,applyRules,noteLineage,LAWS,MARKS,SUBJECTS,ruleTaste} from './rule-engine.js';
-import {createSourceBank,mixSources,cloneCanvas} from './source-mixer.js';
+import {createSourceBank,mixSources,cloneCanvas,prepareMixSamples} from './source-mixer.js';
+import {planDirtyTiles,shouldUseLocalRender} from './dirty-tiles.js';
 import {evolveSeed,rankNoveltyCandidates,commitCanvas,
   methodSignature,snapshotNoveltyMemory} from './nonredundancy.js';
 import {paintHeldMotifs,advanceMotifMemory,motifEvidence} from './motif-memory.js';
@@ -98,7 +99,7 @@ export function createAbstractionLoop({
  let cycle=0,seed=Math.floor(Math.random()*4294967295),last=null;
  let lastRecipe=null,config={},lastMix=null,lastError=null,lastAssessment=null;
  let stamps=[],stamp=0,forceFreshSources=true,motifs=[],ideas=[];
- let objects=loadObjectRegistry(),renderBudget=null;
+ let objects=loadObjectRegistry(),renderBudget=null,dirtyStats=null;
  void loadObjectRegistryFromDB().then(saved=>{
   if(saved?.objects?.length&&!objects.objects.length&&cycle===0)objects=saved;
  }).catch(()=>{});
@@ -116,7 +117,7 @@ export function createAbstractionLoop({
      wordContacts:o.wordContacts||0,
      stable:o.age>=3&&o.volatility<.24
    })),
-   renderBudget,
+   renderBudget,dirtyStats,
    threeWay:lastAssessment?.threeWay||null,
    history:stamps.map(x=>({...x})),
    waitingReason:waiting?'Page hidden':''
@@ -174,7 +175,8 @@ export function createAbstractionLoop({
      }
      // The source bank refreshes from the current lineage seed. The
      // picture still has an external reference; the generator isn't reset.
-     if(cycle===0||cycle%6===0||forceFreshSources){
+     const donorsRefreshed=cycle===0||cycle%6===0||forceFreshSources;
+     if(donorsRefreshed){
        try{
          const scene=config.subject&&config.subject!=='surprise'?
            config.subject:choice(Object.keys(SUBJECTS),baseSeed);
@@ -189,6 +191,13 @@ export function createAbstractionLoop({
      const inputs=bank.sources(previous);
      if(!inputs.length)throw Error('No renderer produced an image');
      const candidates=[];
+     const localAllowed=shouldUseLocalRender({
+       cycle,previous,inherited:inheritedRecipe,words:getWords(),
+       donorsRefreshed,forceFull:!!config.forceFull
+     });
+     const smallSamples=prepareMixSamples(inputs,{
+       width:PREVIEW_WIDTH,height:PREVIEW_HEIGHT
+     });
      // Invent three proposals and execute their REAL cheap raster previews.
      // Only the winning one/two need full-size paint and W/φ/H scoring.
      const mobile=typeof matchMedia==='function'&&
@@ -205,10 +214,18 @@ export function createAbstractionLoop({
        const mate=learned.length?learned[(cycle+attempt)%learned.length]:null;
        const dislike=Number(ruleTaste()['mark:'+inheritedRecipe?.mark])||0;
        const mutation=attempt===0&&dislike<-.75?1:attempt;
+       // A local change retains global drawing laws instead of pretending a
+       // new global style is validly painted with only a few dirty tiles.
+       if(localAllowed){
+         recipe.primary=inheritedRecipe.primary;
+         recipe.secondary=inheritedRecipe.secondary;
+         recipe.mark=inheritedRecipe.mark;
+         recipe.rework=inheritedRecipe.rework;
+       }
        // Once every five generations the entire shortlist deliberately
        // executes an invented compound mark rather than leaving its rare
        // selection to hybrid probabilities. User-locked laws still win.
-       if(cycle%5===3&&!config.lockLaw)recipe.mark='invented';
+       if(cycle%5===3&&!config.lockLaw&&!localAllowed)recipe.mark='invented';
        recipe.markProgram=inheritedRecipe?.markProgram?
          evolveMarkProgram(inheritedRecipe.markProgram,{seed:candidateSeed,branch:mutation,mate}):
          newMarkProgram(candidateSeed,recipe.generation);
@@ -228,7 +245,8 @@ export function createAbstractionLoop({
        recipe.application=application;
        const lowMix=mixSources(inputs,{
          width:PREVIEW_WIDTH,height:PREVIEW_HEIGHT,
-         cycle:cycle+attempt*2,seed:candidateSeed,mode
+         cycle:cycle+attempt*2,seed:candidateSeed,mode,
+         prepared:smallSamples
        });
        const preview=freshCanvas(PREVIEW_WIDTH,PREVIEW_HEIGHT);
        applyRules(lowMix.canvas,preview,recipe,{iteration:cycle+attempt,trace:false});
@@ -253,27 +271,39 @@ export function createAbstractionLoop({
        finalists[finalists.length-1]=proposals[0];
      }
      renderBudget=budgetEvidence(proposals,finalists);
+     const fullSamples=prepareMixSamples(inputs,{width,height});
      // No preview is misrepresented as a full-resolution candidate.
      for(const proposal of finalists){
        const {attempt,candidateSeed,recipe,mode,application}=proposal;
+       const tilePlan=localAllowed?planDirtyTiles(previous,proposal.preview,{
+         seed:candidateSeed,cycle,objects:objects.objects
+       }):null;
+       const partial=!!tilePlan;
        const mixed=mixSources(inputs,{
          width,height,
          cycle:cycle+attempt*2,
-         seed:candidateSeed,mode
+         seed:candidateSeed,mode,prepared:fullSamples,
+         dirtyTiles:partial?tilePlan.tiles:null
        });
        const output=freshCanvas(width,height);
        const metrics=applyRules(mixed.canvas,output,recipe,{
-         iteration:cycle+attempt,trace:true
+         iteration:cycle+attempt,trace:true,
+         baseCanvas:partial?previous:null,
+         dirtyTiles:partial?tilePlan.tiles:null,
+         localApplication:partial
        });
        // Derive a real intermediate image from the accepted parent and proposal.
        // This applied process competes alongside source mixers and mark laws.
        // The painter inherits the previously chosen APPLICATION process as well
        // as shape. A competing candidate deliberately mutates that method.
-       const derivation=previous?deriveBetweenFrames(previous,output,{
-         seed:candidateSeed,cycle,branch:attempt,method:application
-       }):null;
+       const derivation=partial?{method:'graft',canvas:null,
+         retained:1-tilePlan.coverage,interwoven:tilePlan.coverage,
+         changed:tilePlan.coverage}:
+         previous?deriveBetweenFrames(previous,output,{
+           seed:candidateSeed,cycle,branch:attempt,method:application
+         }):null;
        recipe.application=derivation?.method||'fresh';
-       if(derivation){
+       if(derivation?.canvas){
          const context=output.getContext('2d');
          context.save();context.setTransform(1,0,0,1,0,0);
          context.drawImage(derivation.canvas,0,0,width,height);context.restore();
@@ -281,6 +311,13 @@ export function createAbstractionLoop({
        // The new law governs the NEW marks; islands of actual previous
        // brushwork survive as archaeological material. Even wildly
        // different mixers cannot erase them just to score high W novelty.
+       const painter=output.getContext('2d');
+       if(partial){
+         painter.save();painter.setTransform(1,0,0,1,0,0);
+         painter.beginPath();
+         for(const t of tilePlan.tiles)painter.rect(t.x,t.y,t.w,t.h);
+         painter.clip();
+       }
        const held=paintHeldMotifs(output,motifs,{cycle,opacity:.93});
        // Geometry survives separately from the original pixels: it
        // undergoes a NEW mark law and pigment material on each child.
@@ -290,6 +327,7 @@ export function createAbstractionLoop({
        const stable=paintStableObjects(output,previous,objects.objects,{
          generation:cycle,opacity:.74,max:3
        });
+       if(partial)painter.restore();
        // The word is painted into each competing canvas BEFORE its W/φ/H
        // analysis, so word-and-image composition belongs to the same artwork.
        const composite=postProcess(output,recipe,metrics,{cycle,branch:attempt});
@@ -299,7 +337,7 @@ export function createAbstractionLoop({
          application:derivation?.method||'new',
          markProgram:metrics.invented.stamps?recipe.markProgram.signature:'',
          interaction:composite?.interaction?.relation||''});
-       candidates.push({canvas:output,recipe,mixed,metrics,held,heritage,stable,derivation,composite,method,attempt});
+       candidates.push({canvas:output,recipe,mixed,metrics,held,heritage,stable,derivation,composite,method,attempt,dirty:tilePlan});
        if(currentStamp!==stamp)return;
      }
      const evaluated=rankNoveltyCandidates(candidates,{
