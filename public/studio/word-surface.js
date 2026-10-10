@@ -9,6 +9,7 @@ import {coupleWordGeometry,chooseGeometryRelation} from './geometry-coupling.js'
 import {validDirtyTiles} from './dirty-tiles.js';
 import {glyphTraits,typeGenome,validTypeGenome} from './type-genome.js';
 import {validDesignGenome,newDesignGenome,designBounds,paintDesignAccent} from './design-genome.js';
+import {assessGlyphMask,repairGlyphMask} from './type-legibility.js';
 const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
 const create=(w,h)=>{const c=document.createElement('canvas');c.width=w;c.height=h;return c;};
 const lum=(data,i)=>(.2126*data[i]+.7152*data[i+1]+.0722*data[i+2])/255;
@@ -85,7 +86,9 @@ function chooseBand(before,w,h,seed){
 }
 function buildMask(text,w,h,bounds,choice){
   const mask=create(w,h),ctx=mask.getContext('2d',{willReadFrequently:true});
+  const skeleton=create(w,h),base=skeleton.getContext('2d',{willReadFrequently:true});
   ctx.fillStyle='#fff';ctx.textBaseline='middle';ctx.textAlign='left';
+  base.fillStyle='#fff';base.textBaseline='middle';base.textAlign='left';
   const letters=[...text],maxWidth=w*(bounds.widthRatio||.92);
   const genome=choice.type;
   const bubble=genome.grammar==='bubble'||genome.grammar==='rounded';
@@ -93,9 +96,9 @@ function buildMask(text,w,h,bounds,choice){
   let size=Math.min(bounds.height*.77,w/Math.max(2,letters.length*.49));
   // Actual heavyweight glyph outlines are the source of the mutation.
   // Do not sample a randomly chosen thin or italic face for display copy.
-  const font=px=>(bubble?'900 system-ui':block?'900 sans-serif':
-    choice.family.face.replace(/900/,'900'))
-    .replace(/900/,'900 '+Math.max(10,Math.round(px))+'px');
+  const font=px=>(bubble?'700 system-ui':block?'900 sans-serif':
+    choice.family.face.replace(/900/,'850'))
+    .replace(/(700|850|900)/, '$1 '+Math.max(10,Math.round(px))+'px');
   const metrics=px=>{
     ctx.font=font(px);
     const glyphs=letters.map((ch,i)=>{
@@ -108,6 +111,7 @@ function buildMask(text,w,h,bounds,choice){
   };
   let layout=metrics(size);
   while(size>10&&layout.total>maxWidth){size*=.92;layout=metrics(size);}
+  base.font=font(size);
   const scale=Math.min(1,maxWidth/Math.max(1,layout.total)),
     centerY=bounds.top+bounds.height*.52,
     left=(bounds.centerX??w*.5)-layout.total*scale*.5;
@@ -115,7 +119,9 @@ function buildMask(text,w,h,bounds,choice){
   let at=0;
   for(const glyph of layout.glyphs){
     const x0=left+at*scale,x1=x0+glyph.advance*scale;
-    parts.push({x0,x1,shape:glyph.shape});
+    parts.push({x0,x1,char:glyph.ch,shape:glyph.shape,
+      top:Math.max(0,centerY-size*.73),
+      bottom:Math.min(h,centerY+size*.73)});
     ctx.save();ctx.translate(x0,centerY);
     ctx.scale(scale*glyph.shape.width,1);
     ctx.transform(1,0,glyph.shape.slant,1,0,0);
@@ -127,6 +133,12 @@ function buildMask(text,w,h,bounds,choice){
     ctx.strokeText(glyph.ch,0,0);
     ctx.fillText(glyph.ch,0,0);
     ctx.restore();
+    // Reference is the exact un-mutated glyph skeleton at identical
+    // coordinates. It is not an OCR guess or a second final text layer.
+    base.save();base.translate(x0,centerY);
+    base.scale(scale*glyph.shape.width,1);
+    base.transform(1,0,glyph.shape.slant,1,0,0);
+    base.fillText(glyph.ch,0,0);base.restore();
     at+=glyph.advance+layout.tracking;
   }
   // Every letter owns its own top and bottom morphology, including its
@@ -185,7 +197,12 @@ function buildMask(text,w,h,bounds,choice){
       pixels[row+x]=value;
     }
   }
-  return {pixels,size,font:ctx.font,parts,
+  const baseline=base.getImageData(0,0,w,h).data;
+  const reference=new Uint8ClampedArray(w*h);
+  for(let p=0;p<reference.length;p++)reference[p]=baseline[p*4+3];
+  const corrected=repairGlyphMask(reference,pixels,w,h,parts);
+  return {pixels:corrected.pixels,size,font:ctx.font,parts,
+    typeLegibility:corrected.evidence,
     anatomy:genome.grammar+'/'+genome.root+' / '+genome.generation};
 }
 export function paintWordsOnCanvas(canvas,words,{
@@ -212,6 +229,7 @@ export function paintWordsOnCanvas(canvas,words,{
   const before=accented?og.getImageData(0,0,w,h).data:initial;
   const built=buildMask(text,w,h,bounds,choice);
   const {pixels:letters,size,font,parts,anatomy}=built;
+  const letterQuality=[built.typeLegibility];
   // A single optional pipe-delimited input supports a real headline, detail
   // and action line without exposing a second screen full of ad controls.
   let glyphCount=parts.length;
@@ -221,7 +239,7 @@ export function paintWordsOnCanvas(canvas,words,{
       const supporting={top,height:Math.max(20,Math.round(h*(i===1?.115:.093))),
         centerX:bounds.centerX,widthRatio:Math.min(.82,bounds.widthRatio+.07)};
       const sub=buildMask(blocks[i].slice(0,32),w,h,supporting,choice);
-      glyphCount+=sub.parts.length;
+      glyphCount+=sub.parts.length;letterQuality.push(sub.typeLegibility);
       for(let p=0;p<letters.length;p++)letters[p]=
         Math.max(letters[p],Math.round(sub.pixels[p]*(i===1?.95:1)));
     }
@@ -238,6 +256,9 @@ export function paintWordsOnCanvas(canvas,words,{
   // a weave or carve. New pixels outside the original outline still flow.
   for(let p=0;p<mask.length;p++)
     if(letters[p]>200)mask[p]=Math.max(mask[p],Math.round(letters[p]*.94));
+  // Protect the actual legible foreground after scene-edge coupling too.
+  const geometryRepair=repairGlyphMask(letters,mask,w,h,parts);
+  if(geometryRepair.evidence.repaired)mask.set(geometryRepair.pixels);
   const colours=palette(before,w,h,choice);
   const rule=recipe?.mark?{...recipe,seed:seed>>>0}:
     makeRecipe({subject:'abstract',primary:'no_shading',mark:'hybrid',seed:seed>>>0});
@@ -260,8 +281,9 @@ export function paintWordsOnCanvas(canvas,words,{
     const x=p%w,y=(p/w)|0;
     let ink=0;
     if(coverage>0){
-      const stripe=Math.floor((x+y*.46)/Math.max(3,size*.18));
-      const role=(stripe+((choice.key>>>5)%3)+Math.floor(y/Math.max(5,size*.3)))%3;
+      // One intentional ink per word, not a new pigment every few pixels.
+      // Small banded colours used to make the letter look scrambled.
+      const role=(choice.key>>>5)%3;
       const band=layers[role],beforeLight=lum(scene,i);
       const materialLight=lum(pigment,i);
       // Resolve a genuine luminance contrast BEFORE applying chromatic ink.
@@ -270,6 +292,24 @@ export function paintWordsOnCanvas(canvas,words,{
       const inkHue=hue(band)??(choice.key%360);
       const strong=rgbOf(inkHue,.94,beforeLight>.52?.14:.86);
       ink=strong.map(v=>clamp(Math.round(v+(materialLight-.5)*9),0,255));
+      if(choice.type.grammar==='bubble'||choice.type.grammar==='rounded'){
+        // A real cartoon-balloon finish made from the FINAL glyph mask:
+        // dark/bright contours plus a restrained illuminated inner body.
+        // Counter openings remain real transparent geometry, never a
+        // second offset rendering of the same letters.
+        const r=Math.max(1,Math.min(4,Math.round(size*.042)));
+        const core=x>=r&&x+r<w&&y>=r&&y+r<h&&
+          mask[p-r]>190&&mask[p+r]>190&&
+          mask[p-r*w]>190&&mask[p+r*w]>190;
+        if(!core){
+          ink=ink.map(v=>clamp(Math.round(v*(beforeLight>.52?.48:1.09)+
+            (beforeLight>.52?0:8)),0,255));
+        }else{
+          const shine=y<bounds.top+bounds.height*.53?32:11;
+          ink=ink.map(v=>clamp(Math.round(v+(
+            beforeLight>.52?shine:shine*.45)),0,255));
+        }
+      }
       count++;
       if(Math.max(...ink)-Math.min(...ink)>48)chromatic++;
       contrast+=Math.abs(beforeLight-(ink[0]*.2126+ink[1]*.7152+
@@ -286,7 +326,15 @@ export function paintWordsOnCanvas(canvas,words,{
     for(const t of dirtyTiles)
       target.putImageData(out,0,0,t.x,t.y,t.w,t.h);
   }else target.putImageData(out,0,0);
-  return {painted:true,text:copy,count,
+  const typeLegibility={...letterQuality[0],
+    score:+Math.min(geometryRepair.evidence.score,
+      letterQuality.reduce((s,q)=>s+q.score,0)/letterQuality.length).toFixed(4),
+    readable:letterQuality.every(q=>q.readable)&&geometryRepair.evidence.readable,
+    repaired:letterQuality.some(q=>q.repaired)||geometryRepair.evidence.repaired,
+    counters:Math.min(letterQuality[0].counters,geometryRepair.evidence.counters),
+    spacing:Math.min(letterQuality[0].spacing,geometryRepair.evidence.spacing),
+    lines:letterQuality.length};
+  return {painted:true,text:copy,count,typeLegibility,
     legibility:count?+clamp(contrast/count*2.6,0,1).toFixed(4):0,
     design:{purpose:design.purpose,root:design.root,
       ornament:design.ornament,activity:bounds.activity??null},
