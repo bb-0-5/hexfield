@@ -76,6 +76,8 @@ jobs:
         run: node --experimental-default-type=module tests/creative-forgetting.test.mjs
       - name: Verify 327 five repeatable executable styles, source-fidelity and user abstraction dial
         run: node --experimental-default-type=module tests/style-presets.test.mjs
+      - name: Verify 328 real composition survives actual changes of mark material
+        run: node --experimental-default-type=module tests/style-preservation.test.mjs
 
       - name: Guard global renderer non-redundancy and evolving-seed genealogy
         run: node --experimental-default-type=module tests/global-nonredundancy.test.mjs

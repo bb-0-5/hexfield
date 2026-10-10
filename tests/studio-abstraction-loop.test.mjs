@@ -224,8 +224,22 @@ assert.ok(loop.state().donorGenerations.terrain>=1,
 assert.ok(loop.state().donorGenerations.lettering>=1,
  'Letter anatomy must develop a procedure lineage alongside the landscape');
 assert.ok(new Set(produced.map(p=>p.blend)).size>=4,'Auto mixing should rotate materially different renderers');
+// Change the paint MATERIAL on an already living canvas without
+// destroying its chosen subject. The full candidate must preserve the
+// current parent silhouette, not silently return to an all-hybrid reset.
+loop.once({style:'poster',abstraction:'gentle',mixMode:'auto',
+ subject:'sphere',speed:1500});
+await waitGeneration(11);
+assert.equal(produced.at(-1).recipe.styleId,'poster');
+assert.equal(produced.at(-1).recipe.mark,'cutout');
+assert.equal(produced.at(-1).recipe.rework,'none');
+assert.equal(produced.at(-1).metrics.preservedStructure?.applied,true);
+assert.ok(produced.at(-1).metrics.preservedStructure.meanRetention>=.65);
+assert.ok(processEvents.some(e=>e.type==='structure-retained'),
+ 'Conserving the composition must be part of the actual visible creative process');
+assert.equal(loop.state().style.abstraction,'gentle');
 loop.pause();
-assert.equal(loop.state().cycle,10);
+assert.equal(loop.state().cycle,11);
 assert.equal(loop.state().running,false);
 assert.equal(loop.state().history.length,10);
 loop.dispose();

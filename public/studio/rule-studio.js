@@ -6,6 +6,7 @@ import {SUBJECTS,LAWS,MARKS,REWORKS,makeRecipe,mutateRecipe,drawReality,applyRul
   noteRuleVerdict,noteLineage,describeRecipe,buildRulePrompt,RULE_STORE} from './rule-engine.js';
 import {createAbstractionLoop} from './abstraction-loop.js';
 import {renderRuleLive} from './live-rule-execution.js';
+import {conserveComposition,previewRestyling} from './style-preservation.js';
 import {STYLE_PRESETS,ABSTRACTION_LEVELS,nextStyle,styleById,
  styleRecipe,styleCaption} from './style-presets.js';
 import {evolveMarkProgram,rememberedMarkPrograms,rememberMarkVerdict} from './mark-program.js';
@@ -170,7 +171,8 @@ export function initRuleStudio(){
        progress.phase==='candidate'?'COMPLETE CANDIDATE / JUDGING':
        progress.phase==='accepted'?'SELECTED / ACTUAL ARTWORK':
        progress.phase==='living-identity'?
-          (progress.kind==='form'?'LIVING FORM / CARRYING ITS PAST':
+          (progress.kind==='structure'?'SAME PAINTING / NEW BRUSHWORK':
+           progress.kind==='form'?'LIVING FORM / CARRYING ITS PAST':
            progress.kind==='rediscovered'?'FORGOTTEN IDEA / TESTING RETURN':
            progress.kind==='recall-rejected'?'FORGOTTEN IDEA / NOT YET VALUABLE':
            progress.kind==='FORGOT'?'CREATIVE FORGETTING / LETTING GO':
@@ -300,7 +302,11 @@ export function initRuleStudio(){
         live.livingIdentity({painting:event.canvas,
           change:{type:event.event.type,
             root:loop.state().identity.root,id:event.event.id}});
-      }else if(event.type==='regional-decision'){
+      }else if(event.type==='structure-retained'){
+       live.livingIdentity({painting:event.canvas,
+         change:{type:'structure',root:'same-composition',
+           id:Math.round((event.preservation?.meanRetention||0)*100)+'% original'}});
+     }else if(event.type==='regional-decision'){
        live.regionalDecision({painting:event.canvas,decision:event.decision});
      }else if(event.type==='composition-vote'){
        live.compositionVote({painting:event.canvas,
@@ -323,6 +329,10 @@ export function initRuleStudio(){
        survival,heritage,trials,derivation,objectMemory,renderBudget,dirty}=result;
      const before=current?.canvas||null;
      lastOrigin='loop';
+     // Each accepted automatic painting becomes the NEXT actual source
+     // when the user chooses to change only its brushwork.
+     styleToken++;styleAnchor=null;styleLast=null;
+     $('ruleRepeatStyle').disabled=true;
      current={recipe,canvas,judged:false,metrics};
      unlettered=result.composite?.clean||null;
      if(result.composite?.interaction){
@@ -620,7 +630,12 @@ export function initRuleStudio(){
        const sourceRecipe=styleRecipe({style:styleId,
          abstraction:strength,seed:styleSeed,subject:styleSubject,
          generation:styleGeneration});
-       const original=await sourceFor(sourceRecipe);
+       // Current artwork is the reference the artist intends to KEEP.
+       // Previously this ALWAYS fetched a fresh reality painting and
+       // discarded the actual canvas when changing style.
+       // Prefer the unlettered accepted canvas to avoid doubling glyphs.
+       const original=current?.canvas?
+         (unlettered||current.canvas):await sourceFor(sourceRecipe);
        if(token!==styleToken)return;
        styleAnchor=cleanCopy(original);
      }
@@ -628,7 +643,7 @@ export function initRuleStudio(){
      const fixedSeed=evolveSeed(styleSeed,1,1,'comparable-style-327');
      const recipe=styleRecipe({style:styleId,abstraction:strength,
        seed:fixedSeed,subject:styleSubject,generation:styleGeneration});
-     const target=canvasOf();
+     const target=canvasOf(),study=canvasOf();
      text('ruleStyleStatus',styleCaption({
        style:styleId,abstraction:strength,seed:fixedSeed
      })+' · painting the SAME reference · 1 of 5 reproducible modes.');
@@ -639,18 +654,31 @@ export function initRuleStudio(){
        rowsPerTurn:3,isCancelled:()=>token!==styleToken,
        onProgress:p=>{
          if(token!==styleToken)return;
-         live.work({painting:target,completedRows:p.completedRows,
+         // Reveal the REAL executed strokes a few rows at a time over
+         // the original composition, not a new blank wallpaper.
+         previewRestyling(styleAnchor,target,study,{
+           completedRows:p.completedRows,cell:recipe.rework==='abstract_masses'?20:
+             recipe.mark==='cutout'?14:recipe.mark==='carve'?11:9,
+           level:strength
+         });
+         live.work({painting:study,completedRows:p.completedRows,
            rows:p.rows,strokes:p.strokes,attempt:index});
        }
      });
      if(token!==styleToken||painted.cancelled)return;
+     const preserved=conserveComposition(styleAnchor,target,{level:strength});
+     painted.metrics.preservedStructure=preserved;
+     // The final style is evaluated on true modified pixels; baseline
+     // composition retains its edge geometry across comparisons.
      realitySource=styleAnchor;
      present(recipe,styleAnchor,false,{canvas:target,metrics:painted.metrics});
      styleLast={id:styleId,seed:fixedSeed,abstraction:strength};
      $('ruleRepeatStyle').disabled=false;
      text('ruleStyleStatus',styleCaption({
        style:styleId,abstraction:strength,seed:fixedSeed
-     })+' · SAME SOURCE + SEED FOR ALL FIVE STYLES · REPEAT reproduces pixels with unchanged words. '+
+     })+' · SAME ARTWORK AND SEED · PHYSICAL OUTLINES PRESERVED ('+
+       Math.round((preserved.meanRetention||0)*100)+'% source retention) · '+
+       'REPEAT reproduces pixels with unchanged words. '+
        'Use PAUSE / RESUME for continuous painting in this style.');
    }catch(error){
      status('Style change could not paint: '+safe(error.message||error));
