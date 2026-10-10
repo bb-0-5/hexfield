@@ -19,6 +19,10 @@ globalThis.localStorage={
 globalThis.Image=Image;
 const {mixSources,cloneCanvas,publishSource,CROSS_STUDIO_KEYS}=await import('../public/studio/source-mixer.js');
 const {createAbstractionLoop,visualDelta}=await import('../public/studio/abstraction-loop.js');
+const {setGoldenMode}=await import('../public/studio/golden-taste.js');
+// This test exercises deliberate application/mixer exploration. Strict φ
+// qualification precedence is verified independently in golden tests.
+setGoldenMode('guide');
 
 function solid(colour){
  const canvas=new Canvas(200,120);
@@ -78,6 +82,9 @@ await waitGeneration(2);
 assert.ok(produced[1].sources.includes('parent'),'Second pass must use output of first pass');
 assert.equal(produced[1].recipe.parentId,produced[0].recipe.id);
 assert.ok(produced[1].novelty>0,'Recursive rework must modify pixels');
+assert.ok(produced[1].derivation?.retained>=0,
+  'The second frame must be physically derived from the first frame');
+assert.equal(produced[1].recipe.application,produced[1].derivation.method);
 assert.ok(produced[1].trials.length>=2,'Process theatre must use multiple truly rendered alternatives');
 assert.equal(produced[1].trials.filter(t=>t.selected).length,1,
  'Exactly one actually tested method should be adopted');
@@ -99,6 +106,9 @@ for(let pass=3;pass<=10;pass++){
   assert.ok(produced.at(-1).sources.includes('lettering'),
     'Pass '+pass+' must retain an independent lettering donor');
   assert.equal(produced.at(-1).recipe.parentId,produced.at(-2).recipe.id);
+  assert.ok(produced.at(-1).trials.some(t=>t.label.startsWith(
+    produced.at(-2).recipe.application+' /')),
+    'Each generation should trial retaining its parent application style');
   assert.notEqual(produced.at(-1).recipe.seed,produced.at(-2).recipe.seed,
     'Generation '+pass+' must branch from the previous seed, not repeat it');
   assert.ok(produced.at(-1).nonredundancy?.candidates>=2,
