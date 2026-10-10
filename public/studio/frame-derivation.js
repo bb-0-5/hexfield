@@ -92,5 +92,5 @@ export function deriveBetweenFrames(parent,proposal,{
     interwoven:hybrid/count,changed:changed/count,
     parentContribution:sourceContribution/count,
     // Labels describe measurable pixel operations, not semantic decisions.
-    label:chosen+' / '+Math.round(retained/count*100)+'% intact parent pixels'};
+    label:chosen+' / '+Math.round(retained/count*100)+'% parent-dominant area'};
 }
