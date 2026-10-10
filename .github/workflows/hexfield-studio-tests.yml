@@ -88,6 +88,9 @@ jobs:
       - name: Verify 331 inherited design templates for promotion, advertising and logos
         run: node --experimental-default-type=module tests/design-templates.test.mjs
 
+      - name: Verify 332 readable bubble/block fonts and no duplicate canvas lettering
+        run: node --experimental-default-type=module tests/legible-single-type.test.mjs
+
       - name: Guard global renderer non-redundancy and evolving-seed genealogy
         run: node --experimental-default-type=module tests/global-nonredundancy.test.mjs
       - name: Verify component-level font anatomy and mutable logo geometry
