@@ -89,7 +89,7 @@ assert.equal(rankDesignCandidates([qualified,readable],
 assert.equal(rankDesignCandidates([{...qualified,golden:{qualifies:true}},
  {...readable,golden:{qualifies:false}}],{purpose:'promo',strict:true})[0].
  golden.qualifies,true,'Strict golden qualification is authoritative');
-const html=readFileSync('public/index.html','utf8');
+const html=readFileSync('public/studio.html','utf8');
 const ctrl=readFileSync('public/studio/rule-studio.js','utf8');
 const loop=readFileSync('public/studio/abstraction-loop.js','utf8');
 assert.match(html,/id="rulePurpose"/);

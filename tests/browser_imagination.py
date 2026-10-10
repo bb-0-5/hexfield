@@ -5,7 +5,7 @@ from io import BytesIO
 import base64,re,json,sys
 root=Path(__file__).resolve().parents[1]/'public'
 img=Image.new('RGB',(400,300),'#d6c3b0');ImageDraw.Draw(img).polygon([(0,260),(150,20),(400,250)],fill='#2d6a6a');bio=BytesIO();img.save(bio,format='PNG');encoded=base64.b64encode(bio.getvalue()).decode()
-s=(root/'index.html').read_text();s=re.sub(r'<script[^>]+src="studio/studio-controller\.js"[^>]*></script>','',s)
+s=(root/'studio.html').read_text();s=re.sub(r'<script[^>]+src="studio/studio-controller\.js"[^>]*></script>','',s)
 s=re.sub(r'<link[^>]+stylesheet[^>]*>','',s)
 js_names=['evolution.js','vision.js','landscape.js','lettering.js','imagination.js','studio-controller.js']
 with sync_playwright() as p:

@@ -38368,12 +38368,20 @@ let contourVersion = 0;
  * The general painter sizes its brushes to the canvas, so a small or far-off
  * thing - a house down the street, a boat on the horizon - is only ever
  * touched by brushes as big as it is, and comes out as mush while the plan
- * under it is perfectly clear. So each named thing is painted like the
- * letters are: with its own brushes, sized to the thing (a fifth, a tenth,
- * a twentieth of its short side), laid only inside its own shape and along
- * its forms, in the painting's manner - then its silhouette is drawn round
- * in its own edge colour. Afterwards the big brushes leave it alone. */
+ * under it is perfectly clear. So each named thing is painted with its own
+ * brushes, sized to it (a fifth, a tenth, a twentieth of its short side), the
+ * way a painter makes a form without drawing round it:
+ *   blob    its whole area laid in one tone, its own average colour, with a
+ *           brush a fifth of its size, a little over its edge;
+ *   carve   the ground painted back in round it, from outside, so its edge
+ *           is cut by the ground, never drawn;
+ *   tone    its two tones - the side turned to the light and the side turned
+ *           away (HexfieldVisual formItem) - with a brush a tenth of it;
+ *   detail  its drop shadows and small parts with a brush a twentieth of it,
+ *           and its thin limbs one stroke each.
+ * Afterwards the big brushes leave it alone. */
 const THING_PASSES = [1 / 5, 1 / 10, 1 / 20];
+const THING_BLOB = 0, THING_CARVE = 1, THING_TONE = 2, THING_DETAIL = 3;
 /* Foliage: a leafy thing's canopy (its parts with the "leafy" texture, or a
  * grown plant's leaves) painted again as leaves - short dabs of the
  * reference's own colour, each turned out from the middle of its clump the
@@ -38381,9 +38389,9 @@ const THING_PASSES = [1 / 5, 1 / 10, 1 / 20];
  * outline is broken and lacy instead of one smooth blob. A canopy in the
  * plan is mostly one flat colour, so copying it made a blob: the leaves are
  * lighter on the side the light comes from and darker away from it, each a
- * little different. Between the last pass and the silhouette. */
-const THING_FOLIAGE = THING_PASSES.length;
-const THING_SILHOUETTE = THING_PASSES.length + 1;
+ * little different. After the detail, last. */
+const THING_FOLIAGE = 4;
+const THING_LAST = THING_FOLIAGE;
 const FOLIAGE = { leaf: 1 / 26, minLeaf: 1.6, spread: 0.7, light: 0.2, vary: 0.12, rim: 0.35 };
 function foliageBoxes(item) {
   const b = item.box, entry = item.entry;
@@ -38476,30 +38484,74 @@ function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0, to = 
       return mx >= 0 && my >= 0 && mx < mask.w && my < mask.h && mask.alpha[my * mask.w + mx] > 200;
     };
     const short = Math.max(4, Math.min(item.box.w, item.box.h));
-    if (pass === THING_SILHOUETTE) {
-      // A grown thing's thin parts first: each leg, tail and neck bone one
-      // stroke of its own width (Brushwork that follows anatomy).
-      if (anatomy?.bones && item.entry.anatomy?.length) strokes.push(...anatomyBoneStrokes(item, ref, W, H, rng, finish));
-      // Round its edge in its own colour, so the silhouette stays crisp.
-      if (planManner()?.reference?.contour) return; // the ink pass outlines it
-      const edge = new Uint8Array(mask.w * mask.h);
-      for (let y = 1; y < mask.h - 1; y++) {
-        for (let x = 1; x < mask.w - 1; x++) {
-          const i = y * mask.w + x;
-          if (mask.alpha[i] > 200 && (mask.alpha[i - 1] <= 200 || mask.alpha[i + 1] <= 200 ||
-              mask.alpha[i - mask.w] <= 200 || mask.alpha[i + mask.w] <= 200)) edge[i] = 1;
+    if (pass === THING_BLOB) {
+      // Its own tone: the plan's colour averaged over its shape.
+      let r = 0, g = 0, bl = 0, n = 0;
+      for (let y = 0; y < mask.h; y += 2) {
+        for (let x = 0; x < mask.w; x += 2) {
+          if (mask.alpha[y * mask.w + x] <= 200) continue;
+          const c = at(ref, mask.x0 + x, mask.y0 + y);
+          r += c[0]; g += c[1]; bl += c[2]; n++;
         }
       }
-      const width = Math.max(1.5, short / 30);
-      for (const line of traceEdgeLines(edge, mask.w, mask.h)) {
-        const points = line.map(([x, y]) => [x + mask.x0, y + mask.y0]);
-        const mid = points[Math.floor(points.length / 2)];
-        strokes.push(finish({ points, width: width * (0.85 + rng() * 0.3),
-          colour: at(ref, mid[0], mid[1]).map((c) => Math.max(0, Math.min(255, Math.round(c + (rng() - 0.5) * 6)))),
-          bristle: rng() }));
+      if (!n) return;
+      const tone = [r / n, g / n, bl / n];
+      const radius = Math.max(2, short * THING_PASSES[0]), spill = radius * 0.35;
+      // On its shape or a little over its edge: the ground cuts it back after.
+      const near = (x, y) => inside(x, y) || inside(x - spill, y) || inside(x + spill, y) || inside(x, y - spill) || inside(x, y + spill);
+      const cell = Math.max(2, Math.round(radius * 0.9));
+      for (let cy = mask.y0; cy < mask.y0 + mask.h; cy += cell) {
+        for (let cx = mask.x0; cx < mask.x0 + mask.w; cx += cell) {
+          const sx = cx + rng() * cell, sy = cy + rng() * cell;
+          if (!inside(sx, sy)) continue;
+          // A few brush widths the way its body runs.
+          const a = (Number(strokePainter.settleAngle) || 0) + (rng() - 0.5) * 0.6;
+          const [dx, dy] = wrapDirection(sx, sy, Math.cos(a), Math.sin(a), 0.8);
+          const points = [[sx, sy]];
+          let x = sx, y = sy;
+          for (let step = 1; step < 4; step++) {
+            x += dx * radius; y += dy * radius;
+            if (!near(x, y)) break;
+            points.push([x, y]);
+          }
+          strokes.push(finish({ points, width: radius * 2 * (0.9 + rng() * 0.25),
+            colour: tone.map((c) => Math.max(0, Math.min(255, Math.round(c + (rng() - 0.5) * 10)))), bristle: rng() }));
+        }
       }
       return;
     }
+    if (pass === THING_CARVE) {
+      // The ground painted back in round it, from outside, along its edge -
+      // only where the canvas is off the ground there (where the blob went over).
+      const radius = Math.max(1.5, short / 16), step = Math.max(1, Math.round(radius * 0.8));
+      for (let my = 2; my < mask.h - 2; my += step) {
+        for (let mx = 2; mx < mask.w - 2; mx += step) {
+          if (mask.alpha[my * mask.w + mx] <= 200) continue;
+          // On its edge, and which way is out.
+          let ox = 0, oy = 0;
+          for (const [ex, ey] of [[2, 0], [-2, 0], [0, 2], [0, -2], [2, 2], [-2, 2], [2, -2], [-2, -2]]) {
+            if (mask.alpha[(my + ey) * mask.w + mx + ex] <= 200) { ox += ex; oy += ey; }
+          }
+          const ol = Math.hypot(ox, oy);
+          if (!ol) continue;
+          ox /= ol; oy /= ol;
+          // Clear of it: the brush's near side must not reach in.
+          const clear = (x, y) => !inside(x, y) && !inside(x - ox * radius * 0.95, y - oy * radius * 0.95);
+          const x = mask.x0 + mx + ox * radius * 1.3, y = mask.y0 + my + oy * radius * 1.3;
+          if (!clear(x, y)) continue;
+          const ground = at(ref, x, y);
+          if (diff(at(current, x, y), ground) < 16) continue;
+          const points = [[-1, 0, 1].map((k) => [x - oy * radius * k, y + ox * radius * k])].flat().filter(([px, py]) => clear(px, py));
+          if (!points.length) continue;
+          strokes.push(finish({ points, width: radius * 1.8 * (0.9 + rng() * 0.2),
+            colour: ground.map((c) => Math.max(0, Math.min(255, Math.round(c + (rng() - 0.5) * 6)))), bristle: rng() }));
+        }
+      }
+      return;
+    }
+    // Its thin limbs first: each leg, tail and neck bone one stroke of its own
+    // width (Brushwork that follows anatomy).
+    if (pass === THING_DETAIL && anatomy?.bones && item.entry.anatomy?.length) strokes.push(...anatomyBoneStrokes(item, ref, W, H, rng, finish));
     if (pass === THING_FOLIAGE) {
       const boxes = foliageBoxes(item);
       if (!boxes.length) return;
@@ -38537,13 +38589,15 @@ function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0, to = 
       }
       return;
     }
-    const radius = Math.max(1.5, short * THING_PASSES[pass]);
+    // The two tones with the middle brush, the detail with the finest.
+    const size = pass === THING_TONE ? 1 : 2;
+    const radius = Math.max(1.5, short * THING_PASSES[size]);
     const cell = Math.max(2, Math.round(radius));
-    const tolerance = pass === 0 ? 8 : 14;
-    const maxLength = Math.max(3, Math.round([7, 6, 4][pass] * (Number(brush?.length) || 1)));
+    const tolerance = 14;
+    const maxLength = Math.max(3, Math.round([7, 6, 4][size] * (Number(brush?.length) || 1)));
     // The brush's whole width kept inside the shape (its sides at 0.7 of a
-    // radius let the big passes spill blocks over the silhouette).
-    const side = radius * (pass < 2 ? 1 : 0.7);
+    // radius let the bigger brush spill blocks over the silhouette).
+    const side = radius * (size < 2 ? 1 : 0.7);
     const jitter = Number(brush?.jitter) >= 0 ? Number(brush.jitter) : 8;
     const first = strokes.length;
     for (let cy = mask.y0; cy < mask.y0 + mask.h; cy += cell) {
@@ -38551,9 +38605,9 @@ function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0, to = 
         const sx = cx + rng() * cell, sy = cy + rng() * cell;
         if (!inside(sx, sy)) continue;
         const colour = at(ref, sx, sy);
-        if (pass > 0 && diff(at(current, sx, sy), colour) < tolerance) continue;
+        if (diff(at(current, sx, sy), colour) < tolerance) continue;
         // The brush starts only where it fits: a thin part waits for a finer one.
-        if (pass < 2) {
+        if (size < 2) {
           let fits = 0;
           for (const [ox, oy] of [[side, 0], [-side, 0], [0, side], [0, -side]]) if (inside(sx + ox, sy + oy)) fits++;
           if (fits < 4) continue;
@@ -38580,13 +38634,13 @@ function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0, to = 
           x += dx * radius; y += dy * radius;
           // Inside its own shape - centre, both sides of the brush and, for
           // the big passes, the tip it ends in - and inside its own colour.
-          if (!inside(x, y) || (pass < 2 && (!inside(x - dy * side, y + dx * side) || !inside(x + dy * side, y - dx * side) ||
+          if (!inside(x, y) || (size < 2 && (!inside(x - dy * side, y + dx * side) || !inside(x + dy * side, y - dx * side) ||
             !inside(x + dx * radius, y + dy * radius)))) break;
           if (diff(at(ref, x, y), colour) > 34) break;
           points.push([x, y]);
           lastDx = dx; lastDy = dy;
         }
-        if (brush?.round && pass < 2 && points.length < 2) continue;
+        if (brush?.round && size < 2 && points.length < 2) continue;
         const stroke = finish({
           points, width: radius * 2 * (0.85 + rng() * 0.3),
           colour: colour.map((c) => Math.max(0, Math.min(255, Math.round(c + (rng() - 0.5) * jitter)))),
@@ -38627,7 +38681,7 @@ function paintThingStrokes(result, scene, pass) {
     minSize: strokes.length ? Math.min(...strokes.map((x) => x.width)) : 0,
     maxSize: strokes.length ? Math.max(...strokes.map((x) => x.width)) : 0,
     nonRedundancy: 0.5, count: (Number(result.paintBrush?.count) || 0) + strokes.length,
-    wordHand: (planStyle()?.label || "") + " · things " + (pass === THING_SILHOUETTE ? "silhouette" : pass === THING_FOLIAGE ? "foliage" : "pass " + (pass + 1)),
+    wordHand: (planStyle()?.label || "") + " · things " + (["blob", "carve", "two tones", "detail", "foliage"][pass] || "pass " + (pass + 1)),
   };
   if (!strokes.length) {
     if (activePaintAnimation === animation) activePaintAnimation = 0;
@@ -38886,67 +38940,6 @@ function paintContourInk(result, plan) {
     source: "ink-line", lifts: 0, smudges: 0, minSize: width, maxSize: width,
     nonRedundancy: 0.5, count: (Number(result.paintBrush?.count) || 0) + strokes.length,
     wordHand: (plan.manner?.name || "") + " · ink",
-  };
-  if (!strokes.length) {
-    if (activePaintAnimation === animation) activePaintAnimation = 0;
-    markPaintTimingCompleted(result);
-    return Promise.resolve(false);
-  }
-  strokeLogBegin(vctx.getImageData(0, 0, W, H).data, W, H);
-  return animateLoggedStrokes(result, strokes, animation);
-}
-
-/* A face's features, inked: once the brush has blocked a face in (its
- * features are small, and a broad brush loses them), its ink lines - lids,
- * brows, nose, mouth, whiskers, its outline - are laid as ink strokes, and
- * its small filled parts - eyes, pupils, glints, teeth, tongue, nose - as
- * tight dabs in their own colours, from the face's own drawing. */
-// (And its solid blacks - black hair, a cap's band - filled, as your hand fills them.)
-const FACE_FEATURES = new Set(["eye", "pupil", "white", "mouth", "tongue", "nose", "blush", "ink"]);
-function faceInkStrokes(plan) {
-  const strokes = [];
-  const rgbOf = (hsl) => hslToRgb(((hsl?.[0] || 0) % 360) / 360, (hsl?.[1] || 0) / 100, (hsl?.[2] || 0) / 100);
-  for (const item of plan.scene?.items || []) {
-    const e = item.entry, b = item.box;
-    if (e?.grower !== "face" || !b || item.lettering) continue;
-    const at = ([u, v]) => [b.x + u * b.w, b.y + v * b.h];
-    for (const part of e.parts || []) {
-      const colour = rgbOf(e.colours?.[part.colour]);
-      if (part.shape === "line" && part.colour === "ink" && part.pts?.length > 1) {
-        strokes.push({ points: part.pts.map(at), width: Math.max(1.2, part.width * b.w), colour, alpha: 1, plain: true, round: true, bristle: 0.5 });
-      } else if (part.shape === "ellipse" && FACE_FEATURES.has(part.colour)) {
-        const [x, y] = at([part.box[0] + part.box[2] / 2, part.box[1] + part.box[3] / 2]);
-        strokes.push({ points: [[x, y]], width: Math.max(1.5, Math.min(part.box[2] * b.w, part.box[3] * b.h)), colour, alpha: 0.9, plain: true, round: true, bristle: 0.5 });
-      } else if (part.shape === "poly" && FACE_FEATURES.has(part.colour) && part.pts?.length > 2) {
-        // Filled by short level runs across it, a dab's width apart.
-        const pts = part.pts.map(at);
-        const ys = pts.map((p) => p[1]), y0 = Math.min(...ys), y1 = Math.max(...ys);
-        const step = Math.max(1.2, (y1 - y0) / 6);
-        for (let y = y0 + step / 2; y < y1; y += step) {
-          const xs = [];
-          for (let i = 0; i < pts.length; i++) {
-            const [ax, ay] = pts[i], [bx, by] = pts[(i + 1) % pts.length];
-            if ((ay <= y && by > y) || (by <= y && ay > y)) xs.push(ax + (y - ay) / (by - ay) * (bx - ax));
-          }
-          xs.sort((a, c) => a - c);
-          for (let i = 0; i + 1 < xs.length; i += 2) strokes.push({ points: [[xs[i], y], [xs[i + 1], y]], width: step * 1.35, colour, alpha: 0.95, plain: true, round: true, bristle: 0.5 });
-        }
-      }
-    }
-  }
-  return strokes;
-}
-function paintFaceInk(result, plan) {
-  const W = view.width, H = view.height;
-  markPaintTimingStarted(result);
-  const animation = ++activePaintAnimation;
-  const strokes = faceInkStrokes(plan);
-  result.paintStrokeLayer = strokePainter.layer;
-  result.paintStrokeCount = strokes.length;
-  result.paintBrush = {
-    families: ["ink"], textures: ["flat"], signatures: [], lineageObjects: [], source: "face-ink", lifts: 0, smudges: 0,
-    minSize: 1, maxSize: 8, nonRedundancy: 0.5, count: (Number(result.paintBrush?.count) || 0) + strokes.length,
-    wordHand: (plan.manner?.name || "") + " · features",
   };
   if (!strokes.length) {
     if (activePaintAnimation === animation) activePaintAnimation = 0;
@@ -39818,7 +39811,12 @@ function choosePlanManner(plan, composed, width, height, params) {
   const small = paintBuffer(sw, sh);
   const sctx = small.getContext("2d", { willReadFrequently: true });
   const leans = Craft.wordLeans(params?.__hexfieldWords?.text || "", params?.__hexfieldWords?.axes || {});
-  const scores = chooseByTaste(Craft.KEYS, {
+  /* Manners that are outlines - "bold line" (one heavy, even line round every
+   * shape) and "drawn" (ink on every edge) - are not chosen: a painting's
+   * things are told apart by light and shadow, never by a line round them
+   * (HexfieldVisual formItem). Their code stays. */
+  const keys = Craft.KEYS.filter((key) => !(Craft.manner(key)?.reference?.contour > 0));
+  const scores = chooseByTaste(keys, {
     // (A phone does not taste drafts of the manners: two of them held the page
     // for a third of a second as each painting began. Votes and how each
     // manner's paintings have scored choose it there.)
@@ -40994,21 +40992,25 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
   } : () => valued * tolerance;
   // How far each cell is from the reference: whether it is still to be painted.
   const cgw = Math.ceil(width / cell), cellError = new Float32Array(cgw * Math.ceil(height / cell));
+  // (Summed as whole differences of the three channels, a third taken once per cell.)
   for (let cy = 0; cy < height; cy += cell) {
+    const yEnd = Math.min(height, cy + cell);
     for (let cx = 0; cx < width; cx += cell) {
       cells++;
+      const xEnd = Math.min(width, cx + cell);
       let sum = 0, n = 0, worst = -1, wx = cx, wy = cy;
-      for (let y = cy; y < Math.min(height, cy + cell); y += sample) {
-        for (let x = cx; x < Math.min(width, cx + cell); x += sample) {
-          const o = (y * width + x) * 4;
-          const e = (Math.abs(current[o] - ref[o]) + Math.abs(current[o + 1] - ref[o + 1]) + Math.abs(current[o + 2] - ref[o + 2])) / 3;
+      for (let y = cy; y < yEnd; y += sample) {
+        for (let x = cx, o = (y * width + cx) * 4, step = sample * 4; x < xEnd; x += sample, o += step) {
+          const d0 = current[o] - ref[o], d1 = current[o + 1] - ref[o + 1], d2 = current[o + 2] - ref[o + 2];
+          const e = (d0 < 0 ? -d0 : d0) + (d1 < 0 ? -d1 : d1) + (d2 < 0 ? -d2 : d2);
           sum += e; n++;
           if (e > worst) { worst = e; wx = x; wy = y; }
         }
       }
-      cellError[((cy / cell) | 0) * cgw + ((cx / cell) | 0)] = n ? sum / n : 0;
+      const error = n ? sum / (3 * n) : 0;
+      cellError[((cy / cell) | 0) * cgw + ((cx / cell) | 0)] = error;
       if (guarded(wx, wy)) continue;
-      if (n && sum / n > toleranceAt(wx, wy)) starts.push({ x: wx, y: wy, error: sum / n });
+      if (n && error > toleranceAt(wx, wy)) starts.push({ x: wx, y: wy, error });
     }
   }
   /* In the critic's turn the brushes work only where it asked - a painting
@@ -41534,22 +41536,65 @@ function runOutcome(plan, vote) {
  * and the lettering keep their own brushes). Made once per picture and size. */
 const intentCache = { source: null, maps: new Map() };
 function intentReference(ref, width, height, radius) {
-  if (typeof document === "undefined" || ref.length !== width * height * 4) return ref;
+  if (ref.length !== width * height * 4) return ref;
   if (intentCache.source !== ref) { intentCache.source = ref; intentCache.maps.clear(); }
   const k = Math.max(4, Math.round(Math.max(radius * 3, Math.min(width, height) / 40)));
   let map = intentCache.maps.get(k);
   if (map) return map;
-  const full = paintBuffer(width, height), fctx = full.getContext("2d", { willReadFrequently: true });
-  fctx.putImageData(new ImageData(new Uint8ClampedArray(ref), width, height), 0, 0);
+  /* Each block of k x k averaged, then spread back smoothly between the
+   * block middles. (Done on canvases - copied in, drawn down, drawn up and
+   * read back - it was a third of a second of a phone's batch, made afresh
+   * for each brush size whenever the aim had changed.) */
   const sw = Math.max(2, Math.round(width / k)), sh = Math.max(2, Math.round(height / k));
-  const small = paintBuffer(sw, sh), sctx = small.getContext("2d");
-  sctx.imageSmoothingEnabled = true; sctx.imageSmoothingQuality = "high";
-  sctx.drawImage(full, 0, 0, sw, sh);
-  fctx.imageSmoothingEnabled = true; fctx.imageSmoothingQuality = "high";
-  fctx.clearRect(0, 0, width, height);
-  fctx.drawImage(small, 0, 0, width, height);
-  map = fctx.getImageData(0, 0, width, height).data;
-  small.width = 0; full.width = 0;
+  // The block each column and row falls in, and how many pixels each block holds.
+  const colOf = new Int32Array(width), cols = new Float32Array(sw), rows = new Float32Array(sh);
+  for (let x = 0; x < width; x++) cols[colOf[x] = Math.min(sw - 1, Math.floor(x * sw / width))]++;
+  const mean = new Float32Array(sw * sh * 3), line = new Float32Array(sw * 3);
+  for (let y = 0, o = 0; y < height; ) {
+    const by = Math.min(sh - 1, Math.floor(y * sh / height));
+    line.fill(0);
+    for (; y < height && Math.min(sh - 1, Math.floor(y * sh / height)) === by; y++) {
+      rows[by]++;
+      for (let x = 0; x < width; x++, o += 4) {
+        const q = colOf[x] * 3;
+        line[q] += ref[o]; line[q + 1] += ref[o + 1]; line[q + 2] += ref[o + 2];
+      }
+    }
+    for (let bx = 0, q = by * sw * 3; bx < sw; bx++) {
+      const n = cols[bx] * rows[by] || 1;
+      for (let ch = 0; ch < 3; ch++, q++) mean[q] = line[bx * 3 + ch] / n;
+    }
+  }
+  // Where each pixel falls between the block middles.
+  const spread = (size, cells) => {
+    const lo = new Int32Array(size), hi = new Int32Array(size), t = new Float32Array(size);
+    for (let i = 0; i < size; i++) {
+      const s = Math.max(0, Math.min(cells - 1, (i + 0.5) * cells / size - 0.5));
+      lo[i] = Math.floor(s); hi[i] = Math.min(cells - 1, lo[i] + 1); t[i] = s - lo[i];
+    }
+    return { lo, hi, t };
+  };
+  const across = spread(width, sw), down = spread(height, sh);
+  // Across first, each row of blocks to the full width; then down between two of those.
+  const wide = new Float32Array(sh * width * 3);
+  for (let by = 0; by < sh; by++) {
+    const src = by * sw * 3;
+    for (let x = 0, q = by * width * 3; x < width; x++) {
+      const a = src + across.lo[x] * 3, b = src + across.hi[x] * 3, tx = across.t[x];
+      for (let ch = 0; ch < 3; ch++, q++) wide[q] = mean[a + ch] + (mean[b + ch] - mean[a + ch]) * tx;
+    }
+  }
+  map = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0, o = 0; y < height; y++) {
+    const r0 = down.lo[y] * width * 3, r1 = down.hi[y] * width * 3, ty = down.t[y];
+    for (let x = 0, q = 0; x < width; x++, o += 4, q += 3) {
+      const a = r0 + q, b = r1 + q;
+      map[o] = wide[a] + (wide[b] - wide[a]) * ty;
+      map[o + 1] = wide[a + 1] + (wide[b + 1] - wide[a + 1]) * ty;
+      map[o + 2] = wide[a + 2] + (wide[b + 2] - wide[a + 2]) * ty;
+      map[o + 3] = 255;
+    }
+  }
   intentCache.maps.set(k, map);
   return map;
 }
@@ -41931,28 +41976,47 @@ function directedReference(ref, width, height) {
   if (directedCache.source === ref && directedCache.dir === dir) return directedCache.map;
   const out = new Uint8ClampedArray(ref);
   let soft = null;
+  const ACT = { darken: 0, lighten: 1, warm: 2, cool: 3, saturate: 4, mute: 5, simplify: 6 };
   for (const r of dir.regions) {
     if (r.action === "detail") continue;
     if (r.action === "simplify" && !soft) soft = intentReference(ref, width, height, Math.min(width, height) / 30);
     const [bx0, by0, bx1, by1] = regionBounds(r);
     const x0 = Math.max(0, Math.floor(bx0 * width)), x1 = Math.min(width, Math.ceil(bx1 * width));
     const y0 = Math.max(0, Math.floor(by0 * height)), y1 = Math.min(height, Math.ceil(by1 * height));
+    /* regionWeight, worked out per pixel here without its calls: a patch is
+     * (1 - d²)² of the squared distance from its middle in its own half-sizes
+     * (sx, sy pixels); "the darks" or "the lights" go by the reference's value. */
+    const mask = r.mask, byValue = mask?.kind === "value", act = ACT[r.action];
+    let cx = 0, cy = 0, sx = 1, sy = 1;
+    if (mask?.kind === "radial") { cx = mask.x * width; cy = mask.y * height; sx = mask.r / mask.aspect * width; sy = mask.r * height; }
+    else if (!byValue) {
+      cx = (r.x0 + r.x1) / 2 * width; cy = (r.y0 + r.y1) / 2 * height;
+      sx = Math.max(0.01, (r.x1 - r.x0) / 2) * width; sy = Math.max(0.01, (r.y1 - r.y0) / 2) * height;
+    }
+    const dark = byValue && mask.side === "dark", mean = byValue ? mask.mean : 0;
     for (let y = y0; y < y1; y++) {
-      for (let x = x0; x < x1; x++) {
-        const o = (y * width + x) * 4;
-        const L0 = 0.299 * ref[o] + 0.587 * ref[o + 1] + 0.114 * ref[o + 2];
-        const m = r.strength * regionWeight(r, (x + 0.5) / width, (y + 0.5) / height, L0);
+      const dy2 = byValue ? 0 : ((y + 0.5 - cy) / sy) ** 2;
+      if (dy2 >= 1) continue;
+      for (let x = x0, o = (y * width + x0) * 4; x < x1; x++, o += 4) {
+        let w;
+        if (byValue) {
+          const L0 = 0.299 * ref[o] + 0.587 * ref[o + 1] + 0.114 * ref[o + 2];
+          w = Math.min(1, (dark ? mean - L0 : L0 - mean) / 60);
+        } else {
+          const d2 = dy2 + ((x + 0.5 - cx) / sx) ** 2;
+          w = d2 >= 1 ? 0 : (1 - d2) * (1 - d2);
+        }
+        const m = r.strength * w;
         if (m <= 0) continue;
         let R = out[o], G = out[o + 1], B = out[o + 2];
-        const L = 0.299 * R + 0.587 * G + 0.114 * B;
-        if (r.action === "darken") { R *= 1 - 0.55 * m; G *= 1 - 0.55 * m; B *= 1 - 0.55 * m; }
-        else if (r.action === "lighten") { R += (255 - R) * 0.5 * m; G += (255 - G) * 0.5 * m; B += (255 - B) * 0.5 * m; }
-        else if (r.action === "warm") { R += 30 * m; G += 6 * m; B -= 26 * m; }
-        else if (r.action === "cool") { R -= 26 * m; G += 2 * m; B += 30 * m; }
-        else if (r.action === "saturate" || r.action === "mute") {
-          const k = r.action === "saturate" ? 1 + 0.7 * m : 1 - 0.7 * m;
+        if (act === 0) { R *= 1 - 0.55 * m; G *= 1 - 0.55 * m; B *= 1 - 0.55 * m; }
+        else if (act === 1) { R += (255 - R) * 0.5 * m; G += (255 - G) * 0.5 * m; B += (255 - B) * 0.5 * m; }
+        else if (act === 2) { R += 30 * m; G += 6 * m; B -= 26 * m; }
+        else if (act === 3) { R -= 26 * m; G += 2 * m; B += 30 * m; }
+        else if (act === 4 || act === 5) {
+          const L = 0.299 * R + 0.587 * G + 0.114 * B, k = act === 4 ? 1 + 0.7 * m : 1 - 0.7 * m;
           R = L + (R - L) * k; G = L + (G - L) * k; B = L + (B - L) * k;
-        } else if (r.action === "simplify") { R += (soft[o] - R) * m; G += (soft[o + 1] - G) * m; B += (soft[o + 2] - B) * m; }
+        } else if (act === 6) { R += (soft[o] - R) * m; G += (soft[o + 1] - G) * m; B += (soft[o + 2] - B) * m; }
         out[o] = R; out[o + 1] = G; out[o + 2] = B;
       }
     }
@@ -44213,7 +44277,7 @@ function continueMasterDetail(result) {
       // A new master: each thing again from its finest pass, back to front
       // (from the middle one, the big strokes painted a tree's leaves - which
       // differ from the plan on purpose - back into one flat blob).
-      if (things.key !== null && things.started) { things.item = firstThing(0); things.pass = THING_PASSES.length - 1; things.done = false; }
+      if (things.key !== null && things.started) { things.item = firstThing(0); things.pass = THING_DETAIL; things.done = false; }
       things.key = strokePainter.enhancedKey;
     }
     if (!things.masksReady) buildThingMasks(scene, width, height);
@@ -44228,21 +44292,12 @@ function continueMasterDetail(result) {
   const weather = plan?.weather;
   const weatherTurn = Boolean(!letterTurn && !thingTurn && !inkTurn && weather?.brush && !weather.painted && !weather.painting &&
     refReady && strokePainter.layer >= maxStrokeLayer(plan) && (!planHasThings(plan) || scene?.thing?.done));
-  /* A face's features inked once the brush is down to its finer sizes and
-   * its things are painted - and gone over again every dozen passes after (the brush
-   * keeps working round them) and whenever its picture is re-made. */
-  if (plan) plan.facePasses = (plan.facePasses || 0) + 1;
-  // (A drawn painting's face, once its flats are down: the face's own lines are crisper than its traced ones.)
-  const faceTurn = Boolean(!letterTurn && !thingTurn && !inkTurn && !weatherTurn && (!plan?.drawn || (plan.drawn.flatsLaid && !plan.drawn.laying)) && refReady &&
-    strokePainter.layer >= Math.min(2, maxStrokeLayer(plan)) && (!planHasThings(plan) || scene?.thing?.done || plan?.drawn) &&
-    scene?.items?.some((it) => it.entry?.grower === "face") && !plan.faceInking &&
-    (plan.faceInked !== strokePainter.enhancedKey || plan.facePasses >= 12));
+  // (A face is no longer inked: its features are carved by light and shadow, like everything else - formItem.)
   const completion = letterTurn
     ? paintLetteringStrokes(detailResult, strokePainter.plan.scene)
     : thingTurn ? paintThingStrokes(detailResult, scene, scene.thing.pass)
     : inkTurn ? paintContourInk(detailResult, plan)
     : weatherTurn ? paintWeatherStrokes(detailResult, plan)
-    : faceTurn ? paintFaceInk(detailResult, plan)
     // A drawn painting is flats and ink: once its flats are down, no brush.
     : plan?.drawn ? drawnPass(detailResult, plan, reference, width, height, source.params)
     : paintTowardReference(detailResult, reference, width, height, { refKey: source.params, enhance: true });
@@ -44252,10 +44307,10 @@ function continueMasterDetail(result) {
     completion.then((landed) => {
       things.painting = false;
       // A pass of this thing is done when it landed (or there was nothing
-      // left to paint); after its silhouette, the next nearer thing.
+      // left to paint); after its last, the next nearer thing.
       if (landed || !detailResult.paintStrokeCount) {
         things.pass++;
-        if (things.pass > THING_SILHOUETTE) {
+        if (things.pass > THING_LAST) {
           let next = -1;
           for (let i = things.item + 1; i < scene.items.length; i++) if (scene.items[i].entry.kind === "subject" && !scene.items[i].lettering) { next = i; break; }
           things.item = next;
@@ -44272,11 +44327,6 @@ function continueMasterDetail(result) {
         }
       }
     });
-  }
-  if (faceTurn) {
-    const key = strokePainter.enhancedKey;
-    plan.faceInking = true;
-    completion.then((landed) => { plan.faceInking = false; if (landed || !detailResult.paintStrokeCount) { plan.faceInked = key; plan.facePasses = 0; } });
   }
   if (weatherTurn) {
     weather.painting = true;

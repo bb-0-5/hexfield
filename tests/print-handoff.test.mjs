@@ -20,7 +20,7 @@ for(const vendor of providers){
   assert.ok(['posterfactory.com.au','www.frameshop.com.au'].includes(url.hostname));
   assert.ok(vendor.name&&vendor.region&&vendor.description);
 }
-const index=readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
+const index=readFileSync(new URL('../public/studio.html',import.meta.url),'utf8');
 for(const mode of ['rules','studio','imagination'])
  assert.ok(index.includes('data-au-print="'+mode+'"'),
    'Direct buyer-owned print option missing for '+mode);

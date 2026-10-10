@@ -113,6 +113,6 @@ assert.match(sources,/interaction:composite\?\.interaction/,
  'The ranker must include coupled geometry in method provenance');
 assert.match(sources,/wordRelation=chooseGeometryRelation/,
  'Actual relation programs must be inherited and rivalled');
-const style=readFileSync('public/index.html','utf8');
+const style=readFileSync('public/studio.html','utf8');
 assert.doesNotMatch(style,/data-mode="/,'There must still be only one primary canvas');
 console.log('316: two-way scene geometry and word interaction / six relations / chromatic painting / taste heredity PASS');

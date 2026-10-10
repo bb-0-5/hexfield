@@ -91,7 +91,7 @@ for(const grammar of ['bubble','block','rounded']){
 }
 assert.notDeepEqual(actual.get('bubble'),actual.get('block'),
  'Bubble and Block must affect actual different pixels, not labels');
-const ui=readFileSync('public/index.html','utf8');
+const ui=readFileSync('public/studio.html','utf8');
 const ctrl=readFileSync('public/studio/rule-studio.js','utf8');
 const surface=readFileSync('public/studio/word-surface.js','utf8');
 const loop=readFileSync('public/studio/abstraction-loop.js','utf8');

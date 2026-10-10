@@ -63,7 +63,7 @@ assert.ok(designs.size>=6&&faces.size>=4,
  'A painter must actually invent different type anatomy and font construction');
 assert.ok(colours.size>=12,'Newly seeded colour families must not freeze at grey');
 assert.ok(WORD_APPLICATIONS.length>=8);
-const text=readFileSync('public/index.html','utf8');
+const text=readFileSync('public/studio.html','utf8');
 assert.doesNotMatch(text,/id="archiveDock"/,'No embedded competing canvas');
 assert.doesNotMatch(text,/data-mode="(?:rules|landscape|lettering|imagination)"/,
   'No user-facing tabs remain');

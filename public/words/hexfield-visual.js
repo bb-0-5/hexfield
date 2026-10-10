@@ -2416,6 +2416,8 @@
    * `paint(..., "water")`, the same for the water of the places - a sea, a
    * lake, a river - that the things above it are reflected in. */
   let masking = null;
+  // While a thing is painted to be turned solid by the light (formItem): its detail lines are ridges, not lines.
+  let reliefLines = false;
   const GLOW_PARTS = new Set(["window", "flame", "glow", "lamp"]);
   const WATER_PARTS = new Set(["water", "sea"]);
   function colourOf(item, part, name = part.colour) {
@@ -2761,6 +2763,10 @@
     const s = Math.max(2, Math.min(box.w, box.h));
     switch (part.shape) {
       case "line": {
+        // A line that only darkens what it lies on (a nose, a rib, a seam) or is drawn in ink (a lid,
+        // a brow, an outline) is not drawn at all in a thing turned solid by the light: it is a ridge,
+        // seen by the light and shadow either side of it (formItem).
+        if (reliefLines && (tone < 0 || part.colour === "ink")) return true;
         ctx.strokeStyle = hsl(colour, tone);
         ctx.lineWidth = Math.max(1, (part.width || 0.05) * box.w);
         ctx.lineCap = "round"; ctx.lineJoin = "round";
@@ -3295,12 +3301,17 @@
     return geo ? { side: geo.side, slope: geo.slope, dir: geo.dir, c: geo.c, pivot: geo.pivot } : null;
   }
 
-  function paintItem(ctx, item, rng) {
+  function paintItem(ctx, item, rng, formed = false) {
     const parts = rimParts(formParts(item), item);
     const geo = item.turn ? turnedGeometry(item, parts) : null;
-    if (geo) paintTurned(ctx, item, rng, parts, geo);
-    else drawParts(ctx, item, rng, parts);
-    if (item.solidShade && !masking) shadeSolid(ctx, item);
+    reliefLines = formed;
+    try {
+      if (geo) paintTurned(ctx, item, rng, parts, geo);
+      else drawParts(ctx, item, rng, parts);
+    } finally { reliefLines = false; }
+    // (A thing given its form by the light - formItem - is not washed with a gradient as well.)
+    if (item.solidShade && !masking && !formed) shadeSolid(ctx, item);
+    return parts;
   }
   /* A round thing shaded as the solid it is: a cylinder lit down the side
    * toward the light and dark down the other, a sphere with its light spot
@@ -3461,7 +3472,7 @@
     return { dir, away, length, elev, foot };
   }
 
-  function dimensionItem(ctx, layer, lctx, item, W, H, dims, behind = null) {
+  function dimensionItem(ctx, layer, lctx, item, W, H, dims, behind = null, formed = false) {
     const b = item.box;
     const L = dims.lighting || null;
     const sx = Math.cos(dims.light), sy = Math.sin(dims.light);
@@ -3592,7 +3603,8 @@
       ctx.restore();
       body.canvas.width = 0;
     }
-    // Light and shade across the form.
+    // Light and shade across the form - washed across its box, unless formItem has given it its form already.
+    if (formed) return;
     if (dims.model > 0 && !lit) {
       const cx = b.x + b.w / 2, cy = b.y + b.h / 2, R = Math.max(b.w, b.h) * 0.6;
       const g = lctx.createLinearGradient(cx + sx * R, cy + sy * R, cx - sx * R, cy - sy * R);
@@ -3672,6 +3684,221 @@
       lctx.restore();
       rim.canvas.width = 0;
     }
+  }
+
+  /* ── Form from light, no outlines ────────────────────────────────────
+   * A thing is turned into a solid by arithmetic, not drawn round. Its
+   * silhouette is inflated into a height field - every point as high as a
+   * rounded edge of radius r allows at its distance d from the edge,
+   * h = r·sqrt(1 - (1 - d/r)²), a full dome for a round thing and a flat face
+   * with rounded edges for a boxy one - and each of its parts is raised on
+   * that body the same way, a little, in the order it is painted. The
+   * normal of the surface is n = normalize(-dh/dx, -dh/dy, 1); the light is
+   * one direction l (across the picture, up, and toward or away from the
+   * viewer); and n·l splits the thing into two tones: the side that turns
+   * to the light, in its own colours, and the side that turns away, darker.
+   * Where a raised part blocks the light from what lies beside it - a ray
+   * from a point toward the light passing under the height field - that
+   * point is in its drop shadow, darker still. So a part reads by the light
+   * on its near edge, the shade on its far one and the shadow it throws,
+   * never by a line round it. Worked out small and laid back over the
+   * thing's own pixels: it changes their value, never their shape. */
+  const FORM = { side: 200, terminator: 0.18, lift: 0.55, minLift: 2.5, shade: 0.6, cast: 0.47, tint: 0.16, castTint: 0.22, elev: 0.7 };
+  // Distance from each covered cell to the nearest uncovered one (chamfer, 1 and √2 steps); off the grid counts as uncovered.
+  function insideDistance(mask, w, h) {
+    const d = new Float32Array(w * h);
+    for (let i = 0; i < d.length; i++) d[i] = mask[i] ? 1e9 : 0;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (!d[i]) continue;
+        let v = x > 0 ? Math.min(d[i], d[i - 1] + 1) : 1;
+        if (y > 0) {
+          v = Math.min(v, d[i - w] + 1);
+          if (x > 0) v = Math.min(v, d[i - w - 1] + 1.4142);
+          if (x < w - 1) v = Math.min(v, d[i - w + 1] + 1.4142);
+        } else v = 1;
+        d[i] = v;
+      }
+    }
+    for (let y = h - 1; y >= 0; y--) {
+      for (let x = w - 1; x >= 0; x--) {
+        const i = y * w + x;
+        if (!d[i]) continue;
+        let v = x < w - 1 ? Math.min(d[i], d[i + 1] + 1) : 1;
+        if (y < h - 1) {
+          v = Math.min(v, d[i + w] + 1);
+          if (x < w - 1) v = Math.min(v, d[i + w + 1] + 1.4142);
+          if (x > 0) v = Math.min(v, d[i + w - 1] + 1.4142);
+        } else v = 1;
+        d[i] = v;
+      }
+    }
+    return d;
+  }
+  // The tones averaged with their eight neighbours inside the body: two tones still, their borders not stepped.
+  function softenTones(tone, body, w, h) {
+    const src = tone.slice();
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const i = y * w + x;
+        if (!body[i]) continue;
+        let sum = 0, n = 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const j = i + dy * w + dx; if (body[j]) { sum += src[j]; n++; } }
+        tone[i] = sum / n;
+      }
+    }
+  }
+  // Box-blurred twice within the body (outside it stays at the ground).
+  function smoothHeights(hgt, body, w, h, r) {
+    const tmp = new Float32Array(hgt.length);
+    for (let pass = 0; pass < 2; pass++) {
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          let sum = 0, n = 0;
+          for (let k = -r; k <= r; k++) { const xx = x + k; if (xx >= 0 && xx < w) { sum += hgt[y * w + xx]; n++; } }
+          tmp[y * w + x] = sum / n;
+        }
+      }
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = y * w + x;
+          if (!body[i]) { hgt[i] = 0; continue; }
+          let sum = 0, n = 0;
+          for (let k = -r; k <= r; k++) { const yy = y + k; if (yy >= 0 && yy < h) { sum += tmp[yy * w + x]; n++; } }
+          hgt[i] = sum / n;
+        }
+      }
+    }
+  }
+  // A rounded edge: as high as a circle of radius r allows at distance d in from the edge.
+  const pillow = (d, r) => r * Math.sqrt(Math.max(0, 1 - (1 - Math.min(1, d / r)) ** 2));
+  // The light as a unit vector (x right, y down, z toward the viewer).
+  function formLight(item, W, H, dims) {
+    if (dims?.lighting) {
+      const lit = lightOn(item, W, H, dims);
+      const v = [lit.dir[0], lit.dir[1], -lit.dir[2]], n = Math.hypot(...v) || 1;
+      return v.map((x) => x / n);
+    }
+    const a = Number.isFinite(dims?.light) ? dims.light : -2.3, c = Math.cos(FORM.elev);
+    return [Math.cos(a) * c, Math.sin(a) * c, Math.sin(FORM.elev)];
+  }
+  function formItem(lctx, item, parts, W, H, dims) {
+    const b = item.box;
+    const margin = Math.ceil(Math.max(b.w, b.h) * 0.06) + 2;
+    const x0 = Math.max(0, Math.floor(b.x - margin)), y0 = Math.max(0, Math.floor(b.y - margin));
+    const x1 = Math.min(W, Math.ceil(b.x + b.w + margin)), y1 = Math.min(H, Math.ceil(b.y + b.h + margin));
+    const w = x1 - x0, h = y1 - y0;
+    if (w < 6 || h < 6) return;
+    // Worked out at most FORM.side across, then laid back at full size.
+    const k = Math.min(1, FORM.side / Math.max(w, h));
+    const sw = Math.max(4, Math.round(w * k)), sh = Math.max(4, Math.round(h * k));
+    const small = document.createElement("canvas");
+    small.width = sw; small.height = sh;
+    const sc = small.getContext("2d", { willReadFrequently: true });
+    const cover = (draw) => {
+      sc.clearRect(0, 0, sw, sh);
+      sc.save(); sc.scale(k, k); sc.translate(-x0, -y0); draw(); sc.restore();
+      const a = sc.getImageData(0, 0, sw, sh).data, m = new Uint8Array(sw * sh);
+      let n = 0;
+      for (let i = 0; i < m.length; i++) if (a[i * 4 + 3] > 127) { m[i] = 1; n++; }
+      return n ? m : null;
+    };
+    // Each of its solid parts alone (no textures; a glow is light, not a body), and the body they make.
+    const before = masking;
+    masking = "form";
+    const raised = [];
+    let body = null;
+    try {
+      if (!item.turn) {
+        for (const part of parts) {
+          if (part.cut || part.shape === "glow" || part.shape === "gradient") continue;
+          const m = cover(() => drawParts(sc, item, seededRandom(7), [part]));
+          if (m) raised.push(m);
+        }
+      }
+    } finally { masking = before; }
+    if (raised.length) {
+      // (What a cut part took out of the drawing is out of the body too.)
+      const drawn = cover(() => sc.drawImage(lctx.canvas, 0, 0));
+      body = new Uint8Array(sw * sh);
+      for (const m of raised) for (let i = 0; i < m.length; i++) if (m[i] && drawn?.[i]) body[i] = 1;
+    } else body = cover(() => sc.drawImage(lctx.canvas, 0, 0));
+    small.width = 0;
+    if (!body) return;
+    // The body inflated: a dome if it is round, a face with rounded edges if it is boxy.
+    const hgt = new Float32Array(sw * sh);
+    const dBody = insideDistance(body, sw, sh);
+    let deepest = 0;
+    for (let i = 0; i < dBody.length; i++) if (dBody[i] > deepest) deepest = dBody[i];
+    const rBody = Math.max(1.5, deepest * (0.3 + 0.7 * roundness(item)));
+    for (let i = 0; i < hgt.length; i++) if (body[i]) hgt[i] = pillow(dBody[i], rBody);
+    // The body smoothed a little: distances step from cell to cell, and their creases flickered into
+    // stripes where light turns to shade. (Its parts go on after, crisp: a thin ridge must stay one.)
+    smoothHeights(hgt, body, sw, sh, 2);
+    // Each part raised on it, later parts higher (the first part is the body itself), never so little
+    // that a thin one - a rib, a nose - catches no light and throws no shadow.
+    raised.forEach((m, index) => {
+      if (index === 0 && raised.length > 1) return;
+      const d = insideDistance(m, sw, sh);
+      let r = 0;
+      for (let i = 0; i < d.length; i++) if (m[i] && d[i] > r) r = d[i];
+      r = Math.max(1, r);
+      const lift = Math.max(FORM.minLift, FORM.lift * Math.min(r, rBody * 0.5)) * (1 + 0.08 * index);
+      for (let i = 0; i < hgt.length; i++) if (m[i] && body[i]) hgt[i] += lift * pillow(d[i], r) / r;
+    });
+    // Two tones by n·l, and the drop shadows of what stands up toward the light.
+    const [lx, ly, lz] = formLight(item, W, H, dims);
+    const flat = Math.hypot(lx, ly) || 1, ux = lx / flat, uy = ly / flat;
+    const rise = Math.max(0.12, lz) / flat;            // how fast a ray toward the light climbs per cell
+    const reach = Math.min(48, Math.max(sw, sh), Math.ceil(rBody * 2 / rise));
+    const tone = new Float32Array(sw * sh);            // 0 lit .. 1 form shadow .. 2 drop shadow
+    for (let y = 0; y < sh; y++) {
+      for (let x = 0; x < sw; x++) {
+        const i = y * sw + x;
+        if (!body[i]) continue;
+        const hx = (hgt[x < sw - 1 ? i + 1 : i] - hgt[x > 0 ? i - 1 : i]) / 2;
+        const hy = (hgt[y < sh - 1 ? i + sw : i] - hgt[y > 0 ? i - sw : i]) / 2;
+        const nl = (-hx * lx - hy * ly + lz) / Math.hypot(hx, hy, 1);
+        let t = Math.max(0, Math.min(1, (FORM.terminator + 0.06 - nl) / 0.12));
+        // Already turned from the light, it needs no shadow thrown on it; otherwise, is anything
+        // toward the light higher than the ray from here? (Heights read smoothly between cells, and a
+        // little leeway growing with distance, or a smooth curve shadows itself in specks.)
+        if (t < 1) {
+          const h0 = hgt[i];
+          for (let s = 1.5; s <= reach; s += 1.5) {
+            const qx = x + ux * s, qy = y + uy * s;
+            if (qx < 0 || qy < 0 || qx > sw - 1 || qy > sh - 1) break;
+            const ax = Math.floor(qx), ay = Math.floor(qy), bx = Math.min(sw - 1, ax + 1), by = Math.min(sh - 1, ay + 1), fx = qx - ax, fy = qy - ay;
+            const hq = (hgt[ay * sw + ax] * (1 - fx) + hgt[ay * sw + bx] * fx) * (1 - fy) + (hgt[by * sw + ax] * (1 - fx) + hgt[by * sw + bx] * fx) * fy;
+            if (hq - (h0 + s * rise) > 0.6 + 0.05 * s) { t = 2; break; }
+          }
+        }
+        tone[i] = t;
+      }
+    }
+    // Its edges softened by a cell (a ray steps in cells, and drew its shadow's edge as stairs).
+    softenTones(tone, body, sw, sh);
+    // Laid back over the thing's own pixels: lit as painted, shade darker and toward the shade's colour.
+    const ambient = dims?.lighting?.ambient || [24, 26, 48];
+    const img = lctx.getImageData(x0, y0, w, h), px = img.data;
+    for (let y = 0; y < h; y++) {
+      const fy = Math.min(sh - 1, (y + 0.5) * k - 0.5), y0s = Math.max(0, Math.floor(fy)), y1s = Math.min(sh - 1, y0s + 1), wy = Math.max(0, fy - y0s);
+      for (let x = 0; x < w; x++) {
+        const o = (y * w + x) * 4;
+        if (!px[o + 3]) continue;
+        const fx = Math.min(sw - 1, (x + 0.5) * k - 0.5), x0s = Math.max(0, Math.floor(fx)), x1s = Math.min(sw - 1, x0s + 1), wx = Math.max(0, fx - x0s);
+        const t = (tone[y0s * sw + x0s] * (1 - wx) + tone[y0s * sw + x1s] * wx) * (1 - wy) +
+          (tone[y1s * sw + x0s] * (1 - wx) + tone[y1s * sw + x1s] * wx) * wy;
+        if (t <= 0.01) continue;
+        const f = t <= 1 ? 1 + (FORM.shade - 1) * t : FORM.shade + (FORM.cast - FORM.shade) * (t - 1);
+        const a = t <= 1 ? FORM.tint * t : FORM.tint + (FORM.castTint - FORM.tint) * (t - 1);
+        px[o] = px[o] * f * (1 - a) + ambient[0] * a;
+        px[o + 1] = px[o + 1] * f * (1 - a) + ambient[1] * a;
+        px[o + 2] = px[o + 2] * f * (1 - a) + ambient[2] * a;
+      }
+    }
+    lctx.putImageData(img, x0, y0);
   }
 
   /* The light itself, where it can be seen: a sun or moon in the sky on the
@@ -3791,6 +4018,8 @@
     if (mono) { cued = true; sourced = true; }
     const glow = only === "glow" || only === "water";
     if (glow) { cued = true; sourced = true; masking = only; only = null; }
+    // Things turned solid by the light (formItem): in the painting and its light map, not in a mask or a thumbnail.
+    const formed = Boolean(dims && dims.model > 0 && pick === null && !glow);
     try {
       for (let index = 0; index < items.length; index++) {
         const item = items[index];
@@ -3801,16 +4030,18 @@
         lctx.clearRect(0, 0, W, H);
         if (item.turn) item.turnHorizon = view && Number.isFinite(view.horizon) ? view.horizon : H * 0.45;
         if (item.solidShade) item.solidLight = Number.isFinite(dims?.light) ? dims.light : -2.3;
-        paintItem(lctx, item, seededRandom(seeds[index]));
+        const thing = item.entry.kind === "subject" && !item.lettering;
+        const parts = paintItem(lctx, item, seededRandom(seeds[index]), formed && thing);
         if (mono) {
-          if (item.entry.kind !== "subject" || item.lettering) continue;
+          if (!thing) continue;
           lctx.save();
           lctx.globalCompositeOperation = "source-atop";
           lctx.fillStyle = "rgb(128, 128, 128)";
           lctx.fillRect(0, 0, W, H);
           lctx.restore();
         }
-        if (solid && !glow && item.entry.kind === "subject" && !item.lettering) dimensionItem(ctx, layer, lctx, item, W, H, dims, behind);
+        if (formed && thing) formItem(lctx, item, parts, W, H, dims);
+        if (solid && !glow && thing) dimensionItem(ctx, layer, lctx, item, W, H, dims, behind, formed);
         if (behind && item.entry.kind === "subject" && !item.lettering && item.entry.anchor !== "sky") behind.boxes.push(item.box);
         // Distance: far things fade toward the air.
         if (item.aerial && !mono && !glow) {

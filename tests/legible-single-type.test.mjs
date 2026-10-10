@@ -102,7 +102,7 @@ assert.notDeepEqual(samples[0],samples[2],
  'Bubble and block render distinct actual glyph pixels');
 const loop=readFileSync('public/studio/abstraction-loop.js','utf8');
 const ui=readFileSync('public/studio/rule-studio.js','utf8');
-const html=readFileSync('public/index.html','utf8');
+const html=readFileSync('public/studio.html','utf8');
 assert.match(html,/RESEED \/ ART \+ TYPE/);
 assert.doesNotMatch(html,/id="ruleTypeMode"/);
 assert.match(ui,/reseedProfile\(reseedCount\)/);

@@ -89,7 +89,7 @@ assert.equal(automatic.rework,'none');
 assert.equal(nextAbstractRecipe(automatic,{seed:755,cycle:3,
  subject:'coast',style:'poster',abstraction:'gentle'}).mark,'cutout',
  'A chosen auto style must not silently mutate back to hybrid');
-const html=readFileSync('public/index.html','utf8');
+const html=readFileSync('public/studio.html','utf8');
 const ui=readFileSync('public/studio/rule-studio.js','utf8');
 assert.match(html,/id="ruleChangeStyle"/);
 assert.match(html,/id="ruleRepeatStyle"/);

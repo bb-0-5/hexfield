@@ -67,7 +67,7 @@ assert.deepEqual(pixels(noText),pixels(clean));
 const studio=readFileSync('public/studio/rule-studio.js','utf8'),
  source=readFileSync('public/studio/source-mixer.js','utf8'),
  loop=readFileSync('public/studio/abstraction-loop.js','utf8'),
- html=readFileSync('public/index.html','utf8');
+ html=readFileSync('public/studio.html','utf8');
 assert.match(studio,/stored===null\?'':String\(stored\)/,
  'A new visitor should see art rather than an unsolicited watermark');
 assert.doesNotMatch(source,/getWords\(\)\|\|'HEXFIELD'/,
