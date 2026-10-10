@@ -46,6 +46,24 @@ function read(){
 }
 function write(m){try{localStorage.setItem(RULE_STORE,JSON.stringify(m));}catch{}}
 function ledger(){const m=read();return {weights:m.weights||{},choices:m.choices||{},votes:m.votes||[],lineage:m.lineage||[]};}
+export function ruleTaste(){return {...ledger().weights};}
+export function markFromTaste(base,seed,weights){
+  // KEEP repeats a successful manner of applying ink more often;
+  // REJECT does not ban it, but reroutes it toward a neighboring method.
+  const keys=Object.keys(MARKS).filter(x=>x!=='hybrid');
+  const taste=id=>clamp(Number(weights?.['mark:'+id])||0,-10,10);
+  let chosen=base;
+  const random=(((Math.imul(seed>>>0,1664525)+1013904223)>>>0)/4294967296);
+  const penalty=taste(chosen);
+  if(penalty<-.5&&random<Math.min(.88,-penalty*.15+.20)){
+    const candidates=keys.filter(x=>x!==chosen).sort((a,b)=>taste(b)-taste(a));
+    chosen=candidates[(seed>>>8)%Math.min(4,candidates.length)];
+  }else if(random<.28){
+    const favourites=keys.filter(x=>taste(x)>1);
+    if(favourites.length)chosen=favourites[(seed>>>8)%favourites.length];
+  }
+  return chosen;
+}
 function chooseWeighted(list,group,rng=Math.random){
  const m=ledger(),weights=list.map(id=>{
    const score=clamp(Number(m.weights[group+':'+id])||0,-8,8);
@@ -263,6 +281,7 @@ export function applyRules(source,target,recipe,options={}){
  ctx.fillRect(0,0,width,height);
  ctx.lineCap='butt';ctx.lineJoin='bevel';
  const random=seeded(recipe.seed+(Number(options.iteration)||0)*997);
+ const taste=ruleTaste();
  const markTypes=['dashes','dots','hatch','cutout','carve'];
  for(let y=0;y<height;y+=step){
    for(let x=0;x<width;x+=step){
@@ -292,8 +311,10 @@ export function applyRules(source,target,recipe,options={}){
      // themselves vary within the same picture.
      const bx=Math.floor(x/Math.max(32,step*(6+(recipe.seed%4))));
      const by=Math.floor(y/Math.max(32,step*(5+(recipe.seed%3))));
-     const localMark=recipe.mark==='hybrid'?
+     const nominalMark=recipe.mark==='hybrid'?
        markAtCell(bx,by,recipe.seed,Number(options.iteration)||0,1):recipe.mark;
+     const localMark=recipe.mark==='hybrid'?
+       markFromTaste(nominalMark,(recipe.seed^Math.imul(bx+1,7717)^Math.imul(by+1,18313))>>>0,taste):nominalMark;
      const role=localMark==='carve'?(luminosity>.48?'#eee9d9':'#202936'):
        'rgb('+colour.map(z=>Math.round(z)).join(',')+')';
      ctx.fillStyle=role;ctx.strokeStyle=role;
