@@ -81,6 +81,8 @@ const result=negotiateComposition({
  onDecision:(d,c)=>snapshots.push({d,pixels:getPixels(c)})
 });
 assert.equal(result.attempts,1);
+assert.equal(result.accepted,1,
+ 'A real sampled contrast with a supportive neighbourhood must sometimes form an actual treaty');
 assert.equal(snapshots.length,1,'Every local debate must have an observable vote');
 assert.ok(result.decision.neighborhood.length>=2);
 assert.ok(result.decision.neighborhood.every(v=>
