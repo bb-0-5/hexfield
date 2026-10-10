@@ -5,6 +5,9 @@
 import {SUBJECTS,LAWS,MARKS,REWORKS,makeRecipe,mutateRecipe,drawReality,applyRules,
   noteRuleVerdict,noteLineage,describeRecipe,buildRulePrompt,RULE_STORE} from './rule-engine.js';
 import {createAbstractionLoop} from './abstraction-loop.js';
+import {renderRuleLive} from './live-rule-execution.js';
+import {STYLE_PRESETS,ABSTRACTION_LEVELS,nextStyle,styleById,
+ styleRecipe,styleCaption} from './style-presets.js';
 import {evolveMarkProgram,rememberedMarkPrograms,rememberMarkVerdict} from './mark-program.js';
 import {deriveBetweenFrames} from './frame-derivation.js';
 import {paintHeldMotifs,advanceMotifMemory,motifEvidence} from './motif-memory.js';
@@ -73,6 +76,31 @@ export function initRuleStudio(){
  $('ruleArtwork').hidden=false;
  $('ruleEmpty').hidden=true;
  let restoreReady=Promise.resolve(),manuallyPaused=false,autoStarted=false;
+ const styleStore='hexfield.style-choice.327';
+ let storedStyle={};
+ try{storedStyle=JSON.parse(localStorage.getItem(styleStore)||'{}')||{};}catch{}
+ let styleId=STYLE_PRESETS.some(p=>p.id===storedStyle.style)?
+   storedStyle.style:'ink';
+ const preferredLevel=storedStyle.abstraction;
+ $('ruleAbstractionLevel').value=preferredLevel in ABSTRACTION_LEVELS?
+   preferredLevel:'gentle';
+ let styleAnchor=null,styleSeed=0,styleSubject='coast',
+   styleGeneration=1,styleToken=0,styleLast=null;
+ const rememberStyle=()=>{try{
+   localStorage.setItem(styleStore,JSON.stringify({
+     style:styleId,abstraction:$('ruleAbstractionLevel').value
+   }));
+ }catch{}};
+ const refreshStyleHelp=()=>{
+   const abstraction=$('ruleAbstractionLevel').value;
+   $('ruleAbstractionHelp').textContent=
+     ABSTRACTION_LEVELS[abstraction]?.description||
+     ABSTRACTION_LEVELS.gentle.description;
+   if(!styleLast)text('ruleStyleStatus',styleById(styleId).name+
+      ' · '+ABSTRACTION_LEVELS[abstraction].name+
+      ' · CHANGE STYLE will test the same original reference in five ways.');
+ }; 
+ refreshStyleHelp();
  let lastHeritageCycle=-1,lastHistoryCycle=-1;
  const activeWords=()=>String($('ruleWords').value||'').trim().slice(0,48);
  const cleanCopy=source=>{
@@ -234,6 +262,8 @@ export function initRuleStudio(){
  }
  function loopOptions(){
    return {speed:Number($('ruleLoopSpeed').value)||3000,
+     style:styleId,
+     abstraction:$('ruleAbstractionLevel').value,
      mixMode:$('ruleMixMode').value,
      lockLaw:$('ruleLockLaw').checked,
      subject:$('ruleSubject').value,
@@ -425,10 +455,11 @@ export function initRuleStudio(){
    },
    onError(error){status('Abstraction recovered from a renderer error: '+safe(error?.message||error));}
  });
- function present(recipe,source,revision=false){
+ function present(recipe,source,revision=false,prepared=null){
    if(!source)throw Error('No input picture to constrain');
-   const before=current?.canvas||null,target=canvasOf();
-   const metrics=applyRules(source,target,recipe,{
+   const before=current?.canvas||null,
+     target=prepared?.canvas||canvasOf();
+   const metrics=prepared?.metrics||applyRules(source,target,recipe,{
      iteration:recipe.generation,trace:true
    });
    if(revision&&before){
@@ -491,7 +522,8 @@ export function initRuleStudio(){
    current={recipe,canvas:target,judged:false,metrics,nonredundancy:W};parentCanvas=target;
    displayPhi(target);
    showHeritage(heritageEvidence(manualIdeas));
-   void live.commit({parent:before,final:target,trace:metrics.trace,
+   if(prepared)live.accept({final:target,candidates:1});
+   else void live.commit({parent:before,final:target,trace:metrics.trace,
      duration:1500});
    $('ruleEmpty').hidden=true;
    $('ruleArtwork').hidden=false;
@@ -563,6 +595,67 @@ export function initRuleStudio(){
      realitySource=chosen.source;
      present(chosen.recipe,chosen.source);
    }catch(error){status(safe(error.message));}
+ }
+ // Preserve one clean reference across all five styles. Style changes
+ // do NOT compound on already abstracted outputs; this is the crucial
+ // distinction between "another style" and "reabstract the last picture".
+ async function paintSelectedStyle({advance=false}={}){
+   const token=++styleToken;
+   loop.pause();manuallyPaused=true;
+   try{
+     if(advance)styleId=nextStyle(styleId).id;
+     rememberStyle();
+     const strength=$('ruleAbstractionLevel').value;
+     if(!styleAnchor){
+       styleSeed=current?.recipe?.seed>>>0||0x5EED327;
+       const selected=$('ruleSubject').value;
+       const previous=current?.recipe?.subject;
+       styleSubject=selected!=='surprise'?selected:
+         previous&&previous!=='abstract'?previous:'coast';
+       styleGeneration=1;
+       const sourceRecipe=styleRecipe({style:styleId,
+         abstraction:strength,seed:styleSeed,subject:styleSubject,
+         generation:styleGeneration});
+       const original=await sourceFor(sourceRecipe);
+       if(token!==styleToken)return;
+       styleAnchor=cleanCopy(original);
+     }
+     const index=STYLE_PRESETS.findIndex(p=>p.id===styleId);
+     const fixedSeed=evolveSeed(styleSeed,index+1,1,'comparable-style-327');
+     const recipe=styleRecipe({style:styleId,abstraction:strength,
+       seed:fixedSeed,subject:styleSubject,generation:styleGeneration});
+     const target=canvasOf();
+     text('ruleStyleStatus',styleCaption({
+       style:styleId,abstraction:strength,seed:fixedSeed
+     })+' · painting the SAME reference · 1 of 5 reproducible modes.');
+     $('ruleChangeStyle').disabled=true;
+     $('ruleRepeatStyle').disabled=true;
+     const painted=await renderRuleLive(styleAnchor,target,recipe,{
+       options:{iteration:recipe.generation,trace:true},
+       rowsPerTurn:3,isCancelled:()=>token!==styleToken,
+       onProgress:p=>{
+         if(token!==styleToken)return;
+         live.work({painting:target,completedRows:p.completedRows,
+           rows:p.rows,strokes:p.strokes,attempt:index});
+       }
+     });
+     if(token!==styleToken||painted.cancelled)return;
+     realitySource=styleAnchor;
+     present(recipe,styleAnchor,false,{canvas:target,metrics:painted.metrics});
+     styleLast={id:styleId,seed:fixedSeed,abstraction:strength};
+     $('ruleRepeatStyle').disabled=false;
+     text('ruleStyleStatus',styleCaption({
+       style:styleId,abstraction:strength,seed:fixedSeed
+     })+' · SAME SOURCE EVERY STYLE · REPEAT reproduces these pixels. '+
+       'Use PAUSE / RESUME for continuous painting in this style.');
+   }catch(error){
+     status('Style change could not paint: '+safe(error.message||error));
+   }finally{
+     if(token===styleToken){
+       $('ruleChangeStyle').disabled=false;
+       $('ruleRepeatStyle').disabled=!styleLast;
+     }
+   }
  }
  function child(focus){
    if(!current){void paintFresh();return;}
@@ -648,7 +741,20 @@ export function initRuleStudio(){
    // Export always uses fully evaluated art, never half-constructed ink.
    link.href=current.canvas.toDataURL('image/png');document.body.append(link);link.click();link.remove();
  }
- $('rulePaint').addEventListener('click',()=>{loop.pause();void paintFresh();});
+ $('ruleChangeStyle').addEventListener('click',()=>
+   void paintSelectedStyle({advance:true}));
+ $('ruleRepeatStyle').addEventListener('click',()=>
+   void paintSelectedStyle());
+ $('ruleAbstractionLevel').addEventListener('change',()=>{
+   rememberStyle();refreshStyleHelp();
+   // Apply the selected abstraction strength immediately to a clean
+   // repeated reference, not after some unknown number of auto cycles.
+   void paintSelectedStyle();
+ });
+ $('rulePaint').addEventListener('click',()=>{
+   styleToken++;styleAnchor=null;styleLast=null;
+   loop.pause();void paintFresh();
+ });
  $('ruleReworkBtn').addEventListener('click',()=>{loop.pause();rework();});
  $('ruleNewLaw').addEventListener('click',()=>{loop.pause();child('law');});
  $('ruleNewSubject').addEventListener('click',()=>{loop.pause();child('subject');});
