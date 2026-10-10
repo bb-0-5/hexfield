@@ -400,7 +400,10 @@ export function createAbstractionLoop({
          canvas:output,source:mixed.canvas,parent:previous,recipe,
          cycle,attempt,memory:regionMemory,objects:objects.objects,
          dirtyTiles:partial?tilePlan.tiles:null,
-         maxReviews:mobile?1:2,
+         // A user-explicit brush lock is a hard formal constraint.
+         // Region self-critique must not silently violate it.
+         maxReviews:config.lockLaw&&config.mark&&
+           config.mark!=='surprise'?0:mobile?1:2,
          onDecision:(decision,painting)=>process({
            type:'regional-decision',canvas:painting,decision,cycle,attempt
          })
