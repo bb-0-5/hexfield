@@ -20,6 +20,7 @@ import {measureGoldenTaste,explainGolden,diagnoseGolden,
 import {publishSource,loadCachedPictures,CROSS_STUDIO_KEYS} from './source-mixer.js';
 import {paintWordsOnCanvas} from './word-surface.js';
 import {typeGenome} from './type-genome.js';
+import {DESIGN_PURPOSES,newDesignGenome,noteDesignVerdict} from './design-genome.js';
 import {noteGeometryVerdict} from './geometry-coupling.js';
 import {evolveSeed,rankNoveltyCandidates,assessCanvas,commitCanvas,
   methodSignature,snapshotNoveltyMemory} from './nonredundancy.js';
@@ -69,6 +70,11 @@ export function initRuleStudio(){
    archiveCanvas=null,unlettered=null,sequence=0,manualMotifs=[],manualIdeas=[],lastOrigin='manual';
  const context=$('ruleArtwork').getContext('2d');
  const wordKey='hexfield.rule-words.v1';
+ const purposeKey='hexfield.design-purpose.331';
+ try{
+  const p=localStorage.getItem(purposeKey);
+  if(DESIGN_PURPOSES.includes(p))$('rulePurpose').value=p;
+ }catch{}
  try{
   const stored=localStorage.getItem(wordKey);
   $('ruleWords').value=stored===null?'HEXFIELD':String(stored).slice(0,48);
@@ -104,7 +110,7 @@ export function initRuleStudio(){
  }; 
  refreshStyleHelp();
  let lastHeritageCycle=-1,lastHistoryCycle=-1;
- const activeWords=()=>String($('ruleWords').value||'').trim().slice(0,48);
+ const activeWords=()=>String($('ruleWords').value||'').trim().slice(0,96);
  const cleanCopy=source=>{
    const c=canvasOf(source.width,source.height);
    c.getContext('2d').drawImage(source,0,0);return c;
@@ -126,7 +132,8 @@ export function initRuleStudio(){
      dirtyTiles
    });
    if(work.painted){metrics.words=work.text;metrics.coupling=work.interaction;
-     metrics.typeAnatomy=work.typeAnatomy;}
+     metrics.typeAnatomy=work.typeAnatomy;
+     metrics.design=work.design;metrics.legibility=work.legibility;}
    return {...work,clean};
  }
  async function readArchive(){
@@ -150,7 +157,9 @@ export function initRuleStudio(){
        result.palette.join(' × ')+' / '+
        result.interaction.relation+' · '+result.interaction.displacedPixels+
        ' scene pixels moved · '+result.interaction.bentPixels+
-       ' lettering pixels sculpted':
+       ' lettering pixels sculpted · '+
+       result.design.purpose.toUpperCase()+' / '+result.design.ornament+
+       ' · contrast '+Math.round(result.legibility*100)+'%':
      'No word layer. The artwork remains purely procedural.');
    current.judged=false;
    $('ruleKeep').disabled=false;$('ruleReject').disabled=false;
@@ -265,7 +274,8 @@ export function initRuleStudio(){
    }
  }
  function loopOptions(){
-   return {speed:Number($('ruleLoopSpeed').value)||3000,
+   return {purpose:$('rulePurpose').value,
+     speed:Number($('ruleLoopSpeed').value)||3000,
      style:styleId,autoStyle:true,
      abstraction:$('ruleAbstractionLevel').value,
      mixMode:$('ruleMixMode').value,
@@ -336,6 +346,8 @@ export function initRuleStudio(){
      styleToken++;styleAnchor=null;styleLast=null;
      $('ruleRepeatStyle').disabled=true;
      if(recipe.styleId){styleId=recipe.styleId;rememberStyle();}
+     if(DESIGN_PURPOSES.includes(recipe.purpose))
+       $('rulePurpose').value=recipe.purpose;
      current={recipe,canvas,judged:false,metrics};
      unlettered=result.composite?.clean||null;
      if(result.composite?.interaction){
@@ -356,7 +368,12 @@ export function initRuleStudio(){
      text('ruleCaption',describeRecipe(recipe));
      if(result.composite?.typeAnatomy)text('ruleWordsStatus',
        'EVOLVING GLYPHS / '+result.composite.typeAnatomy+
-       ' · '+result.composite.glyphs+' independently formed characters');
+       ' · '+result.composite.glyphs+' independently formed characters'+
+       (result.designEvolution?.purpose!=='art'?
+         ' · '+result.designEvolution.purpose.toUpperCase()+
+         ' / '+result.designEvolution.selectedLayout+
+         ' / readability '+Math.round(result.designEvolution.legibility*100)+'%':'')
+       );
      if(recipe.styleId)text('ruleStyleStatus',styleCaption({
        style:recipe.styleId,abstraction:recipe.abstractionLevel||'gentle',
        seed:recipe.seed
@@ -480,6 +497,10 @@ export function initRuleStudio(){
    onError(error){status('Abstraction recovered from a renderer error: '+safe(error?.message||error));}
  });
  function present(recipe,source,revision=false,prepared=null){
+   if(!recipe.purpose)recipe.purpose=$('rulePurpose').value;
+   if(!recipe.designGenome)recipe.designGenome=
+     current?.recipe?.purpose===recipe.purpose&&current.recipe.designGenome?
+       current.recipe.designGenome:newDesignGenome(recipe.purpose,recipe.seed);
    if(!recipe.typeGenome)recipe.typeGenome=
      current?.recipe?.typeGenome||typeGenome(recipe.seed);
    if(!source)throw Error('No input picture to constrain');
@@ -664,6 +685,10 @@ export function initRuleStudio(){
      const recipe=styleRecipe({style:styleId,abstraction:strength,
        seed:fixedSeed,subject:styleSubject,generation:styleGeneration});
      recipe.typeGenome=current?.recipe?.typeGenome||typeGenome(fixedSeed);
+     recipe.purpose=$('rulePurpose').value;
+     recipe.designGenome=current?.recipe?.purpose===recipe.purpose?
+       current?.recipe?.designGenome||newDesignGenome(recipe.purpose,fixedSeed):
+       newDesignGenome(recipe.purpose,fixedSeed);
      const target=canvasOf(),study=canvasOf();
      text('ruleStyleStatus',styleCaption({
        style:styleId,abstraction:strength,seed:fixedSeed
@@ -767,6 +792,7 @@ export function initRuleStudio(){
      rememberMarkVerdict(current.recipe.markProgram,liked);
    if(current.metrics?.coupling?.relation)
      noteGeometryVerdict(current.metrics.coupling.relation,liked);
+   noteDesignVerdict(current.recipe.designGenome,liked);
    if(lastOrigin==='loop')loop.feedback(liked);
    else{
      manualIdeas=judgeStructuralIdeas(manualIdeas,liked);
@@ -868,6 +894,22 @@ export function initRuleStudio(){
    image.src=restored.image;
    });
  }
+ $('rulePurpose').addEventListener('change',()=>{
+   const purpose=$('rulePurpose').value;
+   if(!DESIGN_PURPOSES.includes(purpose))return;
+   try{localStorage.setItem(purposeKey,purpose);}catch{}
+   const running=loop.isRunning()&&!manuallyPaused;
+   loop.pause();
+   if(current){
+     current.recipe={...current.recipe,purpose,
+       designGenome:newDesignGenome(purpose,current.recipe.seed)};
+     previewWords();
+     // Rebase the automatic painter onto the same actual unlettered art.
+     loop.adoptCanvas(unlettered||current.canvas,current.recipe);
+   }
+   loop.configure(loopOptions());
+   if(running)loop.start(loopOptions());
+ });
  $('ruleWords').addEventListener('input',()=>{
    try{localStorage.setItem(wordKey,activeWords())}catch{}
    loop.pause();
