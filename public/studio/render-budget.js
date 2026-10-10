@@ -34,7 +34,9 @@ export function chooseFullRenderCandidates(previews,{
 }
 export function budgetEvidence(previews,finalists){
  return {predicted:previews.length,full:finalists.length,
-   fullAvoided:Math.max(0,previews.length-finalists.length),
+   // Old desktop engine always made three full-size paintings. A hot phone
+   // may now preview only two, but that does not change the old baseline.
+   baselineFull:3,fullAvoided:Math.max(0,3-finalists.length),
    scale:PREVIEW_WIDTH+'×'+PREVIEW_HEIGHT,
-   reason:finalists.length===1?'confident preflight':'two finalists'};
+   reason:finalists.length===1?'one full finalist':'two full finalists'};
 }
