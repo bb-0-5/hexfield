@@ -141,7 +141,8 @@ export function initRuleStudio(){
    });
    if(work.painted){metrics.words=work.text;metrics.coupling=work.interaction;
      metrics.typeAnatomy=work.typeAnatomy;
-     metrics.design=work.design;metrics.legibility=work.legibility;}
+     metrics.design=work.design;metrics.legibility=work.legibility;
+     metrics.typeLegibility=work.typeLegibility;}
    return {...work,clean};
  }
  async function readArchive(){
@@ -167,7 +168,9 @@ export function initRuleStudio(){
        ' scene pixels moved · '+result.interaction.bentPixels+
        ' lettering pixels sculpted · '+
        result.design.purpose.toUpperCase()+' / '+result.design.ornament+
-       ' · contrast '+Math.round(result.legibility*100)+'%':
+       ' · contrast '+Math.round(result.legibility*100)+'%'+
+       ' · glyph integrity '+Math.round((result.typeLegibility?.score||0)*100)+'%'+
+       (result.typeLegibility?.repaired?' / repaired':''):
      'No word layer. The artwork remains purely procedural.');
    current.judged=false;
    $('ruleKeep').disabled=false;$('ruleReject').disabled=false;
@@ -359,7 +362,15 @@ export function initRuleStudio(){
        $('rulePurpose').value=recipe.purpose;
      current={recipe,canvas,judged:false,metrics};
      unlettered=result.composite?.clean||null;
-     if(result.composite?.interaction){
+     if(result.composite?.typeLegibility){
+       const q=result.composite.typeLegibility;
+       text('ruleWordsStatus','TYPOGRAPHY / '+recipe.typeGenome?.grammar?.toUpperCase()+
+         ' · readable structure '+Math.round(q.score*100)+'%'+
+         ' · counters '+Math.round(q.counters*100)+'%'+
+         ' · spacing '+Math.round(q.spacing*100)+'%'+
+         (q.repaired?' · anatomy repaired':''));
+     }
+     if(result.composite?.interaction&&!result.composite?.typeLegibility){
        const it=result.composite.interaction;
        text('ruleWordsStatus','LETTERING ⇄ SCENE / '+it.relation.toUpperCase()+
          ' · '+it.contactPixels+' intersections · '+it.displacedPixels+
