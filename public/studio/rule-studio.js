@@ -171,7 +171,8 @@ export function initRuleStudio(){
        progress.phase==='candidate'?'COMPLETE CANDIDATE / JUDGING':
        progress.phase==='accepted'?'SELECTED / ACTUAL ARTWORK':
        progress.phase==='living-identity'?
-          (progress.kind==='form'?'LIVING FORM / CARRYING ITS PAST':
+          (progress.kind==='structure'?'SAME PAINTING / NEW BRUSHWORK':
+           progress.kind==='form'?'LIVING FORM / CARRYING ITS PAST':
            progress.kind==='rediscovered'?'FORGOTTEN IDEA / TESTING RETURN':
            progress.kind==='recall-rejected'?'FORGOTTEN IDEA / NOT YET VALUABLE':
            progress.kind==='FORGOT'?'CREATIVE FORGETTING / LETTING GO':
@@ -301,7 +302,11 @@ export function initRuleStudio(){
         live.livingIdentity({painting:event.canvas,
           change:{type:event.event.type,
             root:loop.state().identity.root,id:event.event.id}});
-      }else if(event.type==='regional-decision'){
+      }else if(event.type==='structure-retained'){
+       live.livingIdentity({painting:event.canvas,
+         change:{type:'structure',root:'same-composition',
+           id:Math.round((event.preservation?.meanRetention||0)*100)+'% original'}});
+     }else if(event.type==='regional-decision'){
        live.regionalDecision({painting:event.canvas,decision:event.decision});
      }else if(event.type==='composition-vote'){
        live.compositionVote({painting:event.canvas,
@@ -324,6 +329,10 @@ export function initRuleStudio(){
        survival,heritage,trials,derivation,objectMemory,renderBudget,dirty}=result;
      const before=current?.canvas||null;
      lastOrigin='loop';
+     // Each accepted automatic painting becomes the NEXT actual source
+     // when the user chooses to change only its brushwork.
+     styleToken++;styleAnchor=null;styleLast=null;
+     $('ruleRepeatStyle').disabled=true;
      current={recipe,canvas,judged:false,metrics};
      unlettered=result.composite?.clean||null;
      if(result.composite?.interaction){
@@ -667,8 +676,8 @@ export function initRuleStudio(){
      $('ruleRepeatStyle').disabled=false;
      text('ruleStyleStatus',styleCaption({
        style:styleId,abstraction:strength,seed:fixedSeed
-     })+' · SAME ARTWORK AND SEED · '+(
-       true?"ACTUAL OUTLINES AND COLOURS PRESERVED · ":'')+
+     })+' · SAME ARTWORK AND SEED · PHYSICAL OUTLINES PRESERVED ('+
+       Math.round((preserved.meanRetention||0)*100)+'% source retention) · '+
        'REPEAT reproduces pixels with unchanged words. '+
        'Use PAUSE / RESUME for continuous painting in this style.');
    }catch(error){
