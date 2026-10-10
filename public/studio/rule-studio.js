@@ -94,7 +94,8 @@ export function initRuleStudio(){
    const result=compositeWords(output,current.recipe,current.metrics||{});
    context.clearRect(0,0,960,600);context.drawImage(output,0,0,960,600);
    text('ruleWordsStatus',result?.painted?
-     result.text+' / words made from this picture\'s ink':
+     result.text+' / '+result.method+' · '+result.face+' · '+
+       result.palette.join(' × '):
      'No word layer. The artwork remains purely procedural.');
    publishSource(output,'rules',current.recipe);
    persistCanvas(output,current.recipe,current.judged);
@@ -187,6 +188,7 @@ export function initRuleStudio(){
    getParent:()=>current?.canvas||null,
    getParentRecipe:()=>current?.recipe||null,
    getArchive:()=>archiveCanvas,
+   getWords:()=>activeWords(),
    postProcess:(output,recipe,metrics)=>compositeWords(output,recipe,metrics),
    getUploaded:()=>upload,
    onFrame(result){
@@ -233,6 +235,7 @@ export function initRuleStudio(){
    },
    onState(info){
      $('ruleLoopStart').disabled=info.running;
+   $('ruleLoopStart').textContent=info.running?'PAINTING / LEARNING…':'▶ PAINT & EVOLVE';
      $('ruleLoopStop').disabled=!info.running;
      $('ruleLoopOnce').disabled=info.running;
      const visible=info.motifs||[],genomes=info.ideas||[];
@@ -519,6 +522,7 @@ export function initRuleStudio(){
  $('ruleWords').addEventListener('input',()=>{
    try{localStorage.setItem(wordKey,activeWords())}catch{}
    clearTimeout(wordTimer);
+   loop.invalidateSources();
    wordTimer=setTimeout(previewWords,170);
  });
  $('ruleUseArchive').addEventListener('click',async()=>{
@@ -533,24 +537,6 @@ export function initRuleStudio(){
      status('Experimental image imported into RULES; now evolve this painting with the other simulators.');
    }catch(error){status('Experimental reference unavailable: '+safe(error?.message));}
  });
- const frameHost=$('archiveDockFrame'),dock=$('archiveDock');
- $('archiveToggle').addEventListener('click',()=>{
-   dock.hidden=false;
-   if(!frameHost.querySelector('iframe')){
-     const frame=document.createElement('iframe');
-     frame.src='/legacy.html?embedded=1';
-     frame.title='Hexfield experimental engine';
-     frame.loading='eager';
-     frameHost.append(frame);
-   }
-   dock.scrollIntoView({block:'start',behavior:'smooth'});
- });
- $('archiveClose').addEventListener('click',()=>{
-   dock.hidden=true;
-   // Prevent two invisible CPU-intensive engines competing on phones.
-   frameHost.replaceChildren();
-   latestFrame();
- });
  window.addEventListener('storage',event=>{
    if(event.key===CROSS_STUDIO_KEYS.archive)latestFrame();
  });
@@ -560,6 +546,22 @@ export function initRuleStudio(){
    hide(){loop.pause();theatre.stop();if(current){persistCanvas(current.canvas,current.recipe,current.judged);
      publishSource(current.canvas,'rules',current.recipe);}},
    paintFresh,hasWork:()=>!!current,
+   async takeImagined(imageUrl){
+     if(!imageUrl)return false;
+     const image=new Image();
+     await new Promise((resolve,reject)=>{
+       image.onload=resolve;image.onerror=()=>reject(Error('Cannot decode imagined source'));
+       image.src=imageUrl;
+     });
+     loop.pause();
+     const seed=evolveSeed(current?.recipe?.seed||1,(current?.recipe?.generation||0)+1,0,'new-image');
+     const recipe=makeRecipe({...selections(),seed,subject:'abstract'});
+     realitySource=fromImage(image);
+     present(recipe,realitySource,!!current);
+     loop.invalidateSources();
+     status('The imagined source is now material in this same painting. PAINT & EVOLVE to continue.');
+     return true;
+   },
    loopState:()=>loop.state()
  };
 }

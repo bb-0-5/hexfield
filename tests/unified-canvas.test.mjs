@@ -42,8 +42,30 @@ assert.ok(diff(wordA,original).fraction<.3,
 const wordC=fresh();
 paintWordsOnCanvas(wordC,'RECURSION',{recipe,seed:31});
 assert.ok(diff(wordC,wordA).mean>.004,'Changing the actual text must change the canvas');
+assert.ok(A.chromaticFraction>.65,
+  'The words must have true chromatic pigment, not a grey/white material');
+assert.equal(A.palette.length,3);
+assert.ok(new Set(A.palette).size>=2,'At least two independent pigment hues');
+const {wordApplication,WORD_APPLICATIONS}=await import('../public/studio/word-surface.js');
+const designs=new Set(),faces=new Set(),colours=new Set();
+for(let n=0;n<40;n++){
+ const chosen=wordApplication(31+n*37,n,'source-mark');
+ designs.add(chosen.name);faces.add(chosen.family.name);
+ const image=fresh();
+ const result=paintWordsOnCanvas(image,'MUTATION',{recipe,seed:31+n*37,iteration:n});
+ colours.add(result.palette[0]);
+}
+assert.ok(designs.size>=6&&faces.size>=4,
+ 'A painter must actually invent different type anatomy and font construction');
+assert.ok(colours.size>=12,'Newly seeded colour families must not freeze at grey');
+assert.ok(WORD_APPLICATIONS.length>=8);
 const text=readFileSync('public/index.html','utf8');
-assert.match(text,/id="archiveDock"/);
+assert.doesNotMatch(text,/id="archiveDock"/,'No embedded competing canvas');
+assert.doesNotMatch(text,/data-mode="(?:rules|landscape|lettering|imagination)"/,
+  'No user-facing tabs remain');
+assert.match(text,/id="ruleModelPromptSlot"/);
+assert.match(text,/id="ruleImagine"/);
+assert.match(text,/id="ruleArtwork"/);
 assert.match(text,/id="ruleWords"/);
 assert.match(text,/id="ruleUseArchive"/);
 const code=readFileSync('public/app.js','utf8');
