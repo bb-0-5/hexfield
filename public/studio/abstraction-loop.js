@@ -8,6 +8,9 @@ import {createSourceBank,mixSources,cloneCanvas,prepareMixSamples} from './sourc
 import {planDirtyTiles,shouldUseLocalRender} from './dirty-tiles.js';
 import {renderPlan,recordRenderTime,yieldToBrowser} from './render-governor.js';
 import {renderRuleLive} from './live-rule-execution.js';
+import {negotiateComposition,createCompositionMemory,
+  loadCompositionMemory,saveCompositionMemory,
+  updateCompositionMemory} from './composition-negotiation.js';
 import {auditRegions,createRegionMemory,loadRegionMemory,
   saveRegionMemory,updateRegionMemory} from './regional-judgement.js';
 import {evolveSeed,rankNoveltyCandidates,commitCanvas,
@@ -106,6 +109,7 @@ export function createAbstractionLoop({
  let objects=loadObjectRegistry(),renderBudget=null,dirtyStats=null;
  let performanceHistory={emaMs:0,samples:0},lastFrameMs=0,stage='idle';
  let regionMemory=loadRegionMemory(),lastRegionDecisions=[];
+ let compositionMemory=loadCompositionMemory(),lastComposition=null;
  void loadObjectRegistryFromDB().then(saved=>{
   if(saved?.objects?.length&&!objects.objects.length&&cycle===0)objects=saved;
  }).catch(()=>{});
@@ -130,6 +134,10 @@ export function createAbstractionLoop({
      id:x.region.id,verdict:x.verdict,mark:x.mark,
      improvement:x.improvement
    })),
+   composition:{generation:compositionMemory.generation,
+     treaties:Object.keys(compositionMemory.treaties).length,
+     history:(compositionMemory.history||[]).slice(-4),
+     last:lastComposition},
    performanceHistory:{...performanceHistory},stage,
    threeWay:lastAssessment?.threeWay||null,
    history:stamps.map(x=>({...x})),
@@ -154,6 +162,8 @@ export function createAbstractionLoop({
    motifs=[];ideas=[];dirtyStats=null;performanceHistory={emaMs:0,samples:0};
    lastFrameMs=0;stage='idle';regionMemory=createRegionMemory();
    lastRegionDecisions=[];saveRegionMemory(regionMemory);
+   compositionMemory=createCompositionMemory();
+   lastComposition=null;saveCompositionMemory(compositionMemory);
    seed=Math.floor(Math.random()*4294967295);
    bank.clear();forceFreshSources=true;status();
  }
@@ -412,6 +422,22 @@ export function createAbstractionLoop({
        metrics.regional={reviews:regional.reviews,
          revised:regional.revisions,kept:regional.kept};
        if(currentStamp!==stamp)return;
+       // Each region may request an actual pigment+geometry influence,
+       // but adjacent regions get independent votes on the proposal.
+       if(!await checkpoint('Composition / local consensus'))return;
+       const composition=negotiateComposition({
+         canvas:output,parent:previous,memory:regionMemory,
+         compositionMemory,objects:objects.objects,
+         cycle:compositionMemory.generation+1,attempt,
+         dirtyTiles:partial?tilePlan.tiles:null,
+         locked:!!config.lockLaw,
+         onDecision:(decision,painting)=>process({
+           type:'composition-vote',canvas:painting,decision,cycle,attempt
+         })
+       });
+       metrics.composition={attempts:composition.attempts,
+         accepted:composition.accepted};
+       if(currentStamp!==stamp)return;
        // The word is painted into each competing canvas BEFORE its W/φ/H
        // analysis, so word-and-image composition belongs to the same artwork.
        const composite=postProcess(output,recipe,metrics,{cycle,branch:attempt,
@@ -425,7 +451,7 @@ export function createAbstractionLoop({
          application:derivation?.method||'new',
          markProgram:metrics.invented.stamps?recipe.markProgram.signature:'',
          interaction:composite?.interaction?.relation||''});
-       candidates.push({canvas:output,recipe,mixed,metrics,held,heritage,stable,derivation,composite,method,attempt,dirty:tilePlan,regional});
+       candidates.push({canvas:output,recipe,mixed,metrics,held,heritage,stable,derivation,composite,method,attempt,dirty:tilePlan,regional,composition});
        if(currentStamp!==stamp)return;
      }
      if(!await checkpoint('Judging actual paintings'))return;
@@ -459,6 +485,10 @@ export function createAbstractionLoop({
      regionMemory=updateRegionMemory(regionMemory,lastRegionDecisions,
        regionMemory.generation+1);
      saveRegionMemory(regionMemory);
+     lastComposition=best.composition?.decision||null;
+     compositionMemory=updateCompositionMemory(compositionMemory,
+       lastComposition,compositionMemory.generation+1);
+     saveCompositionMemory(compositionMemory);
      dirtyStats=best.dirty?{
        partial:true,coverage:best.dirty.coverage,
        skippedTiles:best.dirty.skippedTiles,dirtyTiles:best.dirty.dirtyTiles,
@@ -480,9 +510,23 @@ export function createAbstractionLoop({
          retained:derivation.retained,interwoven:derivation.interwoven,
          changed:derivation.changed}:null,candidates:candidates.length,
         preflight:renderBudget,dirty:dirtyStats,
-        regional:{reviews:best.regional?.reviews||0,
+        composition:{attempts:best.composition?.attempts||0,
+         accepted:best.composition?.accepted||0,
+         decision:lastComposition?{
+           from:lastComposition.from,to:lastComposition.to,
+           accepted:lastComposition.accepted,
+           scoreBefore:lastComposition.before.score,
+           scoreAfter:lastComposition.after.score,
+           supporters:lastComposition.supporters,
+           opponents:lastComposition.opponents,
+           vote:lastComposition.vote,method:lastComposition.method,
+           coverage:lastComposition.coverage
+         }:null},
+       regional:{reviews:best.regional?.reviews||0,
           revised:best.regional?.revisions||0,
-          kept:best.regional?.kept||0}};
+          kept:best.regional?.kept||0},
+        composition:{attempts:best.composition?.attempts||0,
+          accepted:best.composition?.accepted||0}};
      const survived=motifEvidence(motifs);
      const inherited=heritageEvidence(ideas);
      // Extract once on the winning FULL image; rejected trials are discarded.
@@ -565,6 +609,8 @@ export function createAbstractionLoop({
         cachedObjectReuses:best.stable?.reused||0,
         regionsReviewed:best.regional?.reviews||0,
         regionsReworked:best.regional?.revisions||0,
+        compositionTreaties:Object.keys(compositionMemory.treaties).length,
+        compositionAccepted:best.composition?.accepted||0,
         previewTrials:renderBudget.predicted,fullRenders:renderBudget.full,
          dirtyCoverage:dirtyStats.coverage,omittedRuleCells:dirtyStats.omittedRuleCells});
      stamps=stamps.slice(-10);
