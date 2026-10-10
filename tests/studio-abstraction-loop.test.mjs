@@ -115,8 +115,19 @@ for(let pass=3;pass<=10;pass++){
     'Each generation should trial retaining its parent application style');
   assert.notEqual(produced.at(-1).recipe.seed,produced.at(-2).recipe.seed,
     'Generation '+pass+' must branch from the previous seed, not repeat it');
-  assert.ok(produced.at(-1).nonredundancy?.candidates>=2,
-    'Every generation must compare multiple actual rendered candidates');
+  assert.ok(produced.at(-1).nonredundancy?.candidates>=1&&
+    produced.at(-1).nonredundancy.candidates<=2,
+    'Only one or two full-resolution candidates are painted per generation');
+  assert.equal(produced.at(-1).renderBudget?.predicted,3,
+    'Three actual coarse previews must still be compared');
+  assert.equal(produced.at(-1).trials.length,3,
+    'All three visibly painted previews must remain inspectable');
+  assert.ok(produced.at(-1).renderBudget.fullAvoided>=1,
+    'Every generation avoids at least one former full-size render');
+  assert.ok(produced.at(-1).trials.some(x=>x.fidelity==='preview'),
+    'The inexpensive competing image must be an actual preview, not a fake score');
+  assert.ok(produced.at(-1).objectMemory?.count<=8,
+    'Object memory must remain bounded on mobile');
   assert.equal(produced.at(-1).trials.filter(t=>t.selected).length,1,
     'The chosen generation is always linked to exactly one actually tested alternative');
   assert.ok(Number.isFinite(produced.at(-1).heritage?.tradeoff?.W)&&
