@@ -101,6 +101,8 @@ export function initRuleStudio(){
        ' scene pixels moved · '+result.interaction.bentPixels+
        ' lettering pixels sculpted':
      'No word layer. The artwork remains purely procedural.');
+   current.judged=false;
+   $('ruleKeep').disabled=false;$('ruleReject').disabled=false;
    publishSource(output,'rules',current.recipe);
    persistCanvas(output,current.recipe,current.judged);
  }
@@ -203,6 +205,12 @@ export function initRuleStudio(){
      context.clearRect(0,0,960,600);context.drawImage(canvas,0,0,960,600);
      current={recipe,canvas,judged:false,metrics};
      unlettered=result.composite?.clean||null;
+     if(result.composite?.interaction){
+       const it=result.composite.interaction;
+       text('ruleWordsStatus','LETTERING ⇄ SCENE / '+it.relation.toUpperCase()+
+         ' · '+it.contactPixels+' intersections · '+it.displacedPixels+
+         ' background pixels moved · '+it.bentPixels+' word pixels bent');
+     }
      parentCanvas=canvas;
      displayPhi(canvas);
      const duration=Math.min(2450,Math.max(1050,
