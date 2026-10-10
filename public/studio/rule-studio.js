@@ -341,6 +341,10 @@ export function initRuleStudio(){
      $('ruleKeep').disabled=false;$('ruleReject').disabled=false;
      $('ruleReworkBtn').disabled=false;$('ruleSave').disabled=false;
      text('ruleCaption',describeRecipe(recipe));
+     if(recipe.styleId)text('ruleStyleStatus',styleCaption({
+       style:recipe.styleId,abstraction:recipe.abstractionLevel||'gentle',
+       seed:recipe.seed
+     })+' · automatic evolution within this executable painting style.');
      text('ruleEvidence','GENERATION '+cycle+' / '+metrics.strokes+
        ' marks / '+metrics.skipped+' removed / '+blend.toUpperCase()+
        (metrics.invented?.stamps?' / INVENTED '+metrics.invented.stamps+
@@ -756,9 +760,12 @@ export function initRuleStudio(){
    loop.pause();void paintFresh();
  });
  $('ruleReworkBtn').addEventListener('click',()=>{loop.pause();rework();});
- $('ruleNewLaw').addEventListener('click',()=>{loop.pause();child('law');});
- $('ruleNewSubject').addEventListener('click',()=>{loop.pause();child('subject');});
- $('ruleNewMark').addEventListener('click',()=>{loop.pause();child('mark');});
+ $('ruleNewLaw').addEventListener('click',()=>{
+   styleToken++;styleAnchor=null;styleLast=null;loop.pause();child('law');});
+ $('ruleNewSubject').addEventListener('click',()=>{
+   styleToken++;styleAnchor=null;styleLast=null;loop.pause();child('subject');});
+ $('ruleNewMark').addEventListener('click',()=>{
+   styleToken++;styleAnchor=null;styleLast=null;loop.pause();child('mark');});
  $('ruleLoopStart').addEventListener('click',()=>{manuallyPaused=false;loop.start(loopOptions());});
  $('ruleLoopStop').addEventListener('click',()=>{
    if(loop.isRunning()){
@@ -779,10 +786,15 @@ export function initRuleStudio(){
  document.querySelector('[data-au-print="rules"]')?.addEventListener(
    'click',()=>live.stop({finalize:true}),{capture:true});
  $('ruleFile').addEventListener('change',async event=>{
-   try{upload=await fileToImage(event.target.files?.[0]);$('ruleReference').value='file';status('Reference image loaded. Your rules will be executed locally.');}
+   try{upload=await fileToImage(event.target.files?.[0]);$('ruleReference').value='file';
+     styleToken++;styleAnchor=null;styleLast=null;
+     $('ruleRepeatStyle').disabled=true;
+     status('Reference image loaded. CHANGE STYLE will test actual mark styles on it.');}
    catch(error){status(safe(error.message));}
  });
  $('ruleReference').addEventListener('change',()=>{
+   styleToken++;styleAnchor=null;styleLast=null;
+   $('ruleRepeatStyle').disabled=true;
    if($('ruleReference').value==='last'&&!current)status('Paint an image first to use it as your next reference.');
  });
  const restored=read(CURRENT);
