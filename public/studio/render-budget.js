@@ -15,7 +15,7 @@ export function scorePreflight(preview,{novelty=0,continuity=.5,
    agreement:(N>.09&&H>.25&&golden.combined>.40)};
 }
 export function chooseFullRenderCandidates(previews,{
- cycle=0,mobile=false,strict=false
+ cycle=0,mobile=false,strict=false,maxFull=MAX_FULL_CANDIDATES
 }={}){
  if(!Array.isArray(previews)||!previews.length)return [];
  const rows=[...previews].sort((a,b)=>{
@@ -30,7 +30,7 @@ export function chooseFullRenderCandidates(previews,{
  // sufficiently decisive lead. Do not early-accept a merely bright preview.
  const confident=cycle>=2&&first.preflight.agreement&&
    margin>(mobile?.12:.18)&&(!strict||first.preflight.golden.qualifies);
- return rows.slice(0,confident?1:MAX_FULL_CANDIDATES);
+ return rows.slice(0,confident?1:Math.max(1,Math.min(MAX_FULL_CANDIDATES,maxFull)));
 }
 export function budgetEvidence(previews,finalists){
  return {predicted:previews.length,full:finalists.length,
