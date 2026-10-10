@@ -85,6 +85,9 @@ jobs:
       - name: Verify 330 glyph shape evolution and real same-canvas typography
         run: node --experimental-default-type=module tests/type-genome.test.mjs
 
+      - name: Verify 331 inherited design templates for promotion, advertising and logos
+        run: node --experimental-default-type=module tests/design-templates.test.mjs
+
       - name: Guard global renderer non-redundancy and evolving-seed genealogy
         run: node --experimental-default-type=module tests/global-nonredundancy.test.mjs
       - name: Verify component-level font anatomy and mutable logo geometry
