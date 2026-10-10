@@ -80,7 +80,16 @@ export function initRuleStudio(){
  };
  function compositeWords(output,recipe,metrics,{dirtyTiles=null}={}){
    if(!activeWords())return null;
-   const clean=cleanCopy(output);
+   // Parent letters live on unchanged tiles. Reconstruct the unlettered
+   // baseline from its actual previous baseline plus only newly painted
+   // regions. Editing the words must replace, not accumulate, old glyphs.
+   const clean=dirtyTiles?.length&&unlettered?
+     cleanCopy(unlettered):cleanCopy(output);
+   if(dirtyTiles?.length&&unlettered){
+     const cg=clean.getContext('2d');
+     for(const t of dirtyTiles)cg.drawImage(output,
+       t.x,t.y,t.w,t.h,t.x,t.y,t.w,t.h);
+   }
    const work=paintWordsOnCanvas(output,activeWords(),{
      recipe,seed:recipe.seed,iteration:recipe.generation,sourceCanvas:clean,
      dirtyTiles
