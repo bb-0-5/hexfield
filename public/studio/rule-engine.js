@@ -304,7 +304,15 @@ export function applyRules(source,target,recipe,options={}){
  const taste=ruleTaste();
  const markTypes=['dashes','dots','hatch','cutout','carve'];
  let visitedCells=0,omittedCells=0;
- const gutter=Math.max(72,step*7);
+ // A safety halo is proportional to ACTUAL warp laws. In unwarped scenes,
+ // a fixed 72px halo squandered the entire dirty-tile saving on phones.
+ // Stamps need only ~3.5 cells of clearance when no geometric law shifts
+ // their centres; larger active displacement laws widen the halo.
+ const gutter=Math.ceil(step*3.5+
+   (has('opposite_bend')?Math.min(width*.055,42):0)+
+   (has('fractured_horizon')?Math.min(width*.033,24):0)+
+   (has('flatten_perspective')?width*.025:0)+
+   (misread?step*1.8:0));
  for(let y=0;y<height;y+=step){
    if(partial&&!tiles.some(t=>y>=t.y-gutter&&y<t.y+t.h+gutter)){
      omittedCells+=Math.ceil(width/step);continue;
