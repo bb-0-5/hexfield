@@ -72,6 +72,8 @@ jobs:
         run: node --experimental-default-type=module tests/composition-negotiation.test.mjs
       - name: Verify 325 living visual roots, real-pixel form carriers and gradual pigment adaptation
         run: node --experimental-default-type=module tests/living-identity.test.mjs
+      - name: Verify 326 selective forgetting and real accepted-form rediscovery under local artistic judgement
+        run: node --experimental-default-type=module tests/creative-forgetting.test.mjs
 
       - name: Guard global renderer non-redundancy and evolving-seed genealogy
         run: node --experimental-default-type=module tests/global-nonredundancy.test.mjs

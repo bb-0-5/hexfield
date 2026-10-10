@@ -8,6 +8,8 @@ import {createSourceBank,mixSources,cloneCanvas,prepareMixSamples} from './sourc
 import {planDirtyTiles,shouldUseLocalRender} from './dirty-tiles.js';
 import {renderPlan,recordRenderTime,yieldToBrowser} from './render-governor.js';
 import {renderRuleLive} from './live-rule-execution.js';
+import {createCreativeMemory,loadCreativeMemory,saveCreativeMemory,
+  settleCreativeMemory,attemptRediscovery} from './creative-forgetting.js';
 import {createVisualIdentity,loadVisualIdentity,saveVisualIdentity,
  adoptVisualIdentity,identitySafeguards,inheritVisualIdentity} from './living-identity.js';
 import {negotiateComposition,createCompositionMemory,
@@ -112,6 +114,7 @@ export function createAbstractionLoop({
  let performanceHistory={emaMs:0,samples:0},lastFrameMs=0,stage='idle';
  let regionMemory=loadRegionMemory(),lastRegionDecisions=[];
  let identity=loadVisualIdentity(),lastIdentityEffect=null;
+ let creativeMemory=loadCreativeMemory(identity.root),lastMemoryEvents=[];
  let compositionMemory=loadCompositionMemory(),lastComposition=null;
  void loadObjectRegistryFromDB().then(saved=>{
   if(saved?.objects?.length&&!objects.objects.length&&cycle===0)objects=saved;
@@ -133,6 +136,15 @@ export function createAbstractionLoop({
    renderBudget,dirtyStats,lastFrameMs,
    regionMemory:{generation:regionMemory.generation,
      cells:Object.values(regionMemory.cells).map(x=>({...x}))},
+   creativeMemory:{root:creativeMemory.root,
+     generation:creativeMemory.generation,
+     habits:Object.fromEntries(Object.entries(creativeMemory.habits).map(
+       ([id,h])=>[id,{held:h.held,misses:h.misses,streak:h.streak}])),
+     dormant:creativeMemory.archive.map(x=>({
+       id:x.id,since:x.dormantSince})),
+     forgotten:creativeMemory.forgotten,
+     rediscovered:creativeMemory.rediscovered,
+     recent:lastMemoryEvents.map(e=>({...e}))},
    identity:{root:identity.root,generation:identity.generation,
      colors:(identity.palette||[]).map(c=>[...c]),
      anchors:(identity.anchors||[]).map(a=>({
@@ -173,6 +185,8 @@ export function createAbstractionLoop({
    lastFrameMs=0;stage='idle';regionMemory=createRegionMemory();
    lastRegionDecisions=[];saveRegionMemory(regionMemory);
    identity=createVisualIdentity();lastIdentityEffect=null;
+   creativeMemory=createCreativeMemory();lastMemoryEvents=[];
+   try{localStorage.removeItem('hexfield.creative-forgetting.326');}catch{}
    try{localStorage.removeItem('hexfield.visual-identity.325');}catch{}
    compositionMemory=createCompositionMemory();
    lastComposition=null;saveCompositionMemory(compositionMemory);
@@ -427,7 +441,30 @@ export function createAbstractionLoop({
        });
        metrics.identity={root:continuity.root,forms:continuity.forms,
          pigments:continuity.pigmentRegions,coverage:continuity.coverage};
-       const recognized=[...objects.objects,...identitySafeguards(identity)];
+       // An occasional dormant, ACTUALLY sampled historical silhouette may
+       // return only when it improves the live candidate's real local score.
+       // It is a reconstruction of prior pigment/form—not lost exact pixels.
+       if(!await checkpoint('Testing a forgotten visual idea'))return;
+       const recall=attemptRediscovery({
+         canvas:output,parent:previous,identity,memory:creativeMemory,
+         generation:creativeMemory.generation+1,
+         // One genuinely evaluated historical proposal per generation,
+         // even if the quality governor paints multiple full finalists.
+         locked:!!config.lockLaw||finalIndex>0,
+         dirtyTiles:partial?tilePlan.tiles:null,
+         onTrial:change=>process({
+           type:'creative-recall',canvas:output,change,cycle,attempt
+         })
+       });
+       metrics.memory={recallAttempted:recall.attempted,
+         recallAccepted:recall.accepted};
+       if(currentStamp!==stamp)return;
+       const recalledGuard=recall.accepted?[{
+         id:recall.signature.id,bbox:recall.signature.box,
+         age:5,volatility:0,stability:.9,identity:true
+       }]:[];
+       const recognized=[...objects.objects,
+         ...identitySafeguards(identity),...recalledGuard];
        // The painting tests local variants of the REAL executed ink before
        // global W / phi / H judging. Different regions develop distinct taste.
        if(!await checkpoint('Auditing live painted regions'))return;
@@ -482,7 +519,7 @@ export function createAbstractionLoop({
          interaction:composite?.interaction?.relation||''});
        candidates.push({canvas:output,recipe,mixed,metrics,held,heritage,
          stable,derivation,composite,method,attempt,dirty:tilePlan,
-         regional,composition,continuity});
+         regional,composition,continuity,recall});
        if(currentStamp!==stamp)return;
      }
      if(!await checkpoint('Judging actual paintings'))return;
@@ -519,6 +556,16 @@ export function createAbstractionLoop({
        composition:best.composition?.decision||null
      });
      lastIdentityEffect=best.continuity||null;
+     // An identity can become a tradition, lose relevance, be forgotten,
+     // and later return from its tiny real-pixel sampled material signature.
+     // Only a GLOBALLY ACCEPTED painting is permitted to revise this memory.
+     const settled=settleCreativeMemory(creativeMemory,identity,output,{
+       generation:identity.generation,recall:best.recall
+     });
+     creativeMemory=settled.memory;
+     identity=settled.identity;
+     lastMemoryEvents=settled.events;
+     saveCreativeMemory(creativeMemory);
      identity.retained=Math.min(100000,(identity.retained||0)+
        (best.continuity?.forms||0));
      identity.adaptations=Math.min(100000,(identity.adaptations||0)+
@@ -561,7 +608,10 @@ export function createAbstractionLoop({
           accepted:best.composition?.accepted||0},
         identity:{root:identity.root,generation:identity.generation,
           forms:best.continuity?.forms||0,
-          pigmentRegions:best.continuity?.pigmentRegions||0}};
+          pigmentRegions:best.continuity?.pigmentRegions||0},
+        creativeMemory:{dormant:creativeMemory.archive.length,
+          forgotten:creativeMemory.forgotten,
+          rediscovered:creativeMemory.rediscovered}};
      const survived=motifEvidence(motifs);
      const inherited=heritageEvidence(ideas);
      // Extract once on the winning FULL image; rejected trials are discarded.
@@ -607,6 +657,15 @@ export function createAbstractionLoop({
        heritage:{...heritage,ancestors:inherited,
          living:heritageEvidence(ideas),tradeoff:threeWay},
        golden,nonredundancy:lastAssessment,renderBudget,dirty:dirtyStats,
+       creativeMemory:{root:creativeMemory.root,
+         traditions:Object.keys(creativeMemory.habits).length,
+         dormant:creativeMemory.archive.map(a=>({
+           id:a.id,dormantSince:a.dormantSince})),
+         forgotten:creativeMemory.forgotten,
+         rediscovered:creativeMemory.rediscovered,
+         attempted:!!best.recall?.attempted,
+         recallAccepted:!!best.recall?.accepted,
+         events:lastMemoryEvents.map(e=>({...e}))},
        identity:{root:identity.root,generation:identity.generation,
          anchors:identity.anchors.map(a=>({
            id:a.id,box:{...a.box},age:a.age,vitality:a.vitality})),
@@ -666,6 +725,9 @@ export function createAbstractionLoop({
         regionsReviewed:best.regional?.reviews||0,
         regionsReworked:best.regional?.revisions||0,
         livingRoot:identity.root,
+        forgottenIdeas:creativeMemory.forgotten,
+        dormantIdeas:creativeMemory.archive.length,
+        returnedIdeas:creativeMemory.rediscovered,
         identityForms:best.continuity?.forms||0,
         compositionTreaties:Object.keys(compositionMemory.treaties).length,
         compositionAccepted:best.composition?.accepted||0,
@@ -682,6 +744,9 @@ export function createAbstractionLoop({
        device:renderBudget.device,
        donorReadbacksSaved:(renderBudget.cache?.full?.hits||0)+
          (renderBudget.cache?.preview?.hits||0)};
+     for(const event of lastMemoryEvents)process({
+       type:'creative-memory',canvas:output,event,cycle
+     });
      process({type:'decision',canvas:output,recipe,metrics,cycle,
        interaction:composite||null,
        objects:objects.objects||[],dirtyTiles:best.dirty?.tiles||null,

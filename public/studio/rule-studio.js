@@ -143,6 +143,10 @@ export function initRuleStudio(){
        progress.phase==='accepted'?'SELECTED / ACTUAL ARTWORK':
        progress.phase==='living-identity'?
           (progress.kind==='form'?'LIVING FORM / CARRYING ITS PAST':
+           progress.kind==='rediscovered'?'FORGOTTEN IDEA / TESTING RETURN':
+           progress.kind==='recall-rejected'?'FORGOTTEN IDEA / NOT YET VALUABLE':
+           progress.kind==='FORGOT'?'CREATIVE FORGETTING / LETTING GO':
+           progress.kind==='RETURNED'?'CREATIVE MEMORY / IDEA RETURNED':
            'LIVING COLOUR / ADAPTING ITS PALETTE'):
         progress.phase==='composition-vote'?
           'COMPOSITION / '+(progress.accepted?'VISUAL ALLIANCE ACCEPTED':'NEIGHBOURS VETOED A CHANGE'):
@@ -258,6 +262,14 @@ export function initRuleStudio(){
          attempt:event.attempt});
      }else if(event.type==='identity'){
         live.livingIdentity({painting:event.canvas,change:event.change});
+      }else if(event.type==='creative-recall'){
+        live.livingIdentity({painting:event.canvas,
+          change:{type:event.change.accepted?'rediscovered':'recall-rejected',
+            root:loop.state().identity.root,id:event.change.id}});
+      }else if(event.type==='creative-memory'){
+        live.livingIdentity({painting:event.canvas,
+          change:{type:event.event.type,
+            root:loop.state().identity.root,id:event.event.id}});
       }else if(event.type==='regional-decision'){
        live.regionalDecision({painting:event.canvas,decision:event.decision});
      }else if(event.type==='composition-vote'){
@@ -314,6 +326,10 @@ export function initRuleStudio(){
           ' / '+(result.identity?.anchors?.length||0)+' enduring forms'+
           ' / '+(result.identity?.forms||0)+' actual pixel echoes'+
           ' / '+(result.identity?.pigments||0)+' pigment evolutions'+
+        ' / CREATIVE MEMORY '+(result.creativeMemory?.traditions||0)+' habits'+
+          ' / '+(result.creativeMemory?.dormant?.length||0)+' dormant ideas'+
+          ' / '+(result.creativeMemory?.forgotten||0)+' forgotten'+
+          ' / '+(result.creativeMemory?.rediscovered||0)+' returned'+
         ' / COMPOSITION '+(result.composition?.attempts||0)+' negotiated ('+
          (result.composition?.accepted||0)+' alliances adopted)'+
        ' / REGIONAL TASTE '+(result.regional?.reviews||0)+' tested ('+
@@ -381,6 +397,8 @@ export function initRuleStudio(){
          ' · '+(info.composition?.treaties||0)+' composition treaties'+
           ' · '+(info.identity?.root||'new')+' evolving visual root'+
           ' · '+(info.identity?.anchors?.length||0)+' enduring form signatures'+
+          ' · '+(info.creativeMemory?.dormant?.length||0)+' dormant ideas'+
+          ' · '+(info.creativeMemory?.rediscovered||0)+' reappearances'+
          (info.dirtyStats?.partial?' · LOCAL / '+
            info.dirtyStats.skippedTiles+' clean tiles kept':' · GLOBAL REPAINT')+
          ' · KEEP or REJECT teaches which lineage to retain.';
