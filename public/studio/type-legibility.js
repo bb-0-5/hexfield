@@ -142,3 +142,46 @@ export function protectReadableWinner(ranked,selected,{
   {winner:options[0],reason:'readability-over-novelty'}:
   {winner:selected,reason:'repaired-mask-no-better-finalist'};
 }
+
+/** A finite safety brake: repair damaged characters only, keeping the
+ * successful bubble or block strokes untouched. Counters and the letter's
+ * recognisable skeleton take priority over excessive morphing.
+ */
+export function repairGlyphMask(reference,mutated,w,h,parts=[]){
+ const first=assessGlyphMask(reference,mutated,w,h,parts);
+ if(first.readable||first.unassessed)
+  return {pixels:mutated,evidence:{...first,repaired:false}};
+ const pixels=new Uint8ClampedArray(mutated);
+ for(const part of parts){
+  if(!part.char?.trim())continue;
+  const x0=Math.max(0,Math.floor(part.x0)-3),
+    x1=Math.min(w,Math.ceil(part.x1)+3),
+    y0=Math.max(0,Math.floor(part.top)-2),
+    y1=Math.min(h,Math.ceil(part.bottom)+2);
+  for(let y=y0;y<y1;y++)for(let x=x0;x<x1;x++){
+   const p=y*w+x,a=reference[p],b=mutated[p];
+   // Keep a variable but bounded outer contour; reduce overflow into
+   // enclosed reference-white areas so O/B/P/R holes remain visible.
+   pixels[p]=a>80?Math.max(a,Math.round(b*.88)):
+     Math.round(b*.23);
+  }
+ }
+ let after=assessGlyphMask(reference,pixels,w,h,parts);
+ if(!after.readable){
+  // The conservative skeleton is preferable to an unrecognisable mark.
+  // Leave up to 9% of the successful new geometry around the outline.
+  for(const part of parts){
+   if(!part.char?.trim())continue;
+   const x0=Math.max(0,Math.floor(part.x0)-3),
+     x1=Math.min(w,Math.ceil(part.x1)+3),
+     y0=Math.max(0,Math.floor(part.top)-2),
+     y1=Math.min(h,Math.ceil(part.bottom)+2);
+   for(let y=y0;y<y1;y++)for(let x=x0;x<x1;x++){
+    const p=y*w+x,a=reference[p],b=mutated[p];
+    pixels[p]=Math.round(a*.94+b*.06);
+   }
+  }
+  after=assessGlyphMask(reference,pixels,w,h,parts);
+ }
+ return {pixels,evidence:{...after,repaired:true,priorScore:first.score}};
+}
