@@ -239,7 +239,9 @@ function remap(color,recipe,x,y,w,h){
  if(laws.includes('bright_shadow'))[red,green,blue]=[255-red,255-green,255-blue];
  return [red,green,blue].map(v=>clamp(Math.round(v/255*n)*255/n,0,255));
 }
-export function applyRules(source,target,recipe,options={}){
+// This deterministic coroutine executes the SAME real brush and ink rules
+// as synchronous applyRules, but exposes completed rows as they are painted.
+export function* applyRulesSteps(source,target,recipe,options={}){
  if(!source||!target)throw Error('Missing source or target canvas');
  const width=target.width,height=target.height;
  const sample=document.createElement('canvas');sample.width=width;sample.height=height;
@@ -313,6 +315,7 @@ export function applyRules(source,target,recipe,options={}){
    (has('fractured_horizon')?Math.min(width*.033,24):0)+
    (has('flatten_perspective')?width*.025:0)+
    (misread?step*1.8:0));
+ try{
  for(let y=0;y<height;y+=step){
    if(partial&&!tiles.some(t=>y>=t.y-gutter&&y<t.y+t.h+gutter)){
      omittedCells+=Math.ceil(width/step);continue;
@@ -405,8 +408,13 @@ export function applyRules(source,target,recipe,options={}){
      }
      strokes++;
    }
+   if(options.progress===true)yield {
+     row:y,rows:Math.ceil(height/step),
+     completedRows:Math.min(Math.ceil(height/step),Math.floor(y/step)+1),
+     strokes,skipped,canvas:target
+   };
  }
- ctx.restore();
+ }finally{ctx.restore();}
  return {strokes,skipped,cell:step,
   dirty:{partial,tiles:partial?tiles.length:0,
     coverage:partial?tilesCoverage(tiles,width,height):1,
@@ -421,6 +429,14 @@ export function applyRules(source,target,recipe,options={}){
     id:program.id,signature:program.signature,sources:program.sources,
     operations:program.operations}:null,background:negative?
     '#eee7d7':recipe.mark==='carve'?'#242c37':'#e5e0d3'}:undefined};
+}
+// The full synchronous API remains pixel-identical and returns the same
+// verdicts. Real-time execution simply advances the same coroutine slowly.
+export function applyRules(source,target,recipe,options={}){
+ const steps=applyRulesSteps(source,target,recipe,{...options,progress:false});
+ let state=steps.next();
+ while(!state.done)state=steps.next();
+ return state.value;
 }
 export function validateRecipe(recipe){
  if(!recipe||!(recipe.subject in SUBJECTS)||!(recipe.primary in LAWS)||!(recipe.mark in MARKS))return false;
