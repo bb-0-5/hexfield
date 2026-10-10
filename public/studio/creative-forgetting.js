@@ -196,6 +196,9 @@ export function paintHistoricalSilhouette(canvas,signature,{
  if(overlap>b.w*b.h*.15)return 0;
  const ctx=canvas.getContext('2d');ctx.save();
  ctx.setTransform(1,0,0,1,0,0);
+ // Elliptical brush samples can extend past a footprint's outer cells.
+ // Clip them to the remembered bbox so not even one neighbour pixel changes.
+ ctx.beginPath();ctx.rect(b.x,b.y,b.w,b.h);ctx.clip();
  ctx.globalAlpha=clamp(alpha,0,.83);
  let painted=0;
  // The dark/light occupancy here was physically sampled from an earlier
