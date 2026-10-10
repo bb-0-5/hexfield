@@ -12,7 +12,7 @@ import {extractStructuralIdea,paintInheritedIdeas,advanceStructuralIdeas,
  heritageEvidence,judgeStructuralIdeas,rankBalancedCandidates,
  recallStructuralIdea} from './structural-heritage.js';
 import {getGoldenMode} from './golden-taste.js';
-import {deriveBetweenFrames} from './frame-derivation.js';
+import {deriveBetweenFrames,DERIVATION_METHODS,derivationMethod} from './frame-derivation.js';
 export const REWORK_SEQUENCE=['abstract_masses','negative_repaint','misread','remove_strength'];
 const clamp=(n,a,b)=>Math.max(a,Math.min(n,b));
 const choice=(a,seed=1)=>a[(seed>>>0)%a.length];
@@ -200,9 +200,19 @@ export function createAbstractionLoop({
        });
        // Derive a real intermediate image from the accepted parent and proposal.
        // This applied process competes alongside source mixers and mark laws.
+       // The painter inherits the previously chosen APPLICATION process as well
+       // as shape. A competing candidate deliberately mutates that method.
+       const ancestor=lastRecipe?.application;
+       const inheritedIndex=DERIVATION_METHODS.indexOf(ancestor);
+       const application=inheritedIndex<0?
+         derivationMethod(candidateSeed,cycle,attempt):
+         attempt===0?ancestor:
+         attempt===1?DERIVATION_METHODS[(inheritedIndex+1+cycle%2)%DERIVATION_METHODS.length]:
+         derivationMethod(candidateSeed,cycle,attempt);
        const derivation=previous?deriveBetweenFrames(previous,output,{
-         seed:candidateSeed,cycle,branch:attempt
+         seed:candidateSeed,cycle,branch:attempt,method:application
        }):null;
+       recipe.application=derivation?.method||'fresh';
        if(derivation){
          const context=output.getContext('2d');
          context.save();context.setTransform(1,0,0,1,0,0);
