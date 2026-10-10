@@ -19,6 +19,7 @@ globalThis.localStorage={
 globalThis.Image=Image;
 const {mixSources,cloneCanvas,publishSource,CROSS_STUDIO_KEYS}=await import('../public/studio/source-mixer.js');
 const {createAbstractionLoop,visualDelta}=await import('../public/studio/abstraction-loop.js');
+const {validMarkProgram}=await import('../public/studio/mark-program.js');
 const {setGoldenMode}=await import('../public/studio/golden-taste.js');
 // This test exercises deliberate application/mixer exploration. Strict φ
 // qualification precedence is verified independently in golden tests.
@@ -81,6 +82,9 @@ loop.once({mixMode:'dissonance',subject:'sphere',speed:1500});
 await waitGeneration(2);
 assert.ok(produced[1].sources.includes('parent'),'Second pass must use output of first pass');
 assert.equal(produced[1].recipe.parentId,produced[0].recipe.id);
+assert.ok(validMarkProgram(produced[1].recipe.markProgram));
+assert.equal(produced[1].recipe.markProgram.parentId,produced[0].recipe.markProgram.id);
+assert.equal(produced[1].recipe.markProgram.rootId,produced[0].recipe.markProgram.rootId);
 assert.ok(produced[1].novelty>0,'Recursive rework must modify pixels');
 assert.ok(produced[1].derivation?.retained>=0,
   'The second frame must be physically derived from the first frame');
@@ -132,6 +136,10 @@ for(let pass=3;pass<=10;pass++){
       'Same original motif must persist across reworks, not respawn as a fresh unrelated patch');
   }
 }
+assert.ok(produced.some(x=>x.metrics.invented.stamps>0),
+  'A continuous painting must actually execute an invented mark program');
+assert.ok(new Set(produced.map(x=>x.recipe.markProgram.rootId)).size===1,
+  'A self-developing mark process keeps its root identity through ten frames');
 assert.ok(loop.state().globalMemory>=10,'Ten accepted passes must enter the shared memory');
 assert.ok(loop.state().donorGenerations.terrain>=1,
  'Terrain programs must mutate instead of restarting from scratch');

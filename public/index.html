@@ -19,20 +19,25 @@
     <header class="masthead">
       <a class="brand" href="/" aria-label="Hexfield Studio home"><span class="brand-symbol" aria-hidden="true">✳</span> HEX<span>FIELD</span></a>
       <div class="top-description">AN ARTIFICIAL STUDIO <span class="top-separator">/</span> IMAGINING NEW WORK</div>
-      <a href="/legacy.html" class="archive-link" title="Explore Hexfield's earlier experimental studio">THE EXPERIMENTAL ARCHIVE ↗</a>
+      <button type="button" id="archiveToggle" class="archive-link" title="Open the experimental engine inside this studio">EXPERIMENTAL ENGINE ↗</button>
     </header>
     <div class="product-frame">
       <aside class="controls" aria-label="Studio controls">
-        <p class="eyebrow">STUDIO / 313</p>
+        <p class="eyebrow">STUDIO / 314</p>
         <h1>Make something<br><em>worth keeping.</em></h1>
         <p class="intro">A painter that can imagine unfamiliar places and techniques. Your criticism changes what it attempts next.</p>
-        <fieldset class="mode-switch" aria-label="Choose an artistic discipline">
-          <legend class="small-label">01 / CHOOSE A DISCIPLINE</legend>
-          <div class="segment">
-            <button class="mode-option active" type="button" data-mode="rules" aria-pressed="true">RULES</button>
-            <button class="mode-option" type="button" data-mode="imagination" aria-pressed="false">IMAGINE</button>
-            <button class="mode-option" type="button" data-mode="landscape" aria-pressed="false">PROCEDURAL</button>
-            <button class="mode-option" type="button" data-mode="lettering" aria-pressed="false">LOGOS</button>
+        <fieldset class="mode-switch" aria-label="Unified studio canvas and optional simulators">
+          <legend class="small-label">01 / SHARED CANVAS</legend>
+          <div class="segment unified-mode-switch">
+            <button class="mode-option active" type="button" data-mode="rules" aria-pressed="true">CANVAS</button>
+            <details class="advanced-configuration other-sims">
+              <summary>OTHER SIMULATORS / OPTIONAL</summary>
+              <div class="other-sims-buttons">
+                <button class="mode-option" type="button" data-mode="imagination" aria-pressed="false">IMAGINE</button>
+                <button class="mode-option" type="button" data-mode="landscape" aria-pressed="false">PROCEDURAL</button>
+                <button class="mode-option" type="button" data-mode="lettering" aria-pressed="false">LETTER ANATOMY</button>
+              </div>
+            </details>
           </div>
         </fieldset>
         <section class="phi-taste-panel" aria-label="Two golden-ratio constraints on how Hexfield evaluates its art">
@@ -52,6 +57,12 @@
           </details>
         </section>
         <section id="ruleControls" class="discipline-panel" aria-label="Executable visual constraints">
+          <div class="unified-studio-input">
+            <label for="ruleWords">WORDS ON THIS PAINTING / OPTIONAL</label>
+            <input id="ruleWords" type="text" maxlength="48" placeholder="Write directly into the evolving canvas" spellcheck="false" autocomplete="off">
+            <p id="ruleWordsStatus" class="control-help" aria-live="polite">Letters are made from the same procedural marks as the painting.</p>
+            <button type="button" id="ruleUseArchive" class="ghost-button">↳ USE EXPERIMENTAL FRAME AS REFERENCE</button>
+          </div>
           <p class="artist-autonomy-note">The painter chooses its subject, drawing laws, pigments and techniques automatically. You can intervene whenever you want.</p>
           <details class="advanced-configuration" id="ruleAdvanced">
             <summary>OPTIONAL / CHOOSE A SUBJECT OR OVERRIDE ITS RULES</summary>
@@ -68,6 +79,7 @@
           <label for="ruleReference">START FROM</label>
           <select id="ruleReference">
             <option value="reality">Geometric reality study (no AI credits)</option>
+              <option value="archive">Latest experimental frame</option>
             <option value="imagined">Last IMAGINE painting</option>
             <option value="file">Upload my own reference</option>
             <option value="last">Last Rule Studio output</option>
@@ -227,6 +239,13 @@
         <div class="studio-principle"><span>OUR RULE</span><p>A real painting needs a new visual idea, not another variation of the same picture.</p></div>
       </aside>
       <main class="workspace" aria-label="Artwork and feedback">
+        <section id="archiveDock" class="archive-dock" hidden aria-label="Embedded experimental engine">
+          <div class="archive-dock-header"><strong>EXPERIMENTAL / LIVE REFERENCE</strong>
+            <button id="archiveClose" type="button" class="ghost-button">CLOSE ↗</button></div>
+          <p>Make an experimental field here, then choose “USE EXPERIMENTAL FRAME” to paint with it in the Rule Studio.</p>
+          <div id="archiveDockFrame"></div>
+          <a href="/legacy.html" target="_blank" rel="noopener">Open separately if your device needs more room ↗</a>
+        </section>
         <section id="ruleWorkspace" aria-label="Executable rule-bound paintings">
           <div class="canvas-heading"><div><span class="status-orb"></span><span class="canvas-heading-text">RULE STUDIO / LAWS BEFORE STYLE</span></div><span class="work-number">REALITY → CONSTRAINT → REWORK</span></div>
           <div class="rule-frame">
@@ -238,8 +257,10 @@
           <div id="ruleGoldenEvidence" class="phi-live-evidence" role="status" aria-live="polite">φ × φ / Awaiting a Rule Studio image.</div>
 
           <section class="imagine-decision rule-vote">
-            <label for="ruleCritique" class="small-label">WHAT FAILED? (e.g., same strokes / bad rule / too realistic)</label>
-            <textarea id="ruleCritique" rows="2" maxlength="230" placeholder="The law is good but the mark-making is repetitive…"></textarea>
+            <details class="advanced-configuration"><summary>OPTIONAL / WHY DID IT FAIL?</summary>
+              <label for="ruleCritique" class="small-label">WHICH PART?</label>
+              <textarea id="ruleCritique" rows="2" maxlength="230" placeholder="The mark application became repetitive…"></textarea>
+            </details>
             <div class="imagine-buttons">
               <button type="button" class="vote-button reject" id="ruleReject" disabled>✕ REJECT THIS METHOD</button>
               <button type="button" class="vote-button keep" id="ruleKeep" disabled>♥ KEEP METHOD</button>

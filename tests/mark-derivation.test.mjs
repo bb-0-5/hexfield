@@ -33,7 +33,7 @@ for(let i=0;i<40;i++){
   ctx.fillRect(i*5,((i*i*11)%110),2,13);
 }
 assert.equal(Object.keys(DERIVED_MARKS).length,10);
-assert.equal(new Set(MARK_PALETTE).size,15);
+assert.equal(new Set(MARK_PALETTE).size,16);
 assert.ok(Object.keys(DERIVED_MARKS).every(k=>k in MARKS));
 assert.notEqual(markAtCell(2,1,2,0,1),markAtCell(3,1,2,0,1));
 const signatures=new Set();

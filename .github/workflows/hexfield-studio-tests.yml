@@ -37,10 +37,21 @@ jobs:
         run: node --experimental-default-type=module tests/studio-evolution.test.mjs
       - name: Install Canvas test renderer
         run: npm install --no-save --no-package-lock skia-canvas@3.0.8
+      - name: Parse all new unified studio and historic engine modules
+        run: |
+          node --check public/studio/rule-studio.js
+          node --check public/studio/abstraction-loop.js
+          node --check public/studio/word-surface.js
+          node --check public/studio/legacy-rules.js
+          node --check public/app.js
       - name: Verify executable Rule Studio and archive law engine
         run: node --experimental-default-type=module tests/studio-rules.test.mjs
       - name: Verify Build 313 mark application and frame derivation
         run: node --experimental-default-type=module tests/mark-derivation.test.mjs
+      - name: Verify Build 314 invented gesture procedures and 24 generations
+        run: node --experimental-default-type=module tests/invented-mark-programs.test.mjs
+      - name: Verify unified canvas text and stable experimental controls
+        run: node --experimental-default-type=module tests/unified-canvas.test.mjs
       - name: Guard global renderer non-redundancy and evolving-seed genealogy
         run: node --experimental-default-type=module tests/global-nonredundancy.test.mjs
       - name: Verify component-level font anatomy and mutable logo geometry

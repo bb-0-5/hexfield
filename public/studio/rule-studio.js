@@ -5,6 +5,7 @@
 import {SUBJECTS,LAWS,MARKS,REWORKS,makeRecipe,mutateRecipe,drawReality,applyRules,
   noteRuleVerdict,noteLineage,describeRecipe,buildRulePrompt,RULE_STORE} from './rule-engine.js';
 import {createAbstractionLoop} from './abstraction-loop.js';
+import {evolveMarkProgram,rememberedMarkPrograms,rememberMarkVerdict} from './mark-program.js';
 import {deriveBetweenFrames} from './frame-derivation.js';
 import {paintHeldMotifs,advanceMotifMemory,motifEvidence} from './motif-memory.js';
 import {extractStructuralIdea,paintInheritedIdeas,advanceStructuralIdeas,
@@ -12,7 +13,8 @@ import {extractStructuralIdea,paintInheritedIdeas,advanceStructuralIdeas,
 import {createCreativePerformance} from './creative-performance.js';
 import {measureGoldenTaste,explainGolden,diagnoseGolden,
   compareGoldenTaste} from './golden-taste.js';
-import {publishSource} from './source-mixer.js';
+import {publishSource,loadCachedPictures,CROSS_STUDIO_KEYS} from './source-mixer.js';
+import {paintWordsOnCanvas} from './word-surface.js';
 import {evolveSeed,rankNoveltyCandidates,assessCanvas,commitCanvas,
   methodSignature,snapshotNoveltyMemory} from './nonredundancy.js';
 const $=id=>document.getElementById(id);
@@ -58,8 +60,52 @@ function persistCanvas(canvas,recipe,judged){
 export function initRuleStudio(){
  optionMarkup();
  let current=null,upload=null,parentCanvas=null,realitySource=null,
-   sequence=0,manualMotifs=[],manualIdeas=[],lastOrigin='manual';
+   archiveCanvas=null,unlettered=null,sequence=0,manualMotifs=[],manualIdeas=[],lastOrigin='manual';
  const context=$('ruleArtwork').getContext('2d');
+ const wordKey='hexfield.rule-words.v1';
+ try{$('ruleWords').value=String(localStorage.getItem(wordKey)||'').slice(0,48)}catch{}
+ const activeWords=()=>String($('ruleWords').value||'').trim().slice(0,48);
+ const cleanCopy=source=>{
+   const c=canvasOf(source.width,source.height);
+   c.getContext('2d').drawImage(source,0,0);return c;
+ };
+ function compositeWords(output,recipe,metrics){
+   if(!activeWords())return null;
+   const clean=cleanCopy(output);
+   const work=paintWordsOnCanvas(output,activeWords(),{
+     recipe,seed:recipe.seed,iteration:recipe.generation,sourceCanvas:clean
+   });
+   if(work.painted)metrics.words=work.text;
+   return {...work,clean};
+ }
+ async function readArchive(){
+   const bank=await loadCachedPictures();
+   if(bank.archive)archiveCanvas=bank.archive;
+   return archiveCanvas;
+ }
+ let wordTimer=null;
+ function previewWords(){
+   if(!current)return;
+   if(!unlettered)unlettered=cleanCopy(current.canvas);
+   const base=unlettered,output=current.canvas;
+   const ctx=output.getContext('2d');
+   ctx.clearRect(0,0,output.width,output.height);
+   ctx.drawImage(base,0,0);
+   const result=compositeWords(output,current.recipe,current.metrics||{});
+   context.clearRect(0,0,960,600);context.drawImage(output,0,0,960,600);
+   text('ruleWordsStatus',result?.painted?
+     result.text+' / words made from this picture\'s ink':
+     'No word layer. The artwork remains purely procedural.');
+   publishSource(output,'rules',current.recipe);
+   persistCanvas(output,current.recipe,current.judged);
+ }
+ function latestFrame(){
+   void readArchive().then(image=>{
+     if(image){loop.invalidateSources();
+       text('ruleWordsStatus','An experimental frame is ready as a reference. '+(
+         activeWords()?'The text remains attached to the painting.':'Add text or use the archive image.'));}
+   }).catch(()=>{});
+ }
  const status=m=>text('ruleStatus',m);
  const theatre=createCreativePerformance({
    host:document.querySelector('.rule-frame'),
@@ -91,7 +137,9 @@ export function initRuleStudio(){
       ' / '+item.mark+' / '+(item.derivedBy||'fresh')+
        ' · '+Math.round((item.retained||0)*100)+'% frame retained · '+
        (item.survivors||0)+' pixels held'+
-      ' · '+(item.inheritedIdeas||0)+' shape genes';
+      ' · '+(item.inheritedIdeas||0)+' shape genes'+
+      (item.inventedStamps?' · '+item.inventedStamps+
+        ' invented marks / '+item.markProgram:'');
      el.append(img,caption);root.append(el);
    }
  }
@@ -137,6 +185,9 @@ export function initRuleStudio(){
  const loop=createAbstractionLoop({
    width:960,height:600,
    getParent:()=>current?.canvas||null,
+   getParentRecipe:()=>current?.recipe||null,
+   getArchive:()=>archiveCanvas,
+   postProcess:(output,recipe,metrics)=>compositeWords(output,recipe,metrics),
    getUploaded:()=>upload,
    onFrame(result){
      const {canvas,recipe,cycle,metrics,blend,sources,novelty,nonredundancy,
@@ -145,6 +196,7 @@ export function initRuleStudio(){
      lastOrigin='loop';
      context.clearRect(0,0,960,600);context.drawImage(canvas,0,0,960,600);
      current={recipe,canvas,judged:false,metrics};
+     unlettered=result.composite?.clean||null;
      parentCanvas=canvas;
      displayPhi(canvas);
      const duration=Math.min(2450,Math.max(1050,
@@ -157,6 +209,9 @@ export function initRuleStudio(){
      text('ruleCaption',describeRecipe(recipe));
      text('ruleEvidence','GENERATION '+cycle+' / '+metrics.strokes+
        ' marks / '+metrics.skipped+' removed / '+blend.toUpperCase()+
+       (metrics.invented?.stamps?' / INVENTED '+metrics.invented.stamps+
+         ' compound marks · '+recipe.markProgram.sources.join(' × ')+' → '+
+         recipe.markProgram.operations.map(x=>x.type).join(' + '):'')+
        ' / '+sources.join(' + ')+
        (derivation?' / DERIVATION '+derivation.method.toUpperCase()+
          ' / '+Math.round(derivation.retained*100)+'% retained frame':'')+
@@ -251,10 +306,14 @@ export function initRuleStudio(){
        source:before,rendered:hereditary
      });
    }
+   unlettered=cleanCopy(target);
+   compositeWords(target,recipe,metrics);
    lastOrigin='manual';
    const method=methodSignature({
      mode:'rule-studio',subject:recipe.subject,primary:recipe.primary,
-     secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework
+     secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework,
+     application:recipe.application||'',
+     markProgram:metrics.invented.stamps?recipe.markProgram.signature:''
    });
    const analysis=assessCanvas(target,{
      mode:'rule-studio',method,parent:before
@@ -276,6 +335,8 @@ export function initRuleStudio(){
    $('ruleSave').disabled=false;
    text('ruleCaption',describeRecipe(recipe));
    text('ruleEvidence',metrics.strokes+' actual marks · '+metrics.skipped+
+     (metrics.invented.stamps?' · INVENTED '+metrics.invented.stamps+
+       ' compound marks using '+recipe.markProgram.signature:'')+
      ' omitted · '+(recipe.parentId?' CHILD OF '+recipe.parentId.slice(0,7):'ORIGINAL')+
      (revision?' · PAINTED FROM PREVIOUS IMAGE · '+held.held.length+
        ' physical old forms survived · '+hereditary.drawn.length+
@@ -300,6 +361,11 @@ export function initRuleStudio(){
      throw Error('Generate a picture in IMAGINE first or select a different reference source.');
    }
    if(origin==='last'&&current)return current.canvas;
+   if(origin==='archive'){
+     const frame=await readArchive();
+     if(frame)return frame;
+     throw Error('Paint in EXPERIMENTAL ENGINE before importing its reference.');
+   }
    const reality=canvasOf();drawReality(reality,recipe.subject,recipe.seed);return reality;
  }
  function selections(){
@@ -319,7 +385,8 @@ export function initRuleStudio(){
        applyRules(source,candidate,recipe,{iteration:recipe.generation});
        const method=methodSignature({
          mode:'rule-studio',subject:recipe.subject,primary:recipe.primary,
-         secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework
+         secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework,
+         markProgram:recipe.markProgram.signature
        });
        options.push({recipe,source,canvas:candidate,method});
      }
@@ -354,9 +421,12 @@ export function initRuleStudio(){
    if(!current){status('Paint a parent picture before reworking.');return;}
    const ancestor=current.recipe;
    const opts=selections();
+   const reworkSeed=evolveSeed(ancestor.seed,ancestor.generation+1,0,'rule-rework');
    const next=makeRecipe({...opts,parentId:ancestor.id,
-     generation:ancestor.generation+1,
-     seed:evolveSeed(ancestor.seed,ancestor.generation+1,0,'rule-rework')});
+     generation:ancestor.generation+1,seed:reworkSeed,
+     markProgram:evolveMarkProgram(ancestor.markProgram,{seed:reworkSeed,
+       branch:rememberedMarkPrograms().length?2:1,
+       mate:rememberedMarkPrograms()[0]})});
    if(next.rework==='none')next.rework='abstract_masses';
    const prior=current.canvas;
    realitySource=prior;
@@ -378,6 +448,9 @@ export function initRuleStudio(){
    if(!current||current.judged)return;
    const critique=safe($('ruleCritique').value,230);
    noteRuleVerdict(current.recipe,liked,critique);
+   // Learn only an actually executed invention, never a dormant genome.
+   if(current.metrics?.invented?.stamps>0)
+     rememberMarkVerdict(current.recipe.markProgram,liked);
    if(lastOrigin==='loop')loop.feedback(liked);
    else{
      manualIdeas=judgeStructuralIdeas(manualIdeas,liked);
@@ -392,7 +465,8 @@ export function initRuleStudio(){
      rows.push({recipe:current.recipe,thumb:thumbnail(current.canvas)});
      store(GALLERY,rows.slice(-12));gallery();
    }
-   status(liked?'KEPT: this law / mark / lineage was recorded.':
+   status(liked?'KEPT: law / mark / lineage recorded'+
+     (current.metrics?.invented?.stamps?' with invented procedure.':'.'):
      'REJECTED: the criticized law and/or mark system will be less likely in future surprise experiments.');
  }
  function save(){
@@ -433,6 +507,7 @@ export function initRuleStudio(){
      context.drawImage(canvas,0,0);
      current={recipe:restored.recipe,canvas,judged:!!restored.judged,metrics:null};
      parentCanvas=canvas;
+     unlettered=cleanCopy(canvas);
      $('ruleArtwork').hidden=false;$('ruleEmpty').hidden=true;
      $('ruleKeep').disabled=!!current.judged;$('ruleReject').disabled=!!current.judged;
      $('ruleReworkBtn').disabled=false;$('ruleSave').disabled=false;
@@ -441,6 +516,44 @@ export function initRuleStudio(){
      status('Previous constrained study restored. REWORK paints its own output as a new reference.');
    };image.src=restored.image;
  }
+ $('ruleWords').addEventListener('input',()=>{
+   try{localStorage.setItem(wordKey,activeWords())}catch{}
+   clearTimeout(wordTimer);
+   wordTimer=setTimeout(previewWords,170);
+ });
+ $('ruleUseArchive').addEventListener('click',async()=>{
+   try{
+     const image=await readArchive();
+     if(!image){status('No experimental reference yet. Open EXPERIMENTAL ENGINE and make a field.');return;}
+     loop.pause();
+     $('ruleReference').value='archive';
+     const nextSeed=evolveSeed(current?.recipe?.seed||1,(current?.recipe?.generation||0)+1,0,'archive-handoff');
+     const recipe=makeRecipe({...selections(),seed:nextSeed,subject:'abstract'});
+     present(recipe,image,false);
+     status('Experimental image imported into RULES; now evolve this painting with the other simulators.');
+   }catch(error){status('Experimental reference unavailable: '+safe(error?.message));}
+ });
+ const frameHost=$('archiveDockFrame'),dock=$('archiveDock');
+ $('archiveToggle').addEventListener('click',()=>{
+   dock.hidden=false;
+   if(!frameHost.querySelector('iframe')){
+     const frame=document.createElement('iframe');
+     frame.src='/legacy.html?embedded=1';
+     frame.title='Hexfield experimental engine';
+     frame.loading='eager';
+     frameHost.append(frame);
+   }
+   dock.scrollIntoView({block:'start',behavior:'smooth'});
+ });
+ $('archiveClose').addEventListener('click',()=>{
+   dock.hidden=true;
+   // Prevent two invisible CPU-intensive engines competing on phones.
+   frameHost.replaceChildren();
+   latestFrame();
+ });
+ window.addEventListener('storage',event=>{
+   if(event.key===CROSS_STUDIO_KEYS.archive)latestFrame();
+ });
  gallery();
  return {
    show(){if(!current)status('Choose visual laws, or start continuous reabstraction of every available renderer.');},

@@ -4,6 +4,7 @@
  * Every rework starts from the preceding result, making its lineage inspectable.
  */
 import {DERIVED_MARKS,markAtCell,paintDerivedMark} from './mark-grammar.js';
+import {newMarkProgram,validMarkProgram,evolveMarkProgram,paintInventedMark} from './mark-program.js';
 export const RULE_STORE = 'hexfield.rule-studio.memory.v1';
 export const SUBJECTS = {
   sphere:'Ball on a table',stairwell:'Flooded stairwell',coast:'Coastline',
@@ -27,7 +28,8 @@ export const MARKS = {
   dashes:'Short separated strokes',dots:'Discrete points',hatch:'Directional hatching',
   cutout:'Flat cut-paper quadrilaterals',carve:'Subtractive marks in a dark ground',
   hybrid:'Hybrid field: original and derived mark procedures together',
-  ...DERIVED_MARKS
+  ...DERIVED_MARKS,
+  invented:'Invent a mark procedure from two gestures and evolving operations'
 };
 export const REWORKS = {
   none:'No rework',abstract_masses:'Reabstract into coarse tonal masses',
@@ -44,6 +46,24 @@ function read(){
 }
 function write(m){try{localStorage.setItem(RULE_STORE,JSON.stringify(m));}catch{}}
 function ledger(){const m=read();return {weights:m.weights||{},choices:m.choices||{},votes:m.votes||[],lineage:m.lineage||[]};}
+export function ruleTaste(){return {...ledger().weights};}
+export function markFromTaste(base,seed,weights){
+  // KEEP repeats a successful manner of applying ink more often;
+  // REJECT does not ban it, but reroutes it toward a neighboring method.
+  const keys=Object.keys(MARKS).filter(x=>x!=='hybrid');
+  const taste=id=>clamp(Number(weights?.['mark:'+id])||0,-10,10);
+  let chosen=base;
+  const random=(((Math.imul(seed>>>0,1664525)+1013904223)>>>0)/4294967296);
+  const penalty=taste(chosen);
+  if(penalty<-.5&&random<Math.min(.88,-penalty*.15+.20)){
+    const candidates=keys.filter(x=>x!==chosen).sort((a,b)=>taste(b)-taste(a));
+    chosen=candidates[(seed>>>8)%Math.min(4,candidates.length)];
+  }else if(random<.28){
+    const favourites=keys.filter(x=>taste(x)>1);
+    if(favourites.length)chosen=favourites[(seed>>>8)%favourites.length];
+  }
+  return chosen;
+}
 function chooseWeighted(list,group,rng=Math.random){
  const m=ledger(),weights=list.map(id=>{
    const score=clamp(Number(m.weights[group+':'+id])||0,-8,8);
@@ -71,6 +91,8 @@ export function makeRecipe(input={}){
    // The rework lineage can continue beyond thirty-two revisions.
    generation:clamp(Number(input.generation)||0,0,1000000)
  };
+ recipe.markProgram=validMarkProgram(input.markProgram)?input.markProgram:
+   newMarkProgram(recipe.seed,recipe.generation);
  return recipe;
 }
 export function mutateRecipe(parent,focus='law',source='studio',seedOverride=null){
@@ -86,6 +108,9 @@ export function mutateRecipe(parent,focus='law',source='studio',seedOverride=nul
  if(focus==='mark')input.mark=chooseWeighted(keys(MARKS).filter(x=>x!==parent.mark),'mark',rng);
  if(focus==='rework')input.rework=chooseWeighted(keys(REWORKS).filter(x=>x!=='none'),'rework',rng);
  if(source==='archive')input.subject=parent.subject;
+ if(focus==='mark'||focus==='rework')input.markProgram=evolveMarkProgram(parent.markProgram,{
+   seed:nextSeed,branch:1
+ });
  return makeRecipe(input);
 }
 export function noteRuleVerdict(recipe,liked,critique=''){
@@ -131,7 +156,11 @@ export function describeRecipe(recipe){
  return (SUBJECTS[recipe.subject]||'Archive field')+' / '+
    (LAWS[recipe.primary]||recipe.primary)+
    (recipe.secondary!=='none'?' + '+LAWS[recipe.secondary]:'')+
-   ' / '+MARKS[recipe.mark]+(recipe.rework!=='none'?' / '+REWORKS[recipe.rework]:'');
+   ' / '+MARKS[recipe.mark]+
+   ((recipe.mark==='invented'||recipe.mark==='hybrid')&&validMarkProgram(recipe.markProgram)?
+     ' / PROCEDURE '+recipe.markProgram.sources.join(' × ')+' → '+
+     recipe.markProgram.operations.map(x=>x.type).join(' + '):'')+
+   (recipe.rework!=='none'?' / '+REWORKS[recipe.rework]:'');
 }
 export function buildRulePrompt(recipe){
  return 'Depict '+(SUBJECTS[recipe.subject]||'an experimental scene')+
@@ -234,7 +263,9 @@ export function applyRules(source,target,recipe,options={}){
  const negative=has('negative_space')||recipe.rework==='negative_repaint';
  const step=(abstract?20:recipe.mark==='cutout'?14:recipe.mark==='carve'||recipe.mark==='hybrid'?11:9);
  const back=getPixel(data,width,height,Math.max(1,width*.07),Math.max(1,height*.07));
- let strokes=0,skipped=0;
+ let strokes=0,skipped=0,inventedStamps=0,inventedPrimitives=0;
+ const program=validMarkProgram(recipe.markProgram)?recipe.markProgram:
+   newMarkProgram(recipe.seed,recipe.generation);
  // Optional bounded process score: sample the ACTUAL marks the renderer
  // executes, in actual rendering order. The theatre replays this score; it
  // does not invent unrelated flying dots over a finished image.
@@ -250,6 +281,7 @@ export function applyRules(source,target,recipe,options={}){
  ctx.fillRect(0,0,width,height);
  ctx.lineCap='butt';ctx.lineJoin='bevel';
  const random=seeded(recipe.seed+(Number(options.iteration)||0)*997);
+ const taste=ruleTaste();
  const markTypes=['dashes','dots','hatch','cutout','carve'];
  for(let y=0;y<height;y+=step){
    for(let x=0;x<width;x+=step){
@@ -279,8 +311,10 @@ export function applyRules(source,target,recipe,options={}){
      // themselves vary within the same picture.
      const bx=Math.floor(x/Math.max(32,step*(6+(recipe.seed%4))));
      const by=Math.floor(y/Math.max(32,step*(5+(recipe.seed%3))));
-     const localMark=recipe.mark==='hybrid'?
+     const nominalMark=recipe.mark==='hybrid'?
        markAtCell(bx,by,recipe.seed,Number(options.iteration)||0,1):recipe.mark;
+     const localMark=recipe.mark==='hybrid'?
+       markFromTaste(nominalMark,(recipe.seed^Math.imul(bx+1,7717)^Math.imul(by+1,18313))>>>0,taste):nominalMark;
      const role=localMark==='carve'?(luminosity>.48?'#eee9d9':'#202936'):
        'rgb('+colour.map(z=>Math.round(z)).join(',')+')';
      ctx.fillStyle=role;ctx.strokeStyle=role;
@@ -291,6 +325,13 @@ export function applyRules(source,target,recipe,options={}){
      const ny=getPixel(data,width,height,sourceX,sourceY+step);
      const lum=p=>p[0]*.213+p[1]*.715+p[2]*.072;
      const gx=lum(nx)-lum(rgb),gy=lum(ny)-lum(rgb);
+     if(localMark==='invented'){
+       const made=paintInventedMark(ctx,{program,x:tx,y:ty,step,
+         angle:Math.hypot(gx,gy)>5?Math.atan2(gy,gx)+Math.PI*.5:(order%7)*Math.PI/7,
+         colour:role,luminosity,contrast:Math.min(1,Math.hypot(gx,gy)/100),
+         seed:recipe.seed,noCurves:has('no_curves'),emit:traceMark});
+       if(made.used){inventedStamps++;inventedPrimitives+=made.primitives;strokes++;continue;}
+     }
      if(paintDerivedMark(ctx,{mark:localMark,x:tx,y:ty,step,
        angle:Math.hypot(gx,gy)>5?Math.atan2(gy,gx)+Math.PI*.5:(order%7)*Math.PI/7,
        colour:role,luminosity,contrast:Math.min(1,Math.hypot(gx,gy)/100),
@@ -332,9 +373,13 @@ export function applyRules(source,target,recipe,options={}){
  }
  ctx.restore();
  return {strokes,skipped,cell:step,negativeSpace:negative,noCurvedMarks:has('no_curves'),
+  invented:{stamps:inventedStamps,primitives:inventedPrimitives,
+    signature:program.signature,id:program.id,rootId:program.rootId},
   strictColourRemap:has('blue_for_red'),hybrid:recipe.mark==='hybrid',
   parentId:recipe.parentId,
-  trace:capture?{marks:traceMarks,total:strokes,step,background:negative?
+  trace:capture?{marks:traceMarks,total:strokes,step,program:inventedStamps?{
+    id:program.id,signature:program.signature,sources:program.sources,
+    operations:program.operations}:null,background:negative?
     '#eee7d7':recipe.mark==='carve'?'#242c37':'#e5e0d3'}:undefined};
 }
 export function validateRecipe(recipe){

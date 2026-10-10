@@ -3,7 +3,7 @@
  * visual laws, then use the ACTUAL result as the next source image.
  * Explicit start/stop. Never invokes a paid image model automatically.
  */
-import {makeRecipe,mutateRecipe,applyRules,noteLineage,LAWS,MARKS,SUBJECTS} from './rule-engine.js';
+import {makeRecipe,mutateRecipe,applyRules,noteLineage,LAWS,MARKS,SUBJECTS,ruleTaste} from './rule-engine.js';
 import {createSourceBank,mixSources,cloneCanvas} from './source-mixer.js';
 import {evolveSeed,rankNoveltyCandidates,commitCanvas,
   methodSignature,snapshotNoveltyMemory} from './nonredundancy.js';
@@ -12,6 +12,7 @@ import {extractStructuralIdea,paintInheritedIdeas,advanceStructuralIdeas,
  heritageEvidence,judgeStructuralIdeas,rankBalancedCandidates,
  recallStructuralIdea} from './structural-heritage.js';
 import {getGoldenMode} from './golden-taste.js';
+import {newMarkProgram,evolveMarkProgram,rememberedMarkPrograms} from './mark-program.js';
 import {deriveBetweenFrames,DERIVATION_METHODS,derivationMethod} from './frame-derivation.js';
 export const REWORK_SEQUENCE=['abstract_masses','negative_repaint','misread','remove_strength'];
 const clamp=(n,a,b)=>Math.max(a,Math.min(n,b));
@@ -83,6 +84,8 @@ export function nextAbstractRecipe(parent,{cycle=0,branch=0,seed=null,
 export function createAbstractionLoop({
   width=720,height=450,
   getArchive=()=>null,getUploaded=()=>null,getParent=()=>null,
+  getParentRecipe=()=>null,
+  postProcess=()=>null,
   onFrame=()=>{},onState=()=>{},onError=()=>{}
 }={}){
  const bank=createSourceBank({width,height,getArchive,getUploaded,getParent});
@@ -132,7 +135,8 @@ export function createAbstractionLoop({
    const currentStamp=stamp;
    try{
      const previous=last||getParent();
-     const parentSeed=lastRecipe?.seed??seed;
+     const inheritedRecipe=lastRecipe||(previous?getParentRecipe():null);
+     const parentSeed=inheritedRecipe?.seed??seed;
      const baseSeed=evolveSeed(parentSeed,cycle+1,0,'abstraction-parent');
      if(!motifs.length&&previous)motifs=advanceMotifMemory([],previous,{
        seed:parentSeed,cycle,parent:previous
@@ -177,11 +181,21 @@ export function createAbstractionLoop({
      // Preserve manually locked laws and rework them with new seed branches.
      for(let attempt=0;attempt<attempts;attempt++){
        const candidateSeed=evolveSeed(baseSeed,cycle+1,attempt,'render-branch');
-       const recipe=nextAbstractRecipe(lastRecipe,{
+       const recipe=nextAbstractRecipe(inheritedRecipe,{
          cycle,branch:attempt,seed:candidateSeed,subject:config.subject||'abstract',
          lockLaw:!!config.lockLaw,law:config.law||'surprise',
          secondary:config.secondary||'none',mark:config.mark||'surprise'
        });
+       // The previously accepted mark PROGRAM competes with a mutation
+       // and a crossover of gestures/operators. Only the selected child
+       // supplies the procedure for the following generation.
+       const learned=rememberedMarkPrograms();
+       const mate=learned.length?learned[(cycle+attempt)%learned.length]:null;
+       const dislike=Number(ruleTaste()['mark:'+inheritedRecipe?.mark])||0;
+       const mutation=attempt===0&&dislike<-.75?1:attempt;
+       recipe.markProgram=inheritedRecipe?.markProgram?
+         evolveMarkProgram(inheritedRecipe.markProgram,{seed:candidateSeed,branch:mutation,mate}):
+         newMarkProgram(candidateSeed,recipe.generation);
        // Candidate methods span the full renderer grammar. The painter
        // cannot maximise H by choosing one comfortable mixer forever.
        const autoMixer=!config.mixMode||config.mixMode==='auto';
@@ -227,11 +241,15 @@ export function createAbstractionLoop({
        const heritage=paintInheritedIdeas(output,ideas,{
          seed:candidateSeed,cycle,recipe
        });
+       // The word is painted into each competing canvas BEFORE its W/φ/H
+       // analysis, so word-and-image composition belongs to the same artwork.
+       const composite=postProcess(output,recipe,metrics,{cycle,branch:attempt});
        const method=methodSignature({mode:'abstraction',primary:recipe.primary,
          secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework,
          blend:mixed.mode,subject:recipe.subject,
-         application:derivation?.method||'new'});
-       candidates.push({canvas:output,recipe,mixed,metrics,held,heritage,derivation,method});
+         application:derivation?.method||'new',
+         markProgram:metrics.invented.stamps?recipe.markProgram.signature:''});
+       candidates.push({canvas:output,recipe,mixed,metrics,held,heritage,derivation,composite,method});
        if(currentStamp!==stamp)return;
      }
      const evaluated=rankNoveltyCandidates(candidates,{
@@ -259,7 +277,7 @@ export function createAbstractionLoop({
      const best=evolvingMix&&cycle%3===0&&!strictQualified?
        ranked.find(x=>x.mixed.mode===expected)||goal:goal;
      const {canvas:output,recipe,mixed,metrics,assessment,
-       golden,held,heritage,threeWay,derivation}=best;
+       golden,held,heritage,threeWay,derivation,composite}=best;
      const novelty=visualDelta(previous,output);
      const stalled=cycle>2&&(assessment.redundant||novelty<.035);
      const recorded=commitCanvas(output,{mode:'abstraction',method:best.method,
@@ -267,7 +285,9 @@ export function createAbstractionLoop({
      lastAssessment={...recorded,golden,
        heritage:{score:heritage.score,coverage:heritage.coverage,
          count:heritage.drawn.length},
-       threeWay,derivation:derivation?{method:derivation.method,
+       threeWay,markProgram:recipe.markProgram.signature,
+       invented:metrics.invented,
+       derivation:derivation?{method:derivation.method,
          retained:derivation.retained,interwoven:derivation.interwoven,
          changed:derivation.changed}:null,candidates:candidates.length};
      const survived=motifEvidence(motifs);
@@ -289,13 +309,17 @@ export function createAbstractionLoop({
        return {canvas:preview,
          label:(entry.derivation?.method||'fresh')+' / '+
            entry.mixed.mode+' / '+entry.recipe.primary+
-           ' / '+entry.recipe.mark+' / H '+
+           ' / '+entry.recipe.mark+
+           (entry.metrics.invented.stamps?' / MADE '+
+             entry.recipe.markProgram.sources.join('×')+' → '+
+             entry.recipe.markProgram.operations.map(x=>x.type).join('+'):'')+
+           ' / H '+
            Math.round(entry.threeWay.H*100)+'%',
          score:entry.threeWay.score,golden:entry.golden,
          selected:entry===best};
      });
      const result={canvas:output,recipe,cycle:cycle+1,metrics,trials,
-       blend:mixed.mode,derivation,sources:mixed.sources,novelty,stalled,
+       blend:mixed.mode,derivation,composite,sources:mixed.sources,novelty,stalled,
        survival:{held:survived,coverage:held.coverage,
          carried:held.held.length,available:motifEvidence(motifs).length},
        heritage:{...heritage,ancestors:inherited,
@@ -307,6 +331,10 @@ export function createAbstractionLoop({
      stamps.push({cycle,thumb:frame.toDataURL('image/webp',.60),
        id:recipe.id,parentId:recipe.parentId,seed:recipe.seed,
        mark:recipe.mark,law:recipe.primary,blend:mixed.mode,novelty,
+       inventedStamps:metrics.invented.stamps,
+       words:composite?.text||'',
+       markProgram:metrics.invented.stamps?recipe.markProgram.signature:null,
+       markRootId:recipe.markProgram.rootId,
        derivedBy:derivation?.method||'fresh',
        retained:derivation?.retained||0,
        globalNovelty:lastAssessment.globalNovelty,
@@ -358,6 +386,7 @@ export function createAbstractionLoop({
    }
  }
  document.addEventListener('visibilitychange',onVisibility);
+ function invalidateSources(){forceFreshSources=true;status();}
  function feedback(liked){
    ideas=judgeStructuralIdeas(ideas,!!liked);
    status();
@@ -368,5 +397,5 @@ export function createAbstractionLoop({
    bank.clear();
  }
  return {start,pause,once,reset,configure,state,feedback,dispose,
-   isRunning:()=>running,getLast:()=>last,getRecipe:()=>lastRecipe};
+   invalidateSources,isRunning:()=>running,getLast:()=>last,getRecipe:()=>lastRecipe};
 }

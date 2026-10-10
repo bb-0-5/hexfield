@@ -284,3 +284,28 @@
  color:#d9dbbd;margin:7px 0 0;overflow-wrap:anywhere}
 @media(max-width:730px){.heritage-specimen{flex-basis:120px}
  .heritage-specimen svg{height:70px}}
+
+/* 314 / unified surface: one word input, one experimental reference,
+ * one living rules canvas. Infrequent configuration remains optional. */
+.unified-studio-input{display:grid;gap:6px;margin:12px 0;padding:12px;border:1px solid rgba(137,190,174,.28);border-radius:10px;background:rgba(71,113,93,.055)}
+.unified-studio-input label{font-size:11px;letter-spacing:.1em;font-weight:700}
+.unified-studio-input input{width:100%;min-width:0;padding:13px 11px;font:700 17px/1.35 ui-monospace,monospace;border:1px solid #849a8c;border-radius:6px;color:inherit;background:rgba(255,255,255,.075)}
+.unified-studio-input .control-help{margin:0 0 3px}
+.archive-link{cursor:pointer}
+.archive-dock[hidden]{display:none!important}
+.archive-dock{margin:12px 0 18px;border:1px solid #88a9a0;border-radius:12px;padding:10px;background:#10211e;color:#daece7}
+.archive-dock-header{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.archive-dock-header .ghost-button{width:auto;min-width:80px}
+.archive-dock p,.archive-dock a{font-size:12px;color:#d0e1dc}
+#archiveDockFrame{width:100%;height:min(78vh,720px);min-height:420px;border-radius:7px;overflow:hidden}
+#archiveDockFrame iframe{width:100%;height:100%;border:0;display:block;background:#0c0c15}
+#ruleUseArchive{font-size:12px}
+@media(max-width:730px){.archive-dock{padding:6px}#archiveDockFrame{height:71vh;min-height:370px}.archive-dock-header strong{font-size:11px}}
+
+.unified-mode-switch{display:flex!important;flex-wrap:wrap;gap:8px;align-items:flex-start}
+.unified-mode-switch>.mode-option{width:auto;min-width:115px;padding-inline:15px;flex:0 0 auto}
+.unified-mode-switch .other-sims{flex:1;min-width:170px;margin:0;padding:8px}
+.other-sims summary{cursor:pointer}
+.other-sims-buttons{display:flex;flex-wrap:wrap;gap:6px;padding-top:7px}
+.other-sims-buttons .mode-option{width:auto;min-width:80px;font-size:11px}
+@media(max-width:600px){.unified-mode-switch .other-sims{min-width:150px}.unified-mode-switch>.mode-option{min-width:90px}}
