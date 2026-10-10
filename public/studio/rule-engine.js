@@ -3,6 +3,7 @@
  * These are executed canvas constraints, NOT style adjectives passed to AI.
  * Every rework starts from the preceding result, making its lineage inspectable.
  */
+import {DERIVED_MARKS,markAtCell,paintDerivedMark} from './mark-grammar.js';
 export const RULE_STORE = 'hexfield.rule-studio.memory.v1';
 export const SUBJECTS = {
   sphere:'Ball on a table',stairwell:'Flooded stairwell',coast:'Coastline',
@@ -25,7 +26,8 @@ export const LAWS = {
 export const MARKS = {
   dashes:'Short separated strokes',dots:'Discrete points',hatch:'Directional hatching',
   cutout:'Flat cut-paper quadrilaterals',carve:'Subtractive marks in a dark ground',
-  hybrid:'Hybrid field: all five mark-making renderers in one painting'
+  hybrid:'Hybrid field: original and derived mark procedures together',
+  ...DERIVED_MARKS
 };
 export const REWORKS = {
   none:'No rework',abstract_masses:'Reabstract into coarse tonal masses',
@@ -278,13 +280,23 @@ export function applyRules(source,target,recipe,options={}){
      const bx=Math.floor(x/Math.max(32,step*(6+(recipe.seed%4))));
      const by=Math.floor(y/Math.max(32,step*(5+(recipe.seed%3))));
      const localMark=recipe.mark==='hybrid'?
-       markTypes[((bx+by*3+(Number(options.iteration)||0))%markTypes.length+markTypes.length)%markTypes.length]:
-       recipe.mark;
+       markAtCell(bx,by,recipe.seed,Number(options.iteration)||0,1):recipe.mark;
      const role=localMark==='carve'?(luminosity>.48?'#eee9d9':'#202936'):
        'rgb('+colour.map(z=>Math.round(z)).join(',')+')';
      ctx.fillStyle=role;ctx.strokeStyle=role;
      const tx=x+dx,ty=y;
      const length=clamp(step*.7,2,14);
+     // Executable application: gestures follow measured image structure.
+     const nx=getPixel(data,width,height,sourceX+step,sourceY);
+     const ny=getPixel(data,width,height,sourceX,sourceY+step);
+     const lum=p=>p[0]*.213+p[1]*.715+p[2]*.072;
+     const gx=lum(nx)-lum(rgb),gy=lum(ny)-lum(rgb);
+     if(paintDerivedMark(ctx,{mark:localMark,x:tx,y:ty,step,
+       angle:Math.hypot(gx,gy)>5?Math.atan2(gy,gx)+Math.PI*.5:(order%7)*Math.PI/7,
+       colour:role,luminosity,contrast:Math.min(1,Math.hypot(gx,gy)/100),
+       seed:recipe.seed,noCurves:has('no_curves'),emit:traceMark})){
+       strokes++;continue;
+     }
      if(localMark==='dots'){
        const radius=clamp((1-luminosity)*step*.46+1,1,step*.5);
        if(has('no_curves')){
