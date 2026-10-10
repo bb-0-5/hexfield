@@ -603,6 +603,10 @@ export function initRuleStudio(){
  $('ruleKeep').addEventListener('click',()=>vote(true));
  $('ruleReject').addEventListener('click',()=>vote(false));
  $('ruleSave').addEventListener('click',save);
+ // External Australian print handoff must receive the finished evaluated
+ // painting, not the middle of an ongoing brush-construction animation.
+ document.querySelector('[data-au-print="rules"]')?.addEventListener(
+   'click',()=>live.stop({finalize:true}),{capture:true});
  $('ruleFile').addEventListener('change',async event=>{
    try{upload=await fileToImage(event.target.files?.[0]);$('ruleReference').value='file';status('Reference image loaded. Your rules will be executed locally.');}
    catch(error){status(safe(error.message));}
