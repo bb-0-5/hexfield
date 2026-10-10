@@ -212,8 +212,10 @@ export function initRuleStudio(){
    });
    if(revision&&before){
      const derived=deriveBetweenFrames(before,target,{
-       seed:recipe.seed,cycle:recipe.generation
+       seed:recipe.seed,cycle:recipe.generation,
+       method:current?.recipe?.application
      });
+     recipe.application=derived.method;
      const ink=target.getContext('2d');
      ink.save();ink.setTransform(1,0,0,1,0,0);
      ink.drawImage(derived.canvas,0,0,target.width,target.height);ink.restore();
