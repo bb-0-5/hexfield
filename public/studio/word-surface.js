@@ -256,6 +256,9 @@ export function paintWordsOnCanvas(canvas,words,{
   // a weave or carve. New pixels outside the original outline still flow.
   for(let p=0;p<mask.length;p++)
     if(letters[p]>200)mask[p]=Math.max(mask[p],Math.round(letters[p]*.94));
+  // Protect the actual legible foreground after scene-edge coupling too.
+  const geometryRepair=repairGlyphMask(letters,mask,w,h,parts);
+  if(geometryRepair.evidence.repaired)mask.set(geometryRepair.pixels);
   const colours=palette(before,w,h,choice);
   const rule=recipe?.mark?{...recipe,seed:seed>>>0}:
     makeRecipe({subject:'abstract',primary:'no_shading',mark:'hybrid',seed:seed>>>0});
@@ -278,8 +281,9 @@ export function paintWordsOnCanvas(canvas,words,{
     const x=p%w,y=(p/w)|0;
     let ink=0;
     if(coverage>0){
-      const stripe=Math.floor((x+y*.46)/Math.max(3,size*.18));
-      const role=(stripe+((choice.key>>>5)%3)+Math.floor(y/Math.max(5,size*.3)))%3;
+      // One intentional ink per word, not a new pigment every few pixels.
+      // Small banded colours used to make the letter look scrambled.
+      const role=(choice.key>>>5)%3;
       const band=layers[role],beforeLight=lum(scene,i);
       const materialLight=lum(pigment,i);
       // Resolve a genuine luminance contrast BEFORE applying chromatic ink.
@@ -305,8 +309,12 @@ export function paintWordsOnCanvas(canvas,words,{
       target.putImageData(out,0,0,t.x,t.y,t.w,t.h);
   }else target.putImageData(out,0,0);
   const typeLegibility={...letterQuality[0],
-    score:+(letterQuality.reduce((s,q)=>s+q.score,0)/letterQuality.length).toFixed(4),
-    readable:letterQuality.every(q=>q.readable),
+    score:+Math.min(geometryRepair.evidence.score,
+      letterQuality.reduce((s,q)=>s+q.score,0)/letterQuality.length).toFixed(4),
+    readable:letterQuality.every(q=>q.readable)&&geometryRepair.evidence.readable,
+    repaired:letterQuality.some(q=>q.repaired)||geometryRepair.evidence.repaired,
+    counters:Math.min(letterQuality[0].counters,geometryRepair.evidence.counters),
+    spacing:Math.min(letterQuality[0].spacing,geometryRepair.evidence.spacing),
     lines:letterQuality.length};
   return {painted:true,text:copy,count,typeLegibility,
     legibility:count?+clamp(contrast/count*2.6,0,1).toFixed(4):0,
