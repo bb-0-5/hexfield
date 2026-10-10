@@ -57,7 +57,10 @@ function palette(before,w,h,choice){
   const sourceHue=swatches.length?swatches[choice.key%swatches.length]:
     ((choice.key>>>7)%360);
   // Golden-angle family: two chromatic inks derived from actual canvas hues.
-  const a=(sourceHue+137.50776405*(1+Math.floor(choice.jitter*4)))%360;
+  // Bounded chromatic deviation prevents a short source palette from
+  // collapsing every new font generation onto the same four ink colours.
+  const offset=(rand(choice.key,'pigment-variation')-.5)*67;
+  const a=(sourceHue+137.50776405*(1+Math.floor(choice.jitter*4))+offset+360)%360;
   const b=(a+137.50776405)%360;
   return {first:rgbOf(a,.84,.45),second:rgbOf(b,.79,.54),
     third:rgbOf((b+137.50776405)%360,.81,.46)};
