@@ -507,6 +507,7 @@ export function initRuleStudio(){
    }
  }
  function vote(liked){
+   const resumeAfterVerdict=loop.isRunning()&&!manuallyPaused;
    loop.pause();
    if(!current||current.judged)return;
    const critique=safe($('ruleCritique').value,230);
@@ -533,6 +534,9 @@ export function initRuleStudio(){
    status(liked?'KEPT: law / mark / lineage recorded'+
      (current.metrics?.invented?.stamps?' with invented procedure.':'.'):
      'REJECTED: the criticized law and/or mark system will be less likely in future surprise experiments.');
+   // A judgement is guidance, not a STOP command. Automatic painting
+   // continues after each vote unless the user explicitly paused it.
+   if(resumeAfterVerdict)loop.start(loopOptions());
  }
  function save(){
    if(!current)return;
