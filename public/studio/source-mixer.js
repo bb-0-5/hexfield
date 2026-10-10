@@ -174,7 +174,7 @@ export function createSourceBank({width=WIDTH,height=HEIGHT,getArchive=()=>null,
       if(wipeGenomes){landAncestor=null;}
     },
     genomes(){return {terrain:landAncestor?.generation||0,
-      lettering:letterAncestor?.generation||0};},
+      lettering:0};},
     available(){return Object.keys(cached).filter(x=>SOURCE_KEYS.includes(x));}};
 }
 const hash=(x,y,seed)=>{
