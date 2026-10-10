@@ -625,7 +625,7 @@ export function initRuleStudio(){
        styleAnchor=cleanCopy(original);
      }
      const index=STYLE_PRESETS.findIndex(p=>p.id===styleId);
-     const fixedSeed=evolveSeed(styleSeed,index+1,1,'comparable-style-327');
+     const fixedSeed=evolveSeed(styleSeed,1,1,'comparable-style-327');
      const recipe=styleRecipe({style:styleId,abstraction:strength,
        seed:fixedSeed,subject:styleSubject,generation:styleGeneration});
      const target=canvasOf();
@@ -650,7 +650,7 @@ export function initRuleStudio(){
      $('ruleRepeatStyle').disabled=false;
      text('ruleStyleStatus',styleCaption({
        style:styleId,abstraction:strength,seed:fixedSeed
-     })+' · SAME SOURCE EVERY STYLE · REPEAT reproduces these pixels. '+
+     })+' · SAME SOURCE + SEED FOR ALL FIVE STYLES · REPEAT reproduces pixels with unchanged words. '+
        'Use PAUSE / RESUME for continuous painting in this style.');
    }catch(error){
      status('Style change could not paint: '+safe(error.message||error));
