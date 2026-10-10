@@ -524,7 +524,10 @@ export function createAbstractionLoop({
    }finally{
      activeStep=false;
      if(!running)stage='paused';
-     if(running)delay(committed?config.speed||3000:150);
+     // Only an explicitly interrupted frame gets a quick retry. Renderer
+     // errors retain normal pacing so a device cannot enter a battery-hungry
+     // 150ms failure loop.
+     if(running)delay(currentStamp!==stamp?150:config.speed||3000);
    }
  }
  function start(options={}){
