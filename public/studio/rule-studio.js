@@ -15,6 +15,7 @@ import {measureGoldenTaste,explainGolden,diagnoseGolden,
   compareGoldenTaste} from './golden-taste.js';
 import {publishSource,loadCachedPictures,CROSS_STUDIO_KEYS} from './source-mixer.js';
 import {paintWordsOnCanvas} from './word-surface.js';
+import {noteGeometryVerdict} from './geometry-coupling.js';
 import {evolveSeed,rankNoveltyCandidates,assessCanvas,commitCanvas,
   methodSignature,snapshotNoveltyMemory} from './nonredundancy.js';
 const $=id=>document.getElementById(id);
@@ -75,7 +76,7 @@ export function initRuleStudio(){
    const work=paintWordsOnCanvas(output,activeWords(),{
      recipe,seed:recipe.seed,iteration:recipe.generation,sourceCanvas:clean
    });
-   if(work.painted)metrics.words=work.text;
+   if(work.painted){metrics.words=work.text;metrics.coupling=work.interaction;}
    return {...work,clean};
  }
  async function readArchive(){
@@ -95,7 +96,10 @@ export function initRuleStudio(){
    context.clearRect(0,0,960,600);context.drawImage(output,0,0,960,600);
    text('ruleWordsStatus',result?.painted?
      result.text+' / '+result.method+' · '+result.face+' · '+
-       result.palette.join(' × '):
+       result.palette.join(' × ')+' / '+
+       result.interaction.relation+' · '+result.interaction.displacedPixels+
+       ' scene pixels moved · '+result.interaction.bentPixels+
+       ' lettering pixels sculpted':
      'No word layer. The artwork remains purely procedural.');
    publishSource(output,'rules',current.recipe);
    persistCanvas(output,current.recipe,current.judged);
@@ -214,6 +218,9 @@ export function initRuleStudio(){
        (metrics.invented?.stamps?' / INVENTED '+metrics.invented.stamps+
          ' compound marks · '+recipe.markProgram.sources.join(' × ')+' → '+
          recipe.markProgram.operations.map(x=>x.type).join(' + '):'')+
+       (result.composite?.interaction?' / GEOMETRY '+
+         result.composite.interaction.relation.toUpperCase()+' / '+
+         result.composite.interaction.displacedPixels+' scene pixels displaced':'')+
        ' / '+sources.join(' + ')+
        (derivation?' / DERIVATION '+derivation.method.toUpperCase()+
          ' / '+Math.round(derivation.retained*100)+'% retained frame':'')+
@@ -316,7 +323,8 @@ export function initRuleStudio(){
      mode:'rule-studio',subject:recipe.subject,primary:recipe.primary,
      secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework,
      application:recipe.application||'',
-     markProgram:metrics.invented.stamps?recipe.markProgram.signature:''
+     markProgram:metrics.invented.stamps?recipe.markProgram.signature:'',
+     interaction:metrics.coupling?.relation||''
    });
    const analysis=assessCanvas(target,{
      mode:'rule-studio',method,parent:before
@@ -340,6 +348,9 @@ export function initRuleStudio(){
    text('ruleEvidence',metrics.strokes+' actual marks · '+metrics.skipped+
      (metrics.invented.stamps?' · INVENTED '+metrics.invented.stamps+
        ' compound marks using '+recipe.markProgram.signature:'')+
+     (metrics.coupling?' · '+metrics.coupling.relation.toUpperCase()+
+       ' moved '+metrics.coupling.displacedPixels+' scene pixels / altered '+
+       metrics.coupling.bentPixels+' glyph pixels':'')+
      ' omitted · '+(recipe.parentId?' CHILD OF '+recipe.parentId.slice(0,7):'ORIGINAL')+
      (revision?' · PAINTED FROM PREVIOUS IMAGE · '+held.held.length+
        ' physical old forms survived · '+hereditary.drawn.length+
@@ -454,6 +465,8 @@ export function initRuleStudio(){
    // Learn only an actually executed invention, never a dormant genome.
    if(current.metrics?.invented?.stamps>0)
      rememberMarkVerdict(current.recipe.markProgram,liked);
+   if(current.metrics?.coupling?.relation)
+     noteGeometryVerdict(current.metrics.coupling.relation,liked);
    if(lastOrigin==='loop')loop.feedback(liked);
    else{
      manualIdeas=judgeStructuralIdeas(manualIdeas,liked);
