@@ -6,6 +6,7 @@
 import {makeRecipe,mutateRecipe,applyRules,noteLineage,LAWS,MARKS,SUBJECTS,ruleTaste} from './rule-engine.js';
 import {createSourceBank,mixSources,cloneCanvas,prepareMixSamples} from './source-mixer.js';
 import {planDirtyTiles,shouldUseLocalRender} from './dirty-tiles.js';
+import {renderPlan,recordRenderTime,yieldToBrowser} from './render-governor.js';
 import {evolveSeed,rankNoveltyCandidates,commitCanvas,
   methodSignature,snapshotNoveltyMemory} from './nonredundancy.js';
 import {paintHeldMotifs,advanceMotifMemory,motifEvidence} from './motif-memory.js';
@@ -100,6 +101,7 @@ export function createAbstractionLoop({
  let lastRecipe=null,config={},lastMix=null,lastError=null,lastAssessment=null;
  let stamps=[],stamp=0,forceFreshSources=true,motifs=[],ideas=[];
  let objects=loadObjectRegistry(),renderBudget=null,dirtyStats=null;
+ let performanceHistory={emaMs:0,samples:0},lastFrameMs=0,stage='idle';
  void loadObjectRegistryFromDB().then(saved=>{
   if(saved?.objects?.length&&!objects.objects.length&&cycle===0)objects=saved;
  }).catch(()=>{});
@@ -117,7 +119,8 @@ export function createAbstractionLoop({
      wordContacts:o.wordContacts||0,
      stable:o.age>=3&&o.volatility<.24
    })),
-   renderBudget,dirtyStats,
+   renderBudget,dirtyStats,lastFrameMs,
+   performanceHistory:{...performanceHistory},stage,
    threeWay:lastAssessment?.threeWay||null,
    history:stamps.map(x=>({...x})),
    waitingReason:waiting?'Page hidden':''
@@ -130,13 +133,14 @@ export function createAbstractionLoop({
    timer=setTimeout(()=>{timer=null;void step();},ms);
  }
  function pause(){
-   running=false;waiting=false;stamp++;
+   running=false;waiting=false;stamp++;stage='paused';
    if(timer)clearTimeout(timer);timer=null;
    status();
  }
  function reset(){
    pause();cycle=0;last=null;lastRecipe=null;lastMix=null;stamps=[];lastAssessment=null;
-   motifs=[];ideas=[];dirtyStats=null;
+   motifs=[];ideas=[];dirtyStats=null;performanceHistory={emaMs:0,samples:0};
+   lastFrameMs=0;stage='idle';
    seed=Math.floor(Math.random()*4294967295);
    bank.clear();forceFreshSources=true;status();
  }
@@ -150,7 +154,17 @@ export function createAbstractionLoop({
    if(activeStep||document.hidden)return;
    activeStep=true;
    const currentStamp=stamp;
+   const begun=typeof performance!=='undefined'&&performance.now?
+     performance.now():Date.now();
+   let committed=false;
+   const checkpoint=async message=>{
+     stage=message;status();
+     await yieldToBrowser();
+     return currentStamp===stamp&&!document.hidden;
+   };
    try{
+     // Give the initial visible canvas a genuine browser paint opportunity.
+     if(!await checkpoint('Preparing painter'))return;
      const previous=last||getParent();
      const inheritedRecipe=lastRecipe||(previous?getParentRecipe():null);
      const parentSeed=inheritedRecipe?.seed??seed;
@@ -188,6 +202,7 @@ export function createAbstractionLoop({
        }
      }
      if(currentStamp!==stamp)return;
+     if(!await checkpoint('Preparing source materials'))return;
      const inputs=bank.sources(previous);
      if(!inputs.length)throw Error('No renderer produced an image');
      const candidates=[];
@@ -207,8 +222,12 @@ export function createAbstractionLoop({
      // Only the winning one/two need full-size paint and W/φ/H scoring.
      const mobile=typeof matchMedia==='function'&&
        matchMedia('(max-width:730px)').matches;
+     const devicePlan=renderPlan({
+       mobile,emaMs:performanceHistory.emaMs,samples:performanceHistory.samples
+     });
      const proposals=[];
-     for(let attempt=0;attempt<3;attempt++){
+     for(let attempt=0;attempt<devicePlan.previews;attempt++){
+       if(!await checkpoint('Sketch '+(attempt+1)+'/'+devicePlan.previews))return;
        const candidateSeed=evolveSeed(baseSeed,cycle+1,attempt,'render-branch');
        const recipe=nextAbstractRecipe(inheritedRecipe,{
          cycle,branch:attempt,seed:candidateSeed,subject:config.subject||'abstract',
@@ -265,7 +284,8 @@ export function createAbstractionLoop({
        if(currentStamp!==stamp)return;
      }
      const finalists=chooseFullRenderCandidates(proposals,{
-       cycle,mobile,strict:getGoldenMode()==='strict'
+       cycle,mobile,strict:getGoldenMode()==='strict',
+       maxFull:devicePlan.finalists
      });
      // The auto-mixer deliberately explores a scheduled NEW material family
      // every third pass. Preflight must not systematically prune the one
@@ -276,9 +296,18 @@ export function createAbstractionLoop({
        finalists[finalists.length-1]=proposals[0];
      }
      renderBudget=budgetEvidence(proposals,finalists);
+     renderBudget.device=devicePlan.speed;
+     renderBudget.recentMs=devicePlan.recentMs;
+     if(!await checkpoint('Preparing full-size paints'))return;
      const fullSamples=prepareMixSamples(inputs,{width,height});
+     renderBudget.cache={
+       preview:smallSamples.cacheEvidence||null,
+       full:fullSamples.cacheEvidence||null
+     };
      // No preview is misrepresented as a full-resolution candidate.
-     for(const proposal of finalists){
+     for(let finalIndex=0;finalIndex<finalists.length;finalIndex++){
+       if(!await checkpoint('Painting '+(finalIndex+1)+'/'+finalists.length))return;
+       const proposal=finalists[finalIndex];
        const {attempt,candidateSeed,recipe,mode,application}=proposal;
        const tilePlan=localAllowed?planDirtyTiles(previous,proposal.preview,{
          seed:candidateSeed,cycle,objects:objects.objects
@@ -346,6 +375,7 @@ export function createAbstractionLoop({
        candidates.push({canvas:output,recipe,mixed,metrics,held,heritage,stable,derivation,composite,method,attempt,dirty:tilePlan});
        if(currentStamp!==stamp)return;
      }
+     if(!await checkpoint('Judging actual paintings'))return;
      const evaluated=rankNoveltyCandidates(candidates,{
        mode:'abstraction',parent:previous
      });
@@ -468,6 +498,16 @@ export function createAbstractionLoop({
         previewTrials:renderBudget.predicted,fullRenders:renderBudget.full,
          dirtyCoverage:dirtyStats.coverage,omittedRuleCells:dirtyStats.omittedRuleCells});
      stamps=stamps.slice(-10);
+     const now=typeof performance!=='undefined'&&performance.now?
+       performance.now():Date.now();
+     lastFrameMs=Math.max(0,Math.round(now-begun));
+     performanceHistory=recordRenderTime(performanceHistory,lastFrameMs);
+     stage='evolving';committed=true;
+     result.renderTiming={elapsedMs:lastFrameMs,
+       averageMs:Math.round(performanceHistory.emaMs),
+       device:renderBudget.device,
+       donorReadbacksSaved:(renderBudget.cache?.full?.hits||0)+
+         (renderBudget.cache?.preview?.hits||0)};
      try{onFrame(result)}catch(error){onError(error)}
      status();
      if(stalled){
@@ -483,7 +523,11 @@ export function createAbstractionLoop({
      onError(error);status();
    }finally{
      activeStep=false;
-     if(running)delay(config.speed||3000);
+     if(!running)stage='paused';
+     // Only an explicitly interrupted frame gets a quick retry. Renderer
+     // errors retain normal pacing so a device cannot enter a battery-hungry
+     // 150ms failure loop.
+     if(running)delay(currentStamp!==stamp?150:config.speed||3000);
    }
  }
  function start(options={}){

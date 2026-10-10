@@ -160,7 +160,11 @@ export function createSourceBank({width=WIDTH,height=HEIGHT,getArchive=()=>null,
     if(previous)all.parent=cloneCanvas(previous,width,height);
     return Object.entries(all).filter(([name,canvas])=>
       SOURCE_KEYS.includes(name)&&canvas?.getContext&&canvas.width>0&&canvas.height>0)
-      .map(([name,canvas])=>({name,canvas}));
+      // Only bank-owned, immutable donor buffers may persist across cycles.
+      // Live parent, user uploads and archive frames are fresh each pass.
+      .map(([name,canvas])=>({name,canvas,
+        cacheable:name!=='parent'&&name!=='upload'&&name!=='archive'&&
+          canvas===cached[name]}));
   }
   return {refresh,sources,
     clear({wipeGenomes=false}={}){
@@ -178,17 +182,39 @@ const hash=(x,y,seed)=>{
   n^=n>>>13;n=Math.imul(n,1274126177);return (n^(n>>>16))>>>0;
 };
 const intensity=(data,i)=>Math.round(data[i]*.2126+data[i+1]*.7152+data[i+2]*.0722);
-// Donor snapshots are immutable within ONE evaluation step. Sharing their
-// extracted RGBA buffers across candidate renderings avoids decoding 4–10
-// full-image sources twice. No persistent stale-source cache is introduced.
+// Reuse immutable bank-owned donor readbacks until their canvas identity
+// changes. A WeakMap releases obsolete donor buffers after bank refresh;
+// live or artist-owned sources NEVER enter this cache.
+const immutableSnapshots=new WeakMap();
 export function prepareMixSamples(inputs,{width=WIDTH,height=HEIGHT}={}){
  const usable=(inputs||[]).filter(s=>s?.canvas?.getContext).slice(0,10);
  if(!usable.length)throw Error('No valid rendered sources');
- return usable.map(({name,canvas})=>{
-   const sheet=cloneCanvas(canvas,width,height),
-     context=sheet.getContext('2d',{willReadFrequently:true});
-   return {name,data:context.getImageData(0,0,width,height).data};
+ let hits=0,reads=0;
+ const sample=usable.map(({name,canvas,cacheable=false})=>{
+   const key=width+'x'+height;
+   const variants=cacheable?immutableSnapshots.get(canvas):null;
+   let pixels=variants?.get(key);
+   if(pixels&&pixels.length===width*height*4)hits++;
+   else{
+     const sheet=cloneCanvas(canvas,width,height),
+       context=sheet.getContext('2d',{willReadFrequently:true});
+     pixels=context.getImageData(0,0,width,height).data;
+     reads++;
+     if(cacheable){
+       const updated=variants||new Map();
+       // Width is typically either coarse or final. Never keep a catalogue.
+       if(updated.size>2)updated.clear();
+       updated.set(key,pixels);immutableSnapshots.set(canvas,updated);
+     }
+   }
+   return {name,data:pixels};
  });
+ // Evidence is non-enumerable so consuming mix signatures remain untouched.
+ Object.defineProperty(sample,'cacheEvidence',{value:{
+   hits,reads,reusedBytes:hits*width*height*4,
+   bankSourceCount:usable.filter(s=>s.cacheable).length
+ }});
+ return sample;
 }
 export function mixSources(inputs,{width=WIDTH,height=HEIGHT,cycle=0,
  mode='auto',seed=1,prepared=null,dirtyTiles=null}={}){

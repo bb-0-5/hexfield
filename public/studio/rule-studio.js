@@ -73,6 +73,7 @@ export function initRuleStudio(){
  $('ruleArtwork').hidden=false;
  $('ruleEmpty').hidden=true;
  let restoreReady=Promise.resolve(),manuallyPaused=false,autoStarted=false;
+ let lastHeritageCycle=-1,lastHistoryCycle=-1;
  const activeWords=()=>String($('ruleWords').value||'').trim().slice(0,48);
  const cleanCopy=source=>{
    const c=canvasOf(source.width,source.height);
@@ -285,12 +286,19 @@ export function initRuleStudio(){
      $('ruleLoopStop').disabled=false;
      $('ruleLoopStop').textContent=info.running?'Ⅱ PAUSE':'▶ RESUME';
      text('ruleHeroStatus',info.running?
-       '● AUTO PAINT + ABSTRACT · GENERATION '+info.cycle+
-       (info.dirtyStats?.partial?' · SPARSE '+Math.round(info.dirtyStats.coverage*100)+'%':' · FULL'):
+       '● '+String(info.stage||'PAINT + ABSTRACT').toUpperCase()+
+       ' · GENERATION '+(info.cycle+1)+
+       (info.performanceHistory?.samples?' · LAST '+info.lastFrameMs+'ms':'')+
+       (info.renderBudget?.device&&info.renderBudget.device!=='quality'?
+         ' · '+info.renderBudget.device.toUpperCase()+' MOBILE BUDGET':''):
        manuallyPaused?'PAUSED · RESUME WHEN READY':'PAINTER INITIALISING');
      $('ruleLoopOnce').disabled=info.running;
      const visible=info.motifs||[],genomes=info.ideas||[];
-     showHeritage(genomes);
+     // Heavy DOM genealogy should only change when a generation commits.
+     // Painting stage callbacks must stay lightweight on mobile.
+     if(info.cycle!==lastHeritageCycle){
+       showHeritage(genomes);lastHeritageCycle=info.cycle;
+     }
      const survivorStatus=$('ruleSurvivors');
      if(survivorStatus){
        survivorStatus.textContent='SURVIVING IDEAS / '+visible.length+
@@ -313,8 +321,18 @@ export function initRuleStudio(){
        (info.nonredundancy?' / GLOBAL W novelty '+
          (info.nonredundancy.novelty*100).toFixed(1)+
          '% · complexity '+(info.nonredundancy.complexity*100).toFixed(1)+'%':'')+
-       (info.lastError?' / '+info.lastError:''));
-     showLoopHistory(info.history||[]);
+       (info.lastError?' / '+info.lastError:'')+
+       (info.performanceHistory?.samples?
+         ' / last '+info.lastFrameMs+'ms · average '+
+         Math.round(info.performanceHistory.emaMs)+'ms':'')+
+       (info.renderBudget?.cache?
+         ' / donor snapshots reused '+
+         ((info.renderBudget.cache.preview?.hits||0)+
+          (info.renderBudget.cache.full?.hits||0)):'')+
+       (info.stage?' / '+info.stage:''));
+     if(info.cycle!==lastHistoryCycle){
+       showLoopHistory(info.history||[]);lastHistoryCycle=info.cycle;
+     }
    },
    onError(error){status('Abstraction recovered from a renderer error: '+safe(error?.message||error));}
  });

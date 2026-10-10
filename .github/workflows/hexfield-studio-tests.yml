@@ -58,6 +58,8 @@ jobs:
         run: node --experimental-default-type=module tests/object-render-memory.test.mjs
       - name: Verify 318 true dirty-region execution and exact outside-pixel conservation
         run: node --experimental-default-type=module tests/dirty-tiles.test.mjs
+      - name: Verify 319 progressive mobile paint governor and immutable donor cache
+        run: node --experimental-default-type=module tests/render-governor.test.mjs
 
       - name: Guard global renderer non-redundancy and evolving-seed genealogy
         run: node --experimental-default-type=module tests/global-nonredundancy.test.mjs

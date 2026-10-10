@@ -15,7 +15,7 @@ export function scorePreflight(preview,{novelty=0,continuity=.5,
    agreement:(N>.09&&H>.25&&golden.combined>.40)};
 }
 export function chooseFullRenderCandidates(previews,{
- cycle=0,mobile=false,strict=false
+ cycle=0,mobile=false,strict=false,maxFull=MAX_FULL_CANDIDATES
 }={}){
  if(!Array.isArray(previews)||!previews.length)return [];
  const rows=[...previews].sort((a,b)=>{
@@ -30,11 +30,13 @@ export function chooseFullRenderCandidates(previews,{
  // sufficiently decisive lead. Do not early-accept a merely bright preview.
  const confident=cycle>=2&&first.preflight.agreement&&
    margin>(mobile?.12:.18)&&(!strict||first.preflight.golden.qualifies);
- return rows.slice(0,confident?1:MAX_FULL_CANDIDATES);
+ return rows.slice(0,confident?1:Math.max(1,Math.min(MAX_FULL_CANDIDATES,maxFull)));
 }
 export function budgetEvidence(previews,finalists){
  return {predicted:previews.length,full:finalists.length,
-   fullAvoided:Math.max(0,previews.length-finalists.length),
+   // Old desktop engine always made three full-size paintings. A hot phone
+   // may now preview only two, but that does not change the old baseline.
+   baselineFull:3,fullAvoided:Math.max(0,3-finalists.length),
    scale:PREVIEW_WIDTH+'×'+PREVIEW_HEIGHT,
-   reason:finalists.length===1?'confident preflight':'two finalists'};
+   reason:finalists.length===1?'one full finalist':'two full finalists'};
 }
