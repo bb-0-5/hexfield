@@ -1,0 +1,12 @@
+# Build 318 — automatic canvas, lettering recovery, conservative sparse rendering
+
+## Canvas first, zero clicks
+The single live artwork is now the first element after the site masthead in desktop and mobile document order. A locally generated starter study appears synchronously while the expensive first real frame is prepared. The painter automatically starts its ongoing Paint + Abstract loop after first browser display. The last painting is restored before it continues when possible. One visible button toggles Pause / Resume; advanced controls remain collapsed. No automatic cloud model calls.
+
+## Lettering regression
+The old Canvas 2D font shorthand incorrectly put the font size before the weight, resulting in invalid CSS and a tiny 10px fallback font. This has been corrected to weight + size + family, including italic variants. New visitors see HEXFIELD painted into the real picture automatically; users who explicitly clear the text field retain an empty word. Edits update the current painting and resume evolution without clicking buttons.
+
+## Dirty tile application
+A coarse comparison of actual source pixels determines a bounded 48px tile region for scheduled local updates (one in every four generations). When input sources, text, global laws or the first scene change, the whole painting is regenerated. Safe local passes conserve actual parent pixels outside the changed tiles. The mixer reuses cached in-memory donor samples and only computes the affected tile pixels. The Rules painter clips marks to those rectangles and skips distant mark cells, and inherited visual structures also paint through the clip. The word renderer deposits pigment only into the affected tile rectangles and retains an unlettered parent baseline so future edits replace letters rather than accumulate duplicate glyphs.
+
+Full W / phi / H judgement continues on the actual full winning image. The existing three cheap previews and one or two full finalists are retained. Sparse status shows counted saved mixer pixels, unchanged tiles and omitted mark cells rather than asserting an unmeasured wall-clock speedup. Automated tests check exact byte-for-byte unchanged pixels, safe full-frame fallback, visible corrected font sizing, canvas-first markup and automatic loop startup.

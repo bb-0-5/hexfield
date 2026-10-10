@@ -6,6 +6,7 @@
 import {DERIVED_MARKS,markAtCell,paintDerivedMark} from './mark-grammar.js';
 import {newMarkProgram,validMarkProgram,evolveMarkProgram,paintInventedMark} from './mark-program.js';
 import {chooseGeometryRelation,GEOMETRY_RELATIONS} from './geometry-coupling.js';
+import {validDirtyTiles,tilesCoverage} from './dirty-tiles.js';
 export const RULE_STORE = 'hexfield.rule-studio.memory.v1';
 export const SUBJECTS = {
   sphere:'Ball on a table',stairwell:'Flooded stairwell',coast:'Coastline',
@@ -244,6 +245,13 @@ export function applyRules(source,target,recipe,options={}){
  const sample=document.createElement('canvas');sample.width=width;sample.height=height;
  const sc=sample.getContext('2d',{willReadFrequently:true});sc.drawImage(source,0,0,width,height);
  const data=sc.getImageData(0,0,width,height).data,ctx=target.getContext('2d');
+ const partial=!!options.baseCanvas?.getContext&&
+   options.baseCanvas.width===width&&options.baseCanvas.height===height&&
+   options.localApplication===true&&validDirtyTiles(options.dirtyTiles,width,height);
+ const tiles=partial?options.dirtyTiles:null;
+ const nearTile=(x,y,gutter=0)=>!partial||tiles.some(t=>
+   x>=t.x-gutter&&x<t.x+t.w+gutter&&
+   y>=t.y-gutter&&y<t.y+t.h+gutter);
  // Other renderer families (especially landscape and typography) sometimes
  // leave a normalized-world transform on their canvas contexts. A rule pass
  // is *always* applied in physical pixel coordinates and must restore the
@@ -280,14 +288,38 @@ export function applyRules(source,target,recipe,options={}){
    if(capture&&strokes%traceStride===0&&traceMarks.length<900)traceMarks.push(item);
  };
  ctx.clearRect(0,0,width,height);
+ if(partial){
+   // Copy actual parent once. Clip all ink including background to dirty tiles.
+   ctx.drawImage(options.baseCanvas,0,0,width,height);
+   ctx.beginPath();
+   for(const t of tiles)ctx.rect(t.x,t.y,t.w,t.h);
+   ctx.clip();
+ }
  ctx.fillStyle=negative?'#eee7d7':recipe.mark==='carve'?'#242c37':'#e5e0d3';
- ctx.fillRect(0,0,width,height);
+ if(partial){
+   for(const t of tiles)ctx.fillRect(t.x,t.y,t.w,t.h);
+ }else ctx.fillRect(0,0,width,height);
  ctx.lineCap='butt';ctx.lineJoin='bevel';
  const random=seeded(recipe.seed+(Number(options.iteration)||0)*997);
  const taste=ruleTaste();
  const markTypes=['dashes','dots','hatch','cutout','carve'];
+ let visitedCells=0,omittedCells=0;
+ // A safety halo is proportional to ACTUAL warp laws. In unwarped scenes,
+ // a fixed 72px halo squandered the entire dirty-tile saving on phones.
+ // Stamps need only ~3.5 cells of clearance when no geometric law shifts
+ // their centres; larger active displacement laws widen the halo.
+ const gutter=Math.ceil(step*3.5+
+   (has('opposite_bend')?Math.min(width*.055,42):0)+
+   (has('fractured_horizon')?Math.min(width*.033,24):0)+
+   (has('flatten_perspective')?width*.025:0)+
+   (misread?step*1.8:0));
  for(let y=0;y<height;y+=step){
+   if(partial&&!tiles.some(t=>y>=t.y-gutter&&y<t.y+t.h+gutter)){
+     omittedCells+=Math.ceil(width/step);continue;
+   }
    for(let x=0;x<width;x+=step){
+     if(!nearTile(x,y,gutter)){omittedCells++;continue;}
+     visitedCells++;
      const order=Math.floor(y/step)*Math.ceil(width/step)+Math.floor(x/step);
      if(has('unclosed_forms')&&(order%9===0||order%17===2)){skipped++;continue;}
      const phi=y/height,center=x-width*.5,side=center>=0?1:-1;
@@ -375,7 +407,12 @@ export function applyRules(source,target,recipe,options={}){
    }
  }
  ctx.restore();
- return {strokes,skipped,cell:step,negativeSpace:negative,noCurvedMarks:has('no_curves'),
+ return {strokes,skipped,cell:step,
+  dirty:{partial,tiles:partial?tiles.length:0,
+    coverage:partial?tilesCoverage(tiles,width,height):1,
+    visitedCells,omittedCells,
+    totalCells:Math.ceil(width/step)*Math.ceil(height/step)},
+  negativeSpace:negative,noCurvedMarks:has('no_curves'),
   invented:{stamps:inventedStamps,primitives:inventedPrimitives,
     signature:program.signature,id:program.id,rootId:program.rootId},
   strictColourRemap:has('blue_for_red'),hybrid:recipe.mark==='hybrid',

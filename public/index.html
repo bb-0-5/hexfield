@@ -22,10 +22,118 @@
       <span class="studio-unified-tag">ONE CANVAS · ALL PROCESSES</span>
     </header>
     <div class="product-frame">
+      <main class="workspace" aria-label="Artwork and feedback">
+        <section id="ruleWorkspace" aria-label="Executable rule-bound paintings">
+          <div class="canvas-heading"><div><span class="status-orb"></span><span class="canvas-heading-text">HEXFIELD / LIVE CANVAS</span></div><span class="work-number">AUTO PAINT + AUTO ABSTRACT</span></div>
+          <div class="rule-frame">
+            <div id="ruleEmpty" class="imagine-empty" hidden><strong>Constructing the first painting…</strong></div>
+            <canvas id="ruleArtwork" width="960" height="600" aria-label="Evolving artwork automatically painted on load"></canvas>
+          </div>
+          <div class="canvas-word-rail">
+          <div class="unified-studio-input">
+            <label for="ruleWords">WORDS ON THIS PAINTING / OPTIONAL</label>
+            <input id="ruleWords" type="text" maxlength="48" placeholder="Write directly into the evolving canvas" spellcheck="false" autocomplete="off">
+            <p id="ruleWordsStatus" class="control-help" aria-live="polite">Words share pigment and movement with the picture. The painter chooses their lettering.</p>
+          </div>
+            <div class="rule-loop-buttons">
+              
+              <button type="button" id="ruleLoopStop" class="ghost-button">Ⅱ PAUSE / RESUME</button>
+            </div>
+          </div>
+          <p id="ruleHeroStatus" class="hero-process-status" role="status" aria-live="polite">INITIALISING THE PAINTER · NO BUTTONS REQUIRED</p>
+          <div class="work-details"><div><span class="small-label">THE PROCESS</span><p id="ruleCaption">Not a style prompt: actual drawing operations.</p><small id="ruleEvidence" class="method-line">Awaiting a rule.</small></div></div>
+          <p class="feedback-line" id="ruleStatus" role="status" aria-live="polite">Ready to test a new visual law.</p>
+          <div id="ruleGoldenEvidence" class="phi-live-evidence" role="status" aria-live="polite">φ × φ / Awaiting a Rule Studio image.</div>
+
+          <section class="imagine-decision rule-vote">
+            <details class="advanced-configuration"><summary>OPTIONAL / WHY DID IT FAIL?</summary>
+              <label for="ruleCritique" class="small-label">WHICH PART?</label>
+              <textarea id="ruleCritique" rows="2" maxlength="230" placeholder="The mark application became repetitive…"></textarea>
+            </details>
+            <div class="imagine-buttons">
+              <button type="button" class="vote-button reject" id="ruleReject" disabled>✕ REJECT THIS METHOD</button>
+              <button type="button" class="vote-button keep" id="ruleKeep" disabled>♥ KEEP METHOD</button>
+            </div>
+          </section>
+          <details class="advanced-configuration"><summary>EXPORT &amp; INDEPENDENT AUSTRALIAN PRINT</summary>
+          <button type="button" class="ghost-button" id="ruleSave" disabled>EXPORT RULE-BOUND PNG ↓</button>
+          <div class="au-print-cta"><button type="button" data-au-print="rules" class="ghost-button">PRINT THIS WITH AN AUSTRALIAN PRINTER ↗</button>
+            <p>Direct manufacturer checkout. Hexfield takes no money, orders or delivery details.</p></div>
+          </details>
+          <details class="advanced-configuration"><summary>SHOW CREATIVE HISTORY / SURVIVING FORMS</summary>
+          <div id="ruleGenealogy" class="heritage-gallery" aria-label="Heritable geometric ideas: their shape, age and new material"></div>
+          <h2 class="rule-gallery-heading">Continuous rework lineage</h2>
+          <div id="ruleLoopHistory" class="rule-loop-history" aria-label="The last ten generations"></div>
+          <h2 class="rule-gallery-heading">Kept experiments &amp; descendants</h2><div id="ruleGallery" class="rule-gallery"></div>
+          </details>
+        </section>
+        <section id="imaginationWorkspace" class="imaginary-workspace" aria-label="Visual imagination studio" hidden>
+          <div class="canvas-heading"><div><span class="status-orb"></span><span class="canvas-heading-text">THE ARTIST'S IMAGINATION / VISUAL MODEL</span></div><span class="work-number">ORIGINAL WORK · NOT A TEMPLATE</span></div>
+          <div class="imagination-frame" id="imaginationFrame">
+            <div id="imagineEmpty" class="imagine-empty"><strong>Something it hasn't painted before.</strong><span>Give it an idea, or let it invent one. Nothing is rendered until you ask.</span></div>
+            <img id="imaginePicture" alt="Newly imagined painting" hidden>
+            <div id="imagineBusy" class="imagine-busy" hidden>IMAGINING A NEW PAINTING…</div>
+          </div>
+          <div class="work-details"><div><span class="small-label">THE PAINTING / THE ATTEMPT</span><p id="imagineTitle">A painting waiting to be made</p><small class="method-line" id="imagineMethod">Not another rearranged landscape.</small></div><span id="imagineMemory">LEARNING FROM YOUR RESPONSES</span></div>
+          <section id="imagineDecision" class="imagine-decision" hidden>
+            <label for="imagineCritique" class="small-label">WHAT WORKED OR FAILED? (OPTIONAL, BUT MORE INFORMATIVE)</label>
+            <div class="critique-chips">
+              <button type="button" data-critique="Too similar to the last painting">Same again</button>
+              <button type="button" data-critique="Generic and predictable">Generic</button>
+              <button type="button" data-critique="Unconvincing composition">Composition</button>
+              <button type="button" data-critique="The artistic technique is wrong">Wrong style</button>
+              <button type="button" data-critique="Not a believable landscape">Unconvincing</button>
+            </div>
+            <textarea id="imagineCritique" rows="3" maxlength="400" placeholder="E.g. Stop painting mountains. Try a flat tidal estuary viewed from a crane, in heavy charcoal instead of digital gradients."></textarea>
+            <div class="imagine-buttons"><button class="vote-button reject" id="imagineReject" type="button">✕ REJECT</button><button class="vote-button keep" id="imagineKeep" type="button">♥ KEEP</button></div>
+          </section>
+          <div class="mini-actions imagination-more"><button type="button" class="ghost-button" id="imagineRevise" disabled>REWORK THIS CANVAS ↺</button><button type="button" class="ghost-button" id="imagineExport" disabled>EXPORT PNG ↓</button></div>
+          <div class="au-print-cta"><button type="button" data-au-print="imagination" class="ghost-button">PRINT THIS WITH AN AUSTRALIAN PRINTER ↗</button>
+            <p>Artwork download + independent Australian printer. Pay the printer directly.</p></div>
+          <p class="feedback-line" id="imagineStatus" role="status" aria-live="polite">The model is ready for a new idea. Feedback influences future prompts, not its trained weights.</p>
+          <div id="imagineHistory" class="imagination-history" aria-label="Recent decisions"></div>
+        </section>
+        <div id="proceduralWorkspace" hidden>
+        <div class="canvas-heading">
+          <div><span class="status-orb" id="statusOrb"></span><span class="canvas-heading-text" id="workHeading">CURRENT STUDY / LANDSCAPE</span></div>
+          <span class="work-number" id="workNumber">STUDY 001</span>
+        </div>
+        <div class="canvas-wrap" id="canvasWrap">
+          <canvas id="artwork" width="1200" height="740" aria-label="Current artwork"></canvas>
+          <div class="canvas-overlay" id="paintingOverlay" role="status" aria-live="polite">STARTING A NEW PAINTING</div>
+        </div>
+        <div class="work-details"><div><span class="small-label">THE METHOD USED</span><p id="workCaption">Inventing a painting procedure.</p><small id="methodLine" class="method-line">METHOD / GENERATION 0</small>
+          <small id="visualMetric" class="method-line">IMAGE MEASUREMENT NOT YET AVAILABLE</small>
+          <small id="studioGoldenEvidence" class="phi-live-evidence">φ × φ / Awaiting a painting.</small></div><span id="renderStatus">01 / STUDIO IS OPEN</span></div>
+        <section class="vote-section" aria-label="Judge this artwork">
+          <div class="vote-description"><strong>Worth keeping?</strong><span>Your judgement changes what the artist tries next.</span></div>
+          <div class="vote-actions">
+            <button type="button" class="vote-button reject" id="reject" disabled>✕ &nbsp; REJECT</button>
+            <button type="button" class="vote-button keep" id="keep" disabled>♥ &nbsp; KEEP THIS</button>
+          </div>
+        </section>
+        <div class="feedback-line" role="status" aria-live="polite" id="feedbackStatus">No account required. Your votes belong to you.</div>
+        <div class="au-print-cta"><button type="button" data-au-print="studio" class="ghost-button">PRINT THIS WITH AN AUSTRALIAN PRINTER ↗</button>
+          <p>Hexfield generates the print-ready file; an Australian manufacturer sells, prints and ships it.</p></div>
+        <section class="experiments" id="experiments" aria-label="Different painting method experiments" hidden>
+          <div class="experiments-title"><span class="small-label">COUNTERFACTUAL STUDIES</span><h2 id="experimentHeading">WHAT SHOULD CHANGE?</h2><p>Same seed, same task. These images were rendered and compared with the rejected painting. A changed algorithm alone does not count as discovery.</p></div>
+          <figure class="rejected-reference" id="rejectedReference" hidden><img id="rejectedSnapshot" alt="The rejected painting used as the comparison baseline"><figcaption>REJECTED ORIGINAL — ALL COUNTERFACTUALS RETAIN ITS SEED</figcaption></figure>
+          <div class="experiment-cards" id="experimentCards"></div>
+        </section>
+        <section class="blind-panel" id="blindPanel" aria-label="Blind learned-versus-untrained painter comparison" hidden>
+          <p class="small-label">BLIND COMPARISON / HUMAN VERDICT</p>
+          <h2>Learned method or a fresh start?</h2>
+          <p id="blindAnswer">Choose whichever image you genuinely prefer. The painter identities are hidden until you vote.</p>
+          <div class="blind-cards" id="blindCards"></div>
+          <p id="blindCount">No blind comparisons yet</p>
+          <p id="blindVerdict">At least 12 comparisons are needed to judge whether feedback helped.</p>
+        </section>
+        </div>
+      </main>
       <aside class="controls" aria-label="Studio controls">
-        <p class="eyebrow">STUDIO / 317</p>
-        <h1>Make something<br><em>worth keeping.</em></h1>
-        <p class="intro">A painter that can imagine unfamiliar places and techniques. Your criticism changes what it attempts next.</p>
+        <p class="eyebrow">STUDIO / 318</p>
+        <h1>Guide the<br><em>living artwork.</em></h1>
+        <p class="intro">The painting above evolves without a click. Type words, keep an idea, reject it, or leave it running.</p>
         <section class="phi-taste-panel" aria-label="Two golden-ratio constraints on how Hexfield evaluates its art">
           <details id="phiTasteDetails">
             <summary>φ × φ / GOLDEN PROPORTION TASTE</summary>
@@ -43,11 +151,7 @@
           </details>
         </section>
         <section id="ruleControls" class="discipline-panel" aria-label="Executable visual constraints">
-          <div class="unified-studio-input">
-            <label for="ruleWords">WORDS ON THIS PAINTING / OPTIONAL</label>
-            <input id="ruleWords" type="text" maxlength="48" placeholder="Write directly into the evolving canvas" spellcheck="false" autocomplete="off">
-            <p id="ruleWordsStatus" class="control-help" aria-live="polite">Words share pigment and movement with the picture. The painter chooses their lettering.</p>
-          </div>
+
           <p class="artist-autonomy-note">The mark process, lettering and source images evolve together. Only type words or judge the result.</p>
           <details class="advanced-configuration" id="ruleAdvanced">
             <summary>OPTIONAL / SOURCES &amp; FORMAL RULES</summary>
@@ -80,6 +184,7 @@
           <p class="control-help">Rules are enforced by a local canvas painter. No curves means no curved marks; negative space erases objects. Your output can become the next input.</p>
           </details>
           <details class="advanced-configuration"><summary>OPTIONAL / MANUAL PAINT &amp; SINGLE PASS</summary>
+            <button type="button" id="ruleLoopStart" class="action-generate">▶ PAINT &amp; EVOLVE</button>
             <button type="button" class="action-generate" id="rulePaint">PAINT UNDER THESE LAWS ↗</button>
             <button type="button" id="ruleLoopOnce" class="ghost-button">ONE MORE PASS</button>
           </details>
@@ -105,11 +210,8 @@
             </select>
             <label class="rule-inline"><input id="ruleLockLaw" type="checkbox"> Hold selected law / marks; evolve everything else</label>
             </details>
-            <div class="rule-loop-buttons">
-              <button type="button" id="ruleLoopStart" class="action-generate">▶ PAINT &amp; EVOLVE</button>
-              <button type="button" id="ruleLoopStop" class="ghost-button" disabled>Ⅱ PAUSE</button>
-            </div>
-            <p id="ruleLoopStatus" class="model-budget" role="status" aria-live="polite">Ready. Start to combine all available renderers into an evolving picture.</p>
+
+            <p id="ruleLoopStatus" class="model-budget" role="status" aria-live="polite">Painting automatically · locally · continuously. Pause whenever you want.</p>
             <p id="ruleSurvivors" class="surviving-ideas" aria-live="polite">SURVIVING IDEAS / Found shapes will linger across generations, with new ones arriving as others fade.</p>
             
           </section>
@@ -231,102 +333,6 @@
         </div>
         <div class="studio-principle"><span>OUR RULE</span><p>A real painting needs a new visual idea, not another variation of the same picture.</p></div>
       </aside>
-      <main class="workspace" aria-label="Artwork and feedback">
-        <section id="ruleWorkspace" aria-label="Executable rule-bound paintings">
-          <div class="canvas-heading"><div><span class="status-orb"></span><span class="canvas-heading-text">RULE STUDIO / LAWS BEFORE STYLE</span></div><span class="work-number">REALITY → CONSTRAINT → REWORK</span></div>
-          <div class="rule-frame">
-            <div id="ruleEmpty" class="imagine-empty"><strong>A painting that must obey its laws.</strong><span>Try a ball without curves, paint only negative space, or force symmetrical lines to bend apart. Or use an AI image as the starting reality.</span></div>
-            <canvas id="ruleArtwork" width="960" height="600" hidden aria-label="Constrained generative painting"></canvas>
-          </div>
-          <div class="work-details"><div><span class="small-label">THE PROCESS</span><p id="ruleCaption">Not a style prompt: actual drawing operations.</p><small id="ruleEvidence" class="method-line">Awaiting a rule.</small></div></div>
-          <p class="feedback-line" id="ruleStatus" role="status" aria-live="polite">Ready to test a new visual law.</p>
-          <div id="ruleGoldenEvidence" class="phi-live-evidence" role="status" aria-live="polite">φ × φ / Awaiting a Rule Studio image.</div>
-
-          <section class="imagine-decision rule-vote">
-            <details class="advanced-configuration"><summary>OPTIONAL / WHY DID IT FAIL?</summary>
-              <label for="ruleCritique" class="small-label">WHICH PART?</label>
-              <textarea id="ruleCritique" rows="2" maxlength="230" placeholder="The mark application became repetitive…"></textarea>
-            </details>
-            <div class="imagine-buttons">
-              <button type="button" class="vote-button reject" id="ruleReject" disabled>✕ REJECT THIS METHOD</button>
-              <button type="button" class="vote-button keep" id="ruleKeep" disabled>♥ KEEP METHOD</button>
-            </div>
-          </section>
-          <details class="advanced-configuration"><summary>EXPORT &amp; INDEPENDENT AUSTRALIAN PRINT</summary>
-          <button type="button" class="ghost-button" id="ruleSave" disabled>EXPORT RULE-BOUND PNG ↓</button>
-          <div class="au-print-cta"><button type="button" data-au-print="rules" class="ghost-button">PRINT THIS WITH AN AUSTRALIAN PRINTER ↗</button>
-            <p>Direct manufacturer checkout. Hexfield takes no money, orders or delivery details.</p></div>
-          </details>
-          <details class="advanced-configuration"><summary>SHOW CREATIVE HISTORY / SURVIVING FORMS</summary>
-          <div id="ruleGenealogy" class="heritage-gallery" aria-label="Heritable geometric ideas: their shape, age and new material"></div>
-          <h2 class="rule-gallery-heading">Continuous rework lineage</h2>
-          <div id="ruleLoopHistory" class="rule-loop-history" aria-label="The last ten generations"></div>
-          <h2 class="rule-gallery-heading">Kept experiments &amp; descendants</h2><div id="ruleGallery" class="rule-gallery"></div>
-          </details>
-        </section>
-        <section id="imaginationWorkspace" class="imaginary-workspace" aria-label="Visual imagination studio" hidden>
-          <div class="canvas-heading"><div><span class="status-orb"></span><span class="canvas-heading-text">THE ARTIST'S IMAGINATION / VISUAL MODEL</span></div><span class="work-number">ORIGINAL WORK · NOT A TEMPLATE</span></div>
-          <div class="imagination-frame" id="imaginationFrame">
-            <div id="imagineEmpty" class="imagine-empty"><strong>Something it hasn't painted before.</strong><span>Give it an idea, or let it invent one. Nothing is rendered until you ask.</span></div>
-            <img id="imaginePicture" alt="Newly imagined painting" hidden>
-            <div id="imagineBusy" class="imagine-busy" hidden>IMAGINING A NEW PAINTING…</div>
-          </div>
-          <div class="work-details"><div><span class="small-label">THE PAINTING / THE ATTEMPT</span><p id="imagineTitle">A painting waiting to be made</p><small class="method-line" id="imagineMethod">Not another rearranged landscape.</small></div><span id="imagineMemory">LEARNING FROM YOUR RESPONSES</span></div>
-          <section id="imagineDecision" class="imagine-decision" hidden>
-            <label for="imagineCritique" class="small-label">WHAT WORKED OR FAILED? (OPTIONAL, BUT MORE INFORMATIVE)</label>
-            <div class="critique-chips">
-              <button type="button" data-critique="Too similar to the last painting">Same again</button>
-              <button type="button" data-critique="Generic and predictable">Generic</button>
-              <button type="button" data-critique="Unconvincing composition">Composition</button>
-              <button type="button" data-critique="The artistic technique is wrong">Wrong style</button>
-              <button type="button" data-critique="Not a believable landscape">Unconvincing</button>
-            </div>
-            <textarea id="imagineCritique" rows="3" maxlength="400" placeholder="E.g. Stop painting mountains. Try a flat tidal estuary viewed from a crane, in heavy charcoal instead of digital gradients."></textarea>
-            <div class="imagine-buttons"><button class="vote-button reject" id="imagineReject" type="button">✕ REJECT</button><button class="vote-button keep" id="imagineKeep" type="button">♥ KEEP</button></div>
-          </section>
-          <div class="mini-actions imagination-more"><button type="button" class="ghost-button" id="imagineRevise" disabled>REWORK THIS CANVAS ↺</button><button type="button" class="ghost-button" id="imagineExport" disabled>EXPORT PNG ↓</button></div>
-          <div class="au-print-cta"><button type="button" data-au-print="imagination" class="ghost-button">PRINT THIS WITH AN AUSTRALIAN PRINTER ↗</button>
-            <p>Artwork download + independent Australian printer. Pay the printer directly.</p></div>
-          <p class="feedback-line" id="imagineStatus" role="status" aria-live="polite">The model is ready for a new idea. Feedback influences future prompts, not its trained weights.</p>
-          <div id="imagineHistory" class="imagination-history" aria-label="Recent decisions"></div>
-        </section>
-        <div id="proceduralWorkspace" hidden>
-        <div class="canvas-heading">
-          <div><span class="status-orb" id="statusOrb"></span><span class="canvas-heading-text" id="workHeading">CURRENT STUDY / LANDSCAPE</span></div>
-          <span class="work-number" id="workNumber">STUDY 001</span>
-        </div>
-        <div class="canvas-wrap" id="canvasWrap">
-          <canvas id="artwork" width="1200" height="740" aria-label="Current artwork"></canvas>
-          <div class="canvas-overlay" id="paintingOverlay" role="status" aria-live="polite">STARTING A NEW PAINTING</div>
-        </div>
-        <div class="work-details"><div><span class="small-label">THE METHOD USED</span><p id="workCaption">Inventing a painting procedure.</p><small id="methodLine" class="method-line">METHOD / GENERATION 0</small>
-          <small id="visualMetric" class="method-line">IMAGE MEASUREMENT NOT YET AVAILABLE</small>
-          <small id="studioGoldenEvidence" class="phi-live-evidence">φ × φ / Awaiting a painting.</small></div><span id="renderStatus">01 / STUDIO IS OPEN</span></div>
-        <section class="vote-section" aria-label="Judge this artwork">
-          <div class="vote-description"><strong>Worth keeping?</strong><span>Your judgement changes what the artist tries next.</span></div>
-          <div class="vote-actions">
-            <button type="button" class="vote-button reject" id="reject" disabled>✕ &nbsp; REJECT</button>
-            <button type="button" class="vote-button keep" id="keep" disabled>♥ &nbsp; KEEP THIS</button>
-          </div>
-        </section>
-        <div class="feedback-line" role="status" aria-live="polite" id="feedbackStatus">No account required. Your votes belong to you.</div>
-        <div class="au-print-cta"><button type="button" data-au-print="studio" class="ghost-button">PRINT THIS WITH AN AUSTRALIAN PRINTER ↗</button>
-          <p>Hexfield generates the print-ready file; an Australian manufacturer sells, prints and ships it.</p></div>
-        <section class="experiments" id="experiments" aria-label="Different painting method experiments" hidden>
-          <div class="experiments-title"><span class="small-label">COUNTERFACTUAL STUDIES</span><h2 id="experimentHeading">WHAT SHOULD CHANGE?</h2><p>Same seed, same task. These images were rendered and compared with the rejected painting. A changed algorithm alone does not count as discovery.</p></div>
-          <figure class="rejected-reference" id="rejectedReference" hidden><img id="rejectedSnapshot" alt="The rejected painting used as the comparison baseline"><figcaption>REJECTED ORIGINAL — ALL COUNTERFACTUALS RETAIN ITS SEED</figcaption></figure>
-          <div class="experiment-cards" id="experimentCards"></div>
-        </section>
-        <section class="blind-panel" id="blindPanel" aria-label="Blind learned-versus-untrained painter comparison" hidden>
-          <p class="small-label">BLIND COMPARISON / HUMAN VERDICT</p>
-          <h2>Learned method or a fresh start?</h2>
-          <p id="blindAnswer">Choose whichever image you genuinely prefer. The painter identities are hidden until you vote.</p>
-          <div class="blind-cards" id="blindCards"></div>
-          <p id="blindCount">No blind comparisons yet</p>
-          <p id="blindVerdict">At least 12 comparisons are needed to judge whether feedback helped.</p>
-        </section>
-        </div>
-      </main>
     </div>
     <section class="shelf" id="shelf" aria-labelledby="shelfHeading" hidden>
       <div class="shelf-title"><div><p class="eyebrow">THE WORK LEFT BEHIND</p><h2 id="shelfHeading">Your kept studies <span id="keepCount">00</span></h2></div><p>A small, growing collection of your choices. Select a study to revisit it.</p></div>

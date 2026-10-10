@@ -64,17 +64,35 @@ export function initRuleStudio(){
    archiveCanvas=null,unlettered=null,sequence=0,manualMotifs=[],manualIdeas=[],lastOrigin='manual';
  const context=$('ruleArtwork').getContext('2d');
  const wordKey='hexfield.rule-words.v1';
- try{$('ruleWords').value=String(localStorage.getItem(wordKey)||'').slice(0,48)}catch{}
+ try{
+  const stored=localStorage.getItem(wordKey);
+  $('ruleWords').value=stored===null?'HEXFIELD':String(stored).slice(0,48);
+ }catch{$('ruleWords').value='HEXFIELD';}
+ // This is a LIVE canvas before any expensive new render begins.
+ drawReality($('ruleArtwork'),'abstract',(Date.now()^0x318)>>>0);
+ $('ruleArtwork').hidden=false;
+ $('ruleEmpty').hidden=true;
+ let restoreReady=Promise.resolve(),manuallyPaused=false,autoStarted=false;
  const activeWords=()=>String($('ruleWords').value||'').trim().slice(0,48);
  const cleanCopy=source=>{
    const c=canvasOf(source.width,source.height);
    c.getContext('2d').drawImage(source,0,0);return c;
  };
- function compositeWords(output,recipe,metrics){
+ function compositeWords(output,recipe,metrics,{dirtyTiles=null}={}){
    if(!activeWords())return null;
-   const clean=cleanCopy(output);
+   // Parent letters live on unchanged tiles. Reconstruct the unlettered
+   // baseline from its actual previous baseline plus only newly painted
+   // regions. Editing the words must replace, not accumulate, old glyphs.
+   const clean=dirtyTiles?.length&&unlettered?
+     cleanCopy(unlettered):cleanCopy(output);
+   if(dirtyTiles?.length&&unlettered){
+     const cg=clean.getContext('2d');
+     for(const t of dirtyTiles)cg.drawImage(output,
+       t.x,t.y,t.w,t.h,t.x,t.y,t.w,t.h);
+   }
    const work=paintWordsOnCanvas(output,activeWords(),{
-     recipe,seed:recipe.seed,iteration:recipe.generation,sourceCanvas:clean
+     recipe,seed:recipe.seed,iteration:recipe.generation,sourceCanvas:clean,
+     dirtyTiles
    });
    if(work.painted){metrics.words=work.text;metrics.coupling=work.interaction;}
    return {...work,clean};
@@ -195,11 +213,12 @@ export function initRuleStudio(){
    getParentRecipe:()=>current?.recipe||null,
    getArchive:()=>archiveCanvas,
    getWords:()=>activeWords(),
-   postProcess:(output,recipe,metrics)=>compositeWords(output,recipe,metrics),
+   postProcess:(output,recipe,metrics,{dirtyTiles=null}={})=>
+     compositeWords(output,recipe,metrics,{dirtyTiles}),
    getUploaded:()=>upload,
    onFrame(result){
      const {canvas,recipe,cycle,metrics,blend,sources,novelty,nonredundancy,
-       survival,heritage,trials,derivation,objectMemory,renderBudget}=result;
+       survival,heritage,trials,derivation,objectMemory,renderBudget,dirty}=result;
      const before=current?.canvas||null;
      lastOrigin='loop';
      context.clearRect(0,0,960,600);context.drawImage(canvas,0,0,960,600);
@@ -236,6 +255,9 @@ export function initRuleStudio(){
          (objectMemory?.stable||0)+' stable, '+(objectMemory?.reused||0)+' reused)'+
        ' / FULL '+(renderBudget?.full||0)+' from '+(renderBudget?.predicted||0)+
        ' cheap trials; saved '+(renderBudget?.fullAvoided||0)+' full passes'+
+       (dirty?.partial?' / SPARSE '+Math.round(dirty.coverage*100)+
+         '% repainted / '+dirty.skippedTiles+' tiles preserved / '+
+         dirty.omittedRuleCells+' mark cells bypassed':' / GLOBAL PASS')+
        ' / visual change '+(novelty*100).toFixed(1)+
        '% / '+(survival?.carried||0)+' original-pixel islands / '+
        (heritage?.drawn?.length||0)+' reconstructed shape identities'+
@@ -251,13 +273,21 @@ export function initRuleStudio(){
        ' φ '+Math.round((heritage?.tradeoff?.phi||0)*100)+
        ' H '+Math.round((heritage?.tradeoff?.H||0)*100)+
        ' · '+(objectMemory?.matched||0)+' recognized shapes'+
-       ' · '+(renderBudget?.fullAvoided||0)+' full render(s) skipped.');
+       ' · '+(renderBudget?.fullAvoided||0)+' full render(s) skipped'+
+       (dirty?.partial?' · '+dirty.skippedTiles+
+         ' clean tiles skipped ('+Math.round((1-dirty.coverage)*100)+
+         '% surface conserved).':'.'));
      if(cycle%4===0){persistCanvas(canvas,recipe,false);publishSource(canvas,'rules',recipe);}
    },
    onState(info){
      $('ruleLoopStart').disabled=info.running;
    $('ruleLoopStart').textContent=info.running?'PAINTING / LEARNING…':'▶ PAINT & EVOLVE';
-     $('ruleLoopStop').disabled=!info.running;
+     $('ruleLoopStop').disabled=false;
+     $('ruleLoopStop').textContent=info.running?'Ⅱ PAUSE':'▶ RESUME';
+     text('ruleHeroStatus',info.running?
+       '● AUTO PAINT + ABSTRACT · GENERATION '+info.cycle+
+       (info.dirtyStats?.partial?' · SPARSE '+Math.round(info.dirtyStats.coverage*100)+'%':' · FULL'):
+       manuallyPaused?'PAUSED · RESUME WHEN READY':'PAINTER INITIALISING');
      $('ruleLoopOnce').disabled=info.running;
      const visible=info.motifs||[],genomes=info.ideas||[];
      showHeritage(genomes);
@@ -272,6 +302,8 @@ export function initRuleStudio(){
          ' · '+(info.objects?.length||0)+' identifiable regions · '+
          (info.objects?.filter(x=>x.stable).length||0)+' stable'+
          ' · '+(info.renderBudget?.fullAvoided||0)+' full candidate render(s) avoided'+
+         (info.dirtyStats?.partial?' · LOCAL / '+
+           info.dirtyStats.skippedTiles+' clean tiles kept':' · GLOBAL REPAINT')+
          ' · KEEP or REJECT teaches which lineage to retain.';
      }
      const sources=info.sourceNames?.length?info.sourceNames.join(' + '):'not rendered yet';
@@ -475,6 +507,7 @@ export function initRuleStudio(){
    }
  }
  function vote(liked){
+   const resumeAfterVerdict=loop.isRunning()&&!manuallyPaused;
    loop.pause();
    if(!current||current.judged)return;
    const critique=safe($('ruleCritique').value,230);
@@ -501,6 +534,9 @@ export function initRuleStudio(){
    status(liked?'KEPT: law / mark / lineage recorded'+
      (current.metrics?.invented?.stamps?' with invented procedure.':'.'):
      'REJECTED: the criticized law and/or mark system will be less likely in future surprise experiments.');
+   // A judgement is guidance, not a STOP command. Automatic painting
+   // continues after each vote unless the user explicitly paused it.
+   if(resumeAfterVerdict)loop.start(loopOptions());
  }
  function save(){
    if(!current)return;
@@ -512,11 +548,13 @@ export function initRuleStudio(){
  $('ruleNewLaw').addEventListener('click',()=>{loop.pause();child('law');});
  $('ruleNewSubject').addEventListener('click',()=>{loop.pause();child('subject');});
  $('ruleNewMark').addEventListener('click',()=>{loop.pause();child('mark');});
- $('ruleLoopStart').addEventListener('click',()=>loop.start(loopOptions()));
+ $('ruleLoopStart').addEventListener('click',()=>{manuallyPaused=false;loop.start(loopOptions());});
  $('ruleLoopStop').addEventListener('click',()=>{
-   loop.pause();
-   if(current){persistCanvas(current.canvas,current.recipe,current.judged);
-     publishSource(current.canvas,'rules',current.recipe);}
+   if(loop.isRunning()){
+     manuallyPaused=true;loop.pause();
+     if(current){persistCanvas(current.canvas,current.recipe,current.judged);
+       publishSource(current.canvas,'rules',current.recipe);}
+   }else{manuallyPaused=false;loop.start(loopOptions());}
  });
  $('ruleLoopOnce').addEventListener('click',()=>loop.once(loopOptions()));
  for(const id of ['ruleLoopSpeed','ruleMixMode','ruleLockLaw']){
@@ -534,6 +572,7 @@ export function initRuleStudio(){
  });
  const restored=read(CURRENT);
  if(restored?.recipe&&restored?.image){
+   restoreReady=new Promise(resolve=>{
    const image=new Image();image.onload=()=>{
      if(current)return;
      const canvas=fromImage(image);
@@ -546,14 +585,22 @@ export function initRuleStudio(){
      $('ruleReworkBtn').disabled=false;$('ruleSave').disabled=false;
      text('ruleCaption',describeRecipe(current.recipe));
      text('ruleEvidence','LAST STUDY RESTORED · CONTINUE FROM THIS CANVAS');
-     status('Previous constrained study restored. REWORK paints its own output as a new reference.');
-   };image.src=restored.image;
+     status('Last painting restored. Automatic abstraction is active.');
+     resolve();
+   };
+   image.onerror=()=>resolve();
+   image.src=restored.image;
+   });
  }
  $('ruleWords').addEventListener('input',()=>{
    try{localStorage.setItem(wordKey,activeWords())}catch{}
+   loop.pause();
    clearTimeout(wordTimer);
    loop.invalidateSources();
-   wordTimer=setTimeout(previewWords,170);
+   wordTimer=setTimeout(()=>{
+     previewWords();
+     if(!manuallyPaused)loop.start(loopOptions());
+   },240);
  });
  $('ruleUseArchive').addEventListener('click',async()=>{
    try{
@@ -572,7 +619,13 @@ export function initRuleStudio(){
  });
  gallery();
  return {
-   show(){if(!current)status('Choose visual laws, or start continuous reabstraction of every available renderer.');},
+   show(){if(!current)status('The painter starts automatically. Type into the painting or just watch.');},
+   async autoStart(){
+     if(autoStarted||manuallyPaused)return;
+     autoStarted=true;
+     await Promise.race([restoreReady,new Promise(resolve=>setTimeout(resolve,900))]);
+     if(!manuallyPaused)loop.start(loopOptions());
+   },
    hide(){loop.pause();theatre.stop();if(current){persistCanvas(current.canvas,current.recipe,current.judged);
      publishSource(current.canvas,'rules',current.recipe);}},
    paintFresh,hasWork:()=>!!current,

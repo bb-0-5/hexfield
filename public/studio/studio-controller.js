@@ -1076,6 +1076,9 @@ function bind(){
     onError:error=>setStatus('Logo evolution paused: '+String(error.message||error).slice(0,140))
   });
   buildGallery();setMode('rules');updateBlindSummary();
+  // First paint appears without any user action. Defer the intensive first
+  // generation until AFTER the browser has displayed the starter canvas.
+  requestAnimationFrame(()=>{void ruleStudio?.autoStart();});
   void restoreRemoteProcedures();
   if(state.pending.length)void syncVotes();
   void loadSharedTaste();
