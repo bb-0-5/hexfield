@@ -54,6 +54,9 @@ jobs:
         run: node --experimental-default-type=module tests/unified-canvas.test.mjs
       - name: Verify Build 316 two-way word scene collision geometry
         run: node --experimental-default-type=module tests/scene-geometry.test.mjs
+      - name: Verify 317 persistent object identities, raster reuse and adaptive candidate budgeting
+        run: node --experimental-default-type=module tests/object-render-memory.test.mjs
+
       - name: Guard global renderer non-redundancy and evolving-seed genealogy
         run: node --experimental-default-type=module tests/global-nonredundancy.test.mjs
       - name: Verify component-level font anatomy and mutable logo geometry
