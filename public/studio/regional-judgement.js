@@ -35,6 +35,35 @@ export function createRegionMemory({grid=REGION_GRID}={}){
    [id,{id,age:0,kept:0,revised:0,lastSeen:-1,lastRevision:-1,
     quality:.5,mark:null,stability:0}]))};
 }
+export const REGION_MEMORY_KEY='hexfield.region-taste.323';
+export function loadRegionMemory(){
+ const blank=createRegionMemory();
+ try{
+  const saved=JSON.parse(localStorage.getItem(REGION_MEMORY_KEY)||'null');
+  if(!saved||saved.grid!==REGION_GRID||
+    !saved.cells||typeof saved.cells!=='object')return blank;
+  for(const [id,cell] of Object.entries(blank.cells)){
+   const v=saved.cells[id];
+   if(!v||!Number.isFinite(v.quality)||!Number.isFinite(v.age))continue;
+   blank.cells[id]={...cell,age:clamp(v.age,0,200000),
+    kept:clamp(Number(v.kept)||0,0,200000),
+    revised:clamp(Number(v.revised)||0,0,200000),
+    lastSeen:Number.isInteger(v.lastSeen)?v.lastSeen:-1,
+    lastRevision:Number.isInteger(v.lastRevision)?v.lastRevision:-1,
+    quality:clamp(v.quality,0,1),
+    stability:clamp(Number(v.stability)||0,0,1),
+    mark:typeof v.mark==='string'&&v.mark in MARKS?v.mark:null};
+  }
+  blank.generation=clamp(Number(saved.generation)||0,0,200000);
+ }catch{}
+ return blank;
+}
+export function saveRegionMemory(memory){
+ try{
+  localStorage.setItem(REGION_MEMORY_KEY,JSON.stringify(memory));
+  return true;
+ }catch{return false;}
+}
 export function selectReviewRegions({width,height,cycle=0,attempt=0,
  memory=createRegionMemory(),objects=[],maxReviews=MAX_REGIONAL_REVIEWS,
  dirtyTiles=null}={}){
