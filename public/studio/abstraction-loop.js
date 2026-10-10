@@ -84,11 +84,11 @@ export function nextAbstractRecipe(parent,{cycle=0,branch=0,seed=null,
 export function createAbstractionLoop({
   width=720,height=450,
   getArchive=()=>null,getUploaded=()=>null,getParent=()=>null,
-  getParentRecipe=()=>null,
+  getParentRecipe=()=>null,getWords=()=>'',
   postProcess=()=>null,
   onFrame=()=>{},onState=()=>{},onError=()=>{}
 }={}){
- const bank=createSourceBank({width,height,getArchive,getUploaded,getParent});
+ const bank=createSourceBank({width,height,getArchive,getUploaded,getParent,getWords});
  let running=false,waiting=false,timer=null,activeStep=false;
  let cycle=0,seed=Math.floor(Math.random()*4294967295),last=null;
  let lastRecipe=null,config={},lastMix=null,lastError=null,lastAssessment=null;
