@@ -106,7 +106,7 @@ assert.ok(produced[0].regional.decisions.every(x=>x.verdict==='KEEP'||x.verdict=
 assert.ok(processEvents.some(e=>e.type==='regional-decision'),
  'The local spatial judgement is visible DURING candidate construction');
 assert.ok(produced[0].sources.includes('terrain'),'Procedural terrain must be rendered into the first pass');
-assert.ok(produced[0].sources.includes('lettering'),'Lettering renderer must participate in the first pass');
+assert.ok(!produced[0].sources.includes('lettering'),'A separate wordmark donor must NOT print phantom letters beneath the painting');
 assert.ok(produced[0].sources.includes('archive'),'Historic archive canvas must participate');
 loop.once({mixMode:'dissonance',subject:'sphere',speed:1500});
 await waitGeneration(2);
@@ -137,8 +137,8 @@ for(let pass=3;pass<=10;pass++){
     'Pass '+pass+' must retain a reality donor after a novelty reset');
   assert.ok(produced.at(-1).sources.includes('terrain'),
     'Pass '+pass+' must retain a terrain donor');
-  assert.ok(produced.at(-1).sources.includes('lettering'),
-    'Pass '+pass+' must retain an independent lettering donor');
+  assert.ok(!produced.at(-1).sources.includes('lettering'),
+    'Pass '+pass+' must not blend duplicate text-bearing donors into art');
   assert.equal(produced.at(-1).recipe.parentId,produced.at(-2).recipe.id);
   assert.equal(produced.at(-1).identity.root,produced[0].identity.root,
     'One painting must retain its ROOT despite changing style and donors');
@@ -221,8 +221,8 @@ assert.ok(produced.some(frame=>frame.regional?.reviews>0),
  'The painter must run true regional review in some full-frame generations');
 assert.ok(loop.state().donorGenerations.terrain>=1,
  'Terrain programs must mutate instead of restarting from scratch');
-assert.ok(loop.state().donorGenerations.lettering>=1,
- 'Letter anatomy must develop a procedure lineage alongside the landscape');
+assert.equal(loop.state().donorGenerations.lettering,0,
+ 'The retired hidden wordmark donor must not consume an extra render pass');
 assert.ok(new Set(produced.map(p=>p.blend)).size>=4,'Auto mixing should rotate materially different renderers');
 // Change the paint MATERIAL on an already living canvas without
 // destroying its chosen subject. The full candidate must preserve the
