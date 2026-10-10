@@ -274,7 +274,7 @@ export function createAbstractionLoop({
      }
      if(currentStamp!==stamp)return;
      if(!await checkpoint('Preparing source materials'))return;
-     const inputs=wordSafeSources(bank.sources(previous),!!getWords());
+     const inputs=wordSafeSources(bank.sources(previous),true);
      if(!inputs.length)throw Error('No renderer produced an image');
      const candidates=[];
      const localAllowed=shouldUseLocalRender({

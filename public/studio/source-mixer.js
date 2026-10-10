@@ -4,7 +4,6 @@
  */
 import {drawReality} from './rule-engine.js';
 import {renderLandscape,SCENES,MOODS} from './landscape.js';
-import {renderLettering} from './lettering.js';
 import {makeGenome,mutateGenome} from './evolution.js';
 import {evolveSeed} from './nonredundancy.js';
 import {validDirtyTiles,tilesCoverage} from './dirty-tiles.js';
@@ -105,7 +104,7 @@ export function publishSource(canvas,key,recipe=null){
 }
 export function createSourceBank({width=WIDTH,height=HEIGHT,getArchive=()=>null,getUploaded=()=>null,getParent=()=>null,getWords=()=>''}={}){
   let cached={};let refreshCount=0;
-  let landAncestor=null,letterAncestor=null;
+  let landAncestor=null;
   let busy=false;
   async function refresh(seed=1,subject='coast',{force=false}={}){
     if(busy)return cached;
@@ -133,17 +132,11 @@ export function createSourceBank({width=WIDTH,height=HEIGHT,getArchive=()=>null,
             genome:nextTerrain}, {animate:false,quality:.24});
           cached.terrain=land;landAncestor=nextTerrain;
         }catch(error){console.warn('Landscape renderer skipped:',String(error).slice(0,110));}
-        const lettering=canvasOf(width,height);
-        const nextLetter=letterAncestor?
-          mutateGenome(letterAncestor,focus,
-            evolveSeed(seed,refreshCount+1,1,'letter-genome')):
-          makeGenome('lettering',evolveSeed(seed,1,1,'letter-origin'));
-        try{
-          renderLettering(lettering,{mode:'lettering',seed:seed+53,text:String(getWords()||'HEXFIELD').slice(0,24),
-            type:'wordmark',style:['geometric','experimental','heavy'][Math.abs(seed)%3],
-            genome:nextLetter});
-          cached.lettering=lettering;letterAncestor=nextLetter;
-        }catch(error){console.warn('Letter renderer skipped:',String(error).slice(0,110));}
+        // The unified compositor typesets words AFTER painting. Injecting
+        // a second rasterized wordmark as an image donor produced stray,
+        // cropped and duplicated text, even in word-free abstract art.
+        // Do not synthesize an unrequested "HEXFIELD" logo here.
+        delete cached.lettering;
       }
       const archive=getArchive();
       if(archive)cached.archive=cloneCanvas(archive,width,height);
@@ -178,10 +171,10 @@ export function createSourceBank({width=WIDTH,height=HEIGHT,getArchive=()=>null,
       cached={};refreshCount=0;
       // Novelty rescue retains the procedural ancestry. Only an explicit
       // full reset would erase the grammar's history.
-      if(wipeGenomes){landAncestor=null;letterAncestor=null;}
+      if(wipeGenomes){landAncestor=null;}
     },
     genomes(){return {terrain:landAncestor?.generation||0,
-      lettering:letterAncestor?.generation||0};},
+      lettering:0};},
     available(){return Object.keys(cached).filter(x=>SOURCE_KEYS.includes(x));}};
 }
 const hash=(x,y,seed)=>{

@@ -105,7 +105,7 @@ function buildMask(text,w,h,bounds,choice){
       const shape=glyphTraits(genome,ch,i);
       return {ch,i,shape,advance:ctx.measureText(ch).width*shape.width};
     });
-    const tracking=px*genome.tracking;
+    const tracking=px*(genome.tracking+(bubble?.05:0));
     return {glyphs,tracking,total:glyphs.reduce((v,g)=>v+g.advance,0)+
       Math.max(0,glyphs.length-1)*tracking};
   };
@@ -125,7 +125,12 @@ function buildMask(text,w,h,bounds,choice){
     ctx.save();ctx.translate(x0,centerY);
     ctx.scale(scale*glyph.shape.width,1);
     ctx.transform(1,0,glyph.shape.slant,1,0,0);
-    const stroke=Math.min(size*.13,Math.max(1,size*glyph.shape.outline));
+    // Give the round family a clearly inflated silhouette; sharp block
+    // lettering is intentionally flatter and square by comparison.
+    const stroke=bubble?Math.min(size*.19,
+      size*(.13+glyph.shape.bubble*.28)):
+      block?Math.max(1,size*.033):
+      Math.min(size*.11,Math.max(1,size*glyph.shape.outline));
     ctx.lineWidth=stroke;
     ctx.lineJoin=bubble?'round':block?'miter':'round';
     ctx.miterLimit=block?2.5:1.2;
@@ -172,7 +177,10 @@ function buildMask(text,w,h,bounds,choice){
       }
       // This is a structural upper/lower split on EACH glyph, not a
       // uniformly tinted stock-font string.
-      if(trait)shift+=(phase<.48?-1:1)*trait.split*size;
+      // Bubble and block should read as actual designed typography, not
+      // letters sliced into vibrating horizontal bands.
+      if(bubble||block)shift=0;
+      else if(trait)shift+=(phase<.48?-1:1)*trait.split*size;
       const sx=Math.round(x-shift);
       if(sx<0||sx>=w)continue;
       let value=old[(row+sx)*4+3];
@@ -201,7 +209,7 @@ function buildMask(text,w,h,bounds,choice){
   const reference=new Uint8ClampedArray(w*h);
   for(let p=0;p<reference.length;p++)reference[p]=baseline[p*4+3];
   const corrected=repairGlyphMask(reference,pixels,w,h,parts);
-  return {pixels:corrected.pixels,size,font:ctx.font,parts,
+  return {pixels:corrected.pixels,core:reference,size,font:ctx.font,parts,
     typeLegibility:corrected.evidence,
     anatomy:genome.grammar+'/'+genome.root+' / '+genome.generation};
 }
@@ -229,6 +237,7 @@ export function paintWordsOnCanvas(canvas,words,{
   const before=accented?og.getImageData(0,0,w,h).data:initial;
   const built=buildMask(text,w,h,bounds,choice);
   const {pixels:letters,size,font,parts,anatomy}=built;
+  const cores=built.core;
   const letterQuality=[built.typeLegibility];
   // A single optional pipe-delimited input supports a real headline, detail
   // and action line without exposing a second screen full of ad controls.
@@ -240,8 +249,10 @@ export function paintWordsOnCanvas(canvas,words,{
         centerX:bounds.centerX,widthRatio:Math.min(.82,bounds.widthRatio+.07)};
       const sub=buildMask(blocks[i].slice(0,32),w,h,supporting,choice);
       glyphCount+=sub.parts.length;letterQuality.push(sub.typeLegibility);
-      for(let p=0;p<letters.length;p++)letters[p]=
-        Math.max(letters[p],Math.round(sub.pixels[p]*(i===1?.95:1)));
+      for(let p=0;p<letters.length;p++){
+        letters[p]=Math.max(letters[p],Math.round(sub.pixels[p]*(i===1?.95:1)));
+        cores[p]=Math.max(cores[p],sub.core[p]);
+      }
     }
   }
   // The original art and the word now push back on one another as geometry.
@@ -272,6 +283,24 @@ export function paintWordsOnCanvas(canvas,words,{
   inkCtx.drawImage(pattern,0,0,w,h);
   const pigment=inkCtx.getImageData(0,0,w,h).data;
   const out=og.createImageData(w,h),d=out.data;
+  // One art-directed colour decision per word, based on the ACTUAL
+  // background underneath glyph coverage. The old per-pixel light/dark
+  // switch created ragged rainbow-looking letter bodies on busy paintings.
+  let background=0,samples=0;
+  const stride=Math.max(1,Math.floor(w*h/4500));
+  for(let p=0;p<w*h;p+=stride){
+    if(mask[p]>110){background+=lum(scene,p*4);samples++;}
+  }
+  const brightGround=(samples?background/samples:.5)>=.51;
+  const bodyBand=colours.first;
+  const inkHue=hue(bodyBand)??(choice.key%360);
+  const bodyInk=rgbOf(inkHue,.82,brightGround?.30:.79);
+  const outlineInk=rgbOf((inkHue+11)%360,.67,
+    brightGround?.085:.135);
+  const highlightInk=rgbOf(inkHue,.42,brightGround?.85:.94);
+  const isBubble=choice.type.grammar==='bubble'||
+    choice.type.grammar==='rounded';
+  let rimPixels=0;
   let count=0,chromatic=0,contrast=0;
   const layers=[colours.first,colours.second,colours.third];
   // A word is an interactively placed material; pixel deposits use actual
@@ -281,35 +310,23 @@ export function paintWordsOnCanvas(canvas,words,{
     const x=p%w,y=(p/w)|0;
     let ink=0;
     if(coverage>0){
-      // One intentional ink per word, not a new pigment every few pixels.
-      // Small banded colours used to make the letter look scrambled.
-      const role=(choice.key>>>5)%3;
-      const band=layers[role],beforeLight=lum(scene,i);
+      // Distinct physical typesetting: a bubble is an outlined coloured
+      // vessel, a block is a solid angular cut. Neither requires the viewer
+      // to adjust a parameter nor recalculates the colour at every pixel.
+      const beforeLight=lum(scene,i);
       const materialLight=lum(pigment,i);
-      // Resolve a genuine luminance contrast BEFORE applying chromatic ink.
-      // Previous independent pigments could closely match local background,
-      // making text almost invisible even though the mask was valid.
-      const inkHue=hue(band)??(choice.key%360);
-      const strong=rgbOf(inkHue,.94,beforeLight>.52?.14:.86);
-      ink=strong.map(v=>clamp(Math.round(v+(materialLight-.5)*9),0,255));
-      if(choice.type.grammar==='bubble'||choice.type.grammar==='rounded'){
-        // A real cartoon-balloon finish made from the FINAL glyph mask:
-        // dark/bright contours plus a restrained illuminated inner body.
-        // Counter openings remain real transparent geometry, never a
-        // second offset rendering of the same letters.
-        const r=Math.max(1,Math.min(4,Math.round(size*.042)));
-        const core=x>=r&&x+r<w&&y>=r&&y+r<h&&
-          mask[p-r]>190&&mask[p+r]>190&&
-          mask[p-r*w]>190&&mask[p+r*w]>190;
-        if(!core){
-          ink=ink.map(v=>clamp(Math.round(v*(beforeLight>.52?.48:1.09)+
-            (beforeLight>.52?0:8)),0,255));
-        }else{
-          const shine=y<bounds.top+bounds.height*.53?32:11;
-          ink=ink.map(v=>clamp(Math.round(v+(
-            beforeLight>.52?shine:shine*.45)),0,255));
-        }
-      }
+      const inCore=cores[p]>130;
+      if(isBubble&&!inCore){
+        ink=outlineInk;
+        rimPixels++;
+      }else if(isBubble&&inCore&&y<bounds.top+bounds.height*.51){
+        ink=bodyInk.map((v,ch)=>clamp(
+          Math.round(v*.83+highlightInk[ch]*.17),0,255));
+      }else ink=bodyInk;
+      // Preserve a trace of the painter's material without breaking
+      // colour consistency across individual letterforms.
+      const variation=Math.round((materialLight-.5)*4);
+      ink=ink.map(v=>clamp(v+variation,0,255));
       count++;
       if(Math.max(...ink)-Math.min(...ink)>48)chromatic++;
       contrast+=Math.abs(beforeLight-(ink[0]*.2126+ink[1]*.7152+
@@ -343,5 +360,7 @@ export function paintWordsOnCanvas(canvas,words,{
     mark:rule.mark,method:choice.name,face:choice.family.name,fontSize:Math.round(size),font,
     typeAnatomy:anatomy,glyphs:glyphCount,
     palette:layers.map(hex),marks:marks.strokes,interaction:coupled.stats,
+    inkDirection:brightGround?'dark-on-light':'light-on-dark',
+    rimPixels,coherentInk:true,
     source:'live painted canvas',partial};
 }
