@@ -438,6 +438,10 @@ export function createAbstractionLoop({
        metrics.composition={attempts:composition.attempts,
          accepted:composition.accepted};
        if(currentStamp!==stamp)return;
+       // Allow an ACTUAL browser frame to display the tested colour and
+       // contour relationship before word composition or judging replaces it.
+       if(composition.attempts&&!await checkpoint('Considering neighbour votes'))
+         return;
        // The word is painted into each competing canvas BEFORE its W/φ/H
        // analysis, so word-and-image composition belongs to the same artwork.
        const composite=postProcess(output,recipe,metrics,{cycle,branch:attempt,
