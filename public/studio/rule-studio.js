@@ -64,7 +64,15 @@ export function initRuleStudio(){
    archiveCanvas=null,unlettered=null,sequence=0,manualMotifs=[],manualIdeas=[],lastOrigin='manual';
  const context=$('ruleArtwork').getContext('2d');
  const wordKey='hexfield.rule-words.v1';
- try{$('ruleWords').value=String(localStorage.getItem(wordKey)||'').slice(0,48)}catch{}
+ try{
+  const stored=localStorage.getItem(wordKey);
+  $('ruleWords').value=stored===null?'HEXFIELD':String(stored).slice(0,48);
+ }catch{$('ruleWords').value='HEXFIELD';}
+ // This is a LIVE canvas before any expensive new render begins.
+ drawReality($('ruleArtwork'),'abstract',(Date.now()^0x318)>>>0);
+ $('ruleArtwork').hidden=false;
+ $('ruleEmpty').hidden=true;
+ let restoreReady=Promise.resolve(),manuallyPaused=false,autoStarted=false;
  const activeWords=()=>String($('ruleWords').value||'').trim().slice(0,48);
  const cleanCopy=source=>{
    const c=canvasOf(source.width,source.height);
@@ -263,7 +271,12 @@ export function initRuleStudio(){
    onState(info){
      $('ruleLoopStart').disabled=info.running;
    $('ruleLoopStart').textContent=info.running?'PAINTING / LEARNING…':'▶ PAINT & EVOLVE';
-     $('ruleLoopStop').disabled=!info.running;
+     $('ruleLoopStop').disabled=false;
+     $('ruleLoopStop').textContent=info.running?'Ⅱ PAUSE':'▶ RESUME';
+     text('ruleHeroStatus',info.running?
+       '● AUTO PAINT + ABSTRACT · GENERATION '+info.cycle+
+       (info.dirtyStats?.partial?' · SPARSE '+Math.round(info.dirtyStats.coverage*100)+'%':' · FULL'):
+       manuallyPaused?'PAUSED · RESUME WHEN READY':'PAINTER INITIALISING');
      $('ruleLoopOnce').disabled=info.running;
      const visible=info.motifs||[],genomes=info.ideas||[];
      showHeritage(genomes);
@@ -520,11 +533,13 @@ export function initRuleStudio(){
  $('ruleNewLaw').addEventListener('click',()=>{loop.pause();child('law');});
  $('ruleNewSubject').addEventListener('click',()=>{loop.pause();child('subject');});
  $('ruleNewMark').addEventListener('click',()=>{loop.pause();child('mark');});
- $('ruleLoopStart').addEventListener('click',()=>loop.start(loopOptions()));
+ $('ruleLoopStart').addEventListener('click',()=>{manuallyPaused=false;loop.start(loopOptions());});
  $('ruleLoopStop').addEventListener('click',()=>{
-   loop.pause();
-   if(current){persistCanvas(current.canvas,current.recipe,current.judged);
-     publishSource(current.canvas,'rules',current.recipe);}
+   if(loop.isRunning()){
+     manuallyPaused=true;loop.pause();
+     if(current){persistCanvas(current.canvas,current.recipe,current.judged);
+       publishSource(current.canvas,'rules',current.recipe);}
+   }else{manuallyPaused=false;loop.start(loopOptions());}
  });
  $('ruleLoopOnce').addEventListener('click',()=>loop.once(loopOptions()));
  for(const id of ['ruleLoopSpeed','ruleMixMode','ruleLockLaw']){
@@ -542,6 +557,7 @@ export function initRuleStudio(){
  });
  const restored=read(CURRENT);
  if(restored?.recipe&&restored?.image){
+   restoreReady=new Promise(resolve=>{
    const image=new Image();image.onload=()=>{
      if(current)return;
      const canvas=fromImage(image);
@@ -554,14 +570,22 @@ export function initRuleStudio(){
      $('ruleReworkBtn').disabled=false;$('ruleSave').disabled=false;
      text('ruleCaption',describeRecipe(current.recipe));
      text('ruleEvidence','LAST STUDY RESTORED · CONTINUE FROM THIS CANVAS');
-     status('Previous constrained study restored. REWORK paints its own output as a new reference.');
-   };image.src=restored.image;
+     status('Last painting restored. Automatic abstraction is active.');
+     resolve();
+   };
+   image.onerror=()=>resolve();
+   image.src=restored.image;
+   });
  }
  $('ruleWords').addEventListener('input',()=>{
    try{localStorage.setItem(wordKey,activeWords())}catch{}
+   loop.pause();
    clearTimeout(wordTimer);
    loop.invalidateSources();
-   wordTimer=setTimeout(previewWords,170);
+   wordTimer=setTimeout(()=>{
+     previewWords();
+     if(!manuallyPaused)loop.start(loopOptions());
+   },240);
  });
  $('ruleUseArchive').addEventListener('click',async()=>{
    try{
@@ -580,7 +604,13 @@ export function initRuleStudio(){
  });
  gallery();
  return {
-   show(){if(!current)status('Choose visual laws, or start continuous reabstraction of every available renderer.');},
+   show(){if(!current)status('The painter starts automatically. Type into the painting or just watch.');},
+   async autoStart(){
+     if(autoStarted||manuallyPaused)return;
+     autoStarted=true;
+     await Promise.race([restoreReady,new Promise(resolve=>setTimeout(resolve,900))]);
+     if(!manuallyPaused)loop.start(loopOptions());
+   },
    hide(){loop.pause();theatre.stop();if(current){persistCanvas(current.canvas,current.recipe,current.judged);
      publishSource(current.canvas,'rules',current.recipe);}},
    paintFresh,hasWork:()=>!!current,
