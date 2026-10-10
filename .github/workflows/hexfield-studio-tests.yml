@@ -39,6 +39,8 @@ jobs:
         run: npm install --no-save --no-package-lock skia-canvas@3.0.8
       - name: Verify executable Rule Studio and archive law engine
         run: node --experimental-default-type=module tests/studio-rules.test.mjs
+      - name: Verify Build 313 mark application and frame derivation
+        run: node --experimental-default-type=module tests/mark-derivation.test.mjs
       - name: Guard global renderer non-redundancy and evolving-seed genealogy
         run: node --experimental-default-type=module tests/global-nonredundancy.test.mjs
       - name: Verify component-level font anatomy and mutable logo geometry
