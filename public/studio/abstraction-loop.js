@@ -10,6 +10,7 @@ import {renderPlan,recordRenderTime,yieldToBrowser} from './render-governor.js';
 import {renderRuleLive} from './live-rule-execution.js';
 import {conserveComposition,previewRestyling} from './style-preservation.js';
 import {evolveTypeGenome} from './type-genome.js';
+import {protectReadableWinner} from './type-legibility.js';
 import {evolveDesignGenome,rankDesignCandidates} from './design-genome.js';
 import {styleAuditions,reserveStyleFinalist,chooseStyleWinner} from './auto-style.js';
 import {applyStyleRecipe,styleById,styleReference,
@@ -617,8 +618,12 @@ export function createAbstractionLoop({
      // The exploratory branch MUST use a fully evaluated (W/φ/H) entry;
      // otherwise its threeWay fields disappear, and the frame crashes
      // after incrementing the generation counter.
-     const best=evolvingMix&&cycle%3===0&&!strictQualified&&!config.style?
+     const initialBest=evolvingMix&&cycle%3===0&&!strictQualified&&!config.style?
        ranked.find(x=>x.mixed.mode===expected)||goal:goal;
+     const typography=protectReadableWinner(ranked,initialBest,{
+       hasWords:!!getWords(),strict:getGoldenMode()==='strict'
+     });
+     const best=typography.winner||initialBest;
      const {canvas:output,recipe,mixed,metrics,assessment,
        golden,held,heritage,threeWay,derivation,composite}=best;
      // Only the globally accepted image may change durable identity.
@@ -726,6 +731,10 @@ export function createAbstractionLoop({
        };
      });
      const result={canvas:output,recipe,cycle:cycle+1,metrics,trials,
+       typographicJudgement:{reason:typography.reason,
+         score:composite?.typeLegibility?.score??null,
+         readable:composite?.typeLegibility?.readable??null,
+         repaired:composite?.typeLegibility?.repaired??false},
        designEvolution:{purpose:recipe.purpose||'art',
          root:recipe.designGenome?.root||null,
          candidateLayouts:proposals.map(x=>x.recipe.designGenome?.ornament||null),
