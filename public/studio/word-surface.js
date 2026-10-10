@@ -147,9 +147,15 @@ export function paintWordsOnCanvas(canvas,words,{
   const colours=palette(before,w,h,choice);
   const rule=recipe?.mark?{...recipe,seed:seed>>>0}:
     makeRecipe({subject:'abstract',primary:'no_shading',mark:'hybrid',seed:seed>>>0});
-  const pattern=create(w,h);
+  // Source-driven material is rendered at an internal bounded resolution.
+  // Keeping the type mask at full canvas resolution preserves crisp anatomy,
+  // while limiting redundant mobile mark simulation per candidate.
+  const pw=Math.min(480,w),ph=Math.min(300,h);
+  const pattern=create(pw,ph);
   const marks=applyRules(source,pattern,rule,{iteration});
-  const pigment=pattern.getContext('2d',{willReadFrequently:true}).getImageData(0,0,w,h).data;
+  const inkSource=create(w,h),inkCtx=inkSource.getContext('2d',{willReadFrequently:true});
+  inkCtx.drawImage(pattern,0,0,w,h);
+  const pigment=inkCtx.getImageData(0,0,w,h).data;
   const out=og.createImageData(w,h),d=out.data;
   let count=0,chromatic=0;
   const layers=[colours.first,colours.second,colours.third];
