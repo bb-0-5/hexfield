@@ -7,6 +7,7 @@ import {makeRecipe,mutateRecipe,applyRules,noteLineage,LAWS,MARKS,SUBJECTS,ruleT
 import {createSourceBank,mixSources,cloneCanvas,prepareMixSamples} from './source-mixer.js';
 import {planDirtyTiles,shouldUseLocalRender} from './dirty-tiles.js';
 import {renderPlan,recordRenderTime,yieldToBrowser} from './render-governor.js';
+import {renderRuleLive} from './live-rule-execution.js';
 import {evolveSeed,rankNoveltyCandidates,commitCanvas,
   methodSignature,snapshotNoveltyMemory} from './nonredundancy.js';
 import {paintHeldMotifs,advanceMotifMemory,motifEvidence} from './motif-memory.js';
@@ -326,12 +327,26 @@ export function createAbstractionLoop({
          dirtyTiles:partial?tilePlan.tiles:null
        });
        const output=freshCanvas(width,height);
-       const metrics=applyRules(mixed.canvas,output,recipe,{
-         iteration:cycle+attempt,trace:true,
-         baseCanvas:partial?previous:null,
-         dirtyTiles:partial?tilePlan.tiles:null,
-         localApplication:partial
+       // The candidate's real ink appears on screen WHILE brush rows
+       // execute. We do not reconstruct a recorded performance afterward.
+       const drawn=await renderRuleLive(mixed.canvas,output,recipe,{
+         options:{
+           iteration:cycle+attempt,trace:true,
+           baseCanvas:partial?previous:null,
+           dirtyTiles:partial?tilePlan.tiles:null,
+           localApplication:partial
+         },
+         rowsPerTurn:mobile?4:3,
+         isCancelled:()=>currentStamp!==stamp||document.hidden,
+         onProgress:progress=>process({
+           type:'painting',canvas:output,cycle,
+           attempt,total:finalists.length,finalIndex,
+           progress,recipe
+         })
        });
+       if(drawn.cancelled||currentStamp!==stamp)return;
+       const metrics=drawn.metrics;
+       if(!await checkpoint('Composing image materials'))return;
        // Derive a real intermediate image from the accepted parent and proposal.
        // This applied process competes alongside source mixers and mark laws.
        // The painter inherits the previously chosen APPLICATION process as well
@@ -372,6 +387,9 @@ export function createAbstractionLoop({
        // analysis, so word-and-image composition belongs to the same artwork.
        const composite=postProcess(output,recipe,metrics,{cycle,branch:attempt,
          dirtyTiles:partial?tilePlan.tiles:null});
+       process({type:'candidate-painted',canvas:output,cycle,attempt,
+         finalIndex,words:composite?.text||''});
+       if(!await checkpoint('Assessing painted candidate'))return;
        const method=methodSignature({mode:'abstraction',primary:recipe.primary,
          secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework,
          blend:mixed.mode,subject:recipe.subject,
@@ -514,9 +532,12 @@ export function createAbstractionLoop({
        device:renderBudget.device,
        donorReadbacksSaved:(renderBudget.cache?.full?.hits||0)+
          (renderBudget.cache?.preview?.hits||0)};
-     process({type:'adopt',canvas:output,recipe,metrics,cycle,
+     process({type:'decision',canvas:output,recipe,metrics,cycle,
        interaction:composite||null,
-       objects:objects.objects||[],dirtyTiles:best.dirty?.tiles||null});
+       objects:objects.objects||[],dirtyTiles:best.dirty?.tiles||null,
+       candidates:candidates.length});
+     result.liveExecution={actualRows:true,
+       considered:candidates.length,drawnBeforeSelection:true};
      try{onFrame(result)}catch(error){onError(error)}
      status();
      if(stalled){
