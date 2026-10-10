@@ -113,6 +113,7 @@ export function createAbstractionLoop({
    objects:(objects.objects||[]).map(o=>({
      id:o.id,rootId:o.rootId,bbox:o.bbox,age:o.age,
      palette:o.palette,volatility:o.volatility,votes:o.votes,
+     wordContacts:o.wordContacts||0,
      stable:o.age>=3&&o.volatility<.24
    })),
    renderBudget,
@@ -333,7 +334,9 @@ export function createAbstractionLoop({
      const inherited=heritageEvidence(ideas);
      // Extract once on the winning FULL image; rejected trials are discarded.
      objects=updateObjectRegistry(objects.objects,output,{
-       generation:cycle+1,priorId:objects.nextId
+       generation:cycle+1,priorId:objects.nextId,
+       wordBounds:composite?.bounds||null,
+       relation:composite?.interaction?.relation||null
      });
      if(cycle%3===0||objects.stable>0)saveObjectRegistry(objects);
      motifs=advanceMotifMemory(motifs,output,{
