@@ -10,6 +10,7 @@ import {renderPlan,recordRenderTime,yieldToBrowser} from './render-governor.js';
 import {renderRuleLive} from './live-rule-execution.js';
 import {conserveComposition,previewRestyling} from './style-preservation.js';
 import {evolveTypeGenome} from './type-genome.js';
+import {evolveDesignGenome,rankDesignCandidates} from './design-genome.js';
 import {styleAuditions,reserveStyleFinalist,chooseStyleWinner} from './auto-style.js';
 import {applyStyleRecipe,styleById,styleReference,
   ABSTRACTION_LEVELS} from './style-presets.js';
@@ -339,6 +340,11 @@ export function createAbstractionLoop({
        recipe.typeGenome=evolveTypeGenome(inheritedRecipe?.typeGenome,{
          seed:candidateSeed,cycle,branch:attempt,gentle:subtle
        });
+       recipe.purpose=config.purpose||'art';
+       recipe.designGenome=evolveDesignGenome(inheritedRecipe?.designGenome,{
+         purpose:recipe.purpose,seed:candidateSeed,cycle,
+         branch:attempt,gentle:subtle
+       });
        const autoMixer=!config.mixMode||config.mixMode==='auto';
        const families=['quilt','cutaway','dissonance','relief','edges'];
        const mode=subtle?'quilt':autoMixer?
@@ -587,9 +593,9 @@ export function createAbstractionLoop({
      // None of these objectives may monopolize artistic judgement:
      // W seeks novelty, φ seeks proportional harmony, H preserves a
      // recognizable identity while its EXECUTED material evolves.
-     const ranked=rankBalancedCandidates(evaluated,{
+     const ranked=rankDesignCandidates(rankBalancedCandidates(evaluated,{
        strict:getGoldenMode()==='strict'
-     });
+     }),{purpose:config.purpose||'art',strict:getGoldenMode()==='strict'});
      const audition=autopilot?chooseStyleWinner(ranked,{
        cycle,previous:inheritedRecipe?.styleId,
        strict:getGoldenMode()==='strict'
@@ -713,6 +719,11 @@ export function createAbstractionLoop({
        };
      });
      const result={canvas:output,recipe,cycle:cycle+1,metrics,trials,
+       designEvolution:{purpose:recipe.purpose||'art',
+         root:recipe.designGenome?.root||null,
+         candidateLayouts:proposals.map(x=>x.recipe.designGenome?.ornament||null),
+         selectedLayout:recipe.designGenome?.ornament||null,
+         legibility:composite?.legibility||0},
        styleAudition:{auto:autopilot,chosen:recipe.styleId||null,
          considered:proposals.map(x=>x.recipe.styleId||null),
          finalists:finalists.map(x=>x.recipe.styleId||null),
