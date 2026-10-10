@@ -92,10 +92,10 @@ export function fingerprintDistance(a,b){
 }
 export function methodSignature({
   mode='',genome='',primary='',secondary='',mark='',rework='',blend='',scene='',
-  subject='',text='',style='',type='',parents='',application='',markProgram=''
+  subject='',text='',style='',type='',parents='',application='',markProgram='',interaction=''
 }={}){
  return [mode,genome,primary,secondary,mark,rework,blend,scene,subject,
-   text,style,type,parents,application,markProgram].map(x=>String(x??'').slice(0,140)).join('|').slice(0,700);
+   text,style,type,parents,application,markProgram,interaction].map(x=>String(x??'').slice(0,140)).join('|').slice(0,760);
 }
 function empty(){return {v:1,records:[],tally:0};}
 function read(){
