@@ -83,10 +83,13 @@ const PATHS=Object.fromEntries(Object.entries(VECTOR_GLYPHS).map(
  ([name,definition])=>[name,parse(definition)]));
 export const coversVectorGlyph=character=>character===' '||
  Object.prototype.hasOwnProperty.call(PATHS,String(character).toUpperCase());
-const glyphWidth=character=>
- character===' '? .48:'I1!.,:;\'"/()'.includes(character)?.62:
- character==='M'||character==='W' ? 1.11:
- character==='?'?.95:1.0;
+const glyphWidth=character=>{
+ if(character===' ')return .48;
+ if('I1!.,:/()'.includes(character))return .70;
+ if(character==='M'||character==='W')return 1.12;
+ if(character==='?')return .94;
+ return 1.0;
+};
 
 function drawPaths(ctx,character){
  const paths=PATHS[character.toUpperCase()];
