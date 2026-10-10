@@ -9,6 +9,7 @@ import {planDirtyTiles,shouldUseLocalRender} from './dirty-tiles.js';
 import {renderPlan,recordRenderTime,yieldToBrowser} from './render-governor.js';
 import {renderRuleLive} from './live-rule-execution.js';
 import {conserveComposition,previewRestyling} from './style-preservation.js';
+import {styleAuditions,reserveStyleFinalist,chooseStyleWinner} from './auto-style.js';
 import {applyStyleRecipe,styleById,styleReference,
   ABSTRACTION_LEVELS} from './style-presets.js';
 import {createCreativeMemory,loadCreativeMemory,saveCreativeMemory,
@@ -143,7 +144,9 @@ export function createAbstractionLoop({
      stable:o.age>=3&&o.volatility<.24
    })),
    renderBudget,dirtyStats,lastFrameMs,
-   style:{id:config.style||null,abstraction:config.abstraction||'wild'},
+   style:{id:lastRecipe?.styleId||config.style||null,
+     auto:!!config.autoStyle&&!config.lockLaw,
+     abstraction:config.abstraction||'wild'},
    regionMemory:{generation:regionMemory.generation,
      cells:Object.values(regionMemory.cells).map(x=>({...x}))},
    creativeMemory:{root:creativeMemory.root,
@@ -292,6 +295,11 @@ export function createAbstractionLoop({
      const devicePlan=renderPlan({
        mobile,emaMs:performanceHistory.emaMs,samples:performanceHistory.samples
      });
+     const autopilot=!!config.autoStyle&&!config.lockLaw&&!!config.style;
+     const auditions=autopilot?styleAuditions({
+       selected:config.style,previous:inheritedRecipe?.styleId,
+       cycle,count:devicePlan.previews
+     }):[];
      const proposals=[];
      for(let attempt=0;attempt<devicePlan.previews;attempt++){
        if(!await checkpoint('Sketch '+(attempt+1)+'/'+devicePlan.previews))return;
@@ -300,7 +308,8 @@ export function createAbstractionLoop({
          cycle,branch:attempt,seed:candidateSeed,subject:config.subject||'abstract',
          lockLaw:!!config.lockLaw,law:config.law||'surprise',
          secondary:config.secondary||'none',mark:config.mark||'surprise',
-         style:config.style||null,abstraction:config.abstraction||'wild'
+         style:autopilot?auditions[attempt]:config.style||null,
+         abstraction:config.abstraction||'wild'
        });
        const learned=rememberedMarkPrograms();
        const mate=learned.length?learned[(cycle+attempt)%learned.length]:null;
@@ -327,7 +336,7 @@ export function createAbstractionLoop({
        const autoMixer=!config.mixMode||config.mixMode==='auto';
        const families=['quilt','cutaway','dissonance','relief','edges'];
        const mode=subtle?'quilt':autoMixer?
-         config.style?styleById(config.style).mix:
+         config.style?styleById(recipe.styleId||config.style).mix:
            families[(Math.floor(cycle/3)+attempt)%families.length]:config.mixMode;
        const ancestor=lastRecipe?.application,
          inheritedIndex=DERIVATION_METHODS.indexOf(ancestor);
@@ -356,9 +365,13 @@ export function createAbstractionLoop({
        process({type:'preview',canvas:preview,parent:previous,
          attempt,total:devicePlan.previews,cycle,preflight});
      }
-     const finalists=chooseFullRenderCandidates(proposals,{
+     let finalists=chooseFullRenderCandidates(proposals,{
        cycle,mobile,strict:getGoldenMode()==='strict',
        maxFull:devicePlan.finalists
+     });
+     if(autopilot)finalists=reserveStyleFinalist(proposals,finalists,{
+       cycle,previous:inheritedRecipe?.styleId,
+       strict:getGoldenMode()==='strict'
      });
      // The auto-mixer deliberately explores a scheduled NEW material family
      // every third pass. Preflight must not systematically prune the one
@@ -571,7 +584,11 @@ export function createAbstractionLoop({
      const ranked=rankBalancedCandidates(evaluated,{
        strict:getGoldenMode()==='strict'
      });
-     const goal=ranked[0];
+     const audition=autopilot?chooseStyleWinner(ranked,{
+       cycle,previous:inheritedRecipe?.styleId,
+       strict:getGoldenMode()==='strict'
+     }):{winner:ranked[0],reason:'selected-technique'};
+     const goal=audition.winner||ranked[0];
      // Every third pass deliberately trials a new mixer family. This is
      // genuine active non-redundancy at the METHOD level, not simply
      // scoring arbitrary pixel differences. Strict φ-qualified work
@@ -690,6 +707,10 @@ export function createAbstractionLoop({
        };
      });
      const result={canvas:output,recipe,cycle:cycle+1,metrics,trials,
+       styleAudition:{auto:autopilot,chosen:recipe.styleId||null,
+         considered:proposals.map(x=>x.recipe.styleId||null),
+         finalists:finalists.map(x=>x.recipe.styleId||null),
+         reason:audition.reason},
        blend:mixed.mode,derivation,composite,sources:mixed.sources,novelty,stalled,
        survival:{held:survived,coverage:held.coverage,
          carried:held.held.length,available:motifEvidence(motifs).length},
@@ -816,6 +837,16 @@ export function createAbstractionLoop({
      if(running)delay(currentStamp!==stamp?150:config.speed||3000);
    }
  }
+ // Manual restyles and imported canvases become the REAL next parent.
+ // Keep the living visual identity, but never resume from a stale auto frame.
+ function adoptCanvas(canvas,recipe){
+   if(!canvas?.getContext||!recipe)return false;
+   last=cloneCanvas(canvas,width,height);
+   lastRecipe=structuredClone(recipe);
+   lastMix=null;seed=recipe.seed>>>0;
+   bank.clear();forceFreshSources=true;
+   status();return true;
+ }
  function start(options={}){
    configure(options);
    if(running)return;
@@ -852,6 +883,6 @@ export function createAbstractionLoop({
    pause();document.removeEventListener('visibilitychange',onVisibility);
    bank.clear();
  }
- return {start,pause,once,reset,configure,state,feedback,dispose,
+ return {start,pause,once,reset,configure,state,feedback,dispose,adoptCanvas,
    invalidateSources,isRunning:()=>running,getLast:()=>last,getRecipe:()=>lastRecipe};
 }
