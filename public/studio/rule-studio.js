@@ -20,6 +20,8 @@ import {measureGoldenTaste,explainGolden,diagnoseGolden,
 import {publishSource,loadCachedPictures,CROSS_STUDIO_KEYS} from './source-mixer.js';
 import {paintWordsOnCanvas} from './word-surface.js';
 import {typeGenome} from './type-genome.js';
+import {reseedProfile} from './reseed-cycle.js';
+import {evolveDesignGenome} from './design-genome.js';
 import {DESIGN_PURPOSES,newDesignGenome,noteDesignVerdict} from './design-genome.js';
 import {noteGeometryVerdict} from './geometry-coupling.js';
 import {evolveSeed,rankNoveltyCandidates,assessCanvas,commitCanvas,
@@ -74,11 +76,9 @@ export function initRuleStudio(){
  const context=$('ruleArtwork').getContext('2d');
  const wordKey='hexfield.rule-words.v1';
  const purposeKey='hexfield.design-purpose.331';
- const typeModeKey='hexfield.type-mode.332';
- try{
-  const mode=localStorage.getItem(typeModeKey);
-  if(['auto','bubble','block'].includes(mode))$('ruleTypeMode').value=mode;
- }catch{}
+ const reseedKey='hexfield.reseed-counter.333';
+ let reseedCount=0;
+ try{reseedCount=Math.max(0,Math.min(100000,Number(localStorage.getItem(reseedKey))||0));}catch{}
  try{
   const p=localStorage.getItem(purposeKey);
   if(DESIGN_PURPOSES.includes(p))$('rulePurpose').value=p;
@@ -114,7 +114,7 @@ export function initRuleStudio(){
      ABSTRACTION_LEVELS.gentle.description;
    if(!styleLast)text('ruleStyleStatus',styleById(styleId).name+
       ' · '+ABSTRACTION_LEVELS[abstraction].name+
-      ' · CHANGE STYLE will test the same original reference in five ways.');
+      ' · RESEED tests new real painting and letter-construction rules.');
  }; 
  refreshStyleHelp();
  let lastHeritageCycle=-1,lastHistoryCycle=-1;
@@ -283,7 +283,7 @@ export function initRuleStudio(){
  }
  function loopOptions(){
    return {purpose:$('rulePurpose').value,
-     typeMode:$('ruleTypeMode').value,
+     typeMode:'auto',
      speed:Number($('ruleLoopSpeed').value)||3000,
      style:styleId,autoStyle:true,
      abstraction:$('ruleAbstractionLevel').value,
@@ -511,8 +511,7 @@ export function initRuleStudio(){
      current?.recipe?.purpose===recipe.purpose&&current.recipe.designGenome?
        current.recipe.designGenome:newDesignGenome(recipe.purpose,recipe.seed);
    if(!recipe.typeGenome)recipe.typeGenome=
-     current?.recipe?.typeGenome||typeGenome(recipe.seed,
-       $('ruleTypeMode').value==='auto'?null:$('ruleTypeMode').value);
+     current?.recipe?.typeGenome||typeGenome(recipe.seed,'bubble');
    if(!source)throw Error('No input picture to constrain');
    const before=current?.canvas||null,
      target=prepared?.canvas||canvasOf();
@@ -663,7 +662,12 @@ export function initRuleStudio(){
    const token=++styleToken;
    loop.pause();manuallyPaused=true;
    try{
-     if(advance)styleId=nextStyle(styleId).id;
+     if(advance){
+       reseedCount++;
+       const profile=reseedProfile(reseedCount);
+       styleId=profile.style;
+       try{localStorage.setItem(reseedKey,String(reseedCount));}catch{}
+     }
      rememberStyle();
      const strength=$('ruleAbstractionLevel').value;
      if(!styleAnchor){
@@ -691,15 +695,22 @@ export function initRuleStudio(){
        styleAnchor=cleanCopy(original);
      }
      const index=STYLE_PRESETS.findIndex(p=>p.id===styleId);
-     const fixedSeed=evolveSeed(styleSeed,1,1,'comparable-style-327');
+     // Repeat uses an identical stored seed; RESEED derives a new
+     // experiment for both pigment and glyph construction.
+     const fixedSeed=evolveSeed(styleSeed,advance?reseedCount+1:styleLast?.ordinal+1||reseedCount+1,
+       1,'paint-and-type-reseed-333');
      const recipe=styleRecipe({style:styleId,abstraction:strength,
        seed:fixedSeed,subject:styleSubject,generation:styleGeneration});
-     recipe.typeGenome=current?.recipe?.typeGenome||typeGenome(fixedSeed,
-       $('ruleTypeMode').value==='auto'?null:$('ruleTypeMode').value);
+     recipe.typeGenome=advance?
+       typeGenome(fixedSeed,reseedProfile(reseedCount).grammar):
+       current?.recipe?.typeGenome||typeGenome(fixedSeed,'bubble');
      recipe.purpose=$('rulePurpose').value;
-     recipe.designGenome=current?.recipe?.purpose===recipe.purpose?
-       current?.recipe?.designGenome||newDesignGenome(recipe.purpose,fixedSeed):
-       newDesignGenome(recipe.purpose,fixedSeed);
+     const ancestorLayout=current?.recipe?.purpose===recipe.purpose?
+       current?.recipe?.designGenome:null;
+     recipe.designGenome=advance?
+       evolveDesignGenome(ancestorLayout,{purpose:recipe.purpose,
+         seed:fixedSeed,cycle:reseedCount,branch:reseedCount%3}):
+       ancestorLayout||newDesignGenome(recipe.purpose,fixedSeed);
      const target=canvasOf(),study=canvasOf();
      text('ruleStyleStatus',styleCaption({
        style:styleId,abstraction:strength,seed:fixedSeed
@@ -729,11 +740,13 @@ export function initRuleStudio(){
      // composition retains its edge geometry across comparisons.
      realitySource=styleAnchor;
      present(recipe,styleAnchor,false,{canvas:target,metrics:painted.metrics});
-     styleLast={id:styleId,seed:fixedSeed,abstraction:strength};
+     styleLast={id:styleId,seed:fixedSeed,abstraction:strength,
+       ordinal:reseedCount};
      $('ruleRepeatStyle').disabled=false;
      text('ruleStyleStatus',styleCaption({
        style:styleId,abstraction:strength,seed:fixedSeed
-     })+' · SAME ARTWORK AND SEED · PHYSICAL OUTLINES PRESERVED ('+
+     })+' · '+recipe.typeGenome.grammar.toUpperCase()+' LETTER SHAPES'+
+       ' · SAME CLEAN REFERENCE · PHYSICAL OUTLINES PRESERVED ('+
        Math.round((preserved.meanRetention||0)*100)+'% source retention) · '+
        'REPEAT reproduces pixels with unchanged words. '+
        'Use PAUSE / RESUME to audition new techniques on this artwork.');
@@ -923,27 +936,6 @@ export function initRuleStudio(){
    image.src=restored.image;
    });
  }
- $('ruleTypeMode').addEventListener('change',()=>{
-   const mode=$('ruleTypeMode').value;
-   if(!['auto','bubble','block'].includes(mode))return;
-   try{localStorage.setItem(typeModeKey,mode);}catch{}
-   const resume=loop.isRunning()&&!manuallyPaused;
-   loop.pause();
-   if(current){
-     // Choosing a grammar rebuilds text from the clean painting ONCE.
-     const seed=current.recipe.seed>>>0;
-     const chosen=mode==='auto'?
-       current.recipe.typeGenome||typeGenome(seed,'bubble'):
-       typeGenome(seed,mode);
-     if(mode!=='auto'&&current.recipe.typeGenome?.root)
-       chosen.root=current.recipe.typeGenome.root;
-     current.recipe={...current.recipe,typeGenome:chosen};
-     previewWords();
-     loop.adoptCanvas(unlettered||current.canvas,current.recipe);
-   }
-   loop.configure(loopOptions());
-   if(resume)loop.start(loopOptions());
- });
  $('rulePurpose').addEventListener('change',()=>{
    const purpose=$('rulePurpose').value;
    if(!DESIGN_PURPOSES.includes(purpose))return;
