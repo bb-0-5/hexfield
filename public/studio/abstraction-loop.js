@@ -9,6 +9,7 @@ import {planDirtyTiles,shouldUseLocalRender} from './dirty-tiles.js';
 import {renderPlan,recordRenderTime,yieldToBrowser} from './render-governor.js';
 import {renderRuleLive} from './live-rule-execution.js';
 import {conserveComposition,previewRestyling} from './style-preservation.js';
+import {evolveTypeGenome} from './type-genome.js';
 import {styleAuditions,reserveStyleFinalist,chooseStyleWinner} from './auto-style.js';
 import {applyStyleRecipe,styleById,styleReference,
   ABSTRACTION_LEVELS} from './style-presets.js';
@@ -333,6 +334,11 @@ export function createAbstractionLoop({
          newMarkProgram(candidateSeed,recipe.generation);
        recipe.wordRelation=chooseGeometryRelation(candidateSeed,cycle,
          inheritedRecipe?.wordRelation||null,attempt);
+       // The text has a surviving formal ancestry independent of its font.
+       // Only the globally accepted candidate becomes a type parent.
+       recipe.typeGenome=evolveTypeGenome(inheritedRecipe?.typeGenome,{
+         seed:candidateSeed,cycle,branch:attempt,gentle:subtle
+       });
        const autoMixer=!config.mixMode||config.mixMode==='auto';
        const families=['quilt','cutaway','dissonance','relief','edges'];
        const mode=subtle?'quilt':autoMixer?
