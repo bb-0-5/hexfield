@@ -386,6 +386,7 @@ export function createAbstractionLoop({
    }
  }
  document.addEventListener('visibilitychange',onVisibility);
+ function invalidateSources(){forceFreshSources=true;status();}
  function feedback(liked){
    ideas=judgeStructuralIdeas(ideas,!!liked);
    status();
@@ -396,5 +397,5 @@ export function createAbstractionLoop({
    bank.clear();
  }
  return {start,pause,once,reset,configure,state,feedback,dispose,
-   isRunning:()=>running,getLast:()=>last,getRecipe:()=>lastRecipe};
+   invalidateSources,isRunning:()=>running,getLast:()=>last,getRecipe:()=>lastRecipe};
 }
