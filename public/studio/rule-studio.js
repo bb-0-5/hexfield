@@ -10,7 +10,7 @@ import {deriveBetweenFrames} from './frame-derivation.js';
 import {paintHeldMotifs,advanceMotifMemory,motifEvidence} from './motif-memory.js';
 import {extractStructuralIdea,paintInheritedIdeas,advanceStructuralIdeas,
  heritageEvidence,judgeStructuralIdeas} from './structural-heritage.js';
-import {createCreativePerformance} from './creative-performance.js';
+import {createLivingPainting} from './live-painting.js';
 import {measureGoldenTaste,explainGolden,diagnoseGolden,
   compareGoldenTaste} from './golden-taste.js';
 import {publishSource,loadCachedPictures,CROSS_STUDIO_KEYS} from './source-mixer.js';
@@ -107,6 +107,7 @@ export function initRuleStudio(){
  function previewWords(){
    if(!current)return;
    if(!unlettered)unlettered=cleanCopy(current.canvas);
+   live.stop({finalize:true});
    const base=unlettered,output=current.canvas;
    const ctx=output.getContext('2d');
    ctx.clearRect(0,0,output.width,output.height);
@@ -133,10 +134,16 @@ export function initRuleStudio(){
    }).catch(()=>{});
  }
  const status=m=>text('ruleStatus',m);
- const theatre=createCreativePerformance({
-   host:document.querySelector('.rule-frame'),
-   canvas:$('ruleArtwork'),name:'rules'
+ const live=createLivingPainting({
+   canvas:$('ruleArtwork'),
+   onPhase:progress=>{
+     const label=progress.phase==='sketch'?'ACTUAL CANDIDATE SKETCH':
+       progress.phase==='construct'?'PAINTING FINAL INK':'PAINTING COMPLETE';
+     text('ruleHeroStatus','● '+label+' · '+
+       progress.done+'/'+progress.total+' actual canvas regions');
+   }
  });
+ let adoptTiles=null;
  let lastPhi=null;
  function displayPhi(canvas){
    const s=measureGoldenTaste(canvas,{mode:'rule-studio'});
@@ -217,12 +224,25 @@ export function initRuleStudio(){
    postProcess:(output,recipe,metrics,{dirtyTiles=null}={})=>
      compositeWords(output,recipe,metrics,{dirtyTiles}),
    getUploaded:()=>upload,
+   onProcess(event){
+     if(event.type==='begin')live.stop({finalize:true});
+     else if(event.type==='preview'){
+       live.preview({painting:event.canvas,parent:event.parent,
+         trial:event.attempt,total:event.total});
+     }else if(event.type==='adopt')adoptTiles=event.dirtyTiles||null;
+     else if(event.type==='cancel'){
+       live.stop({finalize:true});
+       if(current?.canvas){
+         context.clearRect(0,0,960,600);
+         context.drawImage(current.canvas,0,0,960,600);
+       }
+     }
+   },
    onFrame(result){
      const {canvas,recipe,cycle,metrics,blend,sources,novelty,nonredundancy,
        survival,heritage,trials,derivation,objectMemory,renderBudget,dirty}=result;
      const before=current?.canvas||null;
      lastOrigin='loop';
-     context.clearRect(0,0,960,600);context.drawImage(canvas,0,0,960,600);
      current={recipe,canvas,judged:false,metrics};
      unlettered=result.composite?.clean||null;
      if(result.composite?.interaction){
@@ -233,10 +253,14 @@ export function initRuleStudio(){
      }
      parentCanvas=canvas;
      displayPhi(canvas);
-     const duration=Math.min(2450,Math.max(1050,
-       (Number($('ruleLoopSpeed').value)||3000)-260));
-     void theatre.play({kind:'rule',recipe,trace:metrics.trace,
-       survival,heritage,trials,parent:before,final:canvas,duration});
+     // No opaque animation mask: real winner pixels materialise in stages
+     // directly in the same visible production canvas.
+     const duration=Math.min(1800,Math.max(650,
+       (Number($('ruleLoopSpeed').value)||3000)*.42));
+     void live.commit({parent:before,final:canvas,trace:metrics.trace,
+       wordBounds:result.composite?.bounds||null,
+       objects:loop.state().objects,dirtyTiles:adoptTiles,duration});
+     adoptTiles=null;
      $('ruleArtwork').hidden=false;$('ruleEmpty').hidden=true;
      $('ruleKeep').disabled=false;$('ruleReject').disabled=false;
      $('ruleReworkBtn').disabled=false;$('ruleSave').disabled=false;
@@ -399,14 +423,11 @@ export function initRuleStudio(){
    const W=commitCanvas(target,{
      mode:'rule-studio',method,seed:recipe.seed,parentId:recipe.parentId,evaluation:analysis
    });
-   context.clearRect(0,0,960,600);context.drawImage(target,0,0);
    current={recipe,canvas:target,judged:false,metrics,nonredundancy:W};parentCanvas=target;
    displayPhi(target);
    showHeritage(heritageEvidence(manualIdeas));
-   void theatre.play({kind:'rule',recipe,trace:metrics.trace,
-     survival:{held:held.held,available:manualMotifs.length},
-     heritage:{...hereditary,tradeoff:null},
-     parent:before,final:target,duration:2100});
+   void live.commit({parent:before,final:target,trace:metrics.trace,
+     duration:1500});
    $('ruleEmpty').hidden=true;
    $('ruleArtwork').hidden=false;
    $('ruleKeep').disabled=false;$('ruleReject').disabled=false;$('ruleReworkBtn').disabled=false;
@@ -559,7 +580,8 @@ export function initRuleStudio(){
  function save(){
    if(!current)return;
    const link=document.createElement('a');link.download='hexfield-rule-'+current.recipe.id+'.png';
-   link.href=$('ruleArtwork').toDataURL('image/png');document.body.append(link);link.click();link.remove();
+   // Export always uses fully evaluated art, never half-constructed ink.
+   link.href=current.canvas.toDataURL('image/png');document.body.append(link);link.click();link.remove();
  }
  $('rulePaint').addEventListener('click',()=>{loop.pause();void paintFresh();});
  $('ruleReworkBtn').addEventListener('click',()=>{loop.pause();rework();});
@@ -581,6 +603,10 @@ export function initRuleStudio(){
  $('ruleKeep').addEventListener('click',()=>vote(true));
  $('ruleReject').addEventListener('click',()=>vote(false));
  $('ruleSave').addEventListener('click',save);
+ // External Australian print handoff must receive the finished evaluated
+ // painting, not the middle of an ongoing brush-construction animation.
+ document.querySelector('[data-au-print="rules"]')?.addEventListener(
+   'click',()=>live.stop({finalize:true}),{capture:true});
  $('ruleFile').addEventListener('change',async event=>{
    try{upload=await fileToImage(event.target.files?.[0]);$('ruleReference').value='file';status('Reference image loaded. Your rules will be executed locally.');}
    catch(error){status(safe(error.message));}
@@ -644,7 +670,7 @@ export function initRuleStudio(){
      await Promise.race([restoreReady,new Promise(resolve=>setTimeout(resolve,900))]);
      if(!manuallyPaused)loop.start(loopOptions());
    },
-   hide(){loop.pause();theatre.stop();if(current){persistCanvas(current.canvas,current.recipe,current.judged);
+   hide(){loop.pause();live.stop({finalize:true});if(current){persistCanvas(current.canvas,current.recipe,current.judged);
      publishSource(current.canvas,'rules',current.recipe);}},
    paintFresh,hasWork:()=>!!current,
    async takeImagined(imageUrl){

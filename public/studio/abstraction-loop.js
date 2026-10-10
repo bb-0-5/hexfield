@@ -93,7 +93,7 @@ export function createAbstractionLoop({
   getArchive=()=>null,getUploaded=()=>null,getParent=()=>null,
   getParentRecipe=()=>null,getWords=()=>'',
   postProcess=()=>null,
-  onFrame=()=>{},onState=()=>{},onError=()=>{}
+  onFrame=()=>{},onProcess=()=>{},onState=()=>{},onError=()=>{}
 }={}){
  const bank=createSourceBank({width,height,getArchive,getUploaded,getParent,getWords});
  let running=false,waiting=false,timer=null,activeStep=false;
@@ -126,6 +126,7 @@ export function createAbstractionLoop({
    waitingReason:waiting?'Page hidden':''
  });
  const status=()=>onState(state());
+ const process=event=>{try{onProcess(event);}catch(error){onError(error);}};
  function delay(ms){
    if(timer)clearTimeout(timer);
    if(!running||document.hidden){waiting=!!running;status();return;}
@@ -134,6 +135,7 @@ export function createAbstractionLoop({
  }
  function pause(){
    running=false;waiting=false;stamp++;stage='paused';
+   process({type:'cancel'});
    if(timer)clearTimeout(timer);timer=null;
    status();
  }
@@ -166,6 +168,7 @@ export function createAbstractionLoop({
      // Give the initial visible canvas a genuine browser paint opportunity.
      if(!await checkpoint('Preparing painter'))return;
      const previous=last||getParent();
+     process({type:'begin',parent:previous,cycle});
      const inheritedRecipe=lastRecipe||(previous?getParentRecipe():null);
      const parentSeed=inheritedRecipe?.seed??seed;
      const baseSeed=evolveSeed(parentSeed,cycle+1,0,'abstraction-parent');
@@ -282,6 +285,9 @@ export function createAbstractionLoop({
        proposals.push({attempt,candidateSeed,recipe,mode,application,
          preview,preflight});
        if(currentStamp!==stamp)return;
+       // Genuine low-resolution raster study shown on same actual canvas.
+       process({type:'preview',canvas:preview,parent:previous,
+         attempt,total:devicePlan.previews,cycle,preflight});
      }
      const finalists=chooseFullRenderCandidates(proposals,{
        cycle,mobile,strict:getGoldenMode()==='strict',
@@ -508,6 +514,9 @@ export function createAbstractionLoop({
        device:renderBudget.device,
        donorReadbacksSaved:(renderBudget.cache?.full?.hits||0)+
          (renderBudget.cache?.preview?.hits||0)};
+     process({type:'adopt',canvas:output,recipe,metrics,cycle,
+       interaction:composite||null,
+       objects:objects.objects||[],dirtyTiles:best.dirty?.tiles||null});
      try{onFrame(result)}catch(error){onError(error)}
      status();
      if(stalled){
@@ -519,9 +528,11 @@ export function createAbstractionLoop({
        seed=evolveSeed(recipe.seed,cycle+1,7,'novelty-reseed');
      }
    }catch(error){
+     process({type:'cancel'});
      lastError=String(error.message||error).slice(0,240);
      onError(error);status();
    }finally{
+     if(!committed)process({type:'cancel'});
      activeStep=false;
      if(!running)stage='paused';
      // Only an explicitly interrupted frame gets a quick retry. Renderer
