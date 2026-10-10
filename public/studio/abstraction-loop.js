@@ -8,6 +8,8 @@ import {createSourceBank,mixSources,cloneCanvas,prepareMixSamples} from './sourc
 import {planDirtyTiles,shouldUseLocalRender} from './dirty-tiles.js';
 import {renderPlan,recordRenderTime,yieldToBrowser} from './render-governor.js';
 import {renderRuleLive} from './live-rule-execution.js';
+import {applyStyleRecipe,styleById,styleReference,
+  ABSTRACTION_LEVELS} from './style-presets.js';
 import {createCreativeMemory,loadCreativeMemory,saveCreativeMemory,
   settleCreativeMemory,attemptRediscovery} from './creative-forgetting.js';
 import {createVisualIdentity,loadVisualIdentity,saveVisualIdentity,
@@ -49,7 +51,8 @@ export function visualDelta(a,b){
 }
 export function nextAbstractRecipe(parent,{cycle=0,branch=0,seed=null,
   subject='abstract',lockLaw=false,
-  law='surprise',secondary='none',mark='surprise'}={}){
+  law='surprise',secondary='none',mark='surprise',
+  style=null,abstraction='wild'}={}){
  const options={subject:subject==='surprise'?'abstract':subject};
  let recipe;
  if(!parent){
@@ -93,6 +96,11 @@ export function nextAbstractRecipe(parent,{cycle=0,branch=0,seed=null,
      }
    }
  }
+ if(style&&!lockLaw)applyStyleRecipe(recipe,{style,abstraction});
+ else if(abstraction==='gentle'||abstraction==='balanced'){
+  if(recipe.rework==='abstract_masses'||recipe.rework==='misread')
+    recipe.rework='none';
+ }
  if(recipe.primary===recipe.secondary)recipe.secondary='none';
  if(!(recipe.primary in LAWS))recipe.primary=choice(Object.keys(LAWS),recipe.seed);
  if(!(recipe.mark in MARKS))recipe.mark=choice(Object.keys(MARKS),recipe.seed);
@@ -134,6 +142,7 @@ export function createAbstractionLoop({
      stable:o.age>=3&&o.volatility<.24
    })),
    renderBudget,dirtyStats,lastFrameMs,
+   style:{id:config.style||null,abstraction:config.abstraction||'wild'},
    regionMemory:{generation:regionMemory.generation,
      cells:Object.values(regionMemory.cells).map(x=>({...x}))},
    creativeMemory:{root:creativeMemory.root,
@@ -197,6 +206,8 @@ export function createAbstractionLoop({
    config={...config,...newConfig};
    if(typeof config.speed!=='number'||!Number.isFinite(config.speed))config.speed=3000;
    config.speed=clamp(config.speed,1200,12000);
+   if(!(config.abstraction in ABSTRACTION_LEVELS))
+     config.abstraction='wild';
    status();
  }
  async function step(){
@@ -265,7 +276,12 @@ export function createAbstractionLoop({
          (config.mark&&config.mark!=='surprise'&&
            config.mark!==inheritedRecipe?.mark)))
      });
-     const smallSamples=prepareMixSamples(inputs,{
+     // LOW starts from one recognizable reality / uploaded / imagined
+     // reference, instead of re-quilting all unrelated donor images.
+     const subtle=config.abstraction==='gentle';
+     const origin=styleReference(inputs,{abstraction:config.abstraction});
+     const paintInputs=subtle&&origin?[origin]:inputs;
+     const smallSamples=prepareMixSamples(paintInputs,{
        width:PREVIEW_WIDTH,height:PREVIEW_HEIGHT
      });
      // Invent three proposals and execute their REAL cheap raster previews.
@@ -282,7 +298,8 @@ export function createAbstractionLoop({
        const recipe=nextAbstractRecipe(inheritedRecipe,{
          cycle,branch:attempt,seed:candidateSeed,subject:config.subject||'abstract',
          lockLaw:!!config.lockLaw,law:config.law||'surprise',
-         secondary:config.secondary||'none',mark:config.mark||'surprise'
+         secondary:config.secondary||'none',mark:config.mark||'surprise',
+         style:config.style||null,abstraction:config.abstraction||'wild'
        });
        const learned=rememberedMarkPrograms();
        const mate=learned.length?learned[(cycle+attempt)%learned.length]:null;
@@ -299,7 +316,8 @@ export function createAbstractionLoop({
        // Once every five generations the entire shortlist deliberately
        // executes an invented compound mark rather than leaving its rare
        // selection to hybrid probabilities. User-locked laws still win.
-       if(cycle%5===3&&!config.lockLaw&&!localAllowed)recipe.mark='invented';
+       if(cycle%5===3&&!config.lockLaw&&!localAllowed&&
+         !config.style)recipe.mark='invented';
        recipe.markProgram=inheritedRecipe?.markProgram?
          evolveMarkProgram(inheritedRecipe.markProgram,{seed:candidateSeed,branch:mutation,mate}):
          newMarkProgram(candidateSeed,recipe.generation);
@@ -307,8 +325,9 @@ export function createAbstractionLoop({
          inheritedRecipe?.wordRelation||null,attempt);
        const autoMixer=!config.mixMode||config.mixMode==='auto';
        const families=['quilt','cutaway','dissonance','relief','edges'];
-       const mode=autoMixer?
-         families[(Math.floor(cycle/3)+attempt)%families.length]:config.mixMode;
+       const mode=subtle?'quilt':autoMixer?
+         config.style?styleById(config.style).mix:
+           families[(Math.floor(cycle/3)+attempt)%families.length]:config.mixMode;
        const ancestor=lastRecipe?.application,
          inheritedIndex=DERIVATION_METHODS.indexOf(ancestor);
        const application=inheritedIndex<0?
@@ -317,7 +336,7 @@ export function createAbstractionLoop({
          attempt===1?DERIVATION_METHODS[(inheritedIndex+1+cycle%2)%DERIVATION_METHODS.length]:
          derivationMethod(candidateSeed,cycle,attempt);
        recipe.application=application;
-       const lowMix=mixSources(inputs,{
+       const lowMix=mixSources(paintInputs,{
          width:PREVIEW_WIDTH,height:PREVIEW_HEIGHT,
          cycle:cycle+attempt*2,seed:candidateSeed,mode,
          prepared:smallSamples
@@ -352,7 +371,7 @@ export function createAbstractionLoop({
      renderBudget.device=devicePlan.speed;
      renderBudget.recentMs=devicePlan.recentMs;
      if(!await checkpoint('Preparing full-size paints'))return;
-     const fullSamples=prepareMixSamples(inputs,{width,height});
+     const fullSamples=prepareMixSamples(paintInputs,{width,height});
      renderBudget.cache={
        preview:smallSamples.cacheEvidence||null,
        full:fullSamples.cacheEvidence||null
@@ -366,7 +385,7 @@ export function createAbstractionLoop({
          seed:candidateSeed,cycle,objects:objects.objects
        }):null;
        const partial=!!tilePlan;
-       const mixed=mixSources(inputs,{
+       const mixed=mixSources(paintInputs,{
          width,height,
          cycle:cycle+attempt*2,
          seed:candidateSeed,mode,prepared:fullSamples,
@@ -400,7 +419,7 @@ export function createAbstractionLoop({
        const derivation=partial?{method:'graft',canvas:null,
          retained:1-tilePlan.coverage,interwoven:tilePlan.coverage,
          changed:tilePlan.coverage}:
-         previous?deriveBetweenFrames(previous,output,{
+         previous&&!subtle?deriveBetweenFrames(previous,output,{
            seed:candidateSeed,cycle,branch:attempt,method:application
          }):null;
        recipe.application=derivation?.method||'fresh';
@@ -419,14 +438,14 @@ export function createAbstractionLoop({
          for(const t of tilePlan.tiles)painter.rect(t.x,t.y,t.w,t.h);
          painter.clip();
        }
-       const held=paintHeldMotifs(output,motifs,{cycle,opacity:.93});
+       const held=subtle?{held:[],coverage:0}:paintHeldMotifs(
+         output,motifs,{cycle,opacity:.93});
        // Geometry survives separately from the original pixels: it
        // undergoes a NEW mark law and pigment material on each child.
-       const heritage=paintInheritedIdeas(output,ideas,{
-         seed:candidateSeed,cycle,recipe
-       });
+       const heritage=subtle?{drawn:[],score:0,coverage:0}:
+         paintInheritedIdeas(output,ideas,{seed:candidateSeed,cycle,recipe});
        const stable=paintStableObjects(output,previous,objects.objects,{
-         generation:cycle,opacity:.74,max:3
+         generation:cycle,opacity:subtle?.23:.74,max:subtle?1:3
        });
        if(partial)painter.restore();
        // Each child inherits a bounded selection of genuine parent pixels
@@ -545,7 +564,7 @@ export function createAbstractionLoop({
      // The exploratory branch MUST use a fully evaluated (W/φ/H) entry;
      // otherwise its threeWay fields disappear, and the frame crashes
      // after incrementing the generation counter.
-     const best=evolvingMix&&cycle%3===0&&!strictQualified?
+     const best=evolvingMix&&cycle%3===0&&!strictQualified&&!config.style?
        ranked.find(x=>x.mixed.mode===expected)||goal:goal;
      const {canvas:output,recipe,mixed,metrics,assessment,
        golden,held,heritage,threeWay,derivation,composite}=best;

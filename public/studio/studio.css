@@ -409,3 +409,37 @@
   .product-frame>.controls>.intro{font-size:13px;margin-bottom:8px}
   #ruleControls .abstraction-control{margin:6px 0}
 }
+
+/* 327 — one obvious style switch and one obvious abstraction dial. */
+.canvas-word-rail{flex-wrap:wrap}
+.canvas-word-rail .rule-loop-buttons{
+  flex:1 1 100%;display:grid;grid-template-columns:2fr 1fr 1fr;
+  gap:8px;min-height:auto;
+}
+.canvas-word-rail .rule-loop-buttons button{
+  min-height:45px;line-height:1.25;white-space:normal;
+}
+#ruleChangeStyle{font-weight:900;letter-spacing:.06em}
+#ruleRepeatStyle:disabled{opacity:.45}
+.style-control-rail{
+  display:flex;align-items:center;gap:11px;flex-wrap:wrap;
+  padding:10px 13px;border:1px solid rgba(193,202,173,.29);
+  background:rgba(38,49,43,.45);border-radius:8px;
+}
+.style-control-rail label{font:900 11px/1.4 var(--sans);letter-spacing:.08em}
+.style-control-rail select{min-height:42px;flex:1 1 205px;
+  padding:8px 10px;border-radius:5px;max-width:420px}
+.style-control-rail span{font:11px/1.5 var(--sans);flex:1 1 230px}
+#ruleStyleStatus{margin:7px 0 9px;font-size:11px;line-height:1.5}
+@media(max-width:730px){
+ .canvas-word-rail .rule-loop-buttons{flex:1 1 100%;display:grid;
+   grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+ .canvas-word-rail .rule-loop-buttons #ruleChangeStyle{
+   grid-column:1/-1;min-height:52px;font-size:13px}
+ .canvas-word-rail .rule-loop-buttons #ruleRepeatStyle,
+ .canvas-word-rail .rule-loop-buttons #ruleLoopStop{
+   min-height:43px;font-size:10px}
+ .style-control-rail{gap:7px;padding:9px}
+ .style-control-rail select{flex:1 1 100%;max-width:none}
+ .style-control-rail span{flex:1 1 100%}
+}
