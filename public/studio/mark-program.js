@@ -196,7 +196,7 @@ export function paintInventedMark(ctx,{program,x,y,step,angle=0,colour,
     seed:(seed^program.seed)>>>0,noCurves,
     emit:p=>{if(base.length<MAX_MARK_PRIMITIVES)base.push(p);}};
   for(const [i,gesture] of program.sources.entries()){
-    paintDerivedMark(collector,{...options,seed:(options.seed+Math.imul(i+1,2654435761))>>>0,
+    paintDerivedMark(collector,{...options,mark:gesture,seed:(options.seed+Math.imul(i+1,2654435761))>>>0,
       angle:angle+(i===0?-.11:.17)});
   }
   let produced=base;
