@@ -5,6 +5,7 @@
  */
 import {DERIVED_MARKS,markAtCell,paintDerivedMark} from './mark-grammar.js';
 import {newMarkProgram,validMarkProgram,evolveMarkProgram,paintInventedMark} from './mark-program.js';
+import {chooseGeometryRelation,GEOMETRY_RELATIONS} from './geometry-coupling.js';
 export const RULE_STORE = 'hexfield.rule-studio.memory.v1';
 export const SUBJECTS = {
   sphere:'Ball on a table',stairwell:'Flooded stairwell',coast:'Coastline',
@@ -93,6 +94,8 @@ export function makeRecipe(input={}){
  };
  recipe.markProgram=validMarkProgram(input.markProgram)?input.markProgram:
    newMarkProgram(recipe.seed,recipe.generation);
+ recipe.wordRelation=GEOMETRY_RELATIONS.includes(input.wordRelation)?input.wordRelation:
+   chooseGeometryRelation(recipe.seed,recipe.generation);
  return recipe;
 }
 export function mutateRecipe(parent,focus='law',source='studio',seedOverride=null){

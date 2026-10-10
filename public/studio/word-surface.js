@@ -5,6 +5,7 @@
  * Internal masks are calculation buffers; only the production canvas is shown.
  */
 import {applyRules,makeRecipe} from './rule-engine.js';
+import {coupleWordGeometry,chooseGeometryRelation} from './geometry-coupling.js';
 const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
 const create=(w,h)=>{const c=document.createElement('canvas');c.width=w;c.height=h;return c;};
 const lum=(data,i)=>(.2126*data[i]+.7152*data[i+1]+.0722*data[i+2])/255;
@@ -130,7 +131,7 @@ function buildMask(text,w,h,bounds,choice){
   return {pixels,size};
 }
 export function paintWordsOnCanvas(canvas,words,{
-  recipe=null,seed=1,iteration=0,sourceCanvas=null
+  recipe=null,seed=1,iteration=0,sourceCanvas=null,relation=null
 }={}){
   if(!canvas?.getContext)return {painted:false,reason:'no canvas'};
   const text=String(words||'').replace(/\s+/g,' ').trim().slice(0,48);
@@ -143,7 +144,15 @@ export function paintWordsOnCanvas(canvas,words,{
   const signature=recipe?.markProgram?.signature||recipe?.mark||'hybrid';
   const choice=wordApplication(seed,iteration,signature);
   const bounds=chooseBand(before,w,h,seed);
-  const {pixels:mask,size}=buildMask(text,w,h,bounds,choice);
+  const {pixels:letters,size}=buildMask(text,w,h,bounds,choice);
+  // The original art and the word now push back on one another as geometry.
+  // This happens before chromatic deposition, not in an overlay after scoring.
+  const selectedRelation=relation||recipe?.wordRelation||
+    chooseGeometryRelation(seed,iteration);
+  const coupled=coupleWordGeometry(before,letters,w,h,{
+    seed,relation:selectedRelation,bounds,size
+  });
+  const mask=coupled.mask,scene=coupled.scene;
   const colours=palette(before,w,h,choice);
   const rule=recipe?.mark?{...recipe,seed:seed>>>0}:
     makeRecipe({subject:'abstract',primary:'no_shading',mark:'hybrid',seed:seed>>>0});
@@ -168,7 +177,7 @@ export function paintWordsOnCanvas(canvas,words,{
     if(coverage>0){
       const stripe=Math.floor((x+y*.46)/Math.max(3,size*.18));
       const role=(stripe+((choice.key>>>5)%3)+Math.floor(y/Math.max(5,size*.3)))%3;
-      const band=layers[role],beforeLight=lum(before,i);
+      const band=layers[role],beforeLight=lum(scene,i);
       const materialLight=lum(pigment,i);
       const hueColor=band.map((v,ch)=>clamp(Math.round(v*.82+pigment[i+ch]*.18),0,255));
       // Source-sensitive contrast is achieved by luminance, not greyscaling.
@@ -178,12 +187,13 @@ export function paintWordsOnCanvas(canvas,words,{
       if(Math.max(...ink)-Math.min(...ink)>48)chromatic++;
     }
     for(let ch=0;ch<3;ch++)d[i+ch]=coverage>0?
-      Math.round(before[i+ch]*(1-coverage*.94)+ink[ch]*coverage*.94):before[i+ch];
+      Math.round(scene[i+ch]*(1-coverage*.94)+ink[ch]*coverage*.94):scene[i+ch];
     d[i+3]=255;
   }
   canvas.getContext('2d').putImageData(out,0,0);
   return {painted:true,text,count,chromaticFraction:count?chromatic/count:0,
     bounds:{x:Math.round(w*.04),y:bounds.top,w:Math.round(w*.92),h:bounds.height},
     mark:rule.mark,method:choice.name,face:choice.family.name,
-    palette:layers.map(hex),marks:marks.strokes,source:'live painted canvas'};
+    palette:layers.map(hex),marks:marks.strokes,interaction:coupled.stats,
+    source:'live painted canvas'};
 }
