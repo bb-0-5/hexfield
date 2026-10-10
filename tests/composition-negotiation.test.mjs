@@ -65,12 +65,30 @@ assert.equal(selection?.follower.rect.id,'region-1-1',
 assert.ok(Math.abs(selection.leader.rect.column-1)+
  Math.abs(selection.leader.rect.row-1)===1,
  'Influence must originate from an ACTUAL adjacent region');
+const shifted=selectNegotiation({canvas:base,memory,cycle:4,attempt:0,
+ compositionMemory:{treaties:{[selection.follower.rect.id]:{
+   from:selection.leader.rect.id,count:80,acceptance:1
+ }}}});
+assert.equal(shifted?.follower.rect.id,selection.follower.rect.id,
+ 'A negotiated follower identity must persist when its leader changes');
+assert.notEqual(shifted?.leader.rect.id,selection.leader.rect.id,
+ 'Long-standing one-way influence must give a different neighbour a turn');
 const change=proposeInfluence(base,selection.leader,selection.follower,{
  seed:3571,strength:.26
 });
 assert.equal(change.patch.width,120);
 assert.equal(change.patch.height,80);
 assert.ok(change.coverage>.001,'Real pixels change under neighbour influence');
+const detailed=createScene(),tc=detailed.getContext('2d');
+tc.fillStyle='#1568a7';
+tc.fillRect(selection.follower.rect.x+16,
+ selection.follower.rect.y+11,30,28);
+const active=selectNegotiation({canvas:detailed,memory,cycle:4,attempt:0});
+const twisted=proposeInfluence(detailed,active.leader,active.follower,{
+ seed:3571,strength:.26
+});
+assert.ok(twisted.displaced>0,
+ 'The negotiation must actually move observed contours, not only tint RGB');
 assert.ok(change.palette.every(x=>x>=0&&x<=255));
 const chosen=selection.follower.rect;
 const snapshots=[];
