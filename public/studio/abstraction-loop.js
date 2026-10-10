@@ -13,6 +13,7 @@ import {extractStructuralIdea,paintInheritedIdeas,advanceStructuralIdeas,
  recallStructuralIdea} from './structural-heritage.js';
 import {getGoldenMode} from './golden-taste.js';
 import {newMarkProgram,evolveMarkProgram,rememberedMarkPrograms} from './mark-program.js';
+import {chooseGeometryRelation} from './geometry-coupling.js';
 import {deriveBetweenFrames,DERIVATION_METHODS,derivationMethod} from './frame-derivation.js';
 export const REWORK_SEQUENCE=['abstract_masses','negative_repaint','misread','remove_strength'];
 const clamp=(n,a,b)=>Math.max(a,Math.min(n,b));
@@ -196,6 +197,8 @@ export function createAbstractionLoop({
        recipe.markProgram=inheritedRecipe?.markProgram?
          evolveMarkProgram(inheritedRecipe.markProgram,{seed:candidateSeed,branch:mutation,mate}):
          newMarkProgram(candidateSeed,recipe.generation);
+       recipe.wordRelation=chooseGeometryRelation(candidateSeed,cycle,
+         inheritedRecipe?.wordRelation||null,attempt);
        // Candidate methods span the full renderer grammar. The painter
        // cannot maximise H by choosing one comfortable mixer forever.
        const autoMixer=!config.mixMode||config.mixMode==='auto';
@@ -248,7 +251,8 @@ export function createAbstractionLoop({
          secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework,
          blend:mixed.mode,subject:recipe.subject,
          application:derivation?.method||'new',
-         markProgram:metrics.invented.stamps?recipe.markProgram.signature:''});
+         markProgram:metrics.invented.stamps?recipe.markProgram.signature:'',
+         interaction:composite?.interaction?.relation||''});
        candidates.push({canvas:output,recipe,mixed,metrics,held,heritage,derivation,composite,method});
        if(currentStamp!==stamp)return;
      }
@@ -287,6 +291,7 @@ export function createAbstractionLoop({
          count:heritage.drawn.length},
        threeWay,markProgram:recipe.markProgram.signature,
        invented:metrics.invented,
+       interaction:composite?.interaction||null,
        derivation:derivation?{method:derivation.method,
          retained:derivation.retained,interwoven:derivation.interwoven,
          changed:derivation.changed}:null,candidates:candidates.length};
@@ -313,6 +318,7 @@ export function createAbstractionLoop({
            (entry.metrics.invented.stamps?' / MADE '+
              entry.recipe.markProgram.sources.join('×')+' → '+
              entry.recipe.markProgram.operations.map(x=>x.type).join('+'):'')+
+           (entry.composite?.interaction?' / COLLISION '+entry.composite.interaction.relation:'')+
            ' / H '+
            Math.round(entry.threeWay.H*100)+'%',
          score:entry.threeWay.score,golden:entry.golden,
@@ -333,6 +339,9 @@ export function createAbstractionLoop({
        mark:recipe.mark,law:recipe.primary,blend:mixed.mode,novelty,
        inventedStamps:metrics.invented.stamps,
        words:composite?.text||'',
+       relation:composite?.interaction?.relation||'',
+       coupledPixels:(composite?.interaction?.displacedPixels||0)+
+         (composite?.interaction?.bentPixels||0),
        markProgram:metrics.invented.stamps?recipe.markProgram.signature:null,
        markRootId:recipe.markProgram.rootId,
        derivedBy:derivation?.method||'fresh',
