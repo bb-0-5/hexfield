@@ -136,6 +136,10 @@ for(let pass=3;pass<=10;pass++){
       'Same original motif must persist across reworks, not respawn as a fresh unrelated patch');
   }
 }
+assert.ok(produced.some(x=>x.metrics.invented.stamps>0),
+  'A continuous painting must actually execute an invented mark program');
+assert.ok(new Set(produced.map(x=>x.recipe.markProgram.rootId)).size===1,
+  'A self-developing mark process keeps its root identity through ten frames');
 assert.ok(loop.state().globalMemory>=10,'Ten accepted passes must enter the shared memory');
 assert.ok(loop.state().donorGenerations.terrain>=1,
  'Terrain programs must mutate instead of restarting from scratch');
