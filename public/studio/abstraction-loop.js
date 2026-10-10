@@ -366,6 +366,13 @@ export function createAbstractionLoop({
        ranked.find(x=>x.mixed.mode===expected)||goal:goal;
      const {canvas:output,recipe,mixed,metrics,assessment,
        golden,held,heritage,threeWay,derivation,composite}=best;
+     dirtyStats=best.dirty?{
+       partial:true,coverage:best.dirty.coverage,
+       skippedTiles:best.dirty.skippedTiles,dirtyTiles:best.dirty.dirtyTiles,
+       processedPixels:mixed.stats.processedPixels,
+       omittedRuleCells:metrics.dirty?.omittedCells||0
+     }:{partial:false,coverage:1,dirtyTiles:0,skippedTiles:0,
+       processedPixels:width*height,omittedRuleCells:0};
      const novelty=visualDelta(previous,output);
      const stalled=cycle>2&&(assessment.redundant||novelty<.035);
      const recorded=commitCanvas(output,{mode:'abstraction',method:best.method,
@@ -379,7 +386,7 @@ export function createAbstractionLoop({
        derivation:derivation?{method:derivation.method,
          retained:derivation.retained,interwoven:derivation.interwoven,
          changed:derivation.changed}:null,candidates:candidates.length,
-        preflight:renderBudget};
+        preflight:renderBudget,dirty:dirtyStats};
      const survived=motifEvidence(motifs);
      const inherited=heritageEvidence(ideas);
      // Extract once on the winning FULL image; rejected trials are discarded.
@@ -424,7 +431,7 @@ export function createAbstractionLoop({
          carried:held.held.length,available:motifEvidence(motifs).length},
        heritage:{...heritage,ancestors:inherited,
          living:heritageEvidence(ideas),tradeoff:threeWay},
-       golden,nonredundancy:lastAssessment,renderBudget,
+       golden,nonredundancy:lastAssessment,renderBudget,dirty:dirtyStats,
         objectMemory:{count:objects.objects.length,stable:objects.stable,
           matched:objects.matched,extracted:objects.extracted,
           reused:best.stable?.reused||0}};
@@ -452,7 +459,8 @@ export function createAbstractionLoop({
        W:threeWay.W,phi:threeWay.phi,H:threeWay.H,
         objectCount:objects.objects.length,stableObjects:objects.stable,
         cachedObjectReuses:best.stable?.reused||0,
-        previewTrials:renderBudget.predicted,fullRenders:renderBudget.full});
+        previewTrials:renderBudget.predicted,fullRenders:renderBudget.full,
+         dirtyCoverage:dirtyStats.coverage,omittedRuleCells:dirtyStats.omittedRuleCells});
      stamps=stamps.slice(-10);
      try{onFrame(result)}catch(error){onError(error)}
      status();
