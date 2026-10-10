@@ -42,7 +42,7 @@ async function restoreCurrentPainting(){
   }catch{return null;}
 }
 
-export function initImagination({getSession}){
+export function initImagination({getSession,onImage=()=>{}}){
   let current=null,working=false,history=readHistory(),loadPromise=null,syncing=false;
   let lastCritique='';
   const uiStatus=(message)=>{$('imagineStatus').textContent=message;};
@@ -191,6 +191,7 @@ export function initImagination({getSession}){
       document.querySelectorAll('[data-critique]').forEach(b=>b.classList.remove('selected'));
       updateCurrent();
       void storeCurrentPainting(current);
+      try{await onImage(current.image)}catch(error){console.warn('Could not import imagined image',error)}
       void refreshQuota();
       uiStatus('Painting finished. '+result.credits_remaining+' painting(s) remaining today. The image is saved in this browser.');
     }catch(error){
@@ -250,5 +251,5 @@ export function initImagination({getSession}){
   });
   void fetchRemoteFeedback().then(()=>syncFeedback());
   void refreshQuota();
-  return {show(){summariseHistory();},hide(){},getHistory:()=>history};
+  return {show(){summariseHistory();},hide(){},paint:()=>makePainting(false),getHistory:()=>history};
 }
