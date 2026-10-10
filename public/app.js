@@ -38521,30 +38521,56 @@ function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0, to = 
       return;
     }
     if (pass === THING_CARVE) {
-      // The ground painted back in round it, from outside, along its edge -
-      // only where the canvas is off the ground there (where the blob went over).
-      const radius = Math.max(1.5, short / 16), step = Math.max(1, Math.round(radius * 0.8));
-      for (let my = 2; my < mask.h - 2; my += step) {
-        for (let mx = 2; mx < mask.w - 2; mx += step) {
-          if (mask.alpha[my * mask.w + mx] <= 200) continue;
-          // On its edge, and which way is out.
+      /* The ground painted back in round it, from outside: strokes laid along
+       * its outline, a little out from it, as wide as the blob went over, in
+       * the ground's colour as it is painted just beyond - so its edge is cut
+       * by the ground, and the cut melts into the ground round it. (Laid as
+       * round dabs in the reference's colour at the edge - often a rim of
+       * light or a halo, paler than the ground as painted - it ringed things
+       * with a chain of pale beads.) */
+      const rc = Math.max(2, short / 9), reachOut = short * THING_PASSES[0] * 1.6 + rc * 0.5;
+      const cover = scene.layer?.cover && scene.width === W && scene.height === H ? scene.layer.cover : null;
+      const clearOf = (x, y) => x >= 0 && y >= 0 && x < W && y < H && !inside(x, y) && !(cover && cover[(y | 0) * W + (x | 0)] > 100);
+      const solid = (mx, my) => mx >= 0 && my >= 0 && mx < mask.w && my < mask.h && mask.alpha[my * mask.w + mx] > 200;
+      const edge = new Uint8Array(mask.w * mask.h);
+      for (let my = 0; my < mask.h; my++) {
+        for (let mx = 0; mx < mask.w; mx++) {
+          if (solid(mx, my) && (!solid(mx - 1, my) || !solid(mx + 1, my) || !solid(mx, my - 1) || !solid(mx, my + 1))) edge[my * mask.w + mx] = 1;
+        }
+      }
+      const per = Math.max(2, Math.round(rc * 2.5 / 3));
+      for (const line of traceEdgeLines(edge, mask.w, mask.h)) {
+        // Which way is out at each point, smoothed along the line.
+        const out = line.map(([mx, my]) => {
           let ox = 0, oy = 0;
-          for (const [ex, ey] of [[2, 0], [-2, 0], [0, 2], [0, -2], [2, 2], [-2, 2], [2, -2], [-2, -2]]) {
-            if (mask.alpha[(my + ey) * mask.w + mx + ex] <= 200) { ox += ex; oy += ey; }
+          for (const [ex, ey] of [[3, 0], [-3, 0], [0, 3], [0, -3], [2, 2], [-2, 2], [2, -2], [-2, -2]]) if (!solid(mx + ex, my + ey)) { ox += ex; oy += ey; }
+          return [ox, oy];
+        });
+        const normal = out.map((_, i) => {
+          let ox = 0, oy = 0;
+          for (let j = Math.max(0, i - 2); j <= Math.min(out.length - 1, i + 2); j++) { ox += out[j][0]; oy += out[j][1]; }
+          const l = Math.hypot(ox, oy);
+          return l ? [ox / l, oy / l] : null;
+        });
+        for (let i = 0; i < line.length - 1; i += per) {
+          const points = [];
+          let far = null;
+          for (let j = i; j <= Math.min(line.length - 1, i + per); j++) {
+            const n = normal[j];
+            if (!n) continue;
+            const x = mask.x0 + line[j][0] + n[0] * rc * 1.2, y = mask.y0 + line[j][1] + n[1] * rc * 1.2;
+            // Clear of it: the brush's near side must not reach in.
+            if (!clearOf(x, y) || inside(x - n[0] * rc * 0.9, y - n[1] * rc * 0.9)) continue;
+            points.push([x, y]);
+            if (!far && j >= i + (per >> 1)) far = [mask.x0 + line[j][0] + n[0] * reachOut, mask.y0 + line[j][1] + n[1] * reachOut];
           }
-          const ol = Math.hypot(ox, oy);
-          if (!ol) continue;
-          ox /= ol; oy /= ol;
-          // Clear of it: the brush's near side must not reach in.
-          const clear = (x, y) => !inside(x, y) && !inside(x - ox * radius * 0.95, y - oy * radius * 0.95);
-          const x = mask.x0 + mx + ox * radius * 1.3, y = mask.y0 + my + oy * radius * 1.3;
-          if (!clear(x, y)) continue;
-          const ground = at(ref, x, y);
-          if (diff(at(current, x, y), ground) < 16) continue;
-          const points = [[-1, 0, 1].map((k) => [x - oy * radius * k, y + ox * radius * k])].flat().filter(([px, py]) => clear(px, py));
-          if (!points.length) continue;
-          strokes.push(finish({ points, width: radius * 1.8 * (0.9 + rng() * 0.2),
-            colour: ground.map((c) => Math.max(0, Math.min(255, Math.round(c + (rng() - 0.5) * 6)))), bristle: rng() }));
+          if (points.length < 2) continue;
+          const mid = points[points.length >> 1];
+          // The ground as painted beyond where the blob reached; the reference's if that is off the canvas or on a thing.
+          const ground = far && clearOf(far[0], far[1]) ? at(current, far[0], far[1]) : at(ref, mid[0], mid[1]);
+          if (diff(at(current, mid[0], mid[1]), ground) < 14) continue;
+          strokes.push(finish({ points, width: rc * 2 * (0.95 + rng() * 0.15),
+            colour: ground.map((c) => Math.max(0, Math.min(255, Math.round(c + (rng() - 0.5) * 4)))), bristle: rng() }));
         }
       }
       return;
@@ -38573,7 +38599,10 @@ function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0, to = 
             const solid = inside(sx, sy);
             // A rim leaf hangs a little out over the edge.
             if (!solid || !inside(sx + ox / out * leaf, sy + oy / out * leaf)) { sx += ox / out * leaf * FOLIAGE.rim; sy += oy / out * leaf * FOLIAGE.rim; }
-            const base = at(ref, gx, gy);
+            // Its colour from the leaves, not the ground: a rim leaf's place may be just off the clump.
+            let bx = gx, by = gy;
+            for (let k = 0; k < 4 && !inside(bx, by); k++) { bx += (cx - bx) * 0.3; by += (cy - by) * 0.3; }
+            const base = at(ref, bx, by);
             // Lit side lighter, the far side darker; each leaf its own.
             const k = FOLIAGE.light * Math.max(-1, Math.min(1, (ox * lx + oy * ly))) + (rng() - 0.5) * FOLIAGE.vary;
             const colour = base.map((c) => Math.max(0, Math.min(255, Math.round(k > 0 ? c + (255 - c) * k : c * (1 + k)))));
@@ -40947,6 +40976,106 @@ function paintingOrder(plan, width, height) {
   };
 }
 
+/* ── Calm backgrounds ───────────────────────────────────────────────────
+ * Where a painting is its background - away from its things, its words and
+ * its focus - a painter keeps it broad: the masses in their area tones, a
+ * few calm strokes the way each plane runs, its edges soft. The small
+ * touches, the broken colour and the busy marks belong where the eye goes.
+ * (Worked the same everywhere, a sky came out as confetti of dabs and the
+ * critic's corrections as patches of speckle in its corners.)
+ * How much a place is background: 0 on a thing or its words, rising to 1 a
+ * little way off them (a band a fifteenth of the picture across, measured
+ * from the things' own shapes, not their boxes - a box's corners are
+ * background too); at the focus, between its things, half calm. A coarse
+ * grid made once for a plan (and again if its things or words move), read
+ * smoothly between its cells.
+ *   focus      how far off the focus (a fraction of the picture) the calm is whole
+ *   band       how far off a thing's shape (a fraction of the picture) it is
+ *   margin     ...and off the words' box, a fraction of its size (plus a little)
+ *   runs       how strongly busy runs give way to calm ones there
+ *   jitter     how much of a run's colour play it loses there
+ *   fine       how many of the finest brushes' starts it loses there
+ *   tolerance  how much more a place must differ before a brush goes back to it */
+const CALM = { cols: 32, focus: 0.24, band: 0.07, margin: 0.3, runs: 3.5, jitter: 0.75, fine: 0.85, tolerance: 0.6 };
+const calmMaps = new WeakMap();
+function backgroundCalm(plan, width, height) {
+  if (!plan || !width || !height) return null;
+  const scene = plan.scene;
+  const cover = scene?.layer?.cover && scene.width === width && scene.height === height ? scene.layer.cover : null;
+  const things = (scene?.items || []).filter((item) => item.box && item.entry?.kind === "subject" && !item.lettering);
+  // Boxes where there is no map of the things' shapes, and the words' box.
+  const boxes = cover ? [] : things.map((item) => item.box);
+  const words = scene?.lettering?.screenBox || scene?.lettering?.box;
+  if (words) boxes.push(words);
+  const fx = Number.isFinite(plan.fx) ? plan.fx : 0.5, fy = Number.isFinite(plan.fy) ? plan.fy : 0.5;
+  const key = `${width}x${height} ${fx.toFixed(3)},${fy.toFixed(3)} ` + boxes.map((b) => [b.x, b.y, b.w, b.h].map(Math.round).join(",")).join(";");
+  const held = calmMaps.get(plan);
+  if (held?.key === key && held.cover === cover) return held;
+  const cols = CALM.cols, rows = Math.max(2, Math.round(cols * height / width)), aspect = width / height;
+  const cw = width / cols, ch = height / rows;
+  const smooth = (t) => (t = Math.max(0, Math.min(1, t))) * t * (3 - 2 * t);
+  // How far each cell is from the things' shapes, in pixels (a chamfer over the grid).
+  let near = null;
+  if (cover) {
+    near = new Float32Array(cols * rows).fill(1e9);
+    for (let j = 0; j < rows; j++) {
+      for (let i = 0; i < cols; i++) {
+        let on = false;
+        for (let y = Math.floor(j * ch); y < Math.min(height, Math.floor((j + 1) * ch)) && !on; y += 2) {
+          for (let x = Math.floor(i * cw); x < Math.min(width, Math.floor((i + 1) * cw)); x += 2) if (cover[y * width + x] > 100) { on = true; break; }
+        }
+        if (on) near[j * cols + i] = 0;
+      }
+    }
+    const diag = Math.hypot(cw, ch);
+    const relax = (i, j, di, dj, step) => {
+      const a = (j + dj) * cols + i + di;
+      if (i + di >= 0 && i + di < cols && j + dj >= 0 && j + dj < rows && near[a] + step < near[j * cols + i]) near[j * cols + i] = near[a] + step;
+    };
+    for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) { relax(i, j, -1, 0, cw); relax(i, j, 0, -1, ch); relax(i, j, -1, -1, diag); relax(i, j, 1, -1, diag); }
+    for (let j = rows - 1; j >= 0; j--) for (let i = cols - 1; i >= 0; i--) { relax(i, j, 1, 0, cw); relax(i, j, 0, 1, ch); relax(i, j, 1, 1, diag); relax(i, j, -1, 1, diag); }
+  }
+  const band = CALM.band * Math.min(width, height);
+  const map = new Float32Array(cols * rows);
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const u = (i + 0.5) / cols, v = (j + 0.5) / rows, x = u * width, y = v * height;
+      const off = smooth(Math.hypot((u - fx) * aspect, v - fy) / CALM.focus);
+      // With things to look at, the focus between them is half calm; with none, the focus is what there is.
+      let calm = things.length ? 0.5 + 0.5 * off : off;
+      if (near) calm = Math.min(calm, smooth(Math.max(0, near[j * cols + i] - 0.5 * cw) / band));
+      for (const b of boxes) {
+        const dx = Math.max(b.x - x, 0, x - (b.x + b.w)), dy = Math.max(b.y - y, 0, y - (b.y + b.h));
+        calm = Math.min(calm, smooth(Math.hypot(dx, dy) / (CALM.margin * Math.max(b.w, b.h) + 0.03 * width)));
+      }
+      map[j * cols + i] = calm;
+    }
+  }
+  const at = (px, py) => {
+    const gx = Math.max(0, Math.min(cols - 1, px / width * cols - 0.5)), gy = Math.max(0, Math.min(rows - 1, py / height * rows - 0.5));
+    const i0 = Math.floor(gx), j0 = Math.floor(gy), i1 = Math.min(cols - 1, i0 + 1), j1 = Math.min(rows - 1, j0 + 1), tx = gx - i0, ty = gy - j0;
+    const top = map[j0 * cols + i0] + (map[j0 * cols + i1] - map[j0 * cols + i0]) * tx;
+    return top + (map[j1 * cols + i0] + (map[j1 * cols + i1] - map[j1 * cols + i0]) * tx - top) * ty;
+  };
+  /* Which marks to use goes by the things' shapes themselves: off a thing -
+   * the ground just beside it included - a busy run reads as speckle round it,
+   * so there a run is chosen as if well out in the background. */
+  const runsAt = cover && things.length ? (px, py) => {
+    const x = Math.max(0, Math.min(width - 1, px | 0)), y = Math.max(0, Math.min(height - 1, py | 0));
+    return cover[y * width + x] > 100 ? at(px, py) : Math.max(0.8, at(px, py));
+  } : at;
+  const calmMap = { key, cover, cols, rows, map, at, runsAt };
+  calmMaps.set(plan, calmMap);
+  return calmMap;
+}
+// How busy a run is: one stroke is calm; many small strokes in colours apart are a texture (0 .. 2).
+function runTexture(run) {
+  const n = run.strokes.length;
+  if (n <= 1) return 0;
+  const play = run.strokes.reduce((a, s) => a + (Math.abs(s.dc[0]) + Math.abs(s.dc[1]) + Math.abs(s.dc[2])) / 3, 0) / n;
+  return Math.min(2, (n - 1) / 4 + play / 12);
+}
+
 function planStrokeBatch(current, ref, gradient, width, height, radius, rng, hand = null, limit = STROKE_BATCH,
                          tolerance = STROKE_ERROR_TOLERANCE, layer = 0, palette = null) {
   const cell = Math.max(2, Math.round(radius));
@@ -40986,10 +41115,14 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
   const directed = directiveLean(width, height);
   // ...and while the darks or lights are being pushed, the broad brushes take on smaller differences.
   const valued = layer <= 1 && valueDirected() ? 0.7 : 1;
+  // Out in the background a place must be further off before a brush goes back to it, once it is
+  // blocked in (Calm backgrounds): the second brush half as strict there, the fine ones fully.
+  const calm = backgroundCalm(strokePainter.plan, width, height);
+  const calmTolerance = calm && layer >= 1 ? (x, y) => 1 + CALM.tolerance * (layer >= 2 ? 1 : 0.5) * calm.at(x, y) : () => 1;
   const toleranceAt = directed ? (x, y) => {
     const lean = directed(x, y);
-    return valued * tolerance * (lean > 0 ? 1 - 0.5 * lean : 1 - 0.6 * lean);
-  } : () => valued * tolerance;
+    return valued * tolerance * calmTolerance(x, y) * (lean > 0 ? 1 - 0.5 * lean : 1 - 0.6 * lean);
+  } : (x, y) => valued * tolerance * calmTolerance(x, y);
   // How far each cell is from the reference: whether it is still to be painted.
   const cgw = Math.ceil(width / cell), cellError = new Float32Array(cgw * Math.ceil(height / cell));
   // (Summed as whole differences of the three channels, a third taken once per cell.)
@@ -41021,7 +41154,8 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       const st = starts[i], c = colourAt(ref, st.x, st.y), L = 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
       let w = 0;
       for (const r of turn.regions) w = Math.max(w, regionWeight(r, st.x / width, st.y / height, L));
-      if (w < 0.12) starts.splice(i, 1);
+      // (Out in the background, what it asked for is done with the broad brushes alone.)
+      if (w < 0.12 || (layer >= 2 && calm && calm.at(st.x, st.y) > 0.5)) starts.splice(i, 1);
     }
   }
   /* The two finest brushes work mostly at the focus; elsewhere a start
@@ -41047,7 +41181,9 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       // Less fine detail the farther off it is.
       const far = airAt ? 1 - DEPTH_BRUSH.detail * Math.max(0, airAt(starts[i].x, starts[i].y)) : 1;
       const asked = directed ? Math.max(0, directed(starts[i].x, starts[i].y)) : 0;
-      if (rng() > Math.max(floor, w, asked) * far) starts.splice(i, 1);
+      // ...and fewer still out in the background.
+      const quiet = calm ? 1 - CALM.fine * calm.at(starts[i].x, starts[i].y) : 1;
+      if (rng() > Math.max(floor, w, asked) * far * quiet) starts.splice(i, 1);
     }
   }
   /* From what is laid (Planes, and painting from what is laid): nearest the
@@ -41191,10 +41327,12 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       if (anatomyK) [dx, dy] = followAnatomy(paintingAnatomyAt(strokePainter.plan, start.x, start.y), dx, dy, anatomyK);
       const l = Math.hypot(dx, dy) || 1;
       // Finer runs where more detail was asked for, broader where less.
-      const run = pickRun(layer + (directed ? 0.8 * directed(start.x, start.y) : 0), rng, recentRuns, activeDirective()?.marks);
+      // Calm ones, in calm colours, out in the background (Calm backgrounds).
+      const still = calm ? calm.runsAt(start.x, start.y) : 0;
+      const run = pickRun(layer + (directed ? 0.8 * directed(start.x, start.y) : 0), rng, recentRuns, activeDirective()?.marks, still);
       recentRuns.push(run.id); if (recentRuns.length > 3) recentRuns.shift();
       const air = airAt ? airAt(start.x, start.y) : 0;
-      for (const st of placeRun(run, start.x, start.y, dx / l, dy / l, radius * (1 - DEPTH_BRUSH.width * air), colour, rng, guarded, width, height)) {
+      for (const st of placeRun(run, start.x, start.y, dx / l, dy / l, radius * (1 - DEPTH_BRUSH.width * air), colour, rng, guarded, width, height, still)) {
         if (strokes.length >= limit) break;
         strokes.push(st);
       }
@@ -41462,10 +41600,11 @@ const runRank = (run) => (run.kept - 0.8 * run.rejected) / (run.kept + run.rejec
  * just used (a painter does not repeat one mark across a passage). */
 // Runs of thin parallel lines (hatch, cross and what they bred) are not picked: brush-sized they read as glyphs - |||, # - not paint.
 const GLYPH_RUNS = /^(hatch|cross)/;
-function pickRun(layer, rng, recent, favoured = null) {
+function pickRun(layer, rng, recent, favoured = null, calm = 0) {
   const runs = runCatalogue().runs;
+  // (Out in the background a busy run - a scatter of dabs, a fan - gives way to a calm one: calm 0 .. 1.)
   const weights = runs.map((r) => GLYPH_RUNS.test(r.name) ? 0 : Math.exp(2 * runRank(r)) * Math.exp(-((r.size - layer) ** 2) / 1.6) * (recent.includes(r.id) ? 0.25 : 1) *
-    (favoured?.includes(r.name.replace(/′+$/, "")) ? 3 : 1));
+    (favoured?.includes(r.name.replace(/′+$/, "")) ? 3 : 1) * Math.exp(-CALM.runs * calm * runTexture(r)));
   let x = rng() * weights.reduce((a, b) => a + b, 0), k = 0;
   while (k < runs.length - 1 && (x -= weights[k]) > 0) k++;
   return runs[k];
@@ -41473,8 +41612,10 @@ function pickRun(layer, rng, recent, favoured = null) {
 /* A run laid at a place: turned to the way it runs, as big as the brush,
  * mirrored now and then, in colours round its colour - each stroke cut
  * where it would reach a guarded place (lettering, a thing kept for its own brush). */
-function placeRun(run, x0, y0, dx, dy, radius, base, rng, blocked, width, height) {
+function placeRun(run, x0, y0, dx, dy, radius, base, rng, blocked, width, height, calm = 0) {
   const scale = radius * (0.85 + rng() * 0.3), flip = rng() < 0.5 ? -1 : 1, out = [];
+  // Its colours closer together out in the background (calm 0 .. 1).
+  const play = 1 - CALM.jitter * calm;
   for (const st of run.strokes) {
     const points = [];
     for (const [u, v0] of st.pts) {
@@ -41485,7 +41626,7 @@ function placeRun(run, x0, y0, dx, dy, radius, base, rng, blocked, width, height
     if (points.length < 2) continue;
     const stroke = {
       points, width: Math.max(1.2, radius * 2 * st.w * (0.85 + rng() * 0.3)),
-      colour: base.map((c, i) => Math.max(0, Math.min(255, Math.round(c + st.dc[i] + (rng() - 0.5) * 6)))),
+      colour: base.map((c, i) => Math.max(0, Math.min(255, Math.round(c + (st.dc[i] + (rng() - 0.5) * 6) * play)))),
       bristle: rng(), run: run.id,
     };
     if (st.a) stroke.alpha = st.a;
@@ -43880,6 +44021,22 @@ function toneOf(reference) {
   return [Math.round(r / Math.max(1, n)), Math.round(g / Math.max(1, n)), Math.round(b / Math.max(1, n))];
 }
 
+/* What is still the bare toned ground - pixels exactly its colour, between
+ * the first strokes - stained to the reference's area tones (the picture as
+ * a brush a sixth of its size would see it). */
+function restainBareGround(tone, reference, width, height) {
+  if (!vctx || !tone || reference?.length !== width * height * 4 || view.width !== width || view.height !== height) return 0;
+  const img = vctx.getImageData(0, 0, width, height), px = img.data;
+  let area = null, bare = 0;
+  for (let o = 0; o < px.length; o += 4) {
+    if (px[o] !== tone[0] || px[o + 1] !== tone[1] || px[o + 2] !== tone[2]) continue;
+    area ||= intentReference(reference, width, height, Math.min(width, height) / 18);
+    px[o] = area[o]; px[o + 1] = area[o + 1]; px[o + 2] = area[o + 2]; bare++;
+  }
+  if (bare) vctx.putImageData(img, 0, 0);
+  return bare;
+}
+
 function paintTonedGround(reference, width, height) {
   // One colour: the prepared reference's average. A blurred copy already
   // matched the soft areas, so the first brush left them as an unpainted wash.
@@ -44570,15 +44727,24 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
       if (ready.landscape) strokePainter.landscape = ready.landscape;
       // The ground in the prepared reference's own tone, if the quick one was
       // off - unless the sketch is already down: its strokes are corrected,
-      // not wiped.
+      // not wiped. Then the canvas still bare between them is stained in the
+      // colours of its places, so a gap the brushes leave shows the area's
+      // tone, not a speck of the quick one (Calm backgrounds).
+      // (The staining a task of its own, before the first batch.)
       const tone = toneOf(ready.reference);
+      let stained = Promise.resolve();
       if (opening.key === "copy" && !(strokePainter.strokes > 0) && Math.hypot(tone[0] - quickTone[0], tone[1] - quickTone[1], tone[2] - quickTone[2]) > 10) {
         paintTonedGround(ready.reference, width, height);
+      } else {
+        stained = new Promise((resolve) => setTimeout(() => {
+          if (strokePainter.plan === ready.plan) restainBareGround(quickTone, ready.reference, width, height);
+          resolve();
+        }, 0));
       }
       updateWordPaints();
       // A drawn painting's flat colour laid region by region first (Drawn).
       // (After the sketch's last batch: none of it lands on the flats.)
-      const flats = ready.plan.drawn ? sketching.then(() => laydrawnFlats(ready.plan, ready.reference, width, height, () => strokePainter.plan === ready.plan)) : Promise.resolve();
+      const flats = ready.plan.drawn ? stained.then(() => sketching).then(() => laydrawnFlats(ready.plan, ready.reference, width, height, () => strokePainter.plan === ready.plan)) : stained;
       // (A drawn painting has no brush to follow its flats: the ink comes next.)
       return flats.then(() => ready.plan.drawn ? true : paintTowardReference(result, ready.reference, width, height,
         { layer: 0, limit: STROKE_BATCH * 2, prepared: true }))

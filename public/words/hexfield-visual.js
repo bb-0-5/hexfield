@@ -3942,38 +3942,24 @@
   }
 
   /* ── Perspective ───────────────────────────────────────────────────────
-   * The ground made to recede: lines that meet at the vanishing point and
-   * cross-lines that close up toward the horizon (or, isometric, a diamond
-   * grid of parallels). Faint - a floor, furrows, paving, not a diagram. */
+   * The ground made to recede by its value, not by lines: paler and hazier
+   * toward the horizon, deeper at the foot of the picture, so it lies down
+   * and goes back. (Drawn as lines to the vanishing point and cross-lines, it
+   * read as a diagram, and the brushes copied the lines as ruled strokes.) */
   function groundCues(ctx, W, H, view) {
     if (!view?.lines) return;
-    // Only the ground: never over the sky.
-    const top = Math.max(0, view.horizon);
+    // Only the ground: never over the sky. (Isometric has no horizon: the whole picture, top to foot.)
+    const top = view.iso ? 0 : Math.max(0, Math.min(H, view.horizon));
+    if (H - top < 4) return;
+    const k = Math.min(1, view.lines);
+    const shade = ctx.createLinearGradient(0, top, 0, H);
+    shade.addColorStop(0, `rgba(232, 236, 248, ${0.16 * k})`);
+    shade.addColorStop(0.3, "rgba(232, 236, 248, 0)");
+    shade.addColorStop(0.55, "rgba(20, 18, 32, 0)");
+    shade.addColorStop(1, `rgba(20, 18, 32, ${0.26 * k})`);
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(0, top, W, H - top);
-    ctx.clip();
-    ctx.strokeStyle = `rgba(20, 18, 32, ${0.2 * view.lines})`;
-    ctx.lineWidth = Math.max(1, Math.min(W, H) / 240);
-    ctx.beginPath();
-    if (view.iso) {
-      const c = Math.cos(Math.PI / 6), sn = Math.sin(Math.PI / 6), L = W + H * 3, step = Math.max(W, H) / 9;
-      for (let x0 = -L; x0 < W + L; x0 += step) {
-        ctx.moveTo(x0, H); ctx.lineTo(x0 + c * L, H - sn * L);
-        ctx.moveTo(x0, H); ctx.lineTo(x0 - c * L, H - sn * L);
-      }
-    } else {
-      const [vx, vy] = view.vanish;
-      for (let i = -7; i <= 7; i++) {
-        const xb = W / 2 + i * W * 0.16;
-        ctx.moveTo(vx, vy); ctx.lineTo(vx + (xb - vx) * 3, vy + (H - vy) * 3);
-      }
-      for (let k = 1; k <= 8; k++) {
-        const y = vy + (H - vy) * Math.pow(k / 8, 2);
-        ctx.moveTo(0, y); ctx.lineTo(W, y);
-      }
-    }
-    ctx.stroke();
+    ctx.fillStyle = shade;
+    ctx.fillRect(0, top, W, H - top);
     ctx.restore();
   }
 
