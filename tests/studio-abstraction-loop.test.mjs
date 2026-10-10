@@ -86,6 +86,10 @@ assert.ok(processEvents.indexOf(processEvents.find(e=>e.type==='painting'))<
  'The live production canvas must exhibit executed ink BEFORE choosing the winner');
 assert.ok(produced[0].liveExecution?.drawnBeforeSelection,
  'The accepted result must identify real incremental execution, not playback');
+assert.match(produced[0].identity?.root||'',/^vision-[a-z0-9]+$/,
+ 'The first accepted real painting must establish a durable identity');
+assert.equal(produced[0].identity?.paletteBands,9,
+ 'One spatial pigment profile must be measured for all nine districts');
 assert.ok(produced[0].composition?.attempts<=1,
  'Only one composition treaty may be evaluated per candidate');
 assert.ok(produced[0].composition?.decision===null||
@@ -134,6 +138,10 @@ for(let pass=3;pass<=10;pass++){
   assert.ok(produced.at(-1).sources.includes('lettering'),
     'Pass '+pass+' must retain an independent lettering donor');
   assert.equal(produced.at(-1).recipe.parentId,produced.at(-2).recipe.id);
+  assert.equal(produced.at(-1).identity.root,produced[0].identity.root,
+    'One painting must retain its ROOT despite changing style and donors');
+  assert.equal(produced.at(-1).identity.generation,pass,
+    'Identity should age once per globally accepted painting, not per losing trial');
   assert.ok(produced.at(-1).trials.some(t=>t.label.startsWith(
     produced.at(-2).recipe.application+' /')),
     'Each generation should trial retaining its parent application style');
@@ -176,6 +184,15 @@ assert.ok(produced.some(x=>x.metrics.invented.stamps>0),
 assert.ok(new Set(produced.map(x=>x.recipe.markProgram.rootId)).size===1,
   'A self-developing mark process keeps its root identity through ten frames');
 assert.ok(loop.state().globalMemory>=10,'Ten accepted passes must enter the shared memory');
+assert.equal(loop.state().identity.root,produced[0].identity.root);
+assert.equal(loop.state().identity.generation,10);
+assert.ok(loop.state().identity.anchors.length<=2,
+ 'One visual personality may hold at most two physical form carriers');
+assert.ok(produced.every(frame=>frame.identity.paletteBands===9),
+ 'The chromatic identity must be measured from each adopted canvas');
+assert.ok(produced.some(frame=>frame.identity?.forms>0)||
+ loop.state().identity.anchors.length===0,
+ 'When viable live forms exist the painting should inherit actual parent pixels');
 const regional=loop.state().regionMemory;
 assert.equal(regional.cells.length,9,'Nine spatial identities persist independently');
 assert.equal(loop.state().composition?.generation,10,
