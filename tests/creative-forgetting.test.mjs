@@ -96,6 +96,11 @@ assert.ok(paintHistoricalSilhouette(patched,dormant)>0);
 assert.notDeepEqual(pixels(patched),pixels(original),
  'Rediscovery should create REAL new pixels from a historical material imprint');
 outsideSame(patched,original,dormant.box);
+// Outermost recovered silhouette cells must not bleed rounded brush
+// footprints into their neighbouring unmodified regions.
+const edge=blank(),edgeMask={...dormant,mask:'1'+'0'.repeat(95)};
+assert.equal(paintHistoricalSilhouette(edge,edgeMask),1);
+outsideSame(edge,original,dormant.box);
 const ignore=blank(),before=pixels(ignore);
 const rejected=attemptRediscovery({canvas:ignore,identity,memory,
  generation:8,judge:()=>({score:.5}),minImprovement:.01});
