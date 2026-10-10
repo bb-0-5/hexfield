@@ -68,6 +68,8 @@ jobs:
         run: node --experimental-default-type=module tests/live-rule-execution.test.mjs
       - name: Verify 323 autonomous regional KEEP/REWORK and identity-safe local taste memory
         run: node --experimental-default-type=module tests/regional-judgement.test.mjs
+      - name: Verify 324 composition negotiation and precise single-region pixel protection
+        run: node --experimental-default-type=module tests/composition-negotiation.test.mjs
 
       - name: Guard global renderer non-redundancy and evolving-seed genealogy
         run: node --experimental-default-type=module tests/global-nonredundancy.test.mjs

@@ -86,6 +86,13 @@ assert.ok(processEvents.indexOf(processEvents.find(e=>e.type==='painting'))<
  'The live production canvas must exhibit executed ink BEFORE choosing the winner');
 assert.ok(produced[0].liveExecution?.drawnBeforeSelection,
  'The accepted result must identify real incremental execution, not playback');
+assert.ok(produced[0].composition?.attempts<=1,
+ 'Only one composition treaty may be evaluated per candidate');
+assert.ok(produced[0].composition?.decision===null||
+ typeof produced[0].composition.decision?.accepted==='boolean',
+ 'A real neighbour vote must be included in the accepted candidate report');
+assert.ok(processEvents.some(e=>e.type==='composition-vote'),
+ 'Neighbour influence must be exhibited on the live canvas BEFORE global scoring');
 assert.ok(produced[0].regional?.reviews>=1,
  'A full-size candidate should audit its actual local paint before global adoption');
 assert.ok(produced[0].regional.decisions.every(x=>x.verdict==='KEEP'||x.verdict==='REWORK'),
@@ -171,6 +178,12 @@ assert.ok(new Set(produced.map(x=>x.recipe.markProgram.rootId)).size===1,
 assert.ok(loop.state().globalMemory>=10,'Ten accepted passes must enter the shared memory');
 const regional=loop.state().regionMemory;
 assert.equal(regional.cells.length,9,'Nine spatial identities persist independently');
+assert.equal(loop.state().composition?.generation,10,
+ 'The composition influence network advances only on accepted generations');
+assert.ok((loop.state().composition?.history||[]).length<=8,
+ 'Influence history must stay bounded on constrained mobile storage');
+assert.ok(produced.every(p=>p.composition?.attempts<=1),
+ 'One negotiation per accepted full-size candidate at most');
 assert.ok(regional.cells.some(x=>x.age>=1),
  'At least one locality should have accumulated an accepted judgement');
 assert.ok(regional.cells.some(x=>x.kept+x.revised>=1),

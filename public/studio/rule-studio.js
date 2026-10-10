@@ -141,6 +141,8 @@ export function initRuleStudio(){
        progress.phase==='working'?'BRUSHES EXECUTING ON LIVE CANVAS':
        progress.phase==='candidate'?'COMPLETE CANDIDATE / JUDGING':
        progress.phase==='accepted'?'SELECTED / ACTUAL ARTWORK':
+       progress.phase==='composition-vote'?
+          'COMPOSITION / '+(progress.accepted?'VISUAL ALLIANCE ACCEPTED':'NEIGHBOURS VETOED A CHANGE'):
        progress.phase==='region'?'SELF-CRITIQUE / '+
          (progress.verdict==='REWORK'?'REVISING WEAK MARKS':'KEEPING SUCCESSFUL MARKS'):
        progress.phase==='reconsider'?'ERASING A REJECTED IDEA':
@@ -150,6 +152,9 @@ export function initRuleStudio(){
        progress.done+'/'+progress.total+
        (progress.phase==='working'?' painted brush rows / '+
          progress.strokes+' real strokes':' actual strokes & contours')+
+       (progress.phase==='composition-vote'?' / '+progress.from+' → '+
+         progress.to+' / votes '+progress.done+'/'+progress.total+
+         ' / Δ '+Number(progress.vote||0).toFixed(3):'')+
        (progress.phase==='region'?' · '+progress.region+' / '+progress.mark+
          ' / Δ'+Number(progress.improvement||0).toFixed(3):'')+
        (progress.erased?' · '+progress.erased+' discarded regions':'')+
@@ -248,6 +253,9 @@ export function initRuleStudio(){
          attempt:event.attempt});
      }else if(event.type==='regional-decision'){
        live.regionalDecision({painting:event.canvas,decision:event.decision});
+     }else if(event.type==='composition-vote'){
+       live.compositionVote({painting:event.canvas,
+         decision:event.decision});
      }else if(event.type==='candidate-painted'){
        live.completedCandidate({painting:event.canvas,words:event.words,
          attempt:event.attempt});
@@ -295,6 +303,8 @@ export function initRuleStudio(){
        ' / '+sources.join(' + ')+
        (derivation?' / DERIVATION '+derivation.method.toUpperCase()+
          ' / '+Math.round(derivation.retained*100)+'% retained frame':'')+
+       ' / COMPOSITION '+(result.composition?.attempts||0)+' negotiated ('+
+         (result.composition?.accepted||0)+' alliances adopted)'+
        ' / REGIONAL TASTE '+(result.regional?.reviews||0)+' tested ('+
          (result.regional?.revised||0)+' revised, '+
          (result.regional?.kept||0)+' retained)'+
@@ -357,6 +367,7 @@ export function initRuleStudio(){
          (info.objects?.filter(x=>x.stable).length||0)+' stable'+
          ' · '+(info.renderBudget?.fullAvoided||0)+' full candidate render(s) avoided'+
          ' · '+(info.regionMemory?.cells?.length||0)+' local aesthetic memories'+
+         ' · '+(info.composition?.treaties||0)+' composition treaties'+
          (info.dirtyStats?.partial?' · LOCAL / '+
            info.dirtyStats.skippedTiles+' clean tiles kept':' · GLOBAL REPAINT')+
          ' · KEEP or REJECT teaches which lineage to retain.';
