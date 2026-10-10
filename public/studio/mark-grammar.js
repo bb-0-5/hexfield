@@ -16,7 +16,7 @@ export const DERIVED_MARKS=Object.freeze({
   orbit:'Concentric polygonal orbit marks'
 });
 export const ORIGINAL_MARKS=Object.freeze(['dashes','dots','hatch','cutout','carve']);
-export const MARK_PALETTE=Object.freeze([...ORIGINAL_MARKS,...Object.keys(DERIVED_MARKS)]);
+export const MARK_PALETTE=Object.freeze([...ORIGINAL_MARKS,...Object.keys(DERIVED_MARKS),'invented']);
 const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
 const frac=n=>n-Math.floor(n);
 const pi=Math.PI;
