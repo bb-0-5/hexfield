@@ -32,7 +32,11 @@ const recipe=makeRecipe({seed:31,subject:'abstract',primary:'no_curves',mark:'in
 const wordA=fresh(),wordB=fresh();
 const A=paintWordsOnCanvas(wordA,'HEXFIELD',{recipe,seed:31});
 const B=paintWordsOnCanvas(wordB,'HEXFIELD',{recipe,seed:31});
-assert.ok(A.painted&&A.count>300&&A.count<360*220*.3,'Glyphs must occupy a bounded region');
+assert.ok(A.painted&&A.count>900&&A.count<360*220*.3,
+ 'Actual letters must cover enough pixels to be visible in the painting');
+assert.ok(A.fontSize>=18,'CSS Canvas font must not silently reset to 10px');
+assert.match(A.font,/^(?:italic )?8(?:50|900) \d+px /,
+ 'Font shorthand must be weight, size then family, not size then weight');
 assert.deepEqual(A.bounds,B.bounds);
 assert.equal(diff(wordA,wordB).mean,0,'Word deposition must be deterministic');
 assert.ok(diff(wordA,original).fraction>.008,
@@ -66,8 +70,23 @@ assert.doesNotMatch(text,/data-mode="(?:rules|landscape|lettering|imagination)"/
 assert.match(text,/id="ruleModelPromptSlot"/);
 assert.match(text,/id="ruleImagine"/);
 assert.match(text,/id="ruleArtwork"/);
+assert.match(text,/id="ruleHeroStatus"/);
+assert.ok(text.indexOf('<main class="workspace"')<text.indexOf('<aside class="controls"'),
+ 'The visible artwork must precede the configuration in DOM and mobile viewport order');
+assert.ok(text.indexOf('id="ruleArtwork"')<text.indexOf('id="ruleWords"'),
+ 'Show the painting first, with the live editable lettering beside it');
+assert.doesNotMatch(text,/<canvas id="ruleArtwork"[^>]+\shidden\b/,
+ 'The canvas must not be blank or hidden during initial generation');
 assert.match(text,/id="ruleWords"/);
 assert.match(text,/id="ruleUseArchive"/);
+const studio=readFileSync('public/studio/studio-controller.js','utf8');
+const rule=readFileSync('public/studio/rule-studio.js','utf8');
+assert.match(studio,/ruleStudio\?\.autoStart\(\)/,
+ 'Autonomous painting must begin at page load without a button');
+assert.match(rule,/loop\.start\(loopOptions\(\)\)/,
+ 'The painter must execute continuous abstraction, not a one-time poster');
+assert.match(rule,/saved===null\?'HEXFIELD'/,
+ 'New visitors receive visible default typography unless they explicitly clear it');
 const code=readFileSync('public/app.js','utf8');
 assert.match(code,/addEventListener\("click", \(\) => changeSeed\(false\)\)/);
 assert.doesNotMatch(code,/location\.replace\(url\.toString\(\)\)/,
