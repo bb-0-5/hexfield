@@ -148,7 +148,12 @@ export function scoreRegion(canvas,rect,{parent=null,stability=0}={}){
   complexity:+complexity.toFixed(5),
   delta:+variation.toFixed(5),palette:palette.size};
 }
-export function alternativeRegionalMark(recipe,{cycle=0,attempt=0,region}={}){
+export function alternativeRegionalMark(recipe,{cycle=0,attempt=0,
+ region,preferred=null}={}){
+ // When an earlier regional correction has genuinely won, favour its
+ // executed brush family on most visits but periodically explore anew.
+ if(preferred&&preferred in MARKS&&preferred!==recipe?.mark&&
+   (cycle+attempt)%3!==0)return preferred;
  const base=SHAPES.indexOf(recipe?.mark);
  const candidates=SHAPES.filter(mark=>mark!==recipe?.mark&&mark in MARKS);
  return candidates[(Math.imul(cycle+1,7)+Math.imul(attempt+1,5)+
@@ -191,7 +196,9 @@ export function auditRegions({
  const decisions=[];
  for(const region of chosen){
   const remembered=memory.cells?.[region.id]||{};
-  const mark=alternativeRegionalMark(recipe,{cycle,attempt,region});
+  const mark=alternativeRegionalMark(recipe,{
+    cycle,attempt,region,preferred:remembered.mark
+  });
   const criterion={parent,stability:remembered.stability||0};
   const baseline=grade(canvas,region,criterion);
   // The alternate IS executed against the actual full-size mixer source,
