@@ -90,6 +90,8 @@ assert.match(produced[0].identity?.root||'',/^vision-[a-z0-9]+$/,
  'The first accepted real painting must establish a durable identity');
 assert.equal(produced[0].identity?.paletteBands,9,
  'One spatial pigment profile must be measured for all nine districts');
+assert.equal(produced[0].creativeMemory?.root,produced[0].identity?.root,
+ 'Only globally accepted art can establish the creative memory root');
 assert.ok(produced[0].composition?.attempts<=1,
  'Only one composition treaty may be evaluated per candidate');
 assert.ok(produced[0].composition?.decision===null||
@@ -142,6 +144,12 @@ for(let pass=3;pass<=10;pass++){
     'One painting must retain its ROOT despite changing style and donors');
   assert.equal(produced.at(-1).identity.generation,pass,
     'Identity should age once per globally accepted painting, not per losing trial');
+  assert.equal(produced.at(-1).creativeMemory?.root,produced[0].identity.root);
+  assert.ok(produced.at(-1).creativeMemory?.dormant?.length<=4,
+    'Selective forgetting must keep bounded historical form recipes');
+  assert.ok(produced.at(-1).creativeMemory?.events?.every(
+    x=>x.type==='FORGOT'||x.type==='RETURNED'),
+    'Memory actions must be real recorded outcomes, not fabricated captions');
   assert.ok(produced.at(-1).trials.some(t=>t.label.startsWith(
     produced.at(-2).recipe.application+' /')),
     'Each generation should trial retaining its parent application style');
@@ -186,6 +194,10 @@ assert.ok(new Set(produced.map(x=>x.recipe.markProgram.rootId)).size===1,
 assert.ok(loop.state().globalMemory>=10,'Ten accepted passes must enter the shared memory');
 assert.equal(loop.state().identity.root,produced[0].identity.root);
 assert.equal(loop.state().identity.generation,10);
+assert.equal(loop.state().creativeMemory.root,produced[0].identity.root);
+assert.equal(loop.state().creativeMemory.generation,10);
+assert.ok(loop.state().creativeMemory.dormant.length<=4,
+ 'Memory must not grow unbounded as generations accumulate');
 assert.ok(loop.state().identity.anchors.length<=2,
  'One visual personality may hold at most two physical form carriers');
 assert.ok(produced.every(frame=>frame.identity.paletteBands===9),
