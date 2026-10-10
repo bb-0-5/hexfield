@@ -145,8 +145,17 @@ export function createLivingPainting({
   objects=[],dirtyTiles=null,duration=1350}={}){
   stop({finalize:false});
   if(!final?.width)return Promise.resolve({reason:'missing final'});
+  // On the very first auto-generated painting, there is no accepted
+  // parent yet. Construct from the authentic preview currently displayed,
+  // rather than instantly replacing it with a completed full-size picture.
+  let base=parent;
+  if(!base?.getContext){
+   base=document.createElement('canvas');
+   base.width=canvas.width;base.height=canvas.height;
+   base.getContext('2d').drawImage(canvas,0,0);
+  }
   const plan=constructionPlan({width:canvas.width,height:canvas.height,
-   parent,final,trace,wordBounds,objects,dirtyTiles});
+   parent:base,final,trace,wordBounds,objects,dirtyTiles});
   const my=sequence;
   if(reducedMotion()||typeof document!=='undefined'&&document.hidden||
     !plan.total){
@@ -155,7 +164,7 @@ export function createLivingPainting({
    onPhase({...stats});
    return Promise.resolve({reason:'instant',plan});
   }
-  exact(parent||final);
+  exact(base);
   const begin=clock();
   const targetMs=clamp(duration,240,4500);
   return new Promise(resolve=>{
