@@ -7,6 +7,7 @@
 import {applyRules,makeRecipe} from './rule-engine.js';
 import {coupleWordGeometry,chooseGeometryRelation} from './geometry-coupling.js';
 import {validDirtyTiles} from './dirty-tiles.js';
+import {glyphTraits,typeGenome,validTypeGenome} from './type-genome.js';
 const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
 const create=(w,h)=>{const c=document.createElement('canvas');c.width=w;c.height=h;return c;};
 const lum=(data,i)=>(.2126*data[i]+.7152*data[i+1]+.0722*data[i+2])/255;
@@ -83,32 +84,56 @@ function chooseBand(before,w,h,seed){
 }
 function buildMask(text,w,h,bounds,choice){
   const mask=create(w,h),ctx=mask.getContext('2d',{willReadFrequently:true});
-  ctx.fillStyle='#fff';ctx.textBaseline='middle';ctx.textAlign='center';
-  const words=[...text],maxWidth=w*.92;
-  let size=Math.min(bounds.height*.77,w/Math.max(2,words.length*.49));
-  // CSS canvas font shorthand requires "weight SIZE family", not
-  // "SIZE weight family". The old invalid order silently fell back to
-  // 10px sans-serif, making text effectively disappear in the painting.
+  ctx.fillStyle='#fff';ctx.textBaseline='middle';ctx.textAlign='left';
+  const letters=[...text],maxWidth=w*.92;
+  const genome=choice.type;
+  let size=Math.min(bounds.height*.77,w/Math.max(2,letters.length*.49));
   const font=px=>choice.family.face.replace(/900/,
     String(choice.index===1?900:850)+' '+Math.max(10,Math.round(px))+'px');
-  while(size>10){
-    ctx.font=font(size);
-    if(ctx.measureText(text).width*choice.family.width<=maxWidth)break;
-    size*=.92;
+  const metrics=px=>{
+    ctx.font=font(px);
+    const glyphs=letters.map((ch,i)=>{
+      const shape=glyphTraits(genome,ch,i);
+      return {ch,i,shape,advance:ctx.measureText(ch).width*shape.width};
+    });
+    const tracking=px*genome.tracking;
+    return {glyphs,tracking,total:glyphs.reduce((v,g)=>v+g.advance,0)+
+      Math.max(0,glyphs.length-1)*tracking};
+  };
+  let layout=metrics(size);
+  while(size>10&&layout.total>maxWidth){size*=.92;layout=metrics(size);}
+  const scale=Math.min(1,maxWidth/Math.max(1,layout.total)),
+    centerY=bounds.top+bounds.height*.52,
+    left=w*.5-layout.total*scale*.5;
+  const owner=new Int16Array(w).fill(-1),parts=[];
+  let at=0;
+  for(const glyph of layout.glyphs){
+    const x0=left+at*scale,x1=x0+glyph.advance*scale;
+    parts.push({x0,x1,shape:glyph.shape});
+    ctx.save();ctx.translate(x0,centerY);
+    ctx.scale(scale*glyph.shape.width,1);
+    ctx.transform(1,0,glyph.shape.slant,1,0,0);
+    ctx.fillText(glyph.ch,0,0);ctx.restore();
+    at+=glyph.advance+layout.tracking;
   }
-  ctx.font=font(size);
-  const width=ctx.measureText(text).width,scale=Math.min(1,maxWidth/Math.max(1,width));
-  ctx.save();ctx.translate(w*.5,bounds.top+bounds.height*.52);
-  ctx.scale(scale*choice.family.width,1);
-  ctx.transform(1,0,choice.family.slant,1,0,0);
-  ctx.fillText(text,0,0);
-  ctx.restore();
+  // Every letter owns its own top and bottom morphology, including its
+  // true irregular width, bubble, split, slant and stem thickness.
+  // Attribution is a single O(width * letters) preprocessing pass.
+  for(let i=0;i<parts.length;i++){
+    const item=parts[i],lo=Math.max(0,Math.floor(item.x0-size*.10)),
+      hi=Math.min(w,Math.ceil(item.x1+size*.10));
+    for(let x=lo;x<hi;x++)owner[x]=i;
+  }
   const old=ctx.getImageData(0,0,w,h).data;
-  const pixels=new Uint8ClampedArray(w*h),stride=Math.max(2,Math.round(size*.22));
-  const minY=Math.max(0,bounds.top-5),maxY=Math.min(h,bounds.top+bounds.height+6);
+  const pixels=new Uint8ClampedArray(w*h),
+    stride=Math.max(2,Math.round(size*.22));
+  const minY=Math.max(0,bounds.top-8),maxY=Math.min(h,bounds.top+bounds.height+9);
   for(let y=minY;y<maxY;y++){
-    const row=y*w,group=Math.floor((y-bounds.top)/stride),phase=(y-bounds.top)/Math.max(1,bounds.height);
+    const row=y*w,group=Math.floor((y-bounds.top)/stride),
+      phase=(y-bounds.top)/Math.max(1,bounds.height);
     for(let x=0;x<w;x++){
+      const part=owner[x]>=0?parts[owner[x]]:null;
+      const trait=part?.shape;
       let shift=0;
       switch(choice.index){
         case 0:shift=Math.sin((y-bounds.top)/Math.max(2,size)*7)*size*.07;break;
@@ -120,20 +145,36 @@ function buildMask(text,w,h,bounds,choice){
         case 6:shift=((group%3)-1)*size*.08;break;
         default:shift=Math.sin((y-bounds.top)/Math.max(2,size*.24))*size*.023;
       }
-      let sx=Math.round(x-shift);
+      // This is a structural upper/lower split on EACH glyph, not a
+      // uniformly tinted stock-font string.
+      if(trait)shift+=(phase<.48?-1:1)*trait.split*size;
+      const sx=Math.round(x-shift);
       if(sx<0||sx>=w)continue;
       let value=old[(row+sx)*4+3];
-      const expansion=(choice.index===0||choice.index===1&&phase<.5)?Math.max(1,Math.round(size*.025)):0;
-      if(expansion>0)for(let d=1;d<=expansion;d++){
+      const weight=trait?(phase<.48?trait.top:trait.bottom):1;
+      const expansion=trait?
+        Math.max(0,Math.min(7,Math.round(size*(trait.bubble*.28+
+          Math.max(0,weight-1)*.043)))):0;
+      const legacy=(choice.index===0||choice.index===1&&phase<.5)?
+        Math.max(1,Math.round(size*.018)):0;
+      for(let d=1;d<=Math.max(expansion,legacy);d++){
         if(sx+d<w)value=Math.max(value,old[(row+sx+d)*4+3]);
         if(sx-d>=0)value=Math.max(value,old[(row+sx-d)*4+3]);
+        if(d<=expansion&&y+d<h)
+          value=Math.max(value,old[((y+d)*w+sx)*4+3]);
+        if(d<=expansion&&y-d>=0)
+          value=Math.max(value,old[((y-d)*w+sx)*4+3]);
       }
-      if(choice.index===6&&((y+Math.floor(x*.22))%Math.max(4,Math.round(size*.12))===0))value=Math.round(value*.25);
-      if(choice.index===3&&x%Math.max(7,Math.round(size*.42))<size*.043)value=Math.round(value*.10);
+      if(weight<1)value=Math.round(255*Math.pow(value/255,1+(1-weight)*2));
+      if(choice.index===6&&((y+Math.floor(x*.22))%
+        Math.max(4,Math.round(size*.12))===0))value=Math.round(value*.25);
+      if(choice.index===3&&x%Math.max(7,Math.round(size*.42))<size*.043)
+        value=Math.round(value*.10);
       pixels[row+x]=value;
     }
   }
-  return {pixels,size,font:ctx.font};
+  return {pixels,size,font:ctx.font,parts,
+    anatomy:genome.grammar+'/'+genome.root+' / '+genome.generation};
 }
 export function paintWordsOnCanvas(canvas,words,{
   recipe=null,seed=1,iteration=0,sourceCanvas=null,relation=null,dirtyTiles=null
@@ -149,8 +190,9 @@ export function paintWordsOnCanvas(canvas,words,{
   const before=og.getImageData(0,0,w,h).data;
   const signature=recipe?.markProgram?.signature||recipe?.mark||'hybrid';
   const choice=wordApplication(seed,iteration,signature);
+  choice.type=validTypeGenome(recipe?.typeGenome)?recipe.typeGenome:typeGenome(seed);
   const bounds=chooseBand(before,w,h,seed);
-  const {pixels:letters,size,font}=buildMask(text,w,h,bounds,choice);
+  const {pixels:letters,size,font,parts,anatomy}=buildMask(text,w,h,bounds,choice);
   // The original art and the word now push back on one another as geometry.
   // This happens before chromatic deposition, not in an overlay after scoring.
   const selectedRelation=relation||recipe?.wordRelation||
@@ -206,6 +248,7 @@ export function paintWordsOnCanvas(canvas,words,{
   return {painted:true,text,count,chromaticFraction:count?chromatic/count:0,
     bounds:{x:Math.round(w*.04),y:bounds.top,w:Math.round(w*.92),h:bounds.height},
     mark:rule.mark,method:choice.name,face:choice.family.name,fontSize:Math.round(size),font,
+    typeAnatomy:anatomy,glyphs:parts.length,
     palette:layers.map(hex),marks:marks.strokes,interaction:coupled.stats,
     source:'live painted canvas',partial};
 }
