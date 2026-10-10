@@ -47,7 +47,15 @@ export function planDirtyTiles(previous,proposal,{
    after=b.getImageData(0,0,cols,rows).data;
  const stable=objects.filter(x=>x?.age>=3&&x.stability>=.68&&
   x.volatility<.24&&x.votes>-3&&x.bbox);
- const regionCols=Math.min(cols,4),regionRows=Math.min(rows,3);
+ let regionCols=Math.min(cols,4),regionRows=Math.min(rows,3);
+ // Smaller test canvases and mobile preview sizes require fewer tiles.
+ // Never let the planning rectangle exceed the intended sparse budget.
+ while(regionCols*size*regionRows*size>w*h*.18&&
+       (regionCols>1||regionRows>1)){
+   if(regionCols>=regionRows&&regionCols>1)regionCols--;
+   else if(regionRows>1)regionRows--;
+   else regionCols--;
+ }
  let winner=null;
  for(let gy=0;gy<=rows-regionRows;gy++)for(let gx=0;gx<=cols-regionCols;gx++){
   let score=0,protectedCells=0;
