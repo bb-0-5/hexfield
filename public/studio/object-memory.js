@@ -95,9 +95,15 @@ function similarity(a,b){
    0,1);
 }
 export function updateObjectRegistry(registry=[],canvas,{generation=0,
- max=MAX_OBJECTS,priorId=1}={}){
+ max=MAX_OBJECTS,priorId=1,wordBounds=null,relation=null}={}){
  const old=Array.isArray(registry)?registry.slice(0,MAX_OBJECTS):[];
  const fresh=extractVisualObjects(canvas,{max});
+ const contact=found=>{
+   if(!wordBounds)return 0;
+   const bbox={x:wordBounds.x/canvas.width,y:wordBounds.y/canvas.height,
+     w:wordBounds.w/canvas.width,h:wordBounds.h/canvas.height};
+   return rectOverlap(found.bbox,bbox);
+ };
  let nextId=Math.max(1,priorId,
   ...old.map(x=>Number(String(x.id||'').replace(/^o-/,'')||0)+1).filter(Number.isFinite));
  const assigned=new Set(),rows=[];
@@ -117,12 +123,16 @@ export function updateObjectRegistry(registry=[],canvas,{generation=0,
      birth:best.birth??generation,seen:generation,age,
      volatility,stability:clamp(bestScore*.6+(1-volatility)*.4,0,1),
      votes:clamp(best.votes||0,-12,12),
-     relationHistory:Array.isArray(best.relationHistory)?
-       best.relationHistory.slice(-5):[]});
+     wordContacts:contact(found)>.02?(best.wordContacts||0)+1:(best.wordContacts||0),
+     relationHistory:relation&&contact(found)>.02?
+       [...(best.relationHistory||[]),relation].slice(-5):
+       (best.relationHistory||[]).slice(-5)});
   }else{
    const id='o-'+nextId++;
    rows.push({...found,id,rootId:id,birth:generation,seen:generation,
-     age:1,volatility:.5,stability:0,votes:0,relationHistory:[]});
+     age:1,volatility:.5,stability:0,votes:0,
+     wordContacts:contact(found)>.02?1:0,
+     relationHistory:relation&&contact(found)>.02?[relation]:[]});
   }
  }
  // Keep a few missing forms for short-term recognition of returning objects,
