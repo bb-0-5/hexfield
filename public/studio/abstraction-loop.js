@@ -398,12 +398,13 @@ export function createAbstractionLoop({
        if(!await checkpoint('Auditing live painted regions'))return;
        const regional=auditRegions({
          canvas:output,source:mixed.canvas,parent:previous,recipe,
-         cycle,attempt,memory:regionMemory,objects:objects.objects,
+         cycle:regionMemory.generation+1,attempt,memory:regionMemory,objects:objects.objects,
          dirtyTiles:partial?tilePlan.tiles:null,
          // A user-explicit brush lock is a hard formal constraint.
          // Region self-critique must not silently violate it.
          maxReviews:config.lockLaw&&config.mark&&
-           config.mark!=='surprise'?0:mobile?1:2,
+           config.mark!=='surprise'?0:mobile?1:
+           Math.max(1,Math.floor(2/finalists.length)),
          onDecision:(decision,painting)=>process({
            type:'regional-decision',canvas:painting,decision,cycle,attempt
          })
@@ -455,7 +456,8 @@ export function createAbstractionLoop({
      const {canvas:output,recipe,mixed,metrics,assessment,
        golden,held,heritage,threeWay,derivation,composite}=best;
      lastRegionDecisions=best.regional?.decisions||[];
-     regionMemory=updateRegionMemory(regionMemory,lastRegionDecisions,cycle+1);
+     regionMemory=updateRegionMemory(regionMemory,lastRegionDecisions,
+       regionMemory.generation+1);
      saveRegionMemory(regionMemory);
      dirtyStats=best.dirty?{
        partial:true,coverage:best.dirty.coverage,
