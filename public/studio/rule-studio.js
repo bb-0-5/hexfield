@@ -188,6 +188,7 @@ export function initRuleStudio(){
    getParent:()=>current?.canvas||null,
    getParentRecipe:()=>current?.recipe||null,
    getArchive:()=>archiveCanvas,
+   getWords:()=>activeWords(),
    postProcess:(output,recipe,metrics)=>compositeWords(output,recipe,metrics),
    getUploaded:()=>upload,
    onFrame(result){
@@ -521,6 +522,7 @@ export function initRuleStudio(){
  $('ruleWords').addEventListener('input',()=>{
    try{localStorage.setItem(wordKey,activeWords())}catch{}
    clearTimeout(wordTimer);
+   loop.invalidateSources();
    wordTimer=setTimeout(previewWords,170);
  });
  $('ruleUseArchive').addEventListener('click',async()=>{
