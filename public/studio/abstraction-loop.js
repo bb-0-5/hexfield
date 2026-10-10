@@ -3,7 +3,7 @@
  * visual laws, then use the ACTUAL result as the next source image.
  * Explicit start/stop. Never invokes a paid image model automatically.
  */
-import {makeRecipe,mutateRecipe,applyRules,noteLineage,LAWS,MARKS,SUBJECTS} from './rule-engine.js';
+import {makeRecipe,mutateRecipe,applyRules,noteLineage,LAWS,MARKS,SUBJECTS,ruleTaste} from './rule-engine.js';
 import {createSourceBank,mixSources,cloneCanvas} from './source-mixer.js';
 import {evolveSeed,rankNoveltyCandidates,commitCanvas,
   methodSignature,snapshotNoveltyMemory} from './nonredundancy.js';
@@ -85,6 +85,7 @@ export function createAbstractionLoop({
   width=720,height=450,
   getArchive=()=>null,getUploaded=()=>null,getParent=()=>null,
   getParentRecipe=()=>null,
+  postProcess=()=>null,
   onFrame=()=>{},onState=()=>{},onError=()=>{}
 }={}){
  const bank=createSourceBank({width,height,getArchive,getUploaded,getParent});
@@ -190,8 +191,10 @@ export function createAbstractionLoop({
        // supplies the procedure for the following generation.
        const learned=rememberedMarkPrograms();
        const mate=learned.length?learned[(cycle+attempt)%learned.length]:null;
+       const dislike=Number(ruleTaste()['mark:'+inheritedRecipe?.mark])||0;
+       const mutation=attempt===0&&dislike<-.75?1:attempt;
        recipe.markProgram=inheritedRecipe?.markProgram?
-         evolveMarkProgram(inheritedRecipe.markProgram,{seed:candidateSeed,branch:attempt,mate}):
+         evolveMarkProgram(inheritedRecipe.markProgram,{seed:candidateSeed,branch:mutation,mate}):
          newMarkProgram(candidateSeed,recipe.generation);
        // Candidate methods span the full renderer grammar. The painter
        // cannot maximise H by choosing one comfortable mixer forever.
@@ -238,12 +241,15 @@ export function createAbstractionLoop({
        const heritage=paintInheritedIdeas(output,ideas,{
          seed:candidateSeed,cycle,recipe
        });
+       // The word is painted into each competing canvas BEFORE its W/φ/H
+       // analysis, so word-and-image composition belongs to the same artwork.
+       const composite=postProcess(output,recipe,metrics,{cycle,branch:attempt});
        const method=methodSignature({mode:'abstraction',primary:recipe.primary,
          secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework,
          blend:mixed.mode,subject:recipe.subject,
          application:derivation?.method||'new',
          markProgram:metrics.invented.stamps?recipe.markProgram.signature:''});
-       candidates.push({canvas:output,recipe,mixed,metrics,held,heritage,derivation,method});
+       candidates.push({canvas:output,recipe,mixed,metrics,held,heritage,derivation,composite,method});
        if(currentStamp!==stamp)return;
      }
      const evaluated=rankNoveltyCandidates(candidates,{
@@ -271,7 +277,7 @@ export function createAbstractionLoop({
      const best=evolvingMix&&cycle%3===0&&!strictQualified?
        ranked.find(x=>x.mixed.mode===expected)||goal:goal;
      const {canvas:output,recipe,mixed,metrics,assessment,
-       golden,held,heritage,threeWay,derivation}=best;
+       golden,held,heritage,threeWay,derivation,composite}=best;
      const novelty=visualDelta(previous,output);
      const stalled=cycle>2&&(assessment.redundant||novelty<.035);
      const recorded=commitCanvas(output,{mode:'abstraction',method:best.method,
@@ -313,7 +319,7 @@ export function createAbstractionLoop({
          selected:entry===best};
      });
      const result={canvas:output,recipe,cycle:cycle+1,metrics,trials,
-       blend:mixed.mode,derivation,sources:mixed.sources,novelty,stalled,
+       blend:mixed.mode,derivation,composite,sources:mixed.sources,novelty,stalled,
        survival:{held:survived,coverage:held.coverage,
          carried:held.held.length,available:motifEvidence(motifs).length},
        heritage:{...heritage,ancestors:inherited,
@@ -326,6 +332,7 @@ export function createAbstractionLoop({
        id:recipe.id,parentId:recipe.parentId,seed:recipe.seed,
        mark:recipe.mark,law:recipe.primary,blend:mixed.mode,novelty,
        inventedStamps:metrics.invented.stamps,
+       words:composite?.text||'',
        markProgram:metrics.invented.stamps?recipe.markProgram.signature:null,
        markRootId:recipe.markProgram.rootId,
        derivedBy:derivation?.method||'fresh',
