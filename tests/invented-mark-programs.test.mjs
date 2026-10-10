@@ -59,6 +59,7 @@ const paint=(program,mark='invented')=>{
 };
 const A=paint(origin),A2=paint(origin),B=paint(changed),C=paint(hybrid);
 assert.equal(delta(A.image,A2.image),0,'Same program renders the same pixels');
+console.log('DEBUG314',JSON.stringify({a:A.evidence.invented,b:B.evidence.invented,origin:origin.signature,changed:changed.signature,delta:delta(A.image,B.image),rA:A.evidence.trace.marks.length,rB:B.evidence.trace.marks.length,px:[...A.image.getContext('2d').getImageData(30,40,1,1).data],pB:[...B.image.getContext('2d').getImageData(30,40,1,1).data]}));
 assert.ok(delta(A.image,B.image)>0,
   'Mutating procedure structure must change ACTUAL rendered pixels / delta '+delta(A.image,B.image));
 assert.ok(delta(A.image,C.image)>0,
