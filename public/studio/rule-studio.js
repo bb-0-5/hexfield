@@ -78,11 +78,12 @@ export function initRuleStudio(){
    const c=canvasOf(source.width,source.height);
    c.getContext('2d').drawImage(source,0,0);return c;
  };
- function compositeWords(output,recipe,metrics){
+ function compositeWords(output,recipe,metrics,{dirtyTiles=null}={}){
    if(!activeWords())return null;
    const clean=cleanCopy(output);
    const work=paintWordsOnCanvas(output,activeWords(),{
-     recipe,seed:recipe.seed,iteration:recipe.generation,sourceCanvas:clean
+     recipe,seed:recipe.seed,iteration:recipe.generation,sourceCanvas:clean,
+     dirtyTiles
    });
    if(work.painted){metrics.words=work.text;metrics.coupling=work.interaction;}
    return {...work,clean};
@@ -203,7 +204,8 @@ export function initRuleStudio(){
    getParentRecipe:()=>current?.recipe||null,
    getArchive:()=>archiveCanvas,
    getWords:()=>activeWords(),
-   postProcess:(output,recipe,metrics)=>compositeWords(output,recipe,metrics),
+   postProcess:(output,recipe,metrics,{dirtyTiles=null}={})=>
+     compositeWords(output,recipe,metrics,{dirtyTiles}),
    getUploaded:()=>upload,
    onFrame(result){
      const {canvas,recipe,cycle,metrics,blend,sources,novelty,nonredundancy,
