@@ -162,6 +162,17 @@ export function createLivingPainting({
     improvement:decision.improvement,mark:decision.mark};
   onPhase({...stats});
  }
+ // Real neighbourhood vote while candidate pixels are being computed,
+ // never a fake overlay. Copy only the current tested canvas.
+ function compositionVote({painting,decision}={}){
+  if(!painting?.getContext||!decision)return;
+  stop({finalize:false});exact(painting);
+  stats={phase:'composition-vote',done:decision.supporters,
+    total:decision.supporters+decision.opponents,
+    accepted:decision.accepted,from:decision.from,to:decision.to,
+    pigment:decision.coverage,vote:decision.vote,live:true};
+  onPhase({...stats});
+ }
  function completedCandidate({painting,words='',attempt=0}={}){
   if(!painting?.getContext)return;
   stop({finalize:false});exact(painting);
@@ -261,6 +272,6 @@ export function createLivingPainting({
    raf=requestFrame(frame);
   });
  }
- return {preview,work,regionalDecision,completedCandidate,accept,commit,stop,
+ return {preview,work,regionalDecision,compositionVote,completedCandidate,accept,commit,stop,
   getState:()=>({...stats})};
 }
