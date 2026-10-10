@@ -47,8 +47,8 @@ assert.ok(evidence.countersTested>=1,'O must have an enclosed and preserved aper
 assert.ok(evidence.counters>=.75,
  'Inflated bubble O must not collapse its counter to a solid circle');
 const foreign=constructVectorLetters('Bé♥',W,H,band,choice('block'));
-assert.equal(foreign.fallbackGlyphs,1,
- 'Unsupported multilingual letters must have reliable Canvas fallback');
+assert.equal(foreign.fallbackGlyphs,2,
+ 'Non-Latin glyphs must be passed to a real reliable system-font fallback');
 const canvas=()=>{const c=new Canvas(W,H),ctx=c.getContext('2d');
  ctx.fillStyle='#e1d8bc';ctx.fillRect(0,0,W,H);
  ctx.fillStyle='#23475f';ctx.fillRect(5,10,180,160);return c};
