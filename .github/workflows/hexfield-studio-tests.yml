@@ -97,6 +97,9 @@ jobs:
       - name: Verify 334 art-first canvas, graphic coherence and real bubble rim pixels
         run: node --experimental-default-type=module tests/art-direction-reset.test.mjs
 
+      - name: Verify 335 vector alphabet and fully drawn bubble/block glyphs
+        run: node --experimental-default-type=module tests/vector-typefaces.test.mjs
+
       - name: Guard global renderer non-redundancy and evolving-seed genealogy
         run: node --experimental-default-type=module tests/global-nonredundancy.test.mjs
       - name: Verify component-level font anatomy and mutable logo geometry
