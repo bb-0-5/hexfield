@@ -85,7 +85,7 @@ export function initRuleStudio(){
  }catch{}
  try{
   const stored=localStorage.getItem(wordKey);
-  $('ruleWords').value=stored===null?'HEXFIELD':String(stored).slice(0,96);
+  $('ruleWords').value=stored===null?'':String(stored).slice(0,96);
  }catch{$('ruleWords').value='HEXFIELD';}
  // This is a LIVE canvas before any expensive new render begins.
  drawReality($('ruleArtwork'),'abstract',(Date.now()^0x318)>>>0);
