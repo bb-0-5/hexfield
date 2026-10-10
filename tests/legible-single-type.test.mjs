@@ -106,7 +106,7 @@ const html=readFileSync('public/index.html','utf8');
 assert.match(html,/RESEED \/ ART \+ TYPE/);
 assert.doesNotMatch(html,/id="ruleTypeMode"/);
 assert.match(ui,/reseedProfile\(reseedCount\)/);
-assert.match(loop,/wordSafeSources\(bank\.sources\(previous\),!!getWords\(\)\)/);
+assert.match(loop,/wordSafeSources\(bank\.sources\(previous\),true\)/);
 assert.match(loop,/lastClean=composite\?\.clean\|\|null/);
 assert.match(loop,/const scenePlate=composite\?\.clean\|\|output/);
 assert.match(ui,/clean:plate\?\.toDataURL/);
