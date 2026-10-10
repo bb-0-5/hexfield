@@ -95,7 +95,7 @@ export function publishSource(canvas,key,recipe=null){
     return true;
   }catch{return false}
 }
-export function createSourceBank({width=WIDTH,height=HEIGHT,getArchive=()=>null,getUploaded=()=>null,getParent=()=>null}={}){
+export function createSourceBank({width=WIDTH,height=HEIGHT,getArchive=()=>null,getUploaded=()=>null,getParent=()=>null,getWords=()=>''}={}){
   let cached={};let refreshCount=0;
   let landAncestor=null,letterAncestor=null;
   let busy=false;
@@ -131,7 +131,7 @@ export function createSourceBank({width=WIDTH,height=HEIGHT,getArchive=()=>null,
             evolveSeed(seed,refreshCount+1,1,'letter-genome')):
           makeGenome('lettering',evolveSeed(seed,1,1,'letter-origin'));
         try{
-          renderLettering(lettering,{mode:'lettering',seed:seed+53,text:'HEXFIELD',
+          renderLettering(lettering,{mode:'lettering',seed:seed+53,text:String(getWords()||'HEXFIELD').slice(0,24),
             type:'wordmark',style:['geometric','experimental','heavy'][Math.abs(seed)%3],
             genome:nextLetter});
           cached.lettering=lettering;letterAncestor=nextLetter;
