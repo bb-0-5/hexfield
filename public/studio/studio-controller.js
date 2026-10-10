@@ -1036,7 +1036,8 @@ function bind(){
   });
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void syncVotes();});
   imagination=initImagination({getSession:acquireSession,
-    onImage:image=>ruleStudio?.takeImagined(image)});
+    onImage:image=>ruleStudio?.takeImagined(image),
+    onError:message=>{$('ruleStatus').textContent=String(message).slice(0,320)}});
   ruleStudio=initRuleStudio();
   // Model-backed source generation is opt-in and never opens a second view.
   const slot=$('ruleModelPromptSlot');
