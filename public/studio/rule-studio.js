@@ -516,6 +516,44 @@ export function initRuleStudio(){
      status('Previous constrained study restored. REWORK paints its own output as a new reference.');
    };image.src=restored.image;
  }
+ $('ruleWords').addEventListener('input',()=>{
+   try{localStorage.setItem(wordKey,activeWords())}catch{}
+   clearTimeout(wordTimer);
+   wordTimer=setTimeout(previewWords,170);
+ });
+ $('ruleUseArchive').addEventListener('click',async()=>{
+   try{
+     const image=await readArchive();
+     if(!image){status('No experimental reference yet. Open EXPERIMENTAL ENGINE and make a field.');return;}
+     loop.pause();
+     $('ruleReference').value='archive';
+     const nextSeed=evolveSeed(current?.recipe?.seed||1,(current?.recipe?.generation||0)+1,0,'archive-handoff');
+     const recipe=makeRecipe({...selections(),seed:nextSeed,subject:'abstract'});
+     present(recipe,image,false);
+     status('Experimental image imported into RULES; now evolve this painting with the other simulators.');
+   }catch(error){status('Experimental reference unavailable: '+safe(error?.message));}
+ });
+ const frameHost=$('archiveDockFrame'),dock=$('archiveDock');
+ $('archiveToggle').addEventListener('click',()=>{
+   dock.hidden=false;
+   if(!frameHost.querySelector('iframe')){
+     const frame=document.createElement('iframe');
+     frame.src='/legacy.html?embedded=1';
+     frame.title='Hexfield experimental engine';
+     frame.loading='eager';
+     frameHost.append(frame);
+   }
+   dock.scrollIntoView({block:'start',behavior:'smooth'});
+ });
+ $('archiveClose').addEventListener('click',()=>{
+   dock.hidden=true;
+   // Prevent two invisible CPU-intensive engines competing on phones.
+   frameHost.replaceChildren();
+   latestFrame();
+ });
+ window.addEventListener('storage',event=>{
+   if(event.key===CROSS_STUDIO_KEYS.archive)latestFrame();
+ });
  gallery();
  return {
    show(){if(!current)status('Choose visual laws, or start continuous reabstraction of every available renderer.');},
