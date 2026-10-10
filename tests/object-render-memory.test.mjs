@@ -71,6 +71,13 @@ const moved=updateObjectRegistry(registry.objects,scene(3),{
 });
 assert.ok(moved.matched>=1,"Slight drift must not reset every object\'s identity");
 assert.ok(moved.objects.some(o=>beforeMove.includes(o.id)));
+const contacted=updateObjectRegistry(moved.objects,scene(3),{
+ generation:7,priorId:moved.nextId,
+ wordBounds:{x:58,y:38,w:185,h:125},relation:'graft'
+});
+assert.ok(contacted.objects.some(o=>o.wordContacts>0&&
+ o.relationHistory.includes('graft')),
+ 'Physical word/shape intersection must be remembered with the form');
 assert.ok(moved.objects.every(o=>o.area>0&&o.area<.62));
 const proposals=[
  {id:0,preflight:{score:.86,agreement:true,golden:{qualifies:true}}},
