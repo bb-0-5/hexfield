@@ -226,7 +226,13 @@ if(stage&&raw&&mount){
  }
  new MutationObserver(()=>{
    const rev=raw.dataset.paintRevision||'';
-   if(rev!==observedRevision){observedRevision=rev;schedule();}
+   if(rev!==observedRevision){
+     observedRevision=rev;
+     // Expose the newly finished experimental field to the same-origin
+     // RULES workspace immediately, before optional constrained rework.
+     if(rev)publishSource(raw,'archive',window.__hexfield?.getCurrent?.()?.recipe||null);
+     schedule();
+   }
  }).observe(raw,{attributes:true,attributeFilter:['data-paint-revision','width','height']});
  for(const id of ['go','again','perturb','reseedNow','perturbNow'])
    $(id)?.addEventListener('click',schedule);
