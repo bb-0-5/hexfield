@@ -60,9 +60,12 @@ function fromImage(img,w=960,h=600){
  g.drawImage(img,(w-dw)/2,(h-dh)/2,dw,dh);return c;
 }
 function thumbnail(canvas){const out=canvasOf(248,156);out.getContext('2d').drawImage(canvas,0,0,248,156);return out.toDataURL('image/webp',.68);}
-function persistCanvas(canvas,recipe,judged){
+function persistCanvas(canvas,recipe,judged,clean=null){
  const small=canvasOf(720,450);small.getContext('2d').drawImage(canvas,0,0,720,450);
- store(CURRENT,{image:small.toDataURL('image/webp',.73),recipe,judged});
+ const plate=clean?.getContext?canvasOf(720,450):null;
+ if(plate)plate.getContext('2d').drawImage(clean,0,0,720,450);
+ store(CURRENT,{image:small.toDataURL('image/webp',.73),
+   clean:plate?.toDataURL('image/webp',.76)||null,recipe,judged});
 }
 export function initRuleStudio(){
  optionMarkup();
@@ -71,6 +74,11 @@ export function initRuleStudio(){
  const context=$('ruleArtwork').getContext('2d');
  const wordKey='hexfield.rule-words.v1';
  const purposeKey='hexfield.design-purpose.331';
+ const typeModeKey='hexfield.type-mode.332';
+ try{
+  const mode=localStorage.getItem(typeModeKey);
+  if(['auto','bubble','block'].includes(mode))$('ruleTypeMode').value=mode;
+ }catch{}
  try{
   const p=localStorage.getItem(purposeKey);
   if(DESIGN_PURPOSES.includes(p))$('rulePurpose').value=p;
@@ -164,7 +172,7 @@ export function initRuleStudio(){
    current.judged=false;
    $('ruleKeep').disabled=false;$('ruleReject').disabled=false;
    publishSource(output,'rules',current.recipe);
-   persistCanvas(output,current.recipe,current.judged);
+   persistCanvas(output,current.recipe,current.judged,unlettered);
  }
  function latestFrame(){
    void readArchive().then(image=>{
@@ -275,6 +283,7 @@ export function initRuleStudio(){
  }
  function loopOptions(){
    return {purpose:$('rulePurpose').value,
+     typeMode:$('ruleTypeMode').value,
      speed:Number($('ruleLoopSpeed').value)||3000,
      style:styleId,autoStyle:true,
      abstraction:$('ruleAbstractionLevel').value,
@@ -287,7 +296,7 @@ export function initRuleStudio(){
  }
  const loop=createAbstractionLoop({
    width:960,height:600,
-   getParent:()=>current?.canvas||null,
+   getParent:()=>unlettered||current?.canvas||null,
    getParentRecipe:()=>current?.recipe||null,
    getArchive:()=>archiveCanvas,
    getWords:()=>activeWords(),
@@ -432,7 +441,7 @@ export function initRuleStudio(){
        (dirty?.partial?' · '+dirty.skippedTiles+
          ' clean tiles skipped ('+Math.round((1-dirty.coverage)*100)+
          '% surface conserved).':'.'));
-     if(cycle%4===0){persistCanvas(canvas,recipe,false);publishSource(canvas,'rules',recipe);}
+     if(cycle%4===0){persistCanvas(canvas,recipe,false,unlettered);publishSource(canvas,'rules',recipe);}
    },
    onState(info){
      $('ruleLoopStart').disabled=info.running;
@@ -502,7 +511,8 @@ export function initRuleStudio(){
      current?.recipe?.purpose===recipe.purpose&&current.recipe.designGenome?
        current.recipe.designGenome:newDesignGenome(recipe.purpose,recipe.seed);
    if(!recipe.typeGenome)recipe.typeGenome=
-     current?.recipe?.typeGenome||typeGenome(recipe.seed);
+     current?.recipe?.typeGenome||typeGenome(recipe.seed,
+       $('ruleTypeMode').value==='auto'?null:$('ruleTypeMode').value);
    if(!source)throw Error('No input picture to constrain');
    const before=current?.canvas||null,
      target=prepared?.canvas||canvasOf();
@@ -594,7 +604,7 @@ export function initRuleStudio(){
      '% new against this studio, '+(W.globalNovelty*100).toFixed(1)+
      '% new globally, complexity '+(W.complexity*100).toFixed(1)+'%.'+
      (W.redundant?' Repeated image: try a new law.':''));
-   noteLineage(recipe);persistCanvas(target,recipe,false);
+   noteLineage(recipe);persistCanvas(target,recipe,false,unlettered);
    publishSource(target,'rules',recipe);
    return current;
  }
@@ -684,7 +694,8 @@ export function initRuleStudio(){
      const fixedSeed=evolveSeed(styleSeed,1,1,'comparable-style-327');
      const recipe=styleRecipe({style:styleId,abstraction:strength,
        seed:fixedSeed,subject:styleSubject,generation:styleGeneration});
-     recipe.typeGenome=current?.recipe?.typeGenome||typeGenome(fixedSeed);
+     recipe.typeGenome=current?.recipe?.typeGenome||typeGenome(fixedSeed,
+       $('ruleTypeMode').value==='auto'?null:$('ruleTypeMode').value);
      recipe.purpose=$('rulePurpose').value;
      recipe.designGenome=current?.recipe?.purpose===recipe.purpose?
        current?.recipe?.designGenome||newDesignGenome(recipe.purpose,fixedSeed):
@@ -800,7 +811,7 @@ export function initRuleStudio(){
    }
    current.judged=true;
    $('ruleKeep').disabled=true;$('ruleReject').disabled=true;
-   persistCanvas(current.canvas,current.recipe,true);
+   persistCanvas(current.canvas,current.recipe,true,unlettered);
    publishSource(current.canvas,'rules',current.recipe);
    if(liked){
      const rows=read(GALLERY)||[];
@@ -845,7 +856,7 @@ export function initRuleStudio(){
  $('ruleLoopStop').addEventListener('click',()=>{
    if(loop.isRunning()){
      manuallyPaused=true;loop.pause();
-     if(current){persistCanvas(current.canvas,current.recipe,current.judged);
+     if(current){persistCanvas(current.canvas,current.recipe,current.judged,unlettered);
        publishSource(current.canvas,'rules',current.recipe);}
    }else{manuallyPaused=false;loop.start(loopOptions());}
  });
@@ -944,7 +955,7 @@ export function initRuleStudio(){
      await Promise.race([restoreReady,new Promise(resolve=>setTimeout(resolve,900))]);
      if(!manuallyPaused)loop.start(loopOptions());
    },
-   hide(){loop.pause();live.stop({finalize:true});if(current){persistCanvas(current.canvas,current.recipe,current.judged);
+   hide(){loop.pause();live.stop({finalize:true});if(current){persistCanvas(current.canvas,current.recipe,current.judged,unlettered);
      publishSource(current.canvas,'rules',current.recipe);}},
    paintFresh,hasWork:()=>!!current,
    async takeImagined(imageUrl){
