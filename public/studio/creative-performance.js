@@ -32,16 +32,22 @@ export function performancePlan({kind='logo',trials=[],anatomy=null,trace=null,r
   }));
  const rule=recipe?.anatomy?.rules?.[0]||recipe?.genome?.anatomy?.rules?.[0]||
    (recipe?.primary?{target:recipe.primary,operation:recipe.mark}:null);
- const theme=rule?(safe(rule.target)+' → '+safe(rule.operation)):'new form';
+ const markProgram=trace?.program||null;
+ const invented=markProgram?markProgram.sources.join(' × ')+' → '+
+   markProgram.operations.map(x=>x.type).join(' + '):null;
+ const theme=invented?'INVENT / '+safe(invented,120):
+   rule?(safe(rule.target)+' → '+safe(rule.operation)):'new form';
  return {
    kind:kind==='logo'?'logo':'rule',
    tests:decisions,
    parts,
-   marks,survivors,ideas,tradeoff:heritage?.tradeoff||null,
+   marks,survivors,ideas,markProgram,
+   tradeoff:heritage?.tradeoff||null,
    phaseLabels:[
      {key:'remember',label:'REMEMBER / the previous work'},
      ...(ideas.length?[{key:'inherit',label:'RECONSTRUCT / same shape, different material'}]:[]),
      ...decisions.map((d,i)=>({key:'test-'+i,label:d.title+' · '+d.detail})),
+     ...(invented?[{key:'invent',label:'INVENT / compose real gestures · '+safe(invented)}]:[]),
      {key:'undo',label:'REMOVE / '+theme},
      {key:'construct',label:'REMAKE / '+theme},
      {key:'adopt',label:'BECOME / the surviving idea'}
@@ -248,7 +254,9 @@ export function createCreativePerformance({host,canvas,name='theatre',statusElem
          const count=Math.ceil(assembly*plan.marks.length);
          for(let i=0;i<count;i++)drawMark(ctx,plan.marks[i]);
          ctx.save();ctx.globalAlpha=assembly*.45;fit(data.final,1);ctx.restore();
-         label('04 / MAKE EACH MARK',plan.ideas.length?
+         label(plan.markProgram?'04 / INVENTED PROCEDURE':'04 / MAKE EACH MARK',
+           plan.markProgram?plan.method+' · '+count+' executed marks':
+           plan.ideas.length?
            'H / '+plan.ideas.map(x=>x.was+' → '+x.material).join(', ')+
            ' / inherited contour, new material · '+count+' real marks':
            plan.method+' · '+count+' / '+plan.marks.length+' recorded marks');
