@@ -19,27 +19,13 @@
     <header class="masthead">
       <a class="brand" href="/" aria-label="Hexfield Studio home"><span class="brand-symbol" aria-hidden="true">✳</span> HEX<span>FIELD</span></a>
       <div class="top-description">AN ARTIFICIAL STUDIO <span class="top-separator">/</span> IMAGINING NEW WORK</div>
-      <button type="button" id="archiveToggle" class="archive-link" title="Open the experimental engine inside this studio">EXPERIMENTAL ENGINE ↗</button>
+      <span class="studio-unified-tag">ONE CANVAS · ALL PROCESSES</span>
     </header>
     <div class="product-frame">
       <aside class="controls" aria-label="Studio controls">
-        <p class="eyebrow">STUDIO / 314</p>
+        <p class="eyebrow">STUDIO / 315</p>
         <h1>Make something<br><em>worth keeping.</em></h1>
         <p class="intro">A painter that can imagine unfamiliar places and techniques. Your criticism changes what it attempts next.</p>
-        <fieldset class="mode-switch" aria-label="Unified studio canvas and optional simulators">
-          <legend class="small-label">01 / SHARED CANVAS</legend>
-          <div class="segment unified-mode-switch">
-            <button class="mode-option active" type="button" data-mode="rules" aria-pressed="true">CANVAS</button>
-            <details class="advanced-configuration other-sims">
-              <summary>OTHER SIMULATORS / OPTIONAL</summary>
-              <div class="other-sims-buttons">
-                <button class="mode-option" type="button" data-mode="imagination" aria-pressed="false">IMAGINE</button>
-                <button class="mode-option" type="button" data-mode="landscape" aria-pressed="false">PROCEDURAL</button>
-                <button class="mode-option" type="button" data-mode="lettering" aria-pressed="false">LETTER ANATOMY</button>
-              </div>
-            </details>
-          </div>
-        </fieldset>
         <section class="phi-taste-panel" aria-label="Two golden-ratio constraints on how Hexfield evaluates its art">
           <details id="phiTasteDetails">
             <summary>φ × φ / GOLDEN PROPORTION TASTE</summary>
@@ -60,12 +46,17 @@
           <div class="unified-studio-input">
             <label for="ruleWords">WORDS ON THIS PAINTING / OPTIONAL</label>
             <input id="ruleWords" type="text" maxlength="48" placeholder="Write directly into the evolving canvas" spellcheck="false" autocomplete="off">
-            <p id="ruleWordsStatus" class="control-help" aria-live="polite">Letters are made from the same procedural marks as the painting.</p>
-            <button type="button" id="ruleUseArchive" class="ghost-button">↳ USE EXPERIMENTAL FRAME AS REFERENCE</button>
+            <p id="ruleWordsStatus" class="control-help" aria-live="polite">Words share pigment and movement with the picture. The painter chooses their lettering.</p>
           </div>
-          <p class="artist-autonomy-note">The painter chooses its subject, drawing laws, pigments and techniques automatically. You can intervene whenever you want.</p>
+          <p class="artist-autonomy-note">The mark process, lettering and source images evolve together. Only type words or judge the result.</p>
           <details class="advanced-configuration" id="ruleAdvanced">
-            <summary>OPTIONAL / CHOOSE A SUBJECT OR OVERRIDE ITS RULES</summary>
+            <summary>OPTIONAL / SOURCES &amp; FORMAL RULES</summary>
+            <p class="control-help">Terrain, procedural lettering, previous generations, archive images and optional imagined images feed this ONE canvas automatically.</p>
+            <button type="button" id="ruleUseArchive" class="ghost-button">USE LAST EXPERIMENTAL PAINTING ↗</button>
+            <a class="source-lab-link" href="/legacy.html" target="_blank" rel="noopener">Optional / open historical source lab ↗</a>
+            <div id="ruleModelPromptSlot" class="model-prompt-slot"></div>
+            <button type="button" id="ruleImagine" class="ghost-button">IMAGINE SOURCE / MODEL REQUEST ↗</button>
+            <p class="control-help">IMAGINE uses a limited cloud-model allowance only if pressed, then integrates its output into this painting.</p>
           <label for="ruleSubject">REALITY ANCHOR / SUBJECT</label>
           <select id="ruleSubject"></select>
           <label for="rulePrimary">PRIMARY LAW / MUST OBEY</label>
@@ -88,10 +79,13 @@
           <input type="file" id="ruleFile" accept="image/*">
           <p class="control-help">Rules are enforced by a local canvas painter. No curves means no curved marks; negative space erases objects. Your output can become the next input.</p>
           </details>
-          <button type="button" class="action-generate" id="rulePaint">PAINT UNDER THESE LAWS ↗</button>
+          <details class="advanced-configuration"><summary>OPTIONAL / MANUAL PAINT &amp; SINGLE PASS</summary>
+            <button type="button" class="action-generate" id="rulePaint">PAINT UNDER THESE LAWS ↗</button>
+            <button type="button" id="ruleLoopOnce" class="ghost-button">ONE MORE PASS</button>
+          </details>
           <section class="abstraction-control" aria-label="Continuous recursive abstraction">
-            <p class="small-label">CONTINUOUS ABSTRACTION / ALL RENDERERS</p>
-            <p class="control-help">Combine the live canvas, geometric reality, procedural landscapes, evolving letters, archived fields and saved AI images. Every result becomes the next reference. No automatic cloud AI requests.</p>
+            <p class="small-label">THE PAINTING / ONE SURFACE</p>
+            <p class="control-help">Shape, ink, words and remembered forms develop together. KEEP / REJECT steers what survives.</p>
             <details class="advanced-configuration" id="ruleLoopAdvanced">
               <summary>OPTIONAL / CHANGE SPEED OR OVERRIDE THE MIXER</summary>
             <label for="ruleMixMode">HOW TO COMBINE RENDERERS</label>
@@ -112,9 +106,8 @@
             <label class="rule-inline"><input id="ruleLockLaw" type="checkbox"> Hold selected law / marks; evolve everything else</label>
             </details>
             <div class="rule-loop-buttons">
-              <button type="button" id="ruleLoopStart" class="action-generate">▶ KEEP ABSTRACTING</button>
+              <button type="button" id="ruleLoopStart" class="action-generate">▶ PAINT &amp; EVOLVE</button>
               <button type="button" id="ruleLoopStop" class="ghost-button" disabled>Ⅱ PAUSE</button>
-              <button type="button" id="ruleLoopOnce" class="ghost-button">ONE MORE PASS</button>
             </div>
             <p id="ruleLoopStatus" class="model-budget" role="status" aria-live="polite">Ready. Start to combine all available renderers into an evolving picture.</p>
             <p id="ruleSurvivors" class="surviving-ideas" aria-live="polite">SURVIVING IDEAS / Found shapes will linger across generations, with new ones arriving as others fade.</p>
@@ -239,13 +232,6 @@
         <div class="studio-principle"><span>OUR RULE</span><p>A real painting needs a new visual idea, not another variation of the same picture.</p></div>
       </aside>
       <main class="workspace" aria-label="Artwork and feedback">
-        <section id="archiveDock" class="archive-dock" hidden aria-label="Embedded experimental engine">
-          <div class="archive-dock-header"><strong>EXPERIMENTAL / LIVE REFERENCE</strong>
-            <button id="archiveClose" type="button" class="ghost-button">CLOSE ↗</button></div>
-          <p>Make an experimental field here, then choose “USE EXPERIMENTAL FRAME” to paint with it in the Rule Studio.</p>
-          <div id="archiveDockFrame"></div>
-          <a href="/legacy.html" target="_blank" rel="noopener">Open separately if your device needs more room ↗</a>
-        </section>
         <section id="ruleWorkspace" aria-label="Executable rule-bound paintings">
           <div class="canvas-heading"><div><span class="status-orb"></span><span class="canvas-heading-text">RULE STUDIO / LAWS BEFORE STYLE</span></div><span class="work-number">REALITY → CONSTRAINT → REWORK</span></div>
           <div class="rule-frame">
@@ -269,9 +255,11 @@
           <button type="button" class="ghost-button" id="ruleSave" disabled>EXPORT RULE-BOUND PNG ↓</button>
           <div class="au-print-cta"><button type="button" data-au-print="rules" class="ghost-button">PRINT THIS WITH AN AUSTRALIAN PRINTER ↗</button>
             <p>Direct manufacturer checkout. Hexfield takes no money, orders or delivery details.</p></div>
+          <details class="advanced-configuration"><summary>SHOW CREATIVE HISTORY / SURVIVING FORMS</summary>
           <h2 class="rule-gallery-heading">Continuous rework lineage</h2>
           <div id="ruleLoopHistory" class="rule-loop-history" aria-label="The last ten generations"></div>
           <h2 class="rule-gallery-heading">Kept experiments &amp; descendants</h2><div id="ruleGallery" class="rule-gallery"></div>
+          </details>
         </section>
         <section id="imaginationWorkspace" class="imaginary-workspace" aria-label="Visual imagination studio" hidden>
           <div class="canvas-heading"><div><span class="status-orb"></span><span class="canvas-heading-text">THE ARTIST'S IMAGINATION / VISUAL MODEL</span></div><span class="work-number">ORIGINAL WORK · NOT A TEMPLATE</span></div>
