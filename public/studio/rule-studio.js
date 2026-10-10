@@ -199,7 +199,7 @@ export function initRuleStudio(){
    getUploaded:()=>upload,
    onFrame(result){
      const {canvas,recipe,cycle,metrics,blend,sources,novelty,nonredundancy,
-       survival,heritage,trials,derivation}=result;
+       survival,heritage,trials,derivation,objectMemory,renderBudget}=result;
      const before=current?.canvas||null;
      lastOrigin='loop';
      context.clearRect(0,0,960,600);context.drawImage(canvas,0,0,960,600);
@@ -232,6 +232,10 @@ export function initRuleStudio(){
        ' / '+sources.join(' + ')+
        (derivation?' / DERIVATION '+derivation.method.toUpperCase()+
          ' / '+Math.round(derivation.retained*100)+'% retained frame':'')+
+       ' / MEMORY '+(objectMemory?.count||0)+' forms ('+
+         (objectMemory?.stable||0)+' stable, '+(objectMemory?.reused||0)+' reused)'+
+       ' / FULL '+(renderBudget?.full||0)+' from '+(renderBudget?.predicted||0)+
+       ' cheap trials; saved '+(renderBudget?.fullAvoided||0)+' full passes'+
        ' / visual change '+(novelty*100).toFixed(1)+
        '% / '+(survival?.carried||0)+' original-pixel islands / '+
        (heritage?.drawn?.length||0)+' reconstructed shape identities'+
@@ -245,7 +249,9 @@ export function initRuleStudio(){
        (heritage?.living?.length||0)+' reconstructable geometry genes / '+
        'W '+Math.round((heritage?.tradeoff?.W||0)*100)+
        ' φ '+Math.round((heritage?.tradeoff?.phi||0)*100)+
-       ' H '+Math.round((heritage?.tradeoff?.H||0)*100)+'.');
+       ' H '+Math.round((heritage?.tradeoff?.H||0)*100)+
+       ' · '+(objectMemory?.matched||0)+' recognized shapes'+
+       ' · '+(renderBudget?.fullAvoided||0)+' full render(s) skipped.');
      if(cycle%4===0){persistCanvas(canvas,recipe,false);publishSource(canvas,'rules',recipe);}
    },
    onState(info){
@@ -263,6 +269,9 @@ export function initRuleStudio(){
          (genomes.length?' / '+genomes.map(g=>
            (g.recalled?'RETURNED IDEA '+g.recalled+'× ':'')+
            g.name+' #'+g.generation+' '+g.material).join(' · '):'')+
+         ' · '+(info.objects?.length||0)+' identifiable regions · '+
+         (info.objects?.filter(x=>x.stable).length||0)+' stable'+
+         ' · '+(info.renderBudget?.fullAvoided||0)+' full candidate render(s) avoided'+
          ' · KEEP or REJECT teaches which lineage to retain.';
      }
      const sources=info.sourceNames?.length?info.sourceNames.join(' + '):'not rendered yet';
