@@ -85,13 +85,17 @@ function buildMask(text,w,h,bounds,choice){
   ctx.fillStyle='#fff';ctx.textBaseline='middle';ctx.textAlign='center';
   const words=[...text],maxWidth=w*.92;
   let size=Math.min(bounds.height*.77,w/Math.max(2,words.length*.49));
-  const font=()=>choice.family.face.replace(/900/,String(choice.index===1?900:850));
+  // CSS canvas font shorthand requires "weight SIZE family", not
+  // "SIZE weight family". The old invalid order silently fell back to
+  // 10px sans-serif, making text effectively disappear in the painting.
+  const font=px=>choice.family.face.replace(/900/,
+    String(choice.index===1?900:850)+' '+Math.max(10,Math.round(px))+'px');
   while(size>10){
-    ctx.font=Math.round(size)+'px '+font();
+    ctx.font=font(size);
     if(ctx.measureText(text).width*choice.family.width<=maxWidth)break;
     size*=.92;
   }
-  ctx.font=Math.max(10,Math.round(size))+'px '+font();
+  ctx.font=font(size);
   const width=ctx.measureText(text).width,scale=Math.min(1,maxWidth/Math.max(1,width));
   ctx.save();ctx.translate(w*.5,bounds.top+bounds.height*.52);
   ctx.scale(scale*choice.family.width,1);
@@ -128,7 +132,7 @@ function buildMask(text,w,h,bounds,choice){
       pixels[row+x]=value;
     }
   }
-  return {pixels,size};
+  return {pixels,size,font:ctx.font};
 }
 export function paintWordsOnCanvas(canvas,words,{
   recipe=null,seed=1,iteration=0,sourceCanvas=null,relation=null
@@ -144,7 +148,7 @@ export function paintWordsOnCanvas(canvas,words,{
   const signature=recipe?.markProgram?.signature||recipe?.mark||'hybrid';
   const choice=wordApplication(seed,iteration,signature);
   const bounds=chooseBand(before,w,h,seed);
-  const {pixels:letters,size}=buildMask(text,w,h,bounds,choice);
+  const {pixels:letters,size,font}=buildMask(text,w,h,bounds,choice);
   // The original art and the word now push back on one another as geometry.
   // This happens before chromatic deposition, not in an overlay after scoring.
   const selectedRelation=relation||recipe?.wordRelation||
@@ -193,7 +197,7 @@ export function paintWordsOnCanvas(canvas,words,{
   canvas.getContext('2d').putImageData(out,0,0);
   return {painted:true,text,count,chromaticFraction:count?chromatic/count:0,
     bounds:{x:Math.round(w*.04),y:bounds.top,w:Math.round(w*.92),h:bounds.height},
-    mark:rule.mark,method:choice.name,face:choice.family.name,
+    mark:rule.mark,method:choice.name,face:choice.family.name,fontSize:Math.round(size),font,
     palette:layers.map(hex),marks:marks.strokes,interaction:coupled.stats,
     source:'live painted canvas'};
 }
