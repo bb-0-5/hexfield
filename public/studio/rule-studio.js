@@ -198,7 +198,6 @@ export function initRuleStudio(){
      current={recipe,canvas,judged:false,metrics};
      unlettered=result.composite?.clean||null;
      parentCanvas=canvas;
-     unlettered=cleanCopy(canvas);
      displayPhi(canvas);
      const duration=Math.min(2450,Math.max(1050,
        (Number($('ruleLoopSpeed').value)||3000)-260));
@@ -508,6 +507,7 @@ export function initRuleStudio(){
      context.drawImage(canvas,0,0);
      current={recipe:restored.recipe,canvas,judged:!!restored.judged,metrics:null};
      parentCanvas=canvas;
+     unlettered=cleanCopy(canvas);
      $('ruleArtwork').hidden=false;$('ruleEmpty').hidden=true;
      $('ruleKeep').disabled=!!current.judged;$('ruleReject').disabled=!!current.judged;
      $('ruleReworkBtn').disabled=false;$('ruleSave').disabled=false;
