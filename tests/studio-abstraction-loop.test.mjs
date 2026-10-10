@@ -86,6 +86,12 @@ assert.ok(processEvents.indexOf(processEvents.find(e=>e.type==='painting'))<
  'The live production canvas must exhibit executed ink BEFORE choosing the winner');
 assert.ok(produced[0].liveExecution?.drawnBeforeSelection,
  'The accepted result must identify real incremental execution, not playback');
+assert.ok(produced[0].regional?.reviews>=1,
+ 'A full-size candidate should audit its actual local paint before global adoption');
+assert.ok(produced[0].regional.decisions.every(x=>x.verdict==='KEEP'||x.verdict==='REWORK'),
+ 'Each local region must make a real autonomous KEEP or REWORK decision');
+assert.ok(processEvents.some(e=>e.type==='regional-decision'),
+ 'The local spatial judgement is visible DURING candidate construction');
 assert.ok(produced[0].sources.includes('terrain'),'Procedural terrain must be rendered into the first pass');
 assert.ok(produced[0].sources.includes('lettering'),'Lettering renderer must participate in the first pass');
 assert.ok(produced[0].sources.includes('archive'),'Historic archive canvas must participate');
@@ -163,6 +169,14 @@ assert.ok(produced.some(x=>x.metrics.invented.stamps>0),
 assert.ok(new Set(produced.map(x=>x.recipe.markProgram.rootId)).size===1,
   'A self-developing mark process keeps its root identity through ten frames');
 assert.ok(loop.state().globalMemory>=10,'Ten accepted passes must enter the shared memory');
+const regional=loop.state().regionMemory;
+assert.equal(regional.cells.length,9,'Nine spatial identities persist independently');
+assert.ok(regional.cells.some(x=>x.age>=1),
+ 'At least one locality should have accumulated an accepted judgement');
+assert.ok(regional.cells.some(x=>x.kept+x.revised>=1),
+ 'Local aesthetic memory must reflect an actual prior verdict');
+assert.ok(produced.some(frame=>frame.regional?.reviews>0),
+ 'The painter must run true regional review in some full-frame generations');
 assert.ok(loop.state().donorGenerations.terrain>=1,
  'Terrain programs must mutate instead of restarting from scratch');
 assert.ok(loop.state().donorGenerations.lettering>=1,
