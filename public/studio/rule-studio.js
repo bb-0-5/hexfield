@@ -137,10 +137,14 @@ export function initRuleStudio(){
  const live=createLivingPainting({
    canvas:$('ruleArtwork'),
    onPhase:progress=>{
-     const label=progress.phase==='sketch'?'ACTUAL CANDIDATE SKETCH':
-       progress.phase==='construct'?'PAINTING FINAL INK':'PAINTING COMPLETE';
+     const label=progress.phase==='sketch'?'TESTING A REAL CANDIDATE':
+       progress.phase==='reconsider'?'ERASING A REJECTED IDEA':
+       progress.phase==='construct'?'PAINTING REAL MARKS & CONTOURS':
+       'THE NEW PAINTING SURVIVES';
      text('ruleHeroStatus','● '+label+' · '+
-       progress.done+'/'+progress.total+' actual canvas regions');
+       progress.done+'/'+progress.total+' actual strokes & contours'+
+       (progress.erased?' · '+progress.erased+' discarded regions':'')+
+       (progress.wordLast?' · letters emerge last':''));
    }
  });
  let adoptTiles=null;
