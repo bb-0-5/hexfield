@@ -42,7 +42,7 @@ async function restoreCurrentPainting(){
   }catch{return null;}
 }
 
-export function initImagination({getSession,onImage=()=>{}}){
+export function initImagination({getSession,onImage=()=>{},onError=()=>{}}){
   let current=null,working=false,history=readHistory(),loadPromise=null,syncing=false;
   let lastCritique='';
   const uiStatus=(message)=>{$('imagineStatus').textContent=message;};
@@ -202,6 +202,7 @@ export function initImagination({getSession,onImage=()=>{}}){
       if(!timedOut)detail+=' Your previous painting is safe.';
       // The status line is a visible diagnostic, not an indefinite spinner.
       uiStatus(detail);
+      try{onError(detail)}catch{}
       void refreshQuota();
     }
     finally{
