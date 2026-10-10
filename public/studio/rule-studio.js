@@ -19,6 +19,7 @@ import {measureGoldenTaste,explainGolden,diagnoseGolden,
   compareGoldenTaste} from './golden-taste.js';
 import {publishSource,loadCachedPictures,CROSS_STUDIO_KEYS} from './source-mixer.js';
 import {paintWordsOnCanvas} from './word-surface.js';
+import {typeGenome} from './type-genome.js';
 import {noteGeometryVerdict} from './geometry-coupling.js';
 import {evolveSeed,rankNoveltyCandidates,assessCanvas,commitCanvas,
   methodSignature,snapshotNoveltyMemory} from './nonredundancy.js';
@@ -124,7 +125,8 @@ export function initRuleStudio(){
      recipe,seed:recipe.seed,iteration:recipe.generation,sourceCanvas:clean,
      dirtyTiles
    });
-   if(work.painted){metrics.words=work.text;metrics.coupling=work.interaction;}
+   if(work.painted){metrics.words=work.text;metrics.coupling=work.interaction;
+     metrics.typeAnatomy=work.typeAnatomy;}
    return {...work,clean};
  }
  async function readArchive(){
@@ -352,6 +354,9 @@ export function initRuleStudio(){
      $('ruleKeep').disabled=false;$('ruleReject').disabled=false;
      $('ruleReworkBtn').disabled=false;$('ruleSave').disabled=false;
      text('ruleCaption',describeRecipe(recipe));
+     if(result.composite?.typeAnatomy)text('ruleWordsStatus',
+       'EVOLVING GLYPHS / '+result.composite.typeAnatomy+
+       ' · '+result.composite.glyphs+' independently formed characters');
      if(recipe.styleId)text('ruleStyleStatus',styleCaption({
        style:recipe.styleId,abstraction:recipe.abstractionLevel||'gentle',
        seed:recipe.seed
@@ -475,6 +480,8 @@ export function initRuleStudio(){
    onError(error){status('Abstraction recovered from a renderer error: '+safe(error?.message||error));}
  });
  function present(recipe,source,revision=false,prepared=null){
+   if(!recipe.typeGenome)recipe.typeGenome=
+     current?.recipe?.typeGenome||typeGenome(recipe.seed);
    if(!source)throw Error('No input picture to constrain');
    const before=current?.canvas||null,
      target=prepared?.canvas||canvasOf();
@@ -656,6 +663,7 @@ export function initRuleStudio(){
      const fixedSeed=evolveSeed(styleSeed,1,1,'comparable-style-327');
      const recipe=styleRecipe({style:styleId,abstraction:strength,
        seed:fixedSeed,subject:styleSubject,generation:styleGeneration});
+     recipe.typeGenome=current?.recipe?.typeGenome||typeGenome(fixedSeed);
      const target=canvasOf(),study=canvasOf();
      text('ruleStyleStatus',styleCaption({
        style:styleId,abstraction:strength,seed:fixedSeed
