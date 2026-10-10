@@ -32,6 +32,7 @@ const recipe=makeRecipe({seed:31,subject:'abstract',primary:'no_curves',mark:'in
 const wordA=fresh(),wordB=fresh();
 const A=paintWordsOnCanvas(wordA,'HEXFIELD',{recipe,seed:31});
 const B=paintWordsOnCanvas(wordB,'HEXFIELD',{recipe,seed:31});
+console.log('335 geometry diagnostic', {count:A.count, glyphs:A.glyphs,vector:A.vectorGlyphs,size:A.fontSize,quality:A.typeLegibility});
 assert.ok(A.painted&&A.count>900&&A.count<360*220*.3,
  'Actual letters must cover enough pixels to be visible in the painting');
 assert.ok(A.fontSize>=18,'CSS Canvas font must not silently reset to 10px');
