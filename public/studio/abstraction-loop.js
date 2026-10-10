@@ -244,6 +244,14 @@ export function createAbstractionLoop({
      const finalists=chooseFullRenderCandidates(proposals,{
        cycle,mobile,strict:getGoldenMode()==='strict'
      });
+     // The auto-mixer deliberately explores a scheduled NEW material family
+     // every third pass. Preflight must not systematically prune the one
+     // candidate carrying that family, or ten generations may all converge.
+     // Reserve only an existing finalist slot; do not increase render cost.
+     if((!config.mixMode||config.mixMode==='auto')&&cycle%3===0&&
+        !finalists.some(x=>x.attempt===0)){
+       finalists[finalists.length-1]=proposals[0];
+     }
      renderBudget=budgetEvidence(proposals,finalists);
      // No preview is misrepresented as a full-resolution candidate.
      for(const proposal of finalists){
