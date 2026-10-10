@@ -642,8 +642,13 @@ export function initRuleStudio(){
        // Previously this ALWAYS fetched a fresh reality painting and
        // discarded the actual canvas when changing style.
        // Prefer the unlettered accepted canvas to avoid doubling glyphs.
-       const original=current?.canvas?
-         (unlettered||current.canvas):await sourceFor(sourceRecipe);
+       // Selecting FILE / IMAGINED / ARCHIVE is an explicit new source.
+       // Otherwise CHANGE STYLE stays anchored to the accepted artwork.
+       const useNewReference=['file','imagined','archive'].includes(
+         $('ruleReference').value);
+       const original=useNewReference?
+         await sourceFor(sourceRecipe):current?.canvas?
+           (unlettered||current.canvas):await sourceFor(sourceRecipe);
        if(token!==styleToken)return;
        styleAnchor=cleanCopy(original);
      }
