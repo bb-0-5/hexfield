@@ -13,7 +13,8 @@ import {extractStructuralIdea,paintInheritedIdeas,advanceStructuralIdeas,
 import {createCreativePerformance} from './creative-performance.js';
 import {measureGoldenTaste,explainGolden,diagnoseGolden,
   compareGoldenTaste} from './golden-taste.js';
-import {publishSource} from './source-mixer.js';
+import {publishSource,loadCachedPictures,CROSS_STUDIO_KEYS} from './source-mixer.js';
+import {paintWordsOnCanvas} from './word-surface.js';
 import {evolveSeed,rankNoveltyCandidates,assessCanvas,commitCanvas,
   methodSignature,snapshotNoveltyMemory} from './nonredundancy.js';
 const $=id=>document.getElementById(id);
@@ -59,8 +60,52 @@ function persistCanvas(canvas,recipe,judged){
 export function initRuleStudio(){
  optionMarkup();
  let current=null,upload=null,parentCanvas=null,realitySource=null,
-   sequence=0,manualMotifs=[],manualIdeas=[],lastOrigin='manual';
+   archiveCanvas=null,unlettered=null,sequence=0,manualMotifs=[],manualIdeas=[],lastOrigin='manual';
  const context=$('ruleArtwork').getContext('2d');
+ const wordKey='hexfield.rule-words.v1';
+ try{$('ruleWords').value=String(localStorage.getItem(wordKey)||'').slice(0,48)}catch{}
+ const activeWords=()=>String($('ruleWords').value||'').trim().slice(0,48);
+ const cleanCopy=source=>{
+   const c=canvasOf(source.width,source.height);
+   c.getContext('2d').drawImage(source,0,0);return c;
+ };
+ function compositeWords(output,recipe,metrics){
+   if(!activeWords())return null;
+   const clean=cleanCopy(output);
+   const work=paintWordsOnCanvas(output,activeWords(),{
+     recipe,seed:recipe.seed,iteration:recipe.generation,sourceCanvas:clean
+   });
+   if(work.painted)metrics.words=work.text;
+   return {...work,clean};
+ }
+ async function readArchive(){
+   const bank=await loadCachedPictures();
+   if(bank.archive)archiveCanvas=bank.archive;
+   return archiveCanvas;
+ }
+ let wordTimer=null;
+ function previewWords(){
+   if(!current)return;
+   if(!unlettered)unlettered=cleanCopy(current.canvas);
+   const base=unlettered,output=current.canvas;
+   const ctx=output.getContext('2d');
+   ctx.clearRect(0,0,output.width,output.height);
+   ctx.drawImage(base,0,0);
+   const result=compositeWords(output,current.recipe,current.metrics||{});
+   context.clearRect(0,0,960,600);context.drawImage(output,0,0,960,600);
+   text('ruleWordsStatus',result?.painted?
+     result.text+' / words made from this picture\'s ink':
+     'No word layer. The artwork remains purely procedural.');
+   publishSource(output,'rules',current.recipe);
+   persistCanvas(output,current.recipe,current.judged);
+ }
+ function latestFrame(){
+   void readArchive().then(image=>{
+     if(image){loop.invalidateSources();
+       text('ruleWordsStatus','An experimental frame is ready as a reference. '+(
+         activeWords()?'The text remains attached to the painting.':'Add text or use the archive image.'));}
+   }).catch(()=>{});
+ }
  const status=m=>text('ruleStatus',m);
  const theatre=createCreativePerformance({
    host:document.querySelector('.rule-frame'),
