@@ -6,6 +6,7 @@
  */
 import {applyRules,makeRecipe} from './rule-engine.js';
 import {coupleWordGeometry,chooseGeometryRelation} from './geometry-coupling.js';
+import {validDirtyTiles} from './dirty-tiles.js';
 const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
 const create=(w,h)=>{const c=document.createElement('canvas');c.width=w;c.height=h;return c;};
 const lum=(data,i)=>(.2126*data[i]+.7152*data[i+1]+.0722*data[i+2])/255;
@@ -135,12 +136,13 @@ function buildMask(text,w,h,bounds,choice){
   return {pixels,size,font:ctx.font};
 }
 export function paintWordsOnCanvas(canvas,words,{
-  recipe=null,seed=1,iteration=0,sourceCanvas=null,relation=null
+  recipe=null,seed=1,iteration=0,sourceCanvas=null,relation=null,dirtyTiles=null
 }={}){
   if(!canvas?.getContext)return {painted:false,reason:'no canvas'};
   const text=String(words||'').replace(/\s+/g,' ').trim().slice(0,48);
   if(!text)return {painted:false,reason:'no words'};
   const w=canvas.width,h=canvas.height,source=sourceCanvas||canvas;
+  const partial=validDirtyTiles(dirtyTiles,w,h);
   if(!w||!h)return {painted:false,reason:'empty canvas'};
   const origin=create(w,h),og=origin.getContext('2d',{willReadFrequently:true});
   og.drawImage(source,0,0,w,h);
@@ -163,7 +165,7 @@ export function paintWordsOnCanvas(canvas,words,{
   // Source-driven material is rendered at an internal bounded resolution.
   // Keeping the type mask at full canvas resolution preserves crisp anatomy,
   // while limiting redundant mobile mark simulation per candidate.
-  const pw=Math.min(480,w),ph=Math.min(300,h);
+  const pw=Math.min(partial?320:480,w),ph=Math.min(partial?200:300,h);
   const pattern=create(pw,ph);
   const marks=applyRules(source,pattern,rule,{iteration});
   const inkSource=create(w,h),inkCtx=inkSource.getContext('2d',{willReadFrequently:true});
@@ -194,10 +196,16 @@ export function paintWordsOnCanvas(canvas,words,{
       Math.round(scene[i+ch]*(1-coverage*.94)+ink[ch]*coverage*.94):scene[i+ch];
     d[i+3]=255;
   }
-  canvas.getContext('2d').putImageData(out,0,0);
+  const target=canvas.getContext('2d');
+  if(partial){
+    // putImageData ignores Canvas clipping. Upload only the dirty rectangles:
+    // the parent letter structure remains byte-for-byte identical elsewhere.
+    for(const t of dirtyTiles)
+      target.putImageData(out,0,0,t.x,t.y,t.w,t.h);
+  }else target.putImageData(out,0,0);
   return {painted:true,text,count,chromaticFraction:count?chromatic/count:0,
     bounds:{x:Math.round(w*.04),y:bounds.top,w:Math.round(w*.92),h:bounds.height},
     mark:rule.mark,method:choice.name,face:choice.family.name,fontSize:Math.round(size),font,
     palette:layers.map(hex),marks:marks.strokes,interaction:coupled.stats,
-    source:'live painted canvas'};
+    source:'live painted canvas',partial};
 }
