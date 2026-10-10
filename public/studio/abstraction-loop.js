@@ -136,7 +136,7 @@ export function createAbstractionLoop({
  }
  function reset(){
    pause();cycle=0;last=null;lastRecipe=null;lastMix=null;stamps=[];lastAssessment=null;
-   motifs=[];ideas=[];
+   motifs=[];ideas=[];dirtyStats=null;
    seed=Math.floor(Math.random()*4294967295);
    bank.clear();forceFreshSources=true;status();
  }
@@ -193,7 +193,12 @@ export function createAbstractionLoop({
      const candidates=[];
      const localAllowed=shouldUseLocalRender({
        cycle,previous,inherited:inheritedRecipe,words:getWords(),
-       donorsRefreshed,forceFull:!!config.forceFull
+       donorsRefreshed,
+       forceFull:!!config.forceFull||!!(config.lockLaw&&(
+         (config.law&&config.law!=='surprise'&&
+           config.law!==inheritedRecipe?.primary)||
+         (config.mark&&config.mark!=='surprise'&&
+           config.mark!==inheritedRecipe?.mark)))
      });
      const smallSamples=prepareMixSamples(inputs,{
        width:PREVIEW_WIDTH,height:PREVIEW_HEIGHT
