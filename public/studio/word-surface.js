@@ -8,6 +8,7 @@ import {applyRules,makeRecipe} from './rule-engine.js';
 import {coupleWordGeometry,chooseGeometryRelation} from './geometry-coupling.js';
 import {validDirtyTiles} from './dirty-tiles.js';
 import {glyphTraits,typeGenome,validTypeGenome} from './type-genome.js';
+import {validDesignGenome,newDesignGenome,designBounds,paintDesignAccent} from './design-genome.js';
 const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
 const create=(w,h)=>{const c=document.createElement('canvas');c.width=w;c.height=h;return c;};
 const lum=(data,i)=>(.2126*data[i]+.7152*data[i+1]+.0722*data[i+2])/255;
@@ -85,7 +86,7 @@ function chooseBand(before,w,h,seed){
 function buildMask(text,w,h,bounds,choice){
   const mask=create(w,h),ctx=mask.getContext('2d',{willReadFrequently:true});
   ctx.fillStyle='#fff';ctx.textBaseline='middle';ctx.textAlign='left';
-  const letters=[...text],maxWidth=w*.92;
+  const letters=[...text],maxWidth=w*(bounds.widthRatio||.92);
   const genome=choice.type;
   let size=Math.min(bounds.height*.77,w/Math.max(2,letters.length*.49));
   const font=px=>choice.family.face.replace(/900/,
@@ -104,7 +105,7 @@ function buildMask(text,w,h,bounds,choice){
   while(size>10&&layout.total>maxWidth){size*=.92;layout=metrics(size);}
   const scale=Math.min(1,maxWidth/Math.max(1,layout.total)),
     centerY=bounds.top+bounds.height*.52,
-    left=w*.5-layout.total*scale*.5;
+    left=(bounds.centerX??w*.5)-layout.total*scale*.5;
   const owner=new Int16Array(w).fill(-1),parts=[];
   let at=0;
   for(const glyph of layout.glyphs){
@@ -180,19 +181,40 @@ export function paintWordsOnCanvas(canvas,words,{
   recipe=null,seed=1,iteration=0,sourceCanvas=null,relation=null,dirtyTiles=null
 }={}){
   if(!canvas?.getContext)return {painted:false,reason:'no canvas'};
-  const text=String(words||'').replace(/\s+/g,' ').trim().slice(0,48);
-  if(!text)return {painted:false,reason:'no words'};
+  const copy=String(words||'').replace(/\s+/g,' ').trim().slice(0,96);
+  if(!copy)return {painted:false,reason:'no words'};
+  const design=validDesignGenome(recipe?.designGenome)?recipe.designGenome:
+    newDesignGenome(recipe?.purpose||'art',seed);
+  const blocks=design.purpose==='art'?[copy]:copy.split('|').map(s=>s.trim()).filter(Boolean);
+  const text=(blocks[0]||copy).slice(0,48);
   const w=canvas.width,h=canvas.height,source=sourceCanvas||canvas;
   const partial=validDirtyTiles(dirtyTiles,w,h);
   if(!w||!h)return {painted:false,reason:'empty canvas'};
   const origin=create(w,h),og=origin.getContext('2d',{willReadFrequently:true});
   og.drawImage(source,0,0,w,h);
-  const before=og.getImageData(0,0,w,h).data;
+  const initial=og.getImageData(0,0,w,h).data;
   const signature=recipe?.markProgram?.signature||recipe?.mark||'hybrid';
   const choice=wordApplication(seed,iteration,signature);
   choice.type=validTypeGenome(recipe?.typeGenome)?recipe.typeGenome:typeGenome(seed);
-  const bounds=chooseBand(before,w,h,seed);
-  const {pixels:letters,size,font,parts,anatomy}=buildMask(text,w,h,bounds,choice);
+  const bounds=designBounds(initial,w,h,design,seed)||chooseBand(initial,w,h,seed);
+  const accented=paintDesignAccent(og,initial,w,h,bounds,design);
+  const before=accented?og.getImageData(0,0,w,h).data:initial;
+  const built=buildMask(text,w,h,bounds,choice);
+  const {pixels:letters,size,font,parts,anatomy}=built;
+  // A single optional pipe-delimited input supports a real headline, detail
+  // and action line without exposing a second screen full of ad controls.
+  let glyphCount=parts.length;
+  if(design.purpose!=='art'&&blocks.length>1){
+    for(let i=1;i<Math.min(3,blocks.length);i++){
+      const top=Math.round(h*(i===1?.73:.865));
+      const supporting={top,height:Math.max(20,Math.round(h*(i===1?.115:.093))),
+        centerX:bounds.centerX,widthRatio:Math.min(.82,bounds.widthRatio+.07)};
+      const sub=buildMask(blocks[i].slice(0,32),w,h,supporting,choice);
+      glyphCount+=sub.parts.length;
+      for(let p=0;p<letters.length;p++)letters[p]=
+        Math.max(letters[p],Math.round(sub.pixels[p]*(i===1?.95:1)));
+    }
+  }
   // The original art and the word now push back on one another as geometry.
   // This happens before chromatic deposition, not in an overlay after scoring.
   const selectedRelation=relation||recipe?.wordRelation||
@@ -214,7 +236,7 @@ export function paintWordsOnCanvas(canvas,words,{
   inkCtx.drawImage(pattern,0,0,w,h);
   const pigment=inkCtx.getImageData(0,0,w,h).data;
   const out=og.createImageData(w,h),d=out.data;
-  let count=0,chromatic=0;
+  let count=0,chromatic=0,contrast=0;
   const layers=[colours.first,colours.second,colours.third];
   // A word is an interactively placed material; pixel deposits use actual
   // painter colour, geometric rhythm and the local background contrast.
@@ -233,6 +255,8 @@ export function paintWordsOnCanvas(canvas,words,{
       ink=hueColor.map(v=>clamp(Math.round(v*bright+(materialLight-.5)*27),0,255));
       count++;
       if(Math.max(...ink)-Math.min(...ink)>48)chromatic++;
+      contrast+=Math.abs(beforeLight-(ink[0]*.2126+ink[1]*.7152+
+        ink[2]*.0722)/255);
     }
     for(let ch=0;ch<3;ch++)d[i+ch]=coverage>0?
       Math.round(scene[i+ch]*(1-coverage*.94)+ink[ch]*coverage*.94):scene[i+ch];
@@ -245,10 +269,14 @@ export function paintWordsOnCanvas(canvas,words,{
     for(const t of dirtyTiles)
       target.putImageData(out,0,0,t.x,t.y,t.w,t.h);
   }else target.putImageData(out,0,0);
-  return {painted:true,text,count,chromaticFraction:count?chromatic/count:0,
+  return {painted:true,text:copy,count,
+    legibility:count?+clamp(contrast/count*2.6,0,1).toFixed(4):0,
+    design:{purpose:design.purpose,root:design.root,
+      ornament:design.ornament,activity:bounds.activity??null},
+    chromaticFraction:count?chromatic/count:0,
     bounds:{x:Math.round(w*.04),y:bounds.top,w:Math.round(w*.92),h:bounds.height},
     mark:rule.mark,method:choice.name,face:choice.family.name,fontSize:Math.round(size),font,
-    typeAnatomy:anatomy,glyphs:parts.length,
+    typeAnatomy:anatomy,glyphs:glyphCount,
     palette:layers.map(hex),marks:marks.strokes,interaction:coupled.stats,
     source:'live painted canvas',partial};
 }
