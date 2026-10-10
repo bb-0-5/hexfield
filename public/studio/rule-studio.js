@@ -892,19 +892,58 @@ export function initRuleStudio(){
      context.drawImage(canvas,0,0);
      current={recipe:restored.recipe,canvas,judged:!!restored.judged,metrics:null};
      parentCanvas=canvas;
-     unlettered=cleanCopy(canvas);
      $('ruleArtwork').hidden=false;$('ruleEmpty').hidden=true;
      $('ruleKeep').disabled=!!current.judged;$('ruleReject').disabled=!!current.judged;
      $('ruleReworkBtn').disabled=false;$('ruleSave').disabled=false;
      text('ruleCaption',describeRecipe(current.recipe));
-     text('ruleEvidence','LAST STUDY RESTORED · CONTINUE FROM THIS CANVAS');
-     status('Last painting restored. Automatic abstraction is active.');
-     resolve();
+     const complete=clean=>{
+       unlettered=cleanCopy(clean);
+       // The immutable reference must be available BEFORE automatic
+       // evolution starts, including after a complete browser reload.
+       loop.adoptCanvas(unlettered,current.recipe);
+       text('ruleEvidence','RESTORED / SINGLE TEXT PASS / CLEAN ARTWORK SOURCE');
+       status('Restored the artwork and its clean, pre-letter reference.');
+       resolve();
+     };
+     if(restored.clean){
+       const cleanImage=new Image();
+       cleanImage.onload=()=>complete(fromImage(cleanImage));
+       cleanImage.onerror=()=>complete(canvas);
+       cleanImage.src=restored.clean;
+     }else{
+       // Pre-332 saves have NO recoverable clean plate; do not use
+       // their already-rasterized old glyphs as a type source again.
+       const legacy=canvasOf();
+       drawReality(legacy,current.recipe.subject||'abstract',current.recipe.seed||1);
+       complete(legacy);
+       status('Legacy painting restored; a clean source replaces old stamped text on the next generation.');
+     }
    };
    image.onerror=()=>resolve();
    image.src=restored.image;
    });
  }
+ $('ruleTypeMode').addEventListener('change',()=>{
+   const mode=$('ruleTypeMode').value;
+   if(!['auto','bubble','block'].includes(mode))return;
+   try{localStorage.setItem(typeModeKey,mode);}catch{}
+   const resume=loop.isRunning()&&!manuallyPaused;
+   loop.pause();
+   if(current){
+     // Choosing a grammar rebuilds text from the clean painting ONCE.
+     const seed=current.recipe.seed>>>0;
+     const chosen=mode==='auto'?
+       current.recipe.typeGenome||typeGenome(seed,'bubble'):
+       typeGenome(seed,mode);
+     if(mode!=='auto'&&current.recipe.typeGenome?.root)
+       chosen.root=current.recipe.typeGenome.root;
+     current.recipe={...current.recipe,typeGenome:chosen};
+     previewWords();
+     loop.adoptCanvas(unlettered||current.canvas,current.recipe);
+   }
+   loop.configure(loopOptions());
+   if(resume)loop.start(loopOptions());
+ });
  $('rulePurpose').addEventListener('change',()=>{
    const purpose=$('rulePurpose').value;
    if(!DESIGN_PURPOSES.includes(purpose))return;
@@ -928,6 +967,7 @@ export function initRuleStudio(){
    loop.invalidateSources();
    wordTimer=setTimeout(()=>{
      previewWords();
+     if(current)loop.adoptCanvas(unlettered||current.canvas,current.recipe);
      if(!manuallyPaused)loop.start(loopOptions());
    },240);
  });
