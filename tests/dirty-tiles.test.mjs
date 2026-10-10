@@ -11,6 +11,7 @@ const {planDirtyTiles,shouldUseLocalRender,validDirtyTiles,sameOutsideDirty,
   tilesCoverage}=await import('../public/studio/dirty-tiles.js');
 const {prepareMixSamples,mixSources}=await import('../public/studio/source-mixer.js');
 const {makeRecipe,applyRules}=await import('../public/studio/rule-engine.js');
+const {paintWordsOnCanvas}=await import('../public/studio/word-surface.js');
 const W=480,H=300;
 function surface(change=0){
  const c=new Canvas(W,H),ctx=c.getContext('2d');
@@ -59,6 +60,15 @@ assert.ok(metrics.dirty.omittedCells>metrics.dirty.visitedCells,
 assert.ok(metrics.dirty.visitedCells<metrics.dirty.totalCells*.55);
 assert.ok(sameOutsideDirty(local,previous,plan.tiles),
  'The rule painter must preserve every unchanged pixel EXACTLY');
+const beforeWords=new Canvas(W,H);
+beforeWords.getContext('2d').drawImage(local,0,0);
+const words=paintWordsOnCanvas(local,'HEXFIELD',{
+ recipe,seed:92,iteration:5,dirtyTiles:plan.tiles
+});
+assert.ok(words.painted&&words.count>1000);
+assert.ok(words.fontSize>=20,'The text should not silently fall back to 10px glyphs');
+assert.ok(sameOutsideDirty(local,beforeWords,plan.tiles),
+ 'Editing word material must conserve all previous lettering outside dirty tiles');
 let changed=0;
 const p=previous.getContext('2d').getImageData(0,0,W,H).data,
  q=local.getContext('2d').getImageData(0,0,W,H).data;
@@ -85,13 +95,16 @@ assert.equal(fallback.dirty.partial,false,
 for(const args of [
  {cycle:0,previous,inherited:recipe},
  {cycle:1,previous:null,inherited:recipe},
- {cycle:1,previous,inherited:recipe,words:'HELLO'},
+ {cycle:1,previous,inherited:recipe,words:'HELLO',textChanged:true},
  {cycle:1,previous,inherited:recipe,donorsRefreshed:true},
  {cycle:1,previous,inherited:recipe,forceFull:true},
  {cycle:2,previous,inherited:recipe}
 ])assert.equal(shouldUseLocalRender(args),false,
   'Global event/changed words/missing parent must disable partial computation');
 assert.equal(shouldUseLocalRender({cycle:1,previous,inherited:recipe}),true);
+assert.equal(shouldUseLocalRender({cycle:1,previous,inherited:recipe,
+  words:'HEXFIELD',textChanged:false}),true,
+  'Unchanged on-canvas words must not disable the fast path');
 const tiny=new Canvas(240,145),tinyOther=new Canvas(240,145);
 tiny.getContext('2d').drawImage(previous,0,0,240,145);
 tinyOther.getContext('2d').drawImage(future,0,0,240,145);
