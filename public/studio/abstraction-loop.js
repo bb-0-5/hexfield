@@ -205,6 +205,10 @@ export function createAbstractionLoop({
        const mate=learned.length?learned[(cycle+attempt)%learned.length]:null;
        const dislike=Number(ruleTaste()['mark:'+inheritedRecipe?.mark])||0;
        const mutation=attempt===0&&dislike<-.75?1:attempt;
+       // Once every five generations the entire shortlist deliberately
+       // executes an invented compound mark rather than leaving its rare
+       // selection to hybrid probabilities. User-locked laws still win.
+       if(cycle%5===3&&!config.lockLaw)recipe.mark='invented';
        recipe.markProgram=inheritedRecipe?.markProgram?
          evolveMarkProgram(inheritedRecipe.markProgram,{seed:candidateSeed,branch:mutation,mate}):
          newMarkProgram(candidateSeed,recipe.generation);
