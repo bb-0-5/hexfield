@@ -26,7 +26,7 @@ export function gestureBounds(mark){
  return null;
 }
 function intersects(a,b){
- return a.x<a.w+b.x&&b.x<b.w+a.x&&a.y<a.h+b.y&&b.y<b.h+a.y;
+ return a.x<b.x+b.w&&b.x<a.x+a.w&&a.y<b.y+b.h&&b.y<a.y+a.h;
 }
 export function gesturePath(ctx,mark){
  const b=gestureBounds(mark);if(!b)return false;
