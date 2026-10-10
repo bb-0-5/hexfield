@@ -12,6 +12,7 @@ import {extractStructuralIdea,paintInheritedIdeas,advanceStructuralIdeas,
  heritageEvidence,judgeStructuralIdeas,rankBalancedCandidates,
  recallStructuralIdea} from './structural-heritage.js';
 import {getGoldenMode} from './golden-taste.js';
+import {deriveBetweenFrames} from './frame-derivation.js';
 export const REWORK_SEQUENCE=['abstract_masses','negative_repaint','misread','remove_strength'];
 const clamp=(n,a,b)=>Math.max(a,Math.min(n,b));
 const choice=(a,seed=1)=>a[(seed>>>0)%a.length];
@@ -197,6 +198,16 @@ export function createAbstractionLoop({
        const metrics=applyRules(mixed.canvas,output,recipe,{
          iteration:cycle+attempt,trace:true
        });
+       // Derive a real intermediate image from the accepted parent and proposal.
+       // This applied process competes alongside source mixers and mark laws.
+       const derivation=previous?deriveBetweenFrames(previous,output,{
+         seed:candidateSeed,cycle,branch:attempt
+       }):null;
+       if(derivation){
+         const context=output.getContext('2d');
+         context.save();context.setTransform(1,0,0,1,0,0);
+         context.drawImage(derivation.canvas,0,0,width,height);context.restore();
+       }
        // The new law governs the NEW marks; islands of actual previous
        // brushwork survive as archaeological material. Even wildly
        // different mixers cannot erase them just to score high W novelty.
@@ -208,8 +219,9 @@ export function createAbstractionLoop({
        });
        const method=methodSignature({mode:'abstraction',primary:recipe.primary,
          secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework,
-         blend:mixed.mode,subject:recipe.subject});
-       candidates.push({canvas:output,recipe,mixed,metrics,held,heritage,method});
+         blend:mixed.mode,subject:recipe.subject,
+         application:derivation?.method||'new'});
+       candidates.push({canvas:output,recipe,mixed,metrics,held,heritage,derivation,method});
        if(currentStamp!==stamp)return;
      }
      const evaluated=rankNoveltyCandidates(candidates,{
@@ -237,7 +249,7 @@ export function createAbstractionLoop({
      const best=evolvingMix&&cycle%3===0&&!strictQualified?
        ranked.find(x=>x.mixed.mode===expected)||goal:goal;
      const {canvas:output,recipe,mixed,metrics,assessment,
-       golden,held,heritage,threeWay}=best;
+       golden,held,heritage,threeWay,derivation}=best;
      const novelty=visualDelta(previous,output);
      const stalled=cycle>2&&(assessment.redundant||novelty<.035);
      const recorded=commitCanvas(output,{mode:'abstraction',method:best.method,
@@ -245,7 +257,9 @@ export function createAbstractionLoop({
      lastAssessment={...recorded,golden,
        heritage:{score:heritage.score,coverage:heritage.coverage,
          count:heritage.drawn.length},
-       threeWay,candidates:candidates.length};
+       threeWay,derivation:derivation?{method:derivation.method,
+         retained:derivation.retained,interwoven:derivation.interwoven,
+         changed:derivation.changed}:null,candidates:candidates.length};
      const survived=motifEvidence(motifs);
      const inherited=heritageEvidence(ideas);
      motifs=advanceMotifMemory(motifs,output,{
@@ -263,14 +277,15 @@ export function createAbstractionLoop({
        const preview=freshCanvas(320,200);
        preview.getContext('2d').drawImage(entry.canvas,0,0,320,200);
        return {canvas:preview,
-         label:entry.mixed.mode+' / '+entry.recipe.primary+
+         label:(entry.derivation?.method||'fresh')+' / '+
+           entry.mixed.mode+' / '+entry.recipe.primary+
            ' / '+entry.recipe.mark+' / H '+
            Math.round(entry.threeWay.H*100)+'%',
          score:entry.threeWay.score,golden:entry.golden,
          selected:entry===best};
      });
      const result={canvas:output,recipe,cycle:cycle+1,metrics,trials,
-       blend:mixed.mode,sources:mixed.sources,novelty,stalled,
+       blend:mixed.mode,derivation,sources:mixed.sources,novelty,stalled,
        survival:{held:survived,coverage:held.coverage,
          carried:held.held.length,available:motifEvidence(motifs).length},
        heritage:{...heritage,ancestors:inherited,
@@ -282,6 +297,8 @@ export function createAbstractionLoop({
      stamps.push({cycle,thumb:frame.toDataURL('image/webp',.60),
        id:recipe.id,parentId:recipe.parentId,seed:recipe.seed,
        mark:recipe.mark,law:recipe.primary,blend:mixed.mode,novelty,
+       derivedBy:derivation?.method||'fresh',
+       retained:derivation?.retained||0,
        globalNovelty:lastAssessment.globalNovelty,
        minSimilarity:lastAssessment.novelty,
        complexity:lastAssessment.complexity,
