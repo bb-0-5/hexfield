@@ -31,8 +31,8 @@
           </div>
           <div class="canvas-word-rail">
           <div class="unified-studio-input">
-            <label for="ruleWords">WORDS ON THIS PAINTING / OPTIONAL</label>
-            <input id="ruleWords" type="text" maxlength="48" placeholder="Write directly into the evolving canvas" spellcheck="false" autocomplete="off">
+            <label for="ruleWords">HEADLINE / WORDS · OPTIONAL</label>
+            <input id="ruleWords" type="text" maxlength="96" placeholder="Headline | detail | action (optional)" spellcheck="false" autocomplete="off">
             <p id="ruleWordsStatus" class="control-help" aria-live="polite">Words share pigment and movement with the picture. The painter chooses their lettering.</p>
           </div>
             <div class="rule-loop-buttons">
@@ -41,7 +41,14 @@
               <button type="button" id="ruleLoopStop" class="ghost-button">Ⅱ PAUSE / RESUME</button>
             </div>
           </div>
-          <div class="style-control-rail" aria-label="How abstract should the painting be?">
+          <div class="style-control-rail" aria-label="Design purpose and abstraction">
+            <label for="rulePurpose">DESIGN FOR</label>
+            <select id="rulePurpose" aria-label="Design purpose">
+              <option value="art" selected>AUTONOMOUS ART</option>
+              <option value="promo">PROMOTION / EVENT</option>
+              <option value="advert">ADVERTISEMENT</option>
+              <option value="logo">LOGO / IDENTITY</option>
+            </select>
             <label for="ruleAbstractionLevel">ABSTRACTION</label>
             <select id="ruleAbstractionLevel" aria-describedby="ruleAbstractionHelp">
               <option value="gentle" selected>LOW · recognisable subject</option>
