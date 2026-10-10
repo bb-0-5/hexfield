@@ -12,6 +12,13 @@ import {validDirtyTiles,tilesCoverage} from './dirty-tiles.js';
 export const SOURCE_KEYS = [
   'parent','reality','terrain','lettering','logo','archive','imagination','upload','kept'
 ];
+// Word-bearing donor bitmaps cannot be blended back into a canvas that
+// will typeset those SAME words. Only the clean parent may carry the scene.
+export function wordSafeSources(sources,hasLiveWords=false){
+ if(!hasLiveWords)return sources;
+ const contaminated=new Set(['lettering','logo','kept']);
+ return sources.filter(item=>!contaminated.has(item.name));
+}
 export const MIX_METHODS = {
   auto:'Evolve composition',quilt:'Spatial quilt / every renderer',
   cutaway:'Negative-space cutaways',dissonance:'Channel disagreement',
