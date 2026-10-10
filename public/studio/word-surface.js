@@ -292,6 +292,24 @@ export function paintWordsOnCanvas(canvas,words,{
       const inkHue=hue(band)??(choice.key%360);
       const strong=rgbOf(inkHue,.94,beforeLight>.52?.14:.86);
       ink=strong.map(v=>clamp(Math.round(v+(materialLight-.5)*9),0,255));
+      if(choice.type.grammar==='bubble'||choice.type.grammar==='rounded'){
+        // A real cartoon-balloon finish made from the FINAL glyph mask:
+        // dark/bright contours plus a restrained illuminated inner body.
+        // Counter openings remain real transparent geometry, never a
+        // second offset rendering of the same letters.
+        const r=Math.max(1,Math.min(4,Math.round(size*.042)));
+        const core=x>=r&&x+r<w&&y>=r&&y+r<h&&
+          mask[p-r]>190&&mask[p+r]>190&&
+          mask[p-r*w]>190&&mask[p+r*w]>190;
+        if(!core){
+          ink=ink.map(v=>clamp(Math.round(v*(beforeLight>.52?.48:1.09)+
+            (beforeLight>.52?0:8)),0,255));
+        }else{
+          const shine=y<bounds.top+bounds.height*.53?32:11;
+          ink=ink.map(v=>clamp(Math.round(v+(
+            beforeLight>.52?shine:shine*.45)),0,255));
+        }
+      }
       count++;
       if(Math.max(...ink)-Math.min(...ink)>48)chromatic++;
       contrast+=Math.abs(beforeLight-(ink[0]*.2126+ink[1]*.7152+
