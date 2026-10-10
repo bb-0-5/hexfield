@@ -100,6 +100,7 @@ assert.doesNotMatch(ui,/id="ruleTypeMode"/,'No more font parameters exposed');
 assert.match(ctrl,/reseedProfile\(reseedCount\)/);
 assert.match(ctrl,/typeMode:'auto'/);
 assert.match(surface,/repairGlyphMask\(reference,pixels,w,h,parts\)/);
-assert.match(surface,/const role=\(choice\.key>>>5\)%3/);
+assert.match(surface,/const brightGround=\(samples\?background\/samples/,
+ 'One art-directed foreground lightness decision replaces pixel-by-pixel colour switching');
 assert.match(loop,/protectReadableWinner\(ranked,initialBest/);
 console.log('333: real bubble/block pixels, counter topology repair, readability arbitration and 30 art/type reseeds PASS');
