@@ -235,7 +235,7 @@ export function paintWordsOnCanvas(canvas,words,{
       ornament:design.ornament,activity:bounds.activity??null},
     chromaticFraction:count?chromatic/count:0,
     bounds:{x:Math.round(w*.04),y:bounds.top,w:Math.round(w*.92),h:bounds.height},
-    mark:rule.mark,method:choice.name,face:'HEXFIELD VECTOR',fontSize:Math.round(size),font,
+    mark:rule.mark,method:'vector-'+choice.type.grammar,face:'HEXFIELD VECTOR',fontSize:Math.round(size),font,
     typeAnatomy:anatomy,glyphs:glyphCount,
     vectorGlyphs,fallbackGlyphs,construction:built.construction,
     palette:layers.map(hex),marks:marks.strokes,interaction:coupled.stats,
