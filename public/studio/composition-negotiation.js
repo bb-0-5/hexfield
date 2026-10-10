@@ -61,8 +61,8 @@ export function pairCoherence(a,b){
   colour:round(colour),geometry:round(geometry),relation:round(relation),
   pigmentDifference:round(diff),edgeRatio:round(edgeRatio)};
 }
-export function selectNegotiation({canvas,memory,objects=[],cycle=0,
- attempt=0,dirtyTiles=null,locked=false}={}){
+export function selectNegotiation({canvas,memory,compositionMemory=null,
+ objects=[],cycle=0,attempt=0,dirtyTiles=null,locked=false}={}){
  if(!canvas?.getContext||locked||
    Array.isArray(dirtyTiles)&&dirtyTiles.length)return null;
  const regions=regionRects(canvas.width,canvas.height,{grid:3}),
@@ -85,7 +85,7 @@ export function selectNegotiation({canvas,memory,objects=[],cycle=0,
      (sourceHistory.stability??0)*.35;
    const need=(1-(history.quality??.5))*.58+
      (1-(history.stability??0))*.42;
-   const previous=memory?.treaties?.[follower.rect.id];
+   const previous=compositionMemory?.treaties?.[follower.rect.id];
    const antiLoop=previous?.from===leader.rect.id?
      Math.min(.16,(previous.count||0)*.035):0;
    const priority=need*.52+leadership*.3+
@@ -192,8 +192,8 @@ export function negotiateComposition({canvas,parent=null,memory,
  compositionMemory=createCompositionMemory(),objects=[],cycle=0,
  attempt=0,dirtyTiles=null,locked=false,onDecision=()=>{},
  makeInfluence=proposeInfluence,threshold=.003,grade=scoreRegion}={}){
- const option=selectNegotiation({canvas,memory,objects,cycle,attempt,
-  dirtyTiles,locked});
+ const option=selectNegotiation({canvas,memory,compositionMemory,
+  objects,cycle,attempt,dirtyTiles,locked});
  if(!option)return {attempts:0,accepted:0,decision:null};
  const {leader,follower}=option,rect=follower.rect;
  const influence=makeInfluence(canvas,leader,follower,{
