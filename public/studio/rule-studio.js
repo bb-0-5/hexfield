@@ -5,6 +5,7 @@
 import {SUBJECTS,LAWS,MARKS,REWORKS,makeRecipe,mutateRecipe,drawReality,applyRules,
   noteRuleVerdict,noteLineage,describeRecipe,buildRulePrompt,RULE_STORE} from './rule-engine.js';
 import {createAbstractionLoop} from './abstraction-loop.js';
+import {evolveMarkProgram,rememberedMarkPrograms,rememberMarkVerdict} from './mark-program.js';
 import {deriveBetweenFrames} from './frame-derivation.js';
 import {paintHeldMotifs,advanceMotifMemory,motifEvidence} from './motif-memory.js';
 import {extractStructuralIdea,paintInheritedIdeas,advanceStructuralIdeas,
@@ -91,7 +92,9 @@ export function initRuleStudio(){
       ' / '+item.mark+' / '+(item.derivedBy||'fresh')+
        ' · '+Math.round((item.retained||0)*100)+'% frame retained · '+
        (item.survivors||0)+' pixels held'+
-      ' · '+(item.inheritedIdeas||0)+' shape genes';
+      ' · '+(item.inheritedIdeas||0)+' shape genes'+
+      (item.inventedStamps?' · '+item.inventedStamps+
+        ' invented marks / '+item.markProgram:'');
      el.append(img,caption);root.append(el);
    }
  }
@@ -137,6 +140,7 @@ export function initRuleStudio(){
  const loop=createAbstractionLoop({
    width:960,height:600,
    getParent:()=>current?.canvas||null,
+   getParentRecipe:()=>current?.recipe||null,
    getUploaded:()=>upload,
    onFrame(result){
      const {canvas,recipe,cycle,metrics,blend,sources,novelty,nonredundancy,
@@ -157,6 +161,9 @@ export function initRuleStudio(){
      text('ruleCaption',describeRecipe(recipe));
      text('ruleEvidence','GENERATION '+cycle+' / '+metrics.strokes+
        ' marks / '+metrics.skipped+' removed / '+blend.toUpperCase()+
+       (metrics.invented?.stamps?' / INVENTED '+metrics.invented.stamps+
+         ' compound marks · '+recipe.markProgram.sources.join(' × ')+' → '+
+         recipe.markProgram.operations.map(x=>x.type).join(' + '):'')+
        ' / '+sources.join(' + ')+
        (derivation?' / DERIVATION '+derivation.method.toUpperCase()+
          ' / '+Math.round(derivation.retained*100)+'% retained frame':'')+
@@ -254,7 +261,9 @@ export function initRuleStudio(){
    lastOrigin='manual';
    const method=methodSignature({
      mode:'rule-studio',subject:recipe.subject,primary:recipe.primary,
-     secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework
+     secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework,
+     application:recipe.application||'',
+     markProgram:metrics.invented.stamps?recipe.markProgram.signature:''
    });
    const analysis=assessCanvas(target,{
      mode:'rule-studio',method,parent:before
@@ -276,6 +285,8 @@ export function initRuleStudio(){
    $('ruleSave').disabled=false;
    text('ruleCaption',describeRecipe(recipe));
    text('ruleEvidence',metrics.strokes+' actual marks · '+metrics.skipped+
+     (metrics.invented.stamps?' · INVENTED '+metrics.invented.stamps+
+       ' compound marks using '+recipe.markProgram.signature:'')+
      ' omitted · '+(recipe.parentId?' CHILD OF '+recipe.parentId.slice(0,7):'ORIGINAL')+
      (revision?' · PAINTED FROM PREVIOUS IMAGE · '+held.held.length+
        ' physical old forms survived · '+hereditary.drawn.length+
@@ -319,7 +330,8 @@ export function initRuleStudio(){
        applyRules(source,candidate,recipe,{iteration:recipe.generation});
        const method=methodSignature({
          mode:'rule-studio',subject:recipe.subject,primary:recipe.primary,
-         secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework
+         secondary:recipe.secondary,mark:recipe.mark,rework:recipe.rework,
+         markProgram:recipe.markProgram.signature
        });
        options.push({recipe,source,canvas:candidate,method});
      }
@@ -354,9 +366,12 @@ export function initRuleStudio(){
    if(!current){status('Paint a parent picture before reworking.');return;}
    const ancestor=current.recipe;
    const opts=selections();
+   const reworkSeed=evolveSeed(ancestor.seed,ancestor.generation+1,0,'rule-rework');
    const next=makeRecipe({...opts,parentId:ancestor.id,
-     generation:ancestor.generation+1,
-     seed:evolveSeed(ancestor.seed,ancestor.generation+1,0,'rule-rework')});
+     generation:ancestor.generation+1,seed:reworkSeed,
+     markProgram:evolveMarkProgram(ancestor.markProgram,{seed:reworkSeed,
+       branch:rememberedMarkPrograms().length?2:1,
+       mate:rememberedMarkPrograms()[0]})});
    if(next.rework==='none')next.rework='abstract_masses';
    const prior=current.canvas;
    realitySource=prior;
@@ -378,6 +393,9 @@ export function initRuleStudio(){
    if(!current||current.judged)return;
    const critique=safe($('ruleCritique').value,230);
    noteRuleVerdict(current.recipe,liked,critique);
+   // Learn only an actually executed invention, never a dormant genome.
+   if(current.metrics?.invented?.stamps>0)
+     rememberMarkVerdict(current.recipe.markProgram,liked);
    if(lastOrigin==='loop')loop.feedback(liked);
    else{
      manualIdeas=judgeStructuralIdeas(manualIdeas,liked);
@@ -392,7 +410,8 @@ export function initRuleStudio(){
      rows.push({recipe:current.recipe,thumb:thumbnail(current.canvas)});
      store(GALLERY,rows.slice(-12));gallery();
    }
-   status(liked?'KEPT: this law / mark / lineage was recorded.':
+   status(liked?'KEPT: law / mark / lineage recorded'+
+     (current.metrics?.invented?.stamps?' with invented procedure.':'.'):
      'REJECTED: the criticized law and/or mark system will be less likely in future surprise experiments.');
  }
  function save(){
