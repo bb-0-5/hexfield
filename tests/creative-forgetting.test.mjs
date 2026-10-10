@@ -127,9 +127,10 @@ assert.equal(memory.rediscovered,0,
 assert.ok(won.memory.events.length<=8);
 assert.ok(won.memory.archive.length<=4);
 const again=blank();
-assert.equal(attemptRediscovery({canvas:again,
- identity:won.identity,memory:won.memory,generation:12}).attempted,false,
- 'Already living shapes may not be recursively reintroduced');
+const later=attemptRediscovery({canvas:again,
+ identity:won.identity,memory:won.memory,generation:12});
+assert.ok(!later.attempted||later.signature.id!==recall.signature.id,
+ 'A returned LIVING form cannot be reintroduced again; a different still-forgotten form may be reviewed');
 const locked=blank(),lockBefore=pixels(locked);
 assert.equal(attemptRediscovery({canvas:locked,identity,memory,
  generation:8,locked:true}).attempted,false);
