@@ -3472,7 +3472,7 @@
     return { dir, away, length, elev, foot };
   }
 
-  function dimensionItem(ctx, layer, lctx, item, W, H, dims, behind = null, formed = false) {
+  function dimensionItem(ctx, layer, lctx, item, W, H, dims, behind = null, formed = false, contour = null) {
     const b = item.box;
     const L = dims.lighting || null;
     const sx = Math.cos(dims.light), sy = Math.sin(dims.light);
@@ -3521,20 +3521,55 @@
       off.width = 0;
     } else if (dims.cast > 0 && grounded) {
       // A shadow on the ground, thrown away from the light and lying flat.
-      const shadow = tintedPatch(layer, W, H, b, L ? rgba(shade, 1, 0.3) : "rgb(12, 12, 24)");
       const yb = b.y + b.h;
       let A, B;
       if (lit) { A = lit.away[0] * lit.length; B = -0.35 * lit.away[1] * lit.length; }
       else { A = -sx * 1.1; B = -0.28; }
-      ctx.save();
-      clipToBehind(ctx);
-      ctx.globalAlpha = (item.alpha ?? 1) * dims.cast * 0.75 * (L ? strength * (1 - 0.45 * L.soft) : 1);
+      const alpha = (item.alpha ?? 1) * dims.cast * 0.75 * (L ? strength * (1 - 0.45 * L.soft) : 1);
       const blur = Math.min(b.w, b.h) * (0.03 + (L ? L.soft * 0.12 + lit.length * 0.01 : 0));
-      if ("filter" in ctx) ctx.filter = `blur(${Math.max(1, Math.round(blur))}px)`;
-      ctx.setTransform(1, 0, -A, -B, A * yb, yb * (1 + B));
-      ctx.drawImage(shadow.canvas, shadow.x, shadow.y);
-      ctx.restore();
-      shadow.canvas.width = 0;
+      if (contour?.core?.length > 2) {
+        /* Invented from the shade side's contour (formItem): the core's
+         * contour carried down the light onto the ground - the plane square
+         * to the thing standing on it - away from its lightest side, so the
+         * shadow's near edge has the contour's own bows and waver; its far
+         * edge is the lit side's outline carried the same way from a step
+         * further back (the side of the thing that cannot be seen). Darkest
+         * at the foot, thinning toward its far end; fainter and softer the
+         * farther off the thing is. */
+        const down = (x, y, back = 0) => [x + A * (yb - y), yb - back + B * (yb - y)];
+        const back = Math.min(b.w, b.h) * (item.entry.depth ?? 0.6) * 0.18;
+        const { core, edge } = contour, path = new Path2D();
+        path.moveTo(core[core.length - 1][0], yb);
+        for (let i = core.length - 1; i >= 0; i--) path.lineTo(...down(core[i][0], core[i][1]));
+        for (let i = 0; i < edge.length; i++) path.lineTo(...down(edge[i][0], edge[i][1], back));
+        path.lineTo(edge[edge.length - 1][0], yb - back);
+        path.closePath();
+        const colour = L ? shade.map((c0) => c0 * 0.3) : [12, 12, 24], d = contour.d || 0;
+        const tip = down(b.x + b.w / 2, b.y);
+        let fill = rgba(colour, 1);
+        if (Math.hypot(tip[0] - (b.x + b.w / 2), tip[1] - yb) > 1) {
+          fill = ctx.createLinearGradient(b.x + b.w / 2, yb, tip[0], tip[1]);
+          fill.addColorStop(0, rgba(colour, 1));
+          fill.addColorStop(1, rgba(colour, 0.4));
+        }
+        ctx.save();
+        clipToBehind(ctx);
+        ctx.globalAlpha = alpha * (1 - 0.45 * d);
+        if ("filter" in ctx) ctx.filter = `blur(${Math.max(1, Math.round(blur * (1 + d)))}px)`;
+        ctx.fillStyle = fill;
+        ctx.fill(path);
+        ctx.restore();
+      } else {
+        const shadow = tintedPatch(layer, W, H, b, L ? rgba(shade, 1, 0.3) : "rgb(12, 12, 24)");
+        ctx.save();
+        clipToBehind(ctx);
+        ctx.globalAlpha = alpha;
+        if ("filter" in ctx) ctx.filter = `blur(${Math.max(1, Math.round(blur))}px)`;
+        ctx.setTransform(1, 0, -A, -B, A * yb, yb * (1 + B));
+        ctx.drawImage(shadow.canvas, shadow.x, shadow.y);
+        ctx.restore();
+        shadow.canvas.width = 0;
+      }
     }
     // Where it stands, the light is shut out: a dark contact at the foot.
     if (L && grounded && (dims.model > 0 || dims.cast > 0)) {
@@ -3783,7 +3818,105 @@
     const a = Number.isFinite(dims?.light) ? dims.light : -2.3, c = Math.cos(FORM.elev);
     return [Math.cos(a) * c, Math.sin(a) * c, Math.sin(FORM.elev)];
   }
-  function formItem(lctx, item, parts, W, H, dims) {
+
+  /* ── Shade-side divisions ────────────────────────────────────────────
+   * The big form is not left to a dome's arithmetic. As a painter divides a
+   * mass, its shade side is cut off from the side away from the light - in
+   * from the left or the right edge toward the middle - by a contour that is
+   * never the outline's mirror: it bows convex (a crescent, the form turning
+   * away like a ball's) or concave (a waist, the form turning in), fullest
+   * above or below the middle, and wavers along its length; a round mass
+   * bows most, a boxy one is nearly straight (a plane turning). Near masses
+   * take more divisions - the light, a half tone, the core of the shade, and
+   * the light bounced back into it off the ground at its edge - and each
+   * step back takes one away, its contours straighter, until the farthest
+   * are one tone in the air. The core's contour is kept: the thing's cast
+   * shadow is invented from it (dimensionItem).
+   *   width   the shade side's share of a row, frontal light .. side light
+   *   bow     how far a contour bows from straight, boxy .. round
+   *   wave    how much it wavers along its length
+   *   half    how far the half tone reaches past the core toward the light
+   *   bounce  how far the bounced light reaches in from the shade's edge
+   *   tones   the half tone's and the bounced light's tone (0 lit, 1 core)
+   *   lean    how much wider the shade grows toward the foot under a high
+   *           light (it wraps under the form) - toward the top under a low one
+   *   soft    a division's edge, in cells
+   *   dome    how much of the dome's own turning (n·l) stays under them */
+  const FORM_SIDE = { width: [0.16, 0.62], bow: [0.3, 0.85], wave: 0.12, half: 0.17, bounce: 0.32, tones: [0.42, 0.62], lean: 1.1, soft: 1.4, dome: 0.45 };
+  // How far back a thing stands, 0 near .. 1 far: its depth in the layout, how near the horizon its foot is, its air.
+  function formDistance(item, H, view) {
+    if (item.entry.anchor === "sky") return 0.6;
+    const foot = item.box.y + item.box.h, horizon = view && Number.isFinite(view.horizon) ? view.horizon : 0;
+    const up = Math.max(0, Math.min(1, (H - foot) / Math.max(1, H - horizon)));
+    return Math.max(0, Math.min(1, Math.max(Number(item.depth) || 0, up * 1.1 - 0.25, (Number(item.aerial) || 0) * 1.4)));
+  }
+  // How many divisions a mass that far off and that big takes: 3 near .. 0 far.
+  function formDivisions(d, item, W, H) {
+    let n = d < 0.3 ? 3 : d < 0.55 ? 2 : d < 0.85 ? 1 : 0;
+    const s = Math.min(item.box.w, item.box.h) / Math.max(1, Math.min(W, H));
+    if (s < 0.05) n = Math.min(n, 1);
+    if (s < 0.02) n = 0;
+    return n;
+  }
+  function shadeDivisions(body, sw, sh, light, item, W, H, view) {
+    const [lx, ly, lz] = light;
+    // The rows the mass spans, each from its left to its right extent.
+    const xl = new Int32Array(sh).fill(-1), xr = new Int32Array(sh).fill(-1);
+    let top = -1, bot = -1;
+    for (let y = 0; y < sh; y++) {
+      for (let x = 0; x < sw; x++) if (body[y * sw + x]) { if (xl[y] < 0) xl[y] = x; xr[y] = x; }
+      if (xl[y] >= 0) { if (top < 0) top = y; bot = y; }
+    }
+    if (top < 0 || bot - top < 2) return null;
+    // The same choices wherever the thing is painted (the picture, and its light map at a quarter of the size).
+    const b = item.box;
+    let seed = Math.floor(b.x / W * 20) + 20 * Math.floor(b.y / H * 20);
+    for (const ch of String(item.key || "")) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
+    const rng = seededRandom(seed ^ 0x5ade);
+    // The side away from the light (+1: the right), and how much of each row is in shade.
+    const side = lx > 0.04 ? -1 : lx < -0.04 ? 1 : (rng() < 0.5 ? -1 : 1);
+    const [w0, w1] = FORM_SIDE.width, f0 = w0 + (w1 - w0) * Math.max(0, Math.min(1, (1 - lz) / 1.3));
+    const d = formDistance(item, H, view), n = formDivisions(d, item, W, H);
+    const round = roundness(item), near = 1 - 0.6 * d;
+    // One contour: its share of a row at t (0 its top .. 1 its foot).
+    const contour = (round) => {
+      const convex = rng() < 0.55 + 0.25 * round, p = 0.55 + rng() * 1.25;
+      const R = (FORM_SIDE.bow[0] + (FORM_SIDE.bow[1] - FORM_SIDE.bow[0]) * round) * near * (0.75 + rng() * 0.25);
+      const wave = FORM_SIDE.wave * near * (0.3 + rng() * 0.7), cyc = 0.7 + rng() * 0.9, ph = rng();
+      return (t) => {
+        const bump = Math.sin(Math.PI * Math.pow(Math.max(0, Math.min(1, t)), p));
+        const bowed = convex ? 1 - R + R * Math.pow(bump, 0.7) : 1 - 0.6 * R * bump;
+        return bowed * (1 + wave * Math.sin(2 * Math.PI * (t * cyc + ph)));
+      };
+    };
+    const core = contour(round), half = contour(round * 0.6), bounce = contour(round);
+    const fCore = f0 * (0.85 + rng() * 0.3), fHalf = FORM_SIDE.half * (0.7 + rng() * 0.6), fBounce = FORM_SIDE.bounce * (0.7 + rng() * 0.5);
+    const tone = n ? new Float32Array(sw * sh) : null;
+    const step = (u, edge, soft) => Math.max(0, Math.min(1, (edge - u) / soft + 0.5));
+    const corePts = [], edgePts = [];
+    for (let y = top; y <= bot; y++) {
+      if (xl[y] < 0) continue;
+      const t = (y - top) / (bot - top), span = xr[y] - xl[y] + 1;
+      const c = Math.min(0.92, fCore * core(t) * Math.max(0.3, 1 - FORM_SIDE.lean * ly * (t - 0.4)));
+      corePts.push([side > 0 ? xr[y] + 1 - c * span : xl[y] + c * span, y + 0.5]);
+      edgePts.push([side > 0 ? xl[y] : xr[y] + 1, y + 0.5]);
+      if (!tone) continue;
+      const soft = FORM_SIDE.soft / span, h = Math.min(0.97, c + fHalf * half(t)), r = c * fBounce * bounce(t);
+      for (let x = xl[y]; x <= xr[y]; x++) {
+        const i = y * sw + x;
+        if (!body[i]) continue;
+        // How far in from the shade's edge, as a share of the row.
+        const u = side > 0 ? (xr[y] + 0.5 - x) / span : (x - xl[y] + 0.5) / span;
+        let v = n >= 2 ? FORM_SIDE.tones[0] * step(u, h, soft) : 0;
+        v = Math.max(v, step(u, c, soft));
+        if (n >= 3) v -= (1 - FORM_SIDE.tones[1]) * step(u, r, soft);
+        tone[i] = v;
+      }
+    }
+    return { tone, core: corePts, edge: edgePts, side, d, n };
+  }
+
+  function formItem(lctx, item, parts, W, H, dims, view = null) {
     const b = item.box;
     const margin = Math.ceil(Math.max(b.w, b.h) * 0.06) + 2;
     const x0 = Math.max(0, Math.floor(b.x - margin)), y0 = Math.max(0, Math.floor(b.y - margin));
@@ -3877,6 +4010,15 @@
         tone[i] = t;
       }
     }
+    // The big form by its shade side's divisions; the dome's own turning stays under them, a little (none far off).
+    const divided = shadeDivisions(body, sw, sh, [lx, ly, lz], item, W, H, view);
+    if (divided) {
+      const dome = divided.n ? FORM_SIDE.dome : 0.3;
+      for (let i = 0; i < tone.length; i++) {
+        if (!body[i] || tone[i] > 1.5) continue;
+        tone[i] = Math.max(divided.tone ? divided.tone[i] : 0, tone[i] * dome);
+      }
+    }
     // Its edges softened by a cell (a ray steps in cells, and drew its shadow's edge as stairs).
     softenTones(tone, body, sw, sh);
     // Laid back over the thing's own pixels: lit as painted, shade darker and toward the shade's colour.
@@ -3899,6 +4041,10 @@
       }
     }
     lctx.putImageData(img, x0, y0);
+    // The core's contour and the lit side's outline, in the picture, for the cast shadow.
+    if (!divided) return null;
+    const at = ([x, y]) => [x0 + x / k, y0 + y / k];
+    return { core: divided.core.map(at), edge: divided.edge.map(at), side: divided.side, d: divided.d };
   }
 
   /* The light itself, where it can be seen: a sun or moon in the sky on the
@@ -4026,8 +4172,8 @@
           lctx.fillRect(0, 0, W, H);
           lctx.restore();
         }
-        if (formed && thing) formItem(lctx, item, parts, W, H, dims);
-        if (solid && !glow && thing) dimensionItem(ctx, layer, lctx, item, W, H, dims, behind, formed);
+        const contour = formed && thing ? formItem(lctx, item, parts, W, H, dims, view) : null;
+        if (solid && !glow && thing) dimensionItem(ctx, layer, lctx, item, W, H, dims, behind, formed, contour);
         if (behind && item.entry.kind === "subject" && !item.lettering && item.entry.anchor !== "sky") behind.boxes.push(item.box);
         // Distance: far things fade toward the air.
         if (item.aerial && !mono && !glow) {

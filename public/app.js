@@ -31843,12 +31843,17 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null, opening =
   plan.critic = choosePlanCritic(plan);
   // The laws its style is made of, inherited from the painting before (Laws)...
   plan.laws = choosePlanLaws(plan);
+  // How its things are taken apart and put back (Constituents): from the ledger's map (Degrees of freedom).
+  const dofRng = mulberry32(((Number(drawSeed) || 1) ^ 0x51ece5) >>> 0);
+  plan.pieces = { sort: dofChoose("structure", "sort", PIECE_SORTS, dofRng), order: dofChoose("structure", "order", PIECE_ORDERS, dofRng) };
+  dofNote(plan, "structure", "pieces", plan.pieces);
   // ...and that painting, as the ground it is painted on (Frames).
   if (pendingFrame && pendingFrame.token === strokePainter.preparing) { plan.frame = pendingFrame.frame; pendingFrame = null; }
   requestDirectorPlan(plan);
   plan.finish = choosePlanFinish(plan, params);
   const { Lf, Lb } = planLuminanceStats(ref, width, height, plan);
   plan.lightOnDark = Math.abs(Lf - Lb) > 6 ? Lf > Lb : mulberry32((Number(drawSeed) || 7) >>> 0)() < 0.6;
+  dofNotePlan(plan);
   return plan;
 }
 
@@ -34770,6 +34775,13 @@ function paintingChoices(plan) {
   if (plan.critic) add(plan.critic.name, criticVoteWord(plan.critic.key), "critic");
   // Its laws, each to be liked or disliked by itself (Laws).
   for (const law of plan.laws || []) add(lawLabel(plan, law), lawVoteWord(law.key));
+  // How its things were taken apart, and its hand's chaos: each liked or disliked by itself, into the ledger (Degrees of freedom).
+  if (plan.pieces && planHasThings(plan)) {
+    const by = { value: "value", colour: "colour", light: "light" }[plan.pieces.sort] || plan.pieces.sort;
+    const first = { big: "biggest first", dark: "darkest first", light: "lightest first", back: "from the back" }[plan.pieces.order] || plan.pieces.order;
+    add("pieces by " + by + ", " + first, "pieces" + plan.pieces.sort + plan.pieces.order);
+  }
+  if (plan.tea?.fallen) add(`tea leaves \u03c3${Math.round(plan.tea.sigma)} \u03c1${Math.round(plan.tea.rho)} \u03b2${plan.tea.beta.toFixed(1)}`, "tealeaves");
   return out;
 }
 
@@ -34796,6 +34808,9 @@ function recordChoiceVote(word, liked) {
   const votes = plan.choiceVotes || (plan.choiceVotes = {});
   if (votes[word] !== undefined) return false;
   votes[word] = Boolean(liked);
+  // A vote on one freedom's settings goes to the ledger as that freedom's alone (Degrees of freedom).
+  if (word.startsWith("pieces")) dofFreedomVote(plan, "structure", liked ? 1 : -1);
+  if (word === "tealeaves") dofFreedomVote(plan, "chance", liked ? 1 : -1);
   for (let n = 0; n < 2; n++) {
     const vote = { word, liked: Boolean(liked), size: 0, hue: 0, light: 0, literal: 0 };
     visualLexiconAdd(vote);
@@ -36690,7 +36705,18 @@ const DEPTH_STYLES = {
   air: { key: "air", name: "aerial depth", k: 0.5 },
   deep: { key: "deep", name: "deep space", k: 1 },
 };
-const DEPTH_BRUSH = { cells: 64, chroma: 0.3, haze: 0.22, width: 0.3, length: 0.3, soft: 0.8, texture: 0.35, alpha: 0.2, detail: 0.5 };
+const DEPTH_BRUSH = { cells: 64, chroma: 0.3, haze: 0.22, width: 0.6, length: 0.3, soft: 0.8, texture: 0.35, alpha: 0.2, detail: 0.5 };
+/* Line in depth: the thickness and definition of the paint carry the depth
+ * as much as its colour. The nearest strokes go on thick and defined -
+ * wider (DEPTH_BRUSH.width), crisper-edged (chooseStrokeTip), the light
+ * along them strongest and pushing what is behind them back hardest - and
+ * each step away thins and softens them, until the farthest are thin, soft
+ * and nearly one colour along their length.
+ *   things  how much a thing's own strokes (already sized to the thing)
+ *           thicken near and thin far
+ *   light   how much the light along a stroke strengthens near, fades far
+ *   recede  how much harder a near stroke sends what is behind it back */
+const LINE_DEPTH = { things: 0.3, light: 0.6, recede: 0.6 };
 const depthVoteWord = (key) => "depth" + String(key).replace(/[^a-z]/g, "");
 
 /* The map: 0 near, 1 far, on a coarse grid; and the haze far things go to. */
@@ -36749,13 +36775,25 @@ function depthAt(plan, x, y, width, height, landscape = false) {
   return (map[i] * (1 - tx) + map[i + 1] * tx) * (1 - ty) + (map[i + dm.gw] * (1 - tx) + map[i + dm.gw + 1] * tx) * ty;
 }
 
-/* The air, painted into a composed reference: far places duller and toward
- * the haze, as far as the depth style says. In place. */
+/* The air, painted into a composed reference: the colour logic of distance,
+ * as a painter lays a landscape from the back forward. The farthest places
+ * are nearly all air - their values drawn in toward the air's own value,
+ * their colour drained toward its grey and turned toward its hue - and each
+ * nearer place is a little less neutral, until the nearest are a touch
+ * richer than the picture had them. As strongly as the depth style says
+ * (flat: none). In place.
+ *   value   how far the farthest values close in on the air's
+ *   chroma  how much of the farthest colour drains away
+ *   hue     how far the farthest colour turns toward the air's
+ *   near    how much richer the nearest colour is
+ *   curve   how quickly it thickens with distance (above 1: mostly far off) */
+const AIR = { value: 0.55, chroma: 0.7, hue: 0.45, near: 0.14, curve: 1.35 };
 function applyDepthAir(pixels, width, height, plan, only = null) {
   const k = plan?.depthStyle?.k || 0, dm = plan?.depthMap;
   // The weather's air comes after the depth's (fog thickens with it).
   if (!k || !dm) return plan?.weather ? applyWeatherAir(pixels, width, height, plan, only) : pixels;
-  const D = DEPTH_BRUSH, haze = dm.haze;
+  const haze = dm.haze, La = 0.299 * haze[0] + 0.587 * haze[1] + 0.114 * haze[2];
+  const strength = 0.35 + 0.65 * k;
   const gx0 = new Int32Array(width), gtx = new Float32Array(width);
   for (let x = 0; x < width; x++) { const f = Math.max(0, Math.min(dm.gw - 1.001, (x + 0.5) / width * dm.gw - 0.5)); gx0[x] = f | 0; gtx[x] = f - gx0[x]; }
   const line = new Float32Array(dm.gw);
@@ -36765,12 +36803,19 @@ function applyDepthAir(pixels, width, height, plan, only = null) {
     for (let gx = 0; gx < dm.gw; gx++) line[gx] = dm.map[y0 * dm.gw + gx] * (1 - ty) + dm.map[(y0 + 1) * dm.gw + gx] * ty;
     for (let x = 0, i = y * width; x < width; x++, i++) {
       if (only && !only[i]) continue;
-      const a = gx0[x], t = gtx[x], d = line[a] * (1 - t) + line[a + 1] * t;
-      if (d < 0.02) continue;
-      const keep = 1 - D.chroma * k * d, toward = D.haze * k * d * d, o = i * 4;
-      const r = pixels[o], g = pixels[o + 1], b = pixels[o + 2], l = 0.299 * r + 0.587 * g + 0.114 * b;
-      const r1 = l + (r - l) * keep, g1 = l + (g - l) * keep, b1 = l + (b - l) * keep;
-      pixels[o] = r1 + (haze[0] - r1) * toward; pixels[o + 1] = g1 + (haze[1] - g1) * toward; pixels[o + 2] = b1 + (haze[2] - b1) * toward;
+      const a = gx0[x], tx = gtx[x], d = line[a] * (1 - tx) + line[a + 1] * tx, o = i * 4;
+      const r = pixels[o], g = pixels[o + 1], b = pixels[o + 2], L = 0.299 * r + 0.587 * g + 0.114 * b;
+      if (d < 0.25) {
+        // The nearest, a touch richer.
+        const rich = 1 + AIR.near * strength * (0.25 - d) / 0.25;
+        pixels[o] = L + (r - L) * rich; pixels[o + 1] = L + (g - L) * rich; pixels[o + 2] = L + (b - L) * rich;
+        continue;
+      }
+      const t = strength * Math.pow((d - 0.25) / 0.75, AIR.curve);
+      const value = L + (La - L) * AIR.value * t, keep = 1 - AIR.chroma * t, turn = AIR.hue * t;
+      pixels[o] = value + ((r - L) * (1 - turn) + (haze[0] - La) * turn) * keep;
+      pixels[o + 1] = value + ((g - L) * (1 - turn) + (haze[1] - La) * turn) * keep;
+      pixels[o + 2] = value + ((b - L) * (1 - turn) + (haze[2] - La) * turn) * keep;
     }
   }
   return plan?.weather ? applyWeatherAir(pixels, width, height, plan, only) : pixels;
@@ -38384,10 +38429,12 @@ let contourVersion = 0;
  *   tone    its two tones - the side turned to the light and the side turned
  *           away (HexfieldVisual formItem) - with a brush a tenth of it;
  *   detail  its drop shadows and small parts with a brush a twentieth of it,
- *           and its thin limbs one stroke each.
+ *           and its thin limbs one stroke each;
+ *   pieces  its constituents, each with a brush sized to it and its edges
+ *           cut in, last, so nothing broader goes over them (Constituents).
  * Afterwards the big brushes leave it alone. */
 const THING_PASSES = [1 / 5, 1 / 10, 1 / 20];
-const THING_BLOB = 0, THING_CARVE = 1, THING_TONE = 2, THING_DETAIL = 3;
+const THING_BLOB = 0, THING_CARVE = 1, THING_TONE = 2, THING_DETAIL = 3, THING_PIECES = 4;
 /* Foliage: a leafy thing's canopy (its parts with the "leafy" texture, or a
  * grown plant's leaves) painted again as leaves - short dabs of the
  * reference's own colour, each turned out from the middle of its clump the
@@ -38396,7 +38443,7 @@ const THING_BLOB = 0, THING_CARVE = 1, THING_TONE = 2, THING_DETAIL = 3;
  * plan is mostly one flat colour, so copying it made a blob: the leaves are
  * lighter on the side the light comes from and darker away from it, each a
  * little different. After the detail, last. */
-const THING_FOLIAGE = 4;
+const THING_FOLIAGE = 5;
 const THING_LAST = THING_FOLIAGE;
 const FOLIAGE = { leaf: 1 / 26, minLeaf: 1.6, spread: 0.7, light: 0.2, vary: 0.12, rim: 0.35 };
 function foliageBoxes(item) {
@@ -38415,6 +38462,152 @@ function foliageBoxes(item) {
   }
   return boxes;
 }
+/* ── Constituents ───────────────────────────────────────────────────────
+ * Before a thing is finished the painter takes it apart its own way. It
+ * sorts what the thing is made of into kinds - by value (its darks, middles
+ * and lights), by colour (three families of hue, found by k-means), or by
+ * the light (its shade, half light and light) - and cuts each kind into the
+ * pieces it lies in (each patch of one kind that holds together). How it
+ * sorts, and in what order it puts the pieces back - biggest first, darkest
+ * first, lightest first, or from the back (the top) down - is its own,
+ * chosen per painting from what has done best (Degrees of freedom). Each
+ * piece is painted with a brush sized to it - a window with a window's
+ * brush, a wall with a wall's - in its own colour, inside its own edges,
+ * and then its edges are cut in: flat strokes run round it just inside its
+ * boundary, so it ends in a clean edge where the next piece begins (a dab
+ * cannot make a window's straight side). So a thing's small constituents
+ * keep their shapes instead of being swallowed by a brush sized to the
+ * whole thing.
+ *   grid       the grid a thing is sorted on, cells across
+ *   min        the smallest piece, in cells (smaller ones are the detail's)
+ *   brush      a piece's brush against its short side
+ *   own        how much of its piece's colour a stroke carries (the rest is
+ *              the picture's where the stroke starts)
+ *   tolerance  how far off the canvas must be before a piece is painted
+ *   split      how far the picture's colour may change along a stroke (a
+ *              piece sorted by its light may hold stripes of colour: a
+ *              stroke ends where they change, and never mixes them)
+ *   edge       a cutting-in stroke's brush against the piece's
+ *   edgeStep   cells of edge to a cutting-in stroke */
+const PIECES = { grid: 96, min: 6, brush: 0.3, own: 0.3, tolerance: 12, split: 30, edge: 0.55, edgeStep: 4 };
+const PIECE_SORTS = ["value", "colour", "light"];
+const PIECE_ORDERS = ["big", "dark", "light", "back"];
+// How deep each cell lies in its piece: cells to the nearest cell of another piece (or none).
+function pieceDepth(id, gw, gh) {
+  const d = new Float32Array(gw * gh);
+  for (let i = 0; i < d.length; i++) d[i] = id[i] >= 0 ? 1e9 : 0;
+  const step = (i, j, cost) => (id[j] === id[i] ? d[j] + cost : cost);
+  for (let y = 0; y < gh; y++) {
+    for (let x = 0; x < gw; x++) {
+      const i = y * gw + x;
+      if (!d[i]) continue;
+      let v = Math.min(d[i], x > 0 ? step(i, i - 1, 1) : 1, y > 0 ? step(i, i - gw, 1) : 1);
+      if (y > 0 && x > 0) v = Math.min(v, step(i, i - gw - 1, 1.414));
+      if (y > 0 && x < gw - 1) v = Math.min(v, step(i, i - gw + 1, 1.414));
+      d[i] = v;
+    }
+  }
+  for (let y = gh - 1; y >= 0; y--) {
+    for (let x = gw - 1; x >= 0; x--) {
+      const i = y * gw + x;
+      if (!d[i]) continue;
+      let v = Math.min(d[i], x < gw - 1 ? step(i, i + 1, 1) : 1, y < gh - 1 ? step(i, i + gw, 1) : 1);
+      if (y < gh - 1 && x < gw - 1) v = Math.min(v, step(i, i + gw + 1, 1.414));
+      if (y < gh - 1 && x > 0) v = Math.min(v, step(i, i + gw - 1, 1.414));
+      d[i] = v;
+    }
+  }
+  return d;
+}
+// A thing taken apart: its pieces, in the order they are painted. Made once per reference.
+function thingPieces(item, mask, ref, W, H, plan) {
+  const key = strokePainter.enhancedKey;
+  if (item.pieces && item.pieces.key === key && item.pieces.W === W) return item.pieces;
+  const sort = plan?.pieces?.sort || "value", order = plan?.pieces?.order || "big";
+  const gw = Math.max(4, Math.min(PIECES.grid, mask.w)), cs = mask.w / gw, gh = Math.max(4, Math.round(mask.h / cs));
+  const n = gw * gh, col = new Float32Array(n * 3), lum = new Float32Array(n), cells = [];
+  for (let gy = 0; gy < gh; gy++) {
+    for (let gx = 0; gx < gw; gx++) {
+      const mx = Math.min(mask.w - 1, Math.floor((gx + 0.5) * cs)), my = Math.min(mask.h - 1, Math.floor((gy + 0.5) * cs));
+      if (mask.alpha[my * mask.w + mx] <= 200) continue;
+      const i = gy * gw + gx, o = ((mask.y0 + my) * W + mask.x0 + mx) * 4;
+      col[i * 3] = ref[o]; col[i * 3 + 1] = ref[o + 1]; col[i * 3 + 2] = ref[o + 2];
+      lum[i] = 0.299 * ref[o] + 0.587 * ref[o + 1] + 0.114 * ref[o + 2];
+      cells.push(i);
+    }
+  }
+  // Each cell's kind.
+  const kind = new Int8Array(n).fill(-1);
+  if (cells.length >= PIECES.min) {
+    if (sort === "colour") {
+      // Three families of colour, begun from its darkest, middle and lightest.
+      const byLum = cells.slice().sort((a, b) => lum[a] - lum[b]);
+      const centres = [byLum[0], byLum[byLum.length >> 1], byLum[byLum.length - 1]].map((i) => [col[i * 3], col[i * 3 + 1], col[i * 3 + 2]]);
+      for (let it = 0; it < 6; it++) {
+        const sums = centres.map(() => [0, 0, 0, 0]);
+        for (const i of cells) {
+          let best = 0, near = Infinity;
+          centres.forEach((c, k) => {
+            const d = (col[i * 3] - c[0]) ** 2 + (col[i * 3 + 1] - c[1]) ** 2 + (col[i * 3 + 2] - c[2]) ** 2;
+            if (d < near) { near = d; best = k; }
+          });
+          kind[i] = best;
+          const sum = sums[best];
+          sum[0] += col[i * 3]; sum[1] += col[i * 3 + 1]; sum[2] += col[i * 3 + 2]; sum[3]++;
+        }
+        sums.forEach((sum, k) => { if (sum[3]) centres[k] = [sum[0] / sum[3], sum[1] / sum[3], sum[2] / sum[3]]; });
+      }
+    } else if (sort === "light" && planLightMap(plan)) {
+      for (const i of cells) {
+        const l = lightAt(plan, mask.x0 + ((i % gw) + 0.5) * cs, mask.y0 + (((i / gw) | 0) + 0.5) * cs, W, H);
+        kind[i] = l < -0.15 ? 0 : l < 0.25 ? 1 : 2;
+      }
+    } else {
+      // Its darks, middles and lights: a third of it each.
+      const sorted = cells.map((i) => lum[i]).sort((a, b) => a - b);
+      const t1 = sorted[Math.floor(sorted.length / 3)], t2 = sorted[Math.floor(sorted.length * 2 / 3)];
+      for (const i of cells) kind[i] = lum[i] < t1 ? 0 : lum[i] < t2 ? 1 : 2;
+    }
+  }
+  // Each kind cut into the patches it lies in (too small a patch is left to the detail).
+  const id = new Int32Array(n).fill(-1), stack = new Int32Array(n), list = [];
+  for (const start of cells) {
+    if (id[start] !== -1 || kind[start] < 0) continue;
+    const k = kind[start], members = [];
+    let top = 0;
+    stack[top++] = start; id[start] = -2;
+    while (top) {
+      const i = stack[--top], x = i % gw, y = (i / gw) | 0;
+      members.push(i);
+      for (const j of [x > 0 ? i - 1 : -1, x < gw - 1 ? i + 1 : -1, y > 0 ? i - gw : -1, y < gh - 1 ? i + gw : -1]) {
+        if (j >= 0 && id[j] === -1 && kind[j] === k) { id[j] = -2; stack[top++] = j; }
+      }
+    }
+    if (members.length < PIECES.min) { for (const i of members) id[i] = -3; continue; }
+    const p = list.length;
+    let r = 0, g = 0, b = 0, sy = 0, x0 = gw, x1 = 0, y0 = gh, y1 = 0;
+    for (const i of members) {
+      const x = i % gw, y = (i / gw) | 0;
+      id[i] = p; r += col[i * 3]; g += col[i * 3 + 1]; b += col[i * 3 + 2]; sy += y;
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+    }
+    const m = members.length, colour = [r / m, g / m, b / m];
+    list.push({ id: p, kind: k, area: m, colour, lum: 0.299 * colour[0] + 0.587 * colour[1] + 0.114 * colour[2], cy: sy / m, box: [x0, y0, x1, y1], cells: members });
+  }
+  for (let i = 0; i < n; i++) if (id[i] < 0) id[i] = -1;
+  // A piece's brush: from its short side (twice as deep as its deepest cell).
+  const depth = pieceDepth(id, gw, gh);
+  for (const piece of list) {
+    let d = 0;
+    for (const i of piece.cells) d = Math.max(d, depth[i]);
+    piece.radius = Math.max(1.5, d * cs * 2 * PIECES.brush);
+    piece.cells = null;
+  }
+  const orders = { big: (a, b) => b.area - a.area, dark: (a, b) => a.lum - b.lum, light: (a, b) => b.lum - a.lum, back: (a, b) => a.cy - b.cy };
+  list.sort(orders[order] || orders.big);
+  return (item.pieces = { key, W, gw, gh, cs, id, list, sort, order });
+}
+
 // Strokes planned per turn; the rest of the pass continues on the next one.
 const THING_BATCH = isMobileBrowser() ? 500 : 1200;
 
@@ -38471,10 +38664,19 @@ function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0, to = 
     return [px[o], px[o + 1], px[o + 2]];
   };
   const diff = (a, b) => (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2])) / 3;
+  const plan = strokePainter.plan, depthK = plan?.depthStyle?.k || 0;
+  const airOf = depthK && plan?.depthMap ? (x, y) => depthK * (depthAt(plan, x, y, W, H) - 0.5) * 2 : null;
   const finish = (stroke) => {
     if (Number(brush?.alpha) > 0) stroke.alpha = Number(brush.alpha);
     if (brush?.bristle === false) stroke.plain = true;
     if (brush?.round) stroke.round = true;
+    // Near, thicker and crisper; far, thinner, softer and in thinner paint (Line in depth).
+    const air = airOf && stroke.points?.length ? airOf(stroke.points[0][0], stroke.points[0][1]) : 0;
+    if (Math.abs(air) > 0.02) {
+      stroke.air = +air.toFixed(2);
+      stroke.width *= 1 - LINE_DEPTH.things * air;
+      if (air > 0) stroke.alpha = (Number(stroke.alpha) || (0.82 + stroke.bristle * 0.14) / 0.97) * (1 - DEPTH_BRUSH.alpha * air);
+    }
     return stroke;
   };
   scene.items.forEach((item, index) => {
@@ -38577,6 +38779,123 @@ function thingBrushStrokes(scene, ref, current, W, H, pass, rng, from = 0, to = 
           if (diff(at(current, mid[0], mid[1]), ground) < 14) continue;
           strokes.push(finish({ points, width: rc * 2 * (0.95 + rng() * 0.15),
             colour: ground.map((c) => Math.max(0, Math.min(255, Math.round(c + (rng() - 0.5) * 4)))), bristle: rng() }));
+        }
+      }
+      return;
+    }
+    if (pass === THING_PIECES) {
+      // Piece by piece, in the painting's order, each with its own brush, inside its own edges (Constituents).
+      const P = thingPieces(item, mask, ref, W, H, strokePainter.plan);
+      const cap = Math.max(1.5, short * THING_PASSES[1]);
+      for (const piece of P.list) {
+        if (strokes.length >= THING_BATCH) break;
+        const radius = Math.min(cap, piece.radius);
+        const [bx0, by0, bx1, by1] = piece.box;
+        // Its long way: the principal axis of its cells - or, where it is about as wide as long, the way its plane runs.
+        let n = 0, mx = 0, my = 0, sxx = 0, syy = 0, sxy = 0;
+        for (let gy = by0; gy <= by1; gy++) for (let gx = bx0; gx <= bx1; gx++) if (P.id[gy * P.gw + gx] === piece.id) { mx += gx; my += gy; n++; }
+        mx /= n; my /= n;
+        for (let gy = by0; gy <= by1; gy++) {
+          for (let gx = bx0; gx <= bx1; gx++) {
+            if (P.id[gy * P.gw + gx] !== piece.id) continue;
+            const dx = gx - mx, dy = gy - my;
+            sxx += dx * dx; syy += dy * dy; sxy += dx * dy;
+          }
+        }
+        const spread = Math.sqrt((sxx - syy) ** 2 + 4 * sxy * sxy), l1 = (sxx + syy + spread) / 2, l2 = Math.max(1e-6, (sxx + syy - spread) / 2);
+        let a = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+        if (l1 / l2 < 1.6) {
+          const plane = planeAt(strokePainter.plan, mask.x0 + (mx + 0.5) * P.cs, mask.y0 + (my + 0.5) * P.cs, W, H);
+          a = Number.isFinite(plane) ? plane : Number(strokePainter.settleAngle) || 0;
+        }
+        const ux = Math.cos(a), uy = Math.sin(a), vx = -uy, vy = ux;
+        // Its extent along and across that way.
+        let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+        for (let gy = by0; gy <= by1; gy++) {
+          for (let gx = bx0; gx <= bx1; gx++) {
+            if (P.id[gy * P.gw + gx] !== piece.id) continue;
+            const u = (gx - mx) * ux + (gy - my) * uy, v = (gx - mx) * vx + (gy - my) * vy;
+            u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v);
+          }
+        }
+        // Row by row across it, each row its chords along it, each chord a few straight strokes.
+        const rowGap = Math.max(0.8, radius * 1.6 / P.cs), du = Math.max(0.5, radius * 0.5 / P.cs), most = Math.max(2, radius * 6 / P.cs);
+        const cellAt = (u, v) => [mx + u * ux + v * vx, my + u * uy + v * vy];
+        const own = (u, v) => { const [cx, cy] = cellAt(u, v), gx = Math.round(cx), gy = Math.round(cy); return gx >= 0 && gy >= 0 && gx < P.gw && gy < P.gh && P.id[gy * P.gw + gx] === piece.id; };
+        const toCanvas = ([cx, cy]) => [mask.x0 + (cx + 0.5) * P.cs, mask.y0 + (cy + 0.5) * P.cs];
+        const lay = (from, to, v) => {
+          const steps = Math.max(1, Math.round((to - from) / Math.max(du, radius / P.cs)));
+          const points = [];
+          for (let k = 0; k <= steps; k++) points.push(toCanvas(cellAt(from + (to - from) * k / steps, v)));
+          let off = 0;
+          for (const [x, y] of points) off += diff(at(current, x, y), at(ref, x, y));
+          if (off / points.length < PIECES.tolerance) return;
+          const [cx, cy] = points[points.length >> 1], want = at(ref, cx, cy);
+          const colour = want.map((c, k) => Math.max(0, Math.min(255, Math.round(c * (1 - PIECES.own) + piece.colour[k] * PIECES.own + (rng() - 0.5) * 6))));
+          const stroke = finish({ points: points.length > 1 ? points : [points[0], points[0]], width: radius * 2 * (0.9 + rng() * 0.15), colour, bristle: rng() });
+          stroke.tip = "flat";
+          strokes.push(stroke);
+        };
+        const refAt = (u, v) => { const [x, y] = toCanvas(cellAt(u, v)); return at(ref, x, y); };
+        for (let v = v0 + rowGap * (0.3 + rng() * 0.4); v <= v1 + 0.01 && strokes.length < THING_BATCH; v += rowGap) {
+          let runStart = null, runColour = null;
+          for (let u = u0; u <= u1 + du; u += du) {
+            const inside = u <= u1 && own(u, v);
+            // A chord ends where it leaves the piece, or where the picture's colour turns along it.
+            const turned = inside && runStart !== null && diff(refAt(u, v), runColour) > PIECES.split;
+            if (runStart !== null && (!inside || turned)) {
+              // One chord: in straight strokes no longer than `most`, end to end.
+              const end = u - du;
+              for (let s0 = runStart; s0 <= end; s0 += most) lay(s0, Math.min(end, s0 + most), v);
+              runStart = null;
+            }
+            if (inside && runStart === null) { runStart = u; runColour = refAt(u, v); }
+          }
+        }
+        const rectangular = n / Math.max(1, (u1 - u0 + 1) * (v1 - v0 + 1)) > 0.85;
+        if (rectangular) continue;
+        // Its edges cut in: flat strokes along its boundary, set in by half a brush so they end where it does.
+        const ring = new Uint8Array(P.gw * P.gh);
+        for (let gy = by0; gy <= by1; gy++) {
+          for (let gx = bx0; gx <= bx1; gx++) {
+            const i = gy * P.gw + gx;
+            if (P.id[i] !== piece.id) continue;
+            if (gx === 0 || gy === 0 || gx === P.gw - 1 || gy === P.gh - 1 || P.id[i - 1] !== piece.id || P.id[i + 1] !== piece.id ||
+              P.id[i - P.gw] !== piece.id || P.id[i + P.gw] !== piece.id) ring[i] = 1;
+          }
+        }
+        const edgeR = Math.max(P.cs * 0.6, Math.min(radius * PIECES.edge, P.cs * 2)), setIn = Math.max(0, edgeR - P.cs * 0.5);
+        const inward = (gx, gy) => {
+          let ox = 0, oy = 0;
+          for (const [ex, ey] of [[2, 0], [-2, 0], [0, 2], [0, -2], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+            const x = gx + ex, y = gy + ey;
+            if (x >= 0 && y >= 0 && x < P.gw && y < P.gh && P.id[y * P.gw + x] === piece.id) { ox += ex; oy += ey; }
+          }
+          const l = Math.hypot(ox, oy);
+          return l ? [ox / l, oy / l] : [0, 0];
+        };
+        const cutIn = (points) => {
+          if (points.length < 2) return;
+          const [mx, my] = points[points.length >> 1];
+          const want = at(ref, mx, my);
+          if (diff(at(current, mx, my), want) < PIECES.tolerance * 0.5) return;
+          const colour = want.map((c, k) => Math.max(0, Math.min(255, Math.round(c * (1 - PIECES.own) + piece.colour[k] * PIECES.own))));
+          const stroke = finish({ points, width: edgeR * 2, colour, bristle: rng() });
+          stroke.tip = "flat";
+          strokes.push(stroke);
+        };
+        for (const line of traceEdgeLines(ring, P.gw, P.gh)) {
+          // Along it a few cells to a stroke - and a new stroke wherever the picture's colour turns.
+          let points = [], from = null;
+          for (const [gx, gy] of line) {
+            if (strokes.length >= THING_BATCH) break;
+            const [nx, ny] = inward(gx, gy);
+            const point = [mask.x0 + (gx + 0.5) * P.cs + nx * setIn, mask.y0 + (gy + 0.5) * P.cs + ny * setIn], here = at(ref, point[0], point[1]);
+            if (points.length && (points.length > PIECES.edgeStep || diff(here, from) > PIECES.split)) { cutIn(points); points = []; }
+            if (!points.length) from = here;
+            points.push(point);
+          }
+          cutIn(points);
         }
       }
       return;
@@ -38716,7 +39035,7 @@ function paintThingStrokes(result, scene, pass) {
     minSize: strokes.length ? Math.min(...strokes.map((x) => x.width)) : 0,
     maxSize: strokes.length ? Math.max(...strokes.map((x) => x.width)) : 0,
     nonRedundancy: 0.5, count: (Number(result.paintBrush?.count) || 0) + strokes.length,
-    wordHand: (planStyle()?.label || "") + " · things " + (["blob", "carve", "two tones", "detail", "foliage"][pass] || "pass " + (pass + 1)),
+    wordHand: (planStyle()?.label || "") + " · things " + (["blob", "carve", "two tones", "detail", "pieces", "foliage"][pass] || "pass " + (pass + 1)),
   };
   if (!strokes.length) {
     if (activePaintAnimation === animation) activePaintAnimation = 0;
@@ -42022,6 +42341,142 @@ function lawLabel(plan, law) {
   return Number.isFinite(share) ? def.name + " · " + Math.round(share * 100) + "% of " + (plan.frame.words || "the last painting") : def.name;
 }
 
+/* ── Degrees of freedom ─────────────────────────────────────────────────
+ * Every process the painter runs puts a bound on one freedom of the
+ * picture: the target laws on its palette, the mark laws on its marks, the
+ * frame law on what is kept of the last painting, the tea leaves on where
+ * paint falls unmeant, the pieces on how a thing is taken apart and in what
+ * order it is put back together, the light on where it falls, the manner on
+ * how it is handled. The ledger keeps, painting by painting, which freedom
+ * each process bounded and with what settings, and how the painting did -
+ * its own taste of it, and KEEP or REJECT. The map it makes, freedom by
+ * freedom and setting by setting, is how the painter knows which settings
+ * reveal a subject best; the next painting is put together from the
+ * settings each freedom has done best with - kept parts of different
+ * paintings, combined - and now and then something else, to keep learning.
+ * ?map shows it.
+ *   keep     paintings kept in the ledger
+ *   explore  how often a choice from the map is something else instead
+ *   steps    the bins a number setting is mapped in */
+const DOF_KEY = "hexfield.dof.v1";
+const DOF = { keep: 200, explore: 0.3, steps: { sigma: 2, rho: 4, beta: 0.3 } };
+let dofBook = null, dofMapCache = null;
+function dofLedger() {
+  if (dofBook) return dofBook;
+  try { dofBook = JSON.parse(localStorage.getItem(DOF_KEY) || "null"); } catch { dofBook = null; }
+  if (!dofBook || !Array.isArray(dofBook.rows)) dofBook = { rows: [] };
+  return dofBook;
+}
+function saveDof() {
+  try { localStorage.setItem(DOF_KEY, JSON.stringify(dofLedger())); } catch { /* full storage */ }
+}
+// What a process bounded in this painting, and with what settings.
+function dofNote(plan, freedom, process, settings) {
+  if (plan) (plan.dof ||= {})[freedom] = { process, ...settings };
+}
+// The freedoms a painting's own choices bound, noted once its plan is made.
+function dofNotePlan(plan) {
+  const of = (kind) => (plan.laws || []).filter((law) => LAWS[law.key]?.kind === kind).map((law) => law.key).sort().join("+") || "none";
+  dofNote(plan, "palette", "target laws", { laws: of("target") });
+  dofNote(plan, "marks", "mark laws", { laws: of("mark") });
+  dofNote(plan, "keep", "frame law", { law: of("frame") });
+  dofNote(plan, "light", "light", { light: plan.light?.key || "none" });
+  dofNote(plan, "handling", "manner", { manner: plan.manner?.key || "none" });
+}
+// How a painting did: its own taste of it, and the votes on it.
+function dofScore(row) {
+  const vote = Number(row.vote) || 0;
+  if (!Number.isFinite(row.taste) && !vote) return NaN;
+  return (Number.isFinite(row.taste) ? row.taste : 0.5) + 0.35 * vote;
+}
+function dofOutcome(plan, { taste, vote } = {}) {
+  if (!plan?.dof) return;
+  // (Noted again: the manner is chosen after the plan is made.)
+  dofNotePlan(plan);
+  const book = dofLedger();
+  plan.dofId ||= "d" + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36);
+  let row = book.rows.find((r) => r.id === plan.dofId);
+  if (!row) {
+    row = { id: plan.dofId, at: Date.now(), words: String(strokePainter.plan === plan ? wordPromptText() : "").slice(0, 60), dof: plan.dof };
+    book.rows.unshift(row);
+    book.rows.length = Math.min(book.rows.length, DOF.keep);
+  }
+  if (Number.isFinite(taste)) row.taste = +taste.toFixed(4);
+  if (vote) row.vote = vote;
+  dofMapCache = null;
+  saveDof();
+}
+// A vote on one freedom of a painting: a row of its own, of that freedom's settings alone.
+function dofFreedomVote(plan, freedom, vote) {
+  const settings = plan?.dof?.[freedom];
+  if (!settings) return;
+  const book = dofLedger();
+  book.rows.unshift({ id: (plan.dofId || "d" + Date.now().toString(36)) + ":" + freedom, at: Date.now(), dof: { [freedom]: settings }, vote });
+  book.rows.length = Math.min(book.rows.length, DOF.keep);
+  dofMapCache = null;
+  saveDof();
+}
+// A setting as the map files it: a number in its bin, anything else as it is.
+const dofBin = (key, value) => typeof value === "number"
+  ? String(+(Math.round(value / (DOF.steps[key] || 0.1)) * (DOF.steps[key] || 0.1)).toFixed(3)) : String(value);
+// For each freedom and setting, how the paintings with it did: { freedom: { key: { bin: { n, mean } } } }.
+function dofMap() {
+  if (dofMapCache) return dofMapCache;
+  const map = {};
+  for (const row of dofLedger().rows) {
+    const score = dofScore(row);
+    if (!Number.isFinite(score)) continue;
+    for (const [freedom, settings] of Object.entries(row.dof || {})) {
+      for (const [key, value] of Object.entries(settings || {})) {
+        if (key === "process" || value === null || value === undefined) continue;
+        const cell = (((map[freedom] ||= {})[key] ||= {})[dofBin(key, value)] ||= { n: 0, sum: 0 });
+        cell.n++;
+        cell.sum += score;
+      }
+    }
+  }
+  for (const keys of Object.values(map)) for (const bins of Object.values(keys)) for (const cell of Object.values(bins)) cell.mean = cell.sum / cell.n;
+  return (dofMapCache = map);
+}
+// One setting for a freedom: the one the map says has done best (in doubt where it has seen little), or now and then any.
+function dofChoose(freedom, key, options, rng) {
+  if (rng() < DOF.explore) return options[Math.floor(rng() * options.length)];
+  const bins = dofMap()[freedom]?.[key] || {};
+  let best = options[0], top = -Infinity;
+  for (const option of options) {
+    const cell = bins[dofBin(key, option)];
+    const v = (cell ? cell.mean : 0.5) + (rng() - 0.5) * 0.5 / Math.sqrt((cell?.n || 0) + 1);
+    if (v > top) { top = v; best = option; }
+  }
+  return best;
+}
+/* ?map: the ledger's map over the painting - each freedom, the process that
+ * bounds it, and how the paintings did with each of its settings. */
+const SHOW_DOF_MAP = (() => { try { return new URLSearchParams(location.search).has("map"); } catch { return false; } })();
+let dofPanel = null;
+function refreshDofPanel() {
+  if (!SHOW_DOF_MAP || typeof document === "undefined") return;
+  if (!dofPanel) {
+    dofPanel = document.createElement("div");
+    dofPanel.id = "dofMap";
+    dofPanel.style.cssText = "position:fixed;left:8px;right:8px;bottom:8px;max-height:46vh;overflow:auto;z-index:20;" +
+      "background:rgba(16,16,20,0.9);color:#ddd;font:11px/1.35 ui-monospace,monospace;padding:8px;border-radius:6px;white-space:pre-wrap";
+    document.body.appendChild(dofPanel);
+  }
+  const map = dofMap(), plan = strokePainter.plan, rows = dofLedger().rows;
+  const lines = [`degrees of freedom · ${rows.length} paintings in the ledger`];
+  for (const [freedom, keys] of Object.entries(map)) {
+    const now = plan?.dof?.[freedom];
+    lines.push(`\n${freedom}${now ? " (" + now.process + ")" : ""}`);
+    for (const [key, bins] of Object.entries(keys)) {
+      const cells = Object.entries(bins).sort((a, b) => b[1].mean - a[1].mean);
+      lines.push(`  ${key}: ` + cells.map(([bin, c]) => `${bin}${now && dofBin(key, now[key]) === bin ? "*" : ""} ${c.mean.toFixed(2)}·${c.n}`).join("  "));
+    }
+  }
+  dofPanel.textContent = lines.join("\n");
+}
+if (SHOW_DOF_MAP && typeof window !== "undefined") setInterval(refreshDofPanel, 2000);
+
 /* The target laws, on what the brush paints toward (finishPlanReferenceSteps):
  * each moves a pixel's value or colour, never where it is - the masses stay. */
 function* applyTargetLawsSteps(pixels, width, height, plan) {
@@ -43620,8 +44075,9 @@ function recordStyleOutcome(plan, source) {
   let taste;
   try { taste = finishedPictureTaste(); } catch { return null; }
   if (!Number.isFinite(taste)) return null;
-  // (How it came out, for the next painting's laws: Laws.)
+  // (How it came out, for the next painting's laws: Laws; and for the ledger: Degrees of freedom.)
   plan.outcomeTaste = taste;
+  dofOutcome(plan, { taste });
   const row = { id: "so_" + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36),
     at: Date.now(), chain: planStyleChain(plan), taste: +taste.toFixed(4), source };
   styleOutcomes = [row, ...styleOutcomes].slice(0, STYLE_OUTCOME_CAP);
@@ -43818,6 +44274,7 @@ function recordStyleVote(plan, liked) {
   runOutcome(plan, liked ? 1 : -1);
   criticOutcome(plan, liked ? 1 : -1);
   lawOutcome(plan, liked ? 1 : -1);
+  dofOutcome(plan, { vote: liked ? 1 : -1 });
   return row;
 }
 
@@ -43879,8 +44336,13 @@ function chooseStrokeTip(stroke) {
   // (A manner with its own tips takes this only if softness is one of them.)
   const air = Number(stroke.air) || 0;
   if (air && (!own || own.soft > 0)) {
-    if (air > 0) weights.soft = (weights.soft || 0) + air * DEPTH_BRUSH.soft;
-    else { weights.soft = (weights.soft || 0) * Math.max(0, 1 + air * DEPTH_BRUSH.soft); weights.dry = (weights.dry || 0) - air * DEPTH_BRUSH.texture; }
+    // (Far: nearly always soft. Near: crisp - a flat's cut edge - and textured.)
+    if (air > 0) weights.soft = (weights.soft || 0) + air * DEPTH_BRUSH.soft * 2.2;
+    else {
+      weights.soft = (weights.soft || 0) * Math.max(0, 1 + air * DEPTH_BRUSH.soft * 1.4);
+      weights.dry = (weights.dry || 0) - air * DEPTH_BRUSH.texture;
+      weights.flat = (weights.flat || 0) - air * 0.45;
+    }
   }
   // A found edge takes no soft tip; a lost one leans soft (Lost and found edges).
   const edge = Number(stroke.edge);
@@ -43951,10 +44413,80 @@ function strokeResample(spine, width, reach) {
 
 const tipShade = (colour, shade) => `rgb(${colour.map((c) => Math.max(0, Math.min(255, Math.round(c + shade)))).join(",")})`;
 
+/* ── Light along every stroke ───────────────────────────────────────────
+ * No stroke is one flat colour: each carries the light along its own length.
+ * The end that points toward the light (the painting's sun or moon, or its
+ * lamp) keeps the stroke's colour, a touch lifted toward the light's; the end
+ * that points away goes into shade - darker, and toward the light's ambient
+ * colour - and the shade reaches along the stroke as far as the stroke lines
+ * up with the light: a stroke laid toward the light is part in its own
+ * shadow, one laid across the light is all one colour. Worked out once, as
+ * the stroke is laid (lightStroke), and kept on it, so EXPORT and the
+ * time-lapse draw it the same.
+ *   reach  how far along a stroke aimed at the light its shade reaches
+ *   shade  how much darker its shaded end is
+ *   lift   how far its lit end goes toward the light's colour
+ *   cool   how far its shaded end goes toward the ambient colour
+ *   min    below this much alignment with the light, a stroke stays one colour */
+const STROKE_LIGHT = { reach: 0.6, shade: 0.26, lift: 0.08, cool: 0.2, min: 0.2 };
+function lightStroke(stroke, plan, width, height) {
+  if (stroke.light !== undefined) return;
+  stroke.light = null;
+  const pts = stroke.points;
+  if (!plan || !pts || pts.length < 2 || !stroke.colour || stroke.tip === "ink") return;
+  const [x0, y0] = pts[0], [x1, y1] = pts[pts.length - 1];
+  const len = Math.hypot(x1 - x0, y1 - y0);
+  if (len < Math.max(2, stroke.width * 0.3)) return;
+  const L = plan.light?.settings || null, angle = Number.isFinite(plan.lightAngle) ? plan.lightAngle : -Math.PI / 2;
+  let lx = Math.cos(angle), ly = Math.sin(angle);
+  if (L?.point && L.at && width && height) {
+    // Toward a lamp in the picture from where the stroke is.
+    const dx = L.at[0] * width - (x0 + x1) / 2, dy = L.at[1] * height - (y0 + y1) / 2, d = Math.hypot(dx, dy) || 1;
+    lx = dx / d; ly = dy / d;
+  }
+  const a = ((x1 - x0) * lx + (y1 - y0) * ly) / len, k = Math.abs(a);
+  if (k < STROKE_LIGHT.min) return;
+  // (Defined near, faint far: Line in depth.)
+  const near = Math.max(0.3, Math.min(1.4, 1 - LINE_DEPTH.light * (Number(stroke.air) || 0)));
+  const t = Math.min(1, (k - STROKE_LIGHT.min) / (1 - STROKE_LIGHT.min) * near), cool = STROKE_LIGHT.cool * t;
+  const ambient = L?.ambient || [60, 64, 96], tint = L?.colour || [255, 250, 240];
+  stroke.light = {
+    end: a > 0 ? 1 : 0, reach: +(STROKE_LIGHT.reach * t).toFixed(2),
+    lit: stroke.colour.map((c, i) => Math.max(0, Math.min(255, Math.round(c + (tint[i] - c) * STROKE_LIGHT.lift * t)))),
+    shade: stroke.colour.map((c, i) => Math.max(0, Math.min(255, Math.round(c * (1 - STROKE_LIGHT.shade * t) * (1 - cool) + ambient[i] * cool)))),
+  };
+}
+// A stroke's paint: its colour, or its light along it from the shaded end to the lit one.
+function strokeLightFill(ctx, stroke, from, to) {
+  const [r, g, b] = stroke.colour, l = stroke.light;
+  if (!l || !from || !to || (from[0] === to[0] && from[1] === to[1])) return `rgb(${r},${g},${b})`;
+  const [s, e] = l.end ? [from, to] : [to, from];
+  const fill = ctx.createLinearGradient(s[0], s[1], e[0], e[1]);
+  fill.addColorStop(0, `rgb(${l.shade[0]},${l.shade[1]},${l.shade[2]})`);
+  fill.addColorStop(Math.max(0.02, Math.min(0.95, l.reach)), `rgb(${r},${g},${b})`);
+  fill.addColorStop(1, `rgb(${l.lit[0]},${l.lit[1]},${l.lit[2]})`);
+  return fill;
+}
+
 function drawPaintStroke(ctx, stroke) {
-  const [r, g, b] = stroke.colour;
   const pts = stroke.points;
   const tip = stroke.tip || (stroke.tip = chooseStrokeTip(stroke));
+  /* The overlap rule (Overlap): a stroke, as it goes on, sends what is under
+   * and round it back a step - a breath of the painting's air over the paint
+   * beside it - so the newest paint stands in front of the old. */
+  if (stroke.recede > 0 && stroke.haze && pts.length) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    if (pts.length === 1) ctx.lineTo(pts[0][0] + 0.01, pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.globalAlpha = stroke.recede;
+    ctx.strokeStyle = `rgb(${stroke.haze[0]},${stroke.haze[1]},${stroke.haze[2]})`;
+    ctx.lineWidth = stroke.width * 2.1;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
   // A glaze is thin paint: what is under it shows through (Application).
   const glaze = Number(stroke.glaze) || 0;
   const alpha = (stroke.alpha ? Math.min(1, stroke.alpha * (0.94 + stroke.bristle * 0.06)) : 0.82 + stroke.bristle * 0.14) * (1 - 0.5 * glaze);
@@ -43971,7 +44503,7 @@ function drawPaintStroke(ctx, stroke) {
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     ctx.globalAlpha = alpha;
-    ctx.strokeStyle = `rgb(${r},${g},${b})`;
+    ctx.strokeStyle = strokeLightFill(ctx, stroke, pts[0], pts[pts.length - 1]);
     ctx.lineWidth = stroke.width;
     ctx.stroke();
     ctx.globalAlpha = 1;
@@ -44035,7 +44567,7 @@ function drawPaintStroke(ctx, stroke) {
     }
     ctx.closePath();
   };
-  ctx.fillStyle = `rgb(${r},${g},${b})`;
+  ctx.fillStyle = strokeLightFill(ctx, stroke, spine[0], spine[n - 1]);
   if (tip === "soft") {
     // Feathered: wide and faint outside, fuller toward the middle.
     for (const [scale, a] of [[1.4, 0.24], [1.1, 0.36], [0.75, 0.62]]) {
@@ -44196,7 +44728,7 @@ function* landscapeSteps(ref, width, height, things, cover, scene) {
 
 function paintTowardReference(result, ref, width, height,
                               { layer = null, limit = STROKE_BATCH, refKey = null, enhance = false,
-                                prepared = false, split = false } = {}) {
+                                prepared = false, split = false, leaves = false } = {}) {
   markPaintTimingStarted(result);
   if (enhance) {
     // The same master prepares to the same picture; only a new one is redone.
@@ -44259,12 +44791,12 @@ function paintTowardReference(result, ref, width, height,
         await pause();
         if (stale()) return false;
       }
-      return strokesTowardReference(result, ref, width, height, { layer, limit, refKey, enhance, prepared, palette });
+      return strokesTowardReference(result, ref, width, height, { layer, limit, refKey, enhance, prepared, palette, leaves });
     })();
   }
   let step;
   do step = steps.next(); while (!step.done);
-  return strokesTowardReference(result, step.value, width, height, { layer, limit, refKey, enhance, prepared, palette });
+  return strokesTowardReference(result, step.value, width, height, { layer, limit, refKey, enhance, prepared, palette, leaves });
 }
 
 /* An accepted deposit, worked into the painting where it differs from the
@@ -44314,7 +44846,220 @@ function refreshStrokeGradient(ref, refKey, width, height) {
   return true;
 }
 
-function strokesTowardReference(result, ref, width, height, { layer, limit, refKey, enhance, prepared, palette }) {
+/* ── Tea leaves ─────────────────────────────────────────────────────────
+ * Half of what goes on is not meant. A hand that is a chaotic system of
+ * three parameters - Lorenz's σ, ρ and β, its own for each painting -
+ * wanders the canvas, and at every batch lets fall a pinch of leaves: each
+ * a dab begun a hair's breadth from the hand and carried by the same system
+ * three frames ahead before it lands, so the pinch spreads the way only
+ * chaos spreads it - leaves that start together land apart, and no two
+ * pinches fall alike. A leaf's paint is the cup's (what the brush last
+ * carried) stirred into what the picture wants where it lands. Then the
+ * other half reads them, as tea leaves are read after they fall: the
+ * batch's deliberate strokes are planned on the canvas with the leaves in
+ * it, so a leaf that landed near enough is kept and built on (painting from
+ * what is laid), and only one that is far off is painted out.
+ *   share   the leaves' share of the marks
+ *   frames  frames each leaf is carried before it lands (three at least)
+ *   steps   steps of the system to a frame, and the time step
+ *   spread  how far apart a pinch starts, in the system's units
+ *   size    a leaf's width against the batch's brush
+ *   cup     how much of the cup's paint a leaf carries
+ *   layers  the brushes that let leaves fall (the finest does not) */
+const TEA = { share: 0.5, frames: 3, steps: 25, dt: 0.02, spread: 1.5, pinch: 10, size: [0.7, 1.6], cup: 0.22, layers: 2 };
+function lorenzStep(s, sigma, rho, beta, dt) {
+  const f = (x, y, z) => [sigma * (y - x), x * (rho - z) - y, x * y - beta * z];
+  const [x, y, z] = s, h = dt / 2;
+  const k1 = f(x, y, z);
+  const k2 = f(x + h * k1[0], y + h * k1[1], z + h * k1[2]);
+  const k3 = f(x + h * k2[0], y + h * k2[1], z + h * k2[2]);
+  const k4 = f(x + dt * k3[0], y + dt * k3[1], z + dt * k3[2]);
+  return [0, 1, 2].map((i) => s[i] + dt / 6 * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]));
+}
+// The painting's hand: its three parameters, and where it is.
+function teaHand(plan) {
+  if (plan.tea) return plan.tea;
+  const rng = mulberry32(((Number(plan.drawSeed) || 1) ^ 0x7ea1ea5) >>> 0);
+  // Its three parameters from the ledger's map (Degrees of freedom), each a little off the setting chosen...
+  const sigma = dofChoose("chance", "sigma", [8, 10, 12, 14], rng) + (rng() - 0.5) * 1.6;
+  const beta = dofChoose("chance", "beta", [2.2, 2.5, 2.8, 3.1], rng) + (rng() - 0.5) * 0.24;
+  // ...and ρ always past where the system turns chaotic (Lorenz's ρ_H), or the leaves would settle on one spot.
+  const chaotic = sigma * (sigma + beta + 3) / Math.max(0.5, sigma - beta - 1);
+  const rho = Math.max(chaotic + 2, dofChoose("chance", "rho", [26, 30, 34, 38], rng) + (rng() - 0.5) * 3);
+  dofNote(plan, "chance", "tea leaves", { sigma: +sigma.toFixed(2), rho: +rho.toFixed(2), beta: +beta.toFixed(2) });
+  let s = [rng() * 2 - 1, rng() * 2 - 1, 18 + rng() * 6];
+  // Settled onto its attractor first.
+  for (let i = 0; i < 250; i++) s = lorenzStep(s, sigma, rho, beta, TEA.dt);
+  return (plan.tea = { sigma: +sigma.toFixed(2), rho: +rho.toFixed(2), beta: +beta.toFixed(2), s, cup: null, rng, fallen: 0, kept: 0 });
+}
+// Where a state of the system is on the canvas: its x across, its z up.
+function teaPlace(T, s, width, height) {
+  const across = 4.6 * Math.sqrt(T.beta * (T.rho - 1));
+  return [(0.5 + s[0] / across) * width, (1 - (s[2] - 0.15 * T.rho) / (1.6 * T.rho)) * height];
+}
+/* This batch's leaves: the hand moves on a frame, letting fall a pinch
+ * (TEA.pinch leaves) at each step of the way, and each pinch is carried
+ * TEA.frames frames from beside it, leaf by leaf. Chaos stretches a pinch
+ * into a thread, so it lands as tea leaves do, in a clump: round where the
+ * hand itself will be, each leaf as far out as its own path strayed from
+ * the hand's (most a little, a few a long way) and turned by where its own
+ * path ended up. Laid into `current` too, so the batch's deliberate strokes
+ * are planned on them. */
+function teaLeaves(plan, current, ref, width, height, layer, count) {
+  if (!plan || layer > TEA.layers || count < 1) return [];
+  const T = teaHand(plan), rng = T.rng, gradient = strokePainter.gradient;
+  const radius = strokeRadiusForLayer(layer, strokeBrushBase(width, height));
+  const guard = gradient?.protect, things = gradient?.protectThings;
+  const blocked = (x, y) => {
+    const i = (y | 0) * width + (x | 0);
+    return (things && things.cover[i] > 200) || (guard && guard.cover[i] > 110);
+  };
+  const depthK = plan.depthStyle?.k || 0;
+  const airAt = depthK && plan.depthMap ? (x, y) => depthK * (depthAt(plan, x, y, width, height) - 0.5) * 2 : null;
+  const carry = (s) => {
+    for (let i = 0; i < TEA.frames * TEA.steps; i++) s = lorenzStep(s, T.sigma, T.rho, T.beta, TEA.dt);
+    return s;
+  };
+  const cup = T.cup || [128, 128, 128], leaves = [];
+  // (Pinches go on falling, up to three frames' worth, until the batch's share has landed: one that falls off the canvas or on a thing is lost.)
+  const pinches = Math.ceil(count / TEA.pinch), per = Math.max(1, Math.round(TEA.steps / pinches));
+  for (let pinch = 0; leaves.length < count && pinch < pinches * 3; pinch++) {
+    for (let i = 0; i < per; i++) T.s = lorenzStep(T.s, T.sigma, T.rho, T.beta, TEA.dt);
+    const ahead = carry(T.s), [cx, cy] = teaPlace(T, ahead, width, height);
+    // Each leaf's path, and how far it strayed from the hand's.
+    const paths = [];
+    for (let n = Math.min(TEA.pinch, count - leaves.length); n > 0; n--) {
+      const s = carry(T.s.map((v) => v + (rng() * 2 - 1) * TEA.spread));
+      paths.push({ s, d: Math.hypot(s[0] - ahead[0], s[1] - ahead[1], s[2] - ahead[2]) });
+    }
+    // The clump's size: most of it within a few brush widths of the middle.
+    const typical = paths.map((p) => p.d).sort((a, b) => a - b)[paths.length >> 1] || 1;
+    for (const { s, d } of paths) {
+      const turn = 2 * Math.PI * (Math.abs(s[0] * 0.37 + s[1] * 0.61 + s[2] * 0.29) % 1);
+      const out = radius * 3 * Math.pow(d / typical, 0.8);
+      const x = cx + Math.cos(turn) * out, y = cy + Math.sin(turn) * out;
+      if (!(x >= 0 && y >= 0 && x < width && y < height) || blocked(x, y)) continue;
+      // Its way: the way its own path was going as it landed.
+      const v = [T.sigma * (s[1] - s[0]), s[0] * (T.rho - s[2]) - s[1], s[0] * s[1] - T.beta * s[2]];
+      const l = Math.hypot(v[0], v[2]) || 1, dx = v[0] / l, dy = -v[2] / l;
+      const w = radius * (TEA.size[0] + rng() * (TEA.size[1] - TEA.size[0])), len = w * (0.6 + rng() * 1.4);
+      const x1 = Math.max(0, Math.min(width - 1, x + dx * len)), y1 = Math.max(0, Math.min(height - 1, y + dy * len));
+      // The cup's paint stirred into what is wanted here - at the value wanted here: a leaf strays in hue, not in light.
+      const o = ((y | 0) * width + (x | 0)) * 4, want = [ref[o], ref[o + 1], ref[o + 2]];
+      const mixed = want.map((c, k) => c * (1 - TEA.cup) + cup[k] * TEA.cup);
+      const lum = (c) => 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
+      const lift = lum(want) - lum(mixed) + (rng() - 0.5) * 8;
+      const colour = mixed.map((c) => Math.max(0, Math.min(255, Math.round(c + lift))));
+      const leaf = { points: [[x, y], [x1, y1]], width: w, colour, bristle: rng(), leaf: true, recede: 0 };
+      const air = airAt ? airAt(x, y) : 0;
+      if (Math.abs(air) > 0.02) leaf.air = +air.toFixed(2);
+      leaves.push(leaf);
+      stampLeaf(current, width, height, leaf);
+    }
+  }
+  T.fallen += leaves.length;
+  T.asked = (T.asked || 0) + count;
+  return leaves;
+}
+/* ── Building off what is laid ──────────────────────────────────────────
+ * Painting from far to near, a painter builds each thing on what is down
+ * already. A stroke laid is read as the plane it stands for - the ground or
+ * a level top (lying across), a wall facing (standing up), or a side going
+ * back (slanting, along a line to the vanishing point) - a perspective line
+ * is run from the vanishing point through it, and the next stroke goes down
+ * in front of it along that line as the plane square to it: a wall stood
+ * up on the ground, the ground laid at a wall's foot, the front edge of a
+ * side going back. Each is turned a little from square and set a little
+ * aside as the building grows away from the first stroke, in a less
+ * neutral colour and with a crisper edge than the paint it is built on, as
+ * the nearer thing it is. Laid only where it brings the canvas nearer the
+ * picture; what it lays is built on in turn.
+ *   share   its share of the deliberate strokes
+ *   gap     how far in front, in widths of the stroke it is built on
+ *   turn    how far from square it may turn (radians)
+ *   richer  how much less neutral it is than the picture's colour there
+ *   nearer  how much nearer it is painted (a crisper tip, a thicker line)
+ *   flat    a stroke within this angle of level lies flat; past `upright` it
+ *           stands; between, it goes back */
+const CONSTRUCT = { share: 0.25, gap: [0.9, 1.7], turn: 0.26, richer: 0.1, nearer: 0.2, flat: 0.44, upright: 1.13 };
+function constructFrom(sources, current, ref, width, height, count, rng) {
+  const plan = strokePainter.plan;
+  const pool = (sources || []).filter((st) => st && st.points?.length >= 2 && st.colour && !st.patch);
+  if (!plan || !pool.length || count < 1) return [];
+  const view = plan.scene?.view;
+  const vp = view?.vanish && !view.iso ? view.vanish
+    : [(Number(plan.fx) || 0.5) * width, Number.isFinite(view?.horizon) ? view.horizon : height * 0.45];
+  const gradient = strokePainter.gradient, guard = gradient?.protect, things = gradient?.protectThings;
+  const clear = (x, y) => {
+    if (!(x >= 0 && y >= 0 && x < width && y < height)) return false;
+    const i = (y | 0) * width + (x | 0);
+    return !((things && things.cover[i] > 200) || (guard && guard.cover[i] > 110));
+  };
+  const at = (px, x, y) => {
+    const o = (Math.max(0, Math.min(height - 1, y | 0)) * width + Math.max(0, Math.min(width - 1, x | 0))) * 4;
+    return [px[o], px[o + 1], px[o + 2]];
+  };
+  const diff = (a, b) => (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2])) / 3;
+  const depthK = plan.depthStyle?.k || 0;
+  const airAt = depthK && plan.depthMap ? (x, y) => depthK * (depthAt(plan, x, y, width, height) - 0.5) * 2 : () => 0;
+  const built = [];
+  for (let tries = 0; tries < count * 3 && built.length < count; tries++) {
+    const S = pool[Math.floor(rng() * pool.length)];
+    const [ax, ay] = S.points[0], [bx, by] = S.points[S.points.length - 1];
+    const mx = (ax + bx) / 2, my = (ay + by) / 2, len = Math.max(S.width, Math.hypot(bx - ax, by - ay));
+    // The plane it stands for, by how it lies.
+    const tilt = Math.abs(Math.atan2(by - ay, bx - ax)), level = Math.min(tilt, Math.PI - tilt);
+    const kind = level < CONSTRUCT.flat ? "flat" : level > CONSTRUCT.upright ? "upright" : "back";
+    // Its perspective line, and a step along it toward the viewer (and a little aside).
+    let ux = mx - vp[0], uy = my - vp[1];
+    const ul = Math.hypot(ux, uy) || 1;
+    ux /= ul; uy /= ul;
+    const gap = S.width * (CONSTRUCT.gap[0] + rng() * (CONSTRUCT.gap[1] - CONSTRUCT.gap[0])), aside = (rng() - 0.5) * gap * 0.6;
+    const px = mx + ux * gap - uy * aside, py = my + uy * gap + ux * aside;
+    if (!clear(px, py)) continue;
+    // The plane square to it: up from a flat one or one going back; along the ground from an upright one.
+    const angle = (kind === "upright" ? (rng() < 0.5 ? 0 : Math.PI) : -Math.PI / 2) + (rng() - 0.5) * 2 * CONSTRUCT.turn;
+    const reach = len * (0.6 + rng() * 0.6), qx = px + Math.cos(angle) * reach, qy = py + Math.sin(angle) * reach;
+    if (!clear(qx, qy) || !clear((px + qx) / 2, (py + qy) / 2)) continue;
+    // Its colour: the picture's along it, less neutral.
+    const samples = [0, 0.25, 0.5, 0.75, 1].map((t) => [px + (qx - px) * t, py + (qy - py) * t]);
+    const want = samples.map(([x, y]) => at(ref, x, y));
+    const mean = [0, 1, 2].map((k) => want.reduce((sum, c) => sum + c[k], 0) / want.length);
+    const L = 0.299 * mean[0] + 0.587 * mean[1] + 0.114 * mean[2];
+    const colour = mean.map((c) => Math.max(0, Math.min(255, Math.round(L + (c - L) * (1 + CONSTRUCT.richer)))));
+    // Laid only if it brings what it covers nearer the picture.
+    let gain = 0;
+    samples.forEach(([x, y], k) => { gain += diff(at(current, x, y), want[k]) - diff(colour, want[k]); });
+    if (gain < samples.length * 3) continue;
+    const air = Math.max(-1, Math.min(1, (Number.isFinite(S.air) ? S.air : airAt(px, py)) - CONSTRUCT.nearer));
+    const stroke = { points: [[px, py], [qx, qy]], width: S.width * (1 + CONSTRUCT.nearer * 0.6), colour, bristle: rng(), built: kind };
+    if (Math.abs(air) > 0.02) stroke.air = +air.toFixed(2);
+    built.push(stroke);
+    stampLeaf(current, width, height, stroke);
+    // What it lays is built on in turn.
+    pool.push(stroke);
+  }
+  return built;
+}
+
+// A leaf laid into a copy of the canvas: a capsule of its colour, its edge soft.
+function stampLeaf(px, width, height, leaf) {
+  const [[ax, ay], [bx, by]] = leaf.points, r = leaf.width / 2, a = 0.85;
+  const x0 = Math.max(0, Math.floor(Math.min(ax, bx) - r)), x1 = Math.min(width - 1, Math.ceil(Math.max(ax, bx) + r));
+  const y0 = Math.max(0, Math.floor(Math.min(ay, by) - r)), y1 = Math.min(height - 1, Math.ceil(Math.max(ay, by) + r));
+  const vx = bx - ax, vy = by - ay, vv = vx * vx + vy * vy || 1, [cr, cg, cb] = leaf.colour;
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0, o = (y * width + x0) * 4; x <= x1; x++, o += 4) {
+      const t = Math.max(0, Math.min(1, ((x - ax) * vx + (y - ay) * vy) / vv));
+      const d = Math.hypot(x - ax - vx * t, y - ay - vy * t);
+      if (d > r) continue;
+      const k = a * Math.min(1, (r - d) / Math.max(1, r * 0.25));
+      px[o] += (cr - px[o]) * k; px[o + 1] += (cg - px[o + 1]) * k; px[o + 2] += (cb - px[o + 2]) * k;
+    }
+  }
+}
+
+function strokesTowardReference(result, ref, width, height, { layer, limit, refKey, enhance, prepared, palette, leaves: leavesAsked = false }) {
   const animation = ++activePaintAnimation;
   refreshStrokeGradient(ref, refKey, width, height);
   const hand = wordBrushHand(result?.params || bestRun?.params);
@@ -44366,14 +45111,31 @@ function strokesTowardReference(result, ref, width, height, { layer, limit, refK
   const aim = (l) => runs ? intentReference(bent, width, height, strokeRadiusForLayer(l, strokeBrushBase(width, height))) : bent;
   // The critic's turn: this batch works only where it asked (planStrokeBatch).
   criticTurnBatch = layer == null && Boolean(activeDirective()?.regions.length);
-  let plan = planStrokeBatch(current, aim(useLayer), strokePainter.gradient, width, height,
-    strokeRadiusForLayer(useLayer, strokeBrushBase(width, height)), rng, hand, limit, toleranceFor(useLayer), useLayer, palette);
+  const aimed = aim(useLayer);
+  /* Half the marks are tea leaves, let fall first (Tea leaves), as many as
+   * the last batch's deliberate strokes; the other half is planned on the
+   * canvas with them in it. In the painter's own run of brushes (the
+   * critic's turns too: the leaves fall wherever the hand is) and its first
+   * broad batch - not in an accepted change. */
+  const tea = strokePainter.plan && (layer == null || leavesAsked) ? teaHand(strokePainter.plan) : null;
+  const leafCount = tea && useLayer <= TEA.layers ? Math.round(Math.min(limit * TEA.share, tea.lastDeliberate ?? limit * TEA.share)) : 0;
+  // (Laid into a copy: the stroke log holds the canvas as it was.)
+  if (leafCount) current = current.slice();
+  const leaves = leafCount ? teaLeaves(strokePainter.plan, current, aimed, width, height, useLayer, leafCount) : [];
+  // Part of the deliberate half builds off what is laid: the leaves just fallen, and the last batch (Building off what is laid).
+  const builtCount = leafCount ? Math.round((limit - leaves.length) * CONSTRUCT.share) : 0;
+  const last = strokePainter.lastStrokes?.plan === strokePainter.plan ? strokePainter.lastStrokes.strokes : [];
+  const built = builtCount ? constructFrom([...leaves, ...last], current, aimed, width, height, builtCount, rng) : [];
+  if (tea) tea.built = (tea.built || 0) + built.length;
+  const deliberate = Math.max(1, limit - leaves.length - built.length);
+  let plan = planStrokeBatch(current, aimed, strokePainter.gradient, width, height,
+    strokeRadiusForLayer(useLayer, strokeBrushBase(width, height)), rng, hand, deliberate, toleranceFor(useLayer), useLayer, palette);
   // A layer with (almost) nothing left to fix hands over to the next, finer one.
   if (useLayer > finestLayer) useLayer = finestLayer;
   while (plan.candidates < Math.max(3, plan.cells * 0.01) && useLayer < finestLayer) {
     useLayer++;
     plan = planStrokeBatch(current, aim(useLayer), strokePainter.gradient, width, height,
-      strokeRadiusForLayer(useLayer, strokeBrushBase(width, height)), rng, hand, limit, toleranceFor(useLayer), useLayer, palette);
+      strokeRadiusForLayer(useLayer, strokeBrushBase(width, height)), rng, hand, deliberate, toleranceFor(useLayer), useLayer, palette);
   }
   if (layer == null) {
     /* One layer is a fixed number of passes, as in Hertzmann's layering: the
@@ -44392,6 +45154,17 @@ function strokesTowardReference(result, ref, width, height, { layer, limit, refK
       feedOpeningBack(strokePainter.plan);
     }
   }
+  /* ...and as many again as the deliberate half laid, falling after it: what
+   * the pinch before it missed (off the canvas, onto a thing) the next one
+   * makes up, so half of what goes on is the leaves' (read by the next batch). */
+  let after = [];
+  if (tea && useLayer <= TEA.layers && plan.strokes.length) {
+    const more = plan.strokes.length + built.length - leaves.length;
+    if (more > 0) {
+      if (!leafCount) current = current.slice();
+      after = teaLeaves(strokePainter.plan, current, aimed, width, height, useLayer, more);
+    }
+  }
   current = null;
   criticTurnBatch = false;
   /* The finest brush stops too: its passes are counted like the others',
@@ -44401,7 +45174,14 @@ function strokesTowardReference(result, ref, width, height, { layer, limit, refK
    * strokes of noise. */
   const finestDone = layer == null && useLayer >= finestLayer &&
     strokePainter.layerBatches > FINEST_BATCHES * STROKE_LAYER_BATCHES[Math.min(finestLayer, STROKE_LAYER_BATCHES.length - 1)];
-  const strokes = finestDone ? [] : plan.strokes;
+  // The leaves go down first; with nothing deliberate left to do, none fall (the painting is done).
+  const strokes = finestDone || !plan.strokes.length ? [] : [...leaves, ...built, ...plan.strokes, ...after];
+  strokePainter.lastStrokes = strokes.length ? { plan: strokePainter.plan, strokes: [...built, ...plan.strokes] } : null;
+  if (tea) {
+    tea.lastDeliberate = plan.strokes.length;
+    // The cup: what the brush carried in this batch.
+    if (plan.strokes.length) tea.cup = [0, 1, 2].map((k) => Math.round(plan.strokes.reduce((sum, st) => sum + st.colour[k], 0) / plan.strokes.length));
+  }
   if (laid) markLaid(laid, strokes, useLayer);
   result.paintStrokeLayer = useLayer;
   result.paintStrokeCount = strokes.length;
@@ -44440,7 +45220,28 @@ function adoptLaidAhead(laid, source) {
 /* Draw planned strokes onto the canvas a few per frame, logging each for
  * EXPORT. Resolves true when they all landed (false if a newer pass took over
  * first). Shared by the stroke painter and the letter brush. */
+/* The overlap rule's amount (Overlap): how much each stroke breathes over
+ * the paint round it as it goes on - its own colour leaned toward the
+ * painting's air (`air`), at `alpha` - none from the biggest brush (it is
+ * the background), none from a tea leaf (an accident does not mean to put
+ * anything behind it). */
+const RECEDE = { alpha: 0.045, big: 1 / 14, air: 0.35 };
 function animateLoggedStrokes(result, strokes, animation) {
+  // Every stroke carries the light along it, and sends back what it lands on (Light, Overlap).
+  const plan = strokePainter.plan;
+  if (plan && view?.width) {
+    const big = RECEDE.big * strokeBrushBase(view.width, view.height) * 2;
+    const air = (plan.depthMap?.haze || [206, 210, 218]).map((c) => Math.round(c));
+    for (const stroke of strokes) {
+      if (!stroke || stroke.patch) continue;
+      lightStroke(stroke, plan, view.width, view.height);
+      if (stroke.recede === undefined) {
+        stroke.recede = stroke.width < big ? +(RECEDE.alpha * Math.max(0.4, 1 - LINE_DEPTH.recede * (Number(stroke.air) || 0))).toFixed(3) : 0;
+      }
+      // (Its own paint leaned toward the air: in a dark painting the air is far lighter than the paint, and a breath of it ringed each stroke.)
+      if (stroke.recede > 0 && !stroke.haze) stroke.haze = air.map((c, i) => Math.round(stroke.colour[i] + (c - stroke.colour[i]) * RECEDE.air));
+    }
+  }
   strokePainter.strokes += strokes.length;
   strokeLog.drawing = true;
   const logEpoch = strokeLog.epoch;
@@ -45228,7 +46029,7 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
       const flats = ready.plan.drawn ? stained.then(() => sketching).then(() => laydrawnFlats(ready.plan, ready.reference, width, height, () => strokePainter.plan === ready.plan)) : stained;
       // (A drawn painting has no brush to follow its flats: the ink comes next.)
       return flats.then(() => ready.plan.drawn ? true : paintTowardReference(result, ready.reference, width, height,
-        { layer: 0, limit: STROKE_BATCH * 2, prepared: true }))
+        { layer: 0, limit: STROKE_BATCH * 2, prepared: true, leaves: true }))
         .then(() => { paintVisibleGlyphOverlay(result); return true; });
     }).catch((error) => { console.warn("preparing a new painting failed", error); if (alive()) strokePainter.preparing = null; return false; });
   }
