@@ -31841,6 +31841,10 @@ function makePaintingPlan(ref, width, height, drawSeed, params = null, opening =
   // In runs from the catalogue, or copied stroke by stroke (Runs).
   plan.marks = choosePlanMarks(plan);
   plan.critic = choosePlanCritic(plan);
+  // The laws its style is made of, inherited from the painting before (Laws)...
+  plan.laws = choosePlanLaws(plan);
+  // ...and that painting, as the ground it is painted on (Frames).
+  if (pendingFrame && pendingFrame.token === strokePainter.preparing) { plan.frame = pendingFrame.frame; pendingFrame = null; }
   requestDirectorPlan(plan);
   plan.finish = choosePlanFinish(plan, params);
   const { Lf, Lb } = planLuminanceStats(ref, width, height, plan);
@@ -34764,6 +34768,8 @@ function paintingChoices(plan) {
   if (plan.tips) add(plan.tips.key + " brushes", tipsVoteWord(plan.tips.key), "tips");
   if (plan.marks) add(plan.marks.name, marksVoteWord(plan.marks.key), "marks");
   if (plan.critic) add(plan.critic.name, criticVoteWord(plan.critic.key), "critic");
+  // Its laws, each to be liked or disliked by itself (Laws).
+  for (const law of plan.laws || []) add(lawLabel(plan, law), lawVoteWord(law.key));
   return out;
 }
 
@@ -39240,14 +39246,19 @@ function* applyAbstractionSteps(pixels, width, height, plan) {
 }
 
 function planPaletteSize(plan) {
-  const size = Number(plan.manner?.reference?.palette) || plan.style?.paletteSize || PLAN_PALETTE_SIZE;
+  let size = Number(plan.manner?.reference?.palette) || plan.style?.paletteSize || PLAN_PALETTE_SIZE;
+  // A painting under the law of few colours keeps to four to seven (Laws).
+  const few = lawOf(plan, "fewcolours");
+  if (few) size = Math.min(size, 4 + Math.round(3 * (1 - few.s)));
   // An abstract painting keeps to a handful of colours.
   return plan.abstraction?.palette ? Math.min(size, plan.abstraction.palette) : size;
 }
 
 function planSnapAmount(plan) {
   const snap = Number(plan.manner?.reference?.snap);
-  const base = snap >= 0 ? snap : planPaletteSnap(plan);
+  let base = snap >= 0 ? snap : planPaletteSnap(plan);
+  const few = lawOf(plan, "fewcolours");
+  if (few) base = Math.max(base, 0.45 + 0.4 * few.s);
   return plan.abstraction?.snap ? Math.max(base, plan.abstraction.snap) : base;
 }
 
@@ -39710,6 +39721,8 @@ function* finishPlanReferenceSteps(composed, width, height, plan) {
   yield;
   // Simplified as far as the painting's abstraction goes.
   pixels = yield* applyAbstractionSteps(pixels, width, height, plan);
+  // Its laws on what the brush paints toward (Laws).
+  pixels = yield* applyTargetLawsSteps(pixels, width, height, plan);
   // Drawn: laid out as perspective planes, a flat colour to each.
   if (manner.reference?.planes) pixels = yield* applyPerspectivePlanesSteps(pixels, width, height, plan, manner.reference.planes);
   if (!plan.palette) {
@@ -39759,7 +39772,9 @@ function* finishPlanReferenceSteps(composed, width, height, plan) {
     if (Math.hypot(near[0] - f.colour[0], near[1] - f.colour[1], near[2] - f.colour[2]) > 30 && plan.palette.length < planPaletteSize(plan) + 8) plan.palette.push(f.colour);
   }
   // The weather already painted stays painted.
-  return stampWeather(pixels, width, height, plan);
+  pixels = stampWeather(pixels, width, height, plan);
+  // What it keeps of the painting before - last, over all of it (Frames).
+  return yield* applyFrameSteps(pixels, width, height, plan);
 }
 
 /* A small copy by block averages - cheap, and taste reads it the same. */
@@ -41116,9 +41131,11 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
   // ...and while the darks or lights are being pushed, the broad brushes take on smaller differences.
   const valued = layer <= 1 && valueDirected() ? 0.7 : 1;
   // Out in the background a place must be further off before a brush goes back to it, once it is
-  // blocked in (Calm backgrounds): the second brush half as strict there, the fine ones fully.
+  // blocked in (Calm backgrounds) - the finest brush most; the middle ones still paint what is
+  // there at their size (a city's buildings, a far shore), only not its small change.
   const calm = backgroundCalm(strokePainter.plan, width, height);
-  const calmTolerance = calm && layer >= 1 ? (x, y) => 1 + CALM.tolerance * (layer >= 2 ? 1 : 0.5) * calm.at(x, y) : () => 1;
+  const calmBy = CALM.tolerance * [0, 0.25, 0.4, 1][Math.min(3, layer)];
+  const calmTolerance = calm && calmBy ? (x, y) => 1 + calmBy * calm.at(x, y) : () => 1;
   const toleranceAt = directed ? (x, y) => {
     const lean = directed(x, y);
     return valued * tolerance * calmTolerance(x, y) * (lean > 0 ? 1 - 0.5 * lean : 1 - 0.6 * lean);
@@ -41154,8 +41171,8 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       const st = starts[i], c = colourAt(ref, st.x, st.y), L = 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
       let w = 0;
       for (const r of turn.regions) w = Math.max(w, regionWeight(r, st.x / width, st.y / height, L));
-      // (Out in the background, what it asked for is done with the broad brushes alone.)
-      if (w < 0.12 || (layer >= 2 && calm && calm.at(st.x, st.y) > 0.5)) starts.splice(i, 1);
+      // (Out in the background, what it asked for is done without the finest brush.)
+      if (w < 0.12 || (layer >= 3 && calm && calm.at(st.x, st.y) > 0.5)) starts.splice(i, 1);
     }
   }
   /* The two finest brushes work mostly at the focus; elsewhere a start
@@ -41181,8 +41198,8 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       // Less fine detail the farther off it is.
       const far = airAt ? 1 - DEPTH_BRUSH.detail * Math.max(0, airAt(starts[i].x, starts[i].y)) : 1;
       const asked = directed ? Math.max(0, directed(starts[i].x, starts[i].y)) : 0;
-      // ...and fewer still out in the background.
-      const quiet = calm ? 1 - CALM.fine * calm.at(starts[i].x, starts[i].y) : 1;
+      // ...and fewer still out in the background (of the finest brush; of the middle one, a few fewer).
+      const quiet = calm ? 1 - (layer >= 3 ? CALM.fine : 0.3) * calm.at(starts[i].x, starts[i].y) : 1;
       if (rng() > Math.max(floor, w, asked) * far * quiet) starts.splice(i, 1);
     }
   }
@@ -41258,7 +41275,29 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
   const pot = hand ? hand.pot * hand.strength : 0;
   // Big brushes make long sweeps; small ones short touches.
   const lengthScale = Number(brush?.length) || 1;
-  const maxLength = Math.max(lengthScale < 1 ? 2 : 3, Math.round((radius > 8 ? 12 : radius > 4 ? 9 : 6) * (1 + 0.45 * ene) * lengthScale));
+  // The painting's mark laws (Laws): long or short, one way, straight, the big brush in the darks, broken colour.
+  const lawPlan = strokePainter.plan, lawLong = lawOf(lawPlan, "long"), lawShort = lawOf(lawPlan, "short");
+  const lawOneway = lawOf(lawPlan, "oneway"), lawStraight = lawOf(lawPlan, "straight");
+  const lawDarkBig = lawOf(lawPlan, "darkbig"), lawBroken = lawOf(lawPlan, "broken");
+  const lawLength = (lawLong ? 1 + 0.7 * lawLong.s : 1) * (lawShort ? 1 - 0.55 * lawShort.s : 1);
+  const oneWay = (dx, dy) => {
+    const ox = Math.cos(lawOneway.a), oy = Math.sin(lawOneway.a), sign = dx * ox + dy * oy < 0 ? -1 : 1, k = 0.5 + 0.45 * lawOneway.s;
+    dx = dx * (1 - k) + sign * ox * k; dy = dy * (1 - k) + sign * oy * k;
+    const l = Math.hypot(dx, dy) || 1;
+    return [dx / l, dy / l];
+  };
+  const lawMarks = (stroke, n) => {
+    if (lawDarkBig) {
+      const L = (0.299 * stroke.colour[0] + 0.587 * stroke.colour[1] + 0.114 * stroke.colour[2]) / 255;
+      stroke.width *= Math.max(0.5, 1 + 1.2 * lawDarkBig.s * (0.5 - L));
+    }
+    if (lawBroken) {
+      // Warm and cool in turn, stroke by stroke.
+      const w = (n % 2 ? 1 : -1) * lawBroken.s;
+      stroke.colour = stroke.colour.map((c, k) => Math.max(0, Math.min(255, Math.round(c + w * [12, 3, -12][k]))));
+    }
+  };
+  const maxLength = Math.max(2, lengthScale < 1 ? 2 : 3, Math.round((radius > 8 ? 12 : radius > 4 ? 9 : 6) * (1 + 0.45 * ene) * lengthScale * lawLength));
   const width2 = radius * (1 + 0.25 * pot) * (Number(brush?.width) || 1);
   // A print's hatching keeps one direction across the picture.
   const hatch = Number(brush?.hatch) || 0;
@@ -41325,6 +41364,7 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
         if (Number.isFinite(a)) { dx = dx * (1 - planeLock) + Math.cos(a) * planeLock; dy = dy * (1 - planeLock) + Math.sin(a) * planeLock; }
       }
       if (anatomyK) [dx, dy] = followAnatomy(paintingAnatomyAt(strokePainter.plan, start.x, start.y), dx, dy, anatomyK);
+      if (lawOneway) [dx, dy] = oneWay(dx, dy);
       const l = Math.hypot(dx, dy) || 1;
       // Finer runs where more detail was asked for, broader where less.
       // Calm ones, in calm colours, out in the background (Calm backgrounds).
@@ -41334,6 +41374,7 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       const air = airAt ? airAt(start.x, start.y) : 0;
       for (const st of placeRun(run, start.x, start.y, dx / l, dy / l, radius * (1 - DEPTH_BRUSH.width * air), colour, rng, guarded, width, height, still)) {
         if (strokes.length >= limit) break;
+        lawMarks(st, strokes.length);
         strokes.push(st);
       }
       run.uses++;
@@ -41386,6 +41427,13 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
         // Curvature damping: a loose hand follows the forms more freely.
         const follow = 0.4 + 0.15 * Math.max(0, ene);
         dx = follow * dx + (1 - follow) * lastDx; dy = follow * dy + (1 - follow) * lastDy;
+        const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+      }
+      // Its laws: all strokes one way; a straight stroke keeps the way it set off.
+      if (lawOneway) [dx, dy] = oneWay(dx, dy);
+      if (lawStraight && step > 1) {
+        const k = 0.6 + 0.4 * lawStraight.s;
+        dx = dx * (1 - k) + lastDx * k; dy = dy * (1 - k) + lastDy * k;
         const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
       }
       x += dx * radius; y += dy * radius;
@@ -41473,6 +41521,7 @@ function planStrokeBatch(current, ref, gradient, width, height, radius, rng, han
       colour: colour.map((c) => Math.max(0, Math.min(255, Math.round(c + (rng() - 0.5) * jitter)))),
       bristle: rng(),
     };
+    lawMarks(stroke, strokes.length);
     // Double-loaded where the picture differs across the brush: each side
     // its own colour (Application).
     if (APPLY.double && stroke.width >= APPLY.doubleWidth && points.length > 1) {
@@ -41675,17 +41724,11 @@ function runOutcome(plan, vote) {
  * value - not each pixel of it. A painting in runs aims at this, so its
  * marks are its own and not a copy of the reference's detail (the things
  * and the lettering keep their own brushes). Made once per picture and size. */
-const intentCache = { source: null, maps: new Map() };
-function intentReference(ref, width, height, radius) {
-  if (ref.length !== width * height * 4) return ref;
-  if (intentCache.source !== ref) { intentCache.source = ref; intentCache.maps.clear(); }
-  const k = Math.max(4, Math.round(Math.max(radius * 3, Math.min(width, height) / 40)));
-  let map = intentCache.maps.get(k);
-  if (map) return map;
-  /* Each block of k x k averaged, then spread back smoothly between the
-   * block middles. (Done on canvases - copied in, drawn down, drawn up and
-   * read back - it was a third of a second of a phone's batch, made afresh
-   * for each brush size whenever the aim had changed.) */
+/* A picture as masses: each block of k x k pixels averaged, then spread
+ * back smoothly between the block middles. (Done on canvases - copied in,
+ * drawn down, drawn up and read back - it was a third of a second of a
+ * phone's batch.) */
+function blockSpread(ref, width, height, k) {
   const sw = Math.max(2, Math.round(width / k)), sh = Math.max(2, Math.round(height / k));
   // The block each column and row falls in, and how many pixels each block holds.
   const colOf = new Int32Array(width), cols = new Float32Array(sw), rows = new Float32Array(sh);
@@ -41725,7 +41768,7 @@ function intentReference(ref, width, height, radius) {
       for (let ch = 0; ch < 3; ch++, q++) wide[q] = mean[a + ch] + (mean[b + ch] - mean[a + ch]) * tx;
     }
   }
-  map = new Uint8ClampedArray(width * height * 4);
+  const map = new Uint8ClampedArray(width * height * 4);
   for (let y = 0, o = 0; y < height; y++) {
     const r0 = down.lo[y] * width * 3, r1 = down.hi[y] * width * 3, ty = down.t[y];
     for (let x = 0, q = 0; x < width; x++, o += 4, q += 3) {
@@ -41736,6 +41779,16 @@ function intentReference(ref, width, height, radius) {
       map[o + 3] = 255;
     }
   }
+  return map;
+}
+const intentCache = { source: null, maps: new Map() };
+function intentReference(ref, width, height, radius) {
+  if (ref.length !== width * height * 4) return ref;
+  if (intentCache.source !== ref) { intentCache.source = ref; intentCache.maps.clear(); }
+  const k = Math.max(4, Math.round(Math.max(radius * 3, Math.min(width, height) / 40)));
+  let map = intentCache.maps.get(k);
+  if (map) return map;
+  map = blockSpread(ref, width, height, k);
   intentCache.maps.set(k, map);
   return map;
 }
@@ -41793,6 +41846,419 @@ function choosePlanMarks(plan) {
   });
   plan.marksScores = summariseChoice(scores);
   return { key: scores[0].key, name: scores[0].key === "runs" ? "marks from the catalogue" : "copied strokes" };
+}
+
+/* ── Laws: the rules a painting's style is made of ──────────────────────
+ * A painting's style is not a name picked from a list but a few laws it
+ * obeys - rules that are carried out, not words: what its brush paints
+ * toward (two tones to each mass, the picture in three values, warm lights
+ * and cool shadows, a high or a low key, bright shadows, a few colours), how
+ * its marks go on (straight, all one way, long or short, the big brush in the
+ * darks, broken colour), and how it is made from the painting before it (its
+ * frame law: Frames, below). Each painting inherits the laws of the one
+ * before, changed a little - a law swapped, added or dropped, its strength
+ * nudged - more after a REJECT (and back to the last laws you kept) or after
+ * a painting that came out weaker than usual, less after a KEEP; so the
+ * paintings in a row are one lineage, and every law can be liked or disliked
+ * by itself on the card, or with the painting.
+ *   kind   target: what the brush paints toward (finishPlanReferenceSteps)
+ *          mark:   how the strokes go on (planStrokeBatch)
+ *          frame:  how the last painting is used (applyFrame)
+ *   group  laws that cannot both hold (two tones and three values...)
+ *   name   as the card says it */
+const LAWS = {
+  twotone: { kind: "target", group: "value", name: "two tones to a mass" },
+  threevalues: { kind: "target", group: "value", name: "three values" },
+  warmcool: { kind: "target", group: "temperature", name: "warm light, cool shade" },
+  highkey: { kind: "target", group: "key", name: "high key" },
+  lowkey: { kind: "target", group: "key", name: "low key" },
+  brightshade: { kind: "target", group: "shade", name: "bright shadows" },
+  fewcolours: { kind: "target", group: "palette", name: "few colours" },
+  straight: { kind: "mark", group: "line", name: "straight strokes" },
+  oneway: { kind: "mark", group: "direction", name: "strokes all one way" },
+  long: { kind: "mark", group: "length", name: "long strokes" },
+  short: { kind: "mark", group: "length", name: "short strokes" },
+  darkbig: { kind: "mark", group: "size", name: "big brush in the darks" },
+  broken: { kind: "mark", group: "colour", name: "broken colour" },
+  conserve: { kind: "frame", group: "frame", name: "keeps what still fits" },
+  palimpsest: { kind: "frame", group: "frame", name: "the last one shows through" },
+  abrade: { kind: "frame", group: "frame", name: "scraped back to the last one" },
+  weft: { kind: "frame", group: "frame", name: "woven with the last one" },
+  graft: { kind: "frame", group: "frame", name: "the last one moved over" },
+  relic: { kind: "frame", group: "frame", name: "keeps the last one's subject" },
+};
+const LAW_LIMITS = { target: 2, mark: 2, frame: 1 };
+const LAWS_KEY = "hexfield.laws.v1";
+const lawVoteWord = (key) => "law" + key;
+const lawOf = (plan, key) => plan?.laws?.find((law) => law.key === key) || null;
+let lawBook = null;
+function lawLineage() {
+  if (lawBook) return lawBook;
+  try { lawBook = JSON.parse(localStorage.getItem(LAWS_KEY) || "null"); } catch { lawBook = null; }
+  if (!lawBook || typeof lawBook !== "object") lawBook = {};
+  lawBook.stats = lawBook.stats && typeof lawBook.stats === "object" ? lawBook.stats : {};
+  lawBook.generation = Number(lawBook.generation) || 0;
+  return lawBook;
+}
+function saveLaws() {
+  try { localStorage.setItem(LAWS_KEY, JSON.stringify(lawLineage())); } catch { /* full storage: this visit only */ }
+}
+// A list of laws as stored, checked: known laws, one to a group, strengths in range.
+function validLaws(list) {
+  if (!Array.isArray(list)) return null;
+  const out = [];
+  for (const law of list) {
+    if (!law || !LAWS[law.key] || out.some((o) => LAWS[o.key].group === LAWS[law.key].group)) continue;
+    out.push({ key: law.key, s: Math.max(0.3, Math.min(1, Number(law.s) || 0.6)), ...(Number.isFinite(law.a) ? { a: +law.a } : {}) });
+  }
+  return out.length ? out : null;
+}
+// How a law has done: your votes on it, the paintings kept and rejected with it, and a turn for the little tried.
+function lawStanding(key) {
+  const st = lawLineage().stats[key] || {};
+  const kept = st.kept || 0, rejected = st.rejected || 0;
+  return visualLearnedChoice(lawVoteWord(key)) + (kept - 0.8 * rejected) / (kept + rejected + 3) + 0.3 / Math.sqrt(1 + (st.used || 0));
+}
+function newLaw(key, rng) {
+  const law = { key, s: +(0.45 + rng() * 0.5).toFixed(2) };
+  // One way: a diagonal of the hand's, or the level of the land.
+  if (key === "oneway") law.a = +(rng() < 0.3 ? 0 : (rng() < 0.5 ? -1 : 1) * (0.5 + rng() * 0.5)).toFixed(3);
+  return law;
+}
+function pickLaw(kind, laws, rng, not = null) {
+  const taken = new Set(laws.map((law) => LAWS[law.key].group));
+  const keys = Object.keys(LAWS).filter((key) => LAWS[key].kind === kind && !taken.has(LAWS[key].group) && key !== not);
+  if (!keys.length) return null;
+  const weights = keys.map((key) => Math.exp(2 * lawStanding(key)));
+  let x = rng() * weights.reduce((a, b) => a + b, 0), i = 0;
+  while (i < keys.length - 1 && (x -= weights[i]) > 0) i++;
+  return newLaw(keys[i], rng);
+}
+function choosePlanLaws(plan) {
+  const book = lawLineage();
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x1a35e) >>> 0);
+  const count = (kind, laws) => laws.filter((law) => LAWS[law.key].kind === kind).length;
+  // From the painting before - or, after a REJECT, from the last laws you kept.
+  const parent = validLaws(book.verdict === "rejected" && book.kept ? book.kept : book.parent);
+  const changes = [];
+  let laws;
+  if (!parent) {
+    // The first of a lineage: a law of what it paints toward, maybe another and one of marks, and a frame law.
+    laws = [];
+    for (const [kind, odds] of [["target", 1], ["target", 0.45], ["mark", 0.6], ["frame", 1]]) {
+      if (rng() < odds) { const law = pickLaw(kind, laws, rng); if (law) laws.push(law); }
+    }
+  } else {
+    laws = parent.map((law) => ({ ...law, s: +Math.max(0.3, Math.min(1, law.s + (rng() - 0.5) * 0.24)).toFixed(2) }));
+    const weak = book.fitness && book.fitness.last < book.fitness.mean - 0.02;
+    let moves = book.verdict === "kept" ? (rng() < 0.35 ? 1 : 0) : book.verdict === "rejected" || weak ? 2 : 1;
+    while (moves-- > 0) {
+      const r = rng();
+      if (r < 0.5) {
+        // A law swapped for another of its kind.
+        const i = Math.floor(rng() * laws.length), old = laws[i];
+        const next = pickLaw(LAWS[old.key].kind, laws.filter((_, j) => j !== i), rng, old.key);
+        if (next) { laws[i] = next; changes.push(LAWS[old.key].name + " → " + LAWS[next.key].name); }
+      } else if (r < 0.78) {
+        // A law added, while there is room for it.
+        const kind = rng() < 0.6 ? "target" : "mark";
+        const law = count(kind, laws) < LAW_LIMITS[kind] ? pickLaw(kind, laws, rng) : null;
+        if (law) { laws.push(law); changes.push("+ " + LAWS[law.key].name); }
+      } else {
+        // ...or one dropped (never the last, nor the frame law).
+        const loose = laws.filter((law) => LAWS[law.key].kind !== "frame");
+        if (loose.length > 1) {
+          const gone = loose[Math.floor(rng() * loose.length)];
+          laws = laws.filter((law) => law !== gone);
+          changes.push("− " + LAWS[gone.key].name);
+        }
+      }
+    }
+  }
+  // A frame law that has kept nothing twice running gives way to another.
+  const idle = parent && book.frameEmpty >= 2 ? laws.findIndex((law) => LAWS[law.key].kind === "frame") : -1;
+  if (idle >= 0) {
+    const old = laws[idle], next = pickLaw("frame", laws.filter((_, j) => j !== idle), rng, old.key);
+    if (next) { laws[idle] = next; changes.push(LAWS[old.key].name + " → " + LAWS[next.key].name); }
+  }
+  if (!count("frame", laws)) { const law = pickLaw("frame", laws, rng); if (law) laws.push(law); }
+  plan.lawGeneration = book.generation + 1;
+  plan.lawChanges = changes;
+  return laws;
+}
+// The painting before becomes the parent of the next one's laws, with how it did.
+function noteLawParent(plan) {
+  if (!plan?.laws?.length) return;
+  const book = lawLineage();
+  book.parent = plan.laws.map((law) => ({ ...law }));
+  book.generation = plan.lawGeneration || book.generation + 1;
+  book.verdict = plan.styleVotes?.rejected ? "rejected" : plan.styleVotes?.kept ? "kept" : null;
+  if (Number.isFinite(plan.outcomeTaste)) {
+    const mean = Number.isFinite(book.fitness?.mean) ? book.fitness.mean : plan.outcomeTaste;
+    book.fitness = { last: plan.outcomeTaste, mean: mean + (plan.outcomeTaste - mean) * 0.2 };
+  }
+  // A frame law that had a painting to keep from and kept nothing of it, how many times running.
+  if (plan.frame && Number.isFinite(plan.frame.share)) book.frameEmpty = plan.frame.share < 0.01 ? (book.frameEmpty || 0) + 1 : 0;
+  for (const law of plan.laws) { const st = (book.stats[law.key] ||= {}); st.used = (st.used || 0) + 1; }
+  saveLaws();
+}
+// KEEP or REJECT, on each of its laws; a kept painting's laws are where a rejected lineage goes back to.
+function lawOutcome(plan, vote) {
+  if (!plan?.laws?.length) return;
+  const book = lawLineage();
+  for (const law of plan.laws) {
+    const st = (book.stats[law.key] ||= {});
+    if (vote > 0) st.kept = (st.kept || 0) + 1; else st.rejected = (st.rejected || 0) + 1;
+  }
+  if (vote > 0) book.kept = plan.laws.map((law) => ({ ...law }));
+  saveLaws();
+}
+function lawLabel(plan, law) {
+  const def = LAWS[law.key];
+  if (def.kind !== "frame") return def.name;
+  const share = plan.frame?.share;
+  if (!plan.frame) return def.name + " (nothing to keep)";
+  if (Number.isFinite(share) && share < 0.005) return def.name + (law.key === "relic" ? " (no room for it)" : " (kept nothing)");
+  return Number.isFinite(share) ? def.name + " · " + Math.round(share * 100) + "% of " + (plan.frame.words || "the last painting") : def.name;
+}
+
+/* The target laws, on what the brush paints toward (finishPlanReferenceSteps):
+ * each moves a pixel's value or colour, never where it is - the masses stay. */
+function* applyTargetLawsSteps(pixels, width, height, plan) {
+  const laws = (plan.laws || []).filter((law) => LAWS[law.key]?.kind === "target" && law.key !== "fewcolours");
+  if (!laws.length || pixels.length !== width * height * 4) return pixels;
+  const lum = (o) => 0.299 * pixels[o] + 0.587 * pixels[o + 1] + 0.114 * pixels[o + 2];
+  let mean = 0, n = 0;
+  for (let o = 0; o < pixels.length; o += 4 * 7) { mean += lum(o); n++; }
+  mean /= Math.max(1, n);
+  for (const law of laws) {
+    const s = law.s;
+    if (law.key === "twotone") {
+      /* Each mass in two tones: the picture's colour families (by hue more
+       * than by value, so a mass's lit side and its shade are one family),
+       * each split at its own middle value into its light tone and its shade
+       * tone. (Against a blurred copy instead, it ringed every mass with a
+       * halo of the opposite tone.) */
+      const feature = (o) => {
+        const r = pixels[o], g = pixels[o + 1], b = pixels[o + 2];
+        return [r - g, (r + g) / 2 - b, 0.35 * (0.299 * r + 0.587 * g + 0.114 * b)];
+      };
+      const samples = [];
+      for (let o = 0, stride = Math.max(1, Math.floor(pixels.length / 4 / 3000)) * 4; o < pixels.length; o += stride) samples.push(feature(o));
+      const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0x2709e) >>> 0), K = Math.min(5, samples.length);
+      const d2 = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2;
+      const centres = [];
+      while (centres.length < K) centres.push(samples[Math.floor(rng() * samples.length)].slice());
+      for (let iter = 0; iter < 6; iter++) {
+        const sums = centres.map(() => [0, 0, 0, 0]);
+        for (const f of samples) {
+          let best = 0, bd = Infinity;
+          for (let c = 0; c < K; c++) { const d = d2(f, centres[c]); if (d < bd) { bd = d; best = c; } }
+          const t = sums[best]; t[0] += f[0]; t[1] += f[1]; t[2] += f[2]; t[3]++;
+        }
+        for (let c = 0; c < K; c++) if (sums[c][3]) centres[c] = [sums[c][0] / sums[c][3], sums[c][1] / sums[c][3], sums[c][2] / sums[c][3]];
+      }
+      // Each pixel's family, and each family's values.
+      const family = new Uint8Array(width * height), hist = Array.from({ length: K }, () => new Float32Array(256));
+      for (let o = 0, i = 0; o < pixels.length; o += 4, i++) {
+        const f = feature(o);
+        let best = 0, bd = Infinity;
+        for (let c = 0; c < K; c++) { const d = d2(f, centres[c]); if (d < bd) { bd = d; best = c; } }
+        family[i] = best;
+        hist[best][Math.max(0, Math.min(255, Math.round(lum(o))))]++;
+      }
+      const tones = hist.map((h) => {
+        const total = h.reduce((a, b) => a + b, 0);
+        if (!total) return null;
+        let mid = 0;
+        for (let c = 0; mid < 255 && (c += h[mid]) < total / 2; mid++);
+        let lo = 0, nl = 0, hi = 0, nh = 0;
+        for (let v = 0; v < 256; v++) { if (v <= mid) { lo += v * h[v]; nl += h[v]; } else { hi += v * h[v]; nh += h[v]; } }
+        lo = nl ? lo / nl : mid; hi = nh ? hi / nh : mid;
+        // ...a little further apart than they were.
+        return { mid, lo: lo - 8 * s, hi: hi + 8 * s };
+      });
+      const pull = 0.45 + 0.45 * s;
+      for (let o = 0, i = 0; o < pixels.length; o += 4, i++) {
+        const t = tones[family[i]];
+        if (!t) continue;
+        const L = lum(o), side = 1 / (1 + Math.exp(-(L - t.mid) / 4));
+        const d = (t.lo + (t.hi - t.lo) * side - L) * pull;
+        pixels[o] += d; pixels[o + 1] += d; pixels[o + 2] += d;
+      }
+    } else if (law.key === "threevalues") {
+      // The picture in three values - its darks, middles and lights - with soft steps between.
+      const hist = new Float32Array(256);
+      for (let o = 0; o < pixels.length; o += 4 * 5) hist[Math.max(0, Math.min(255, Math.round(lum(o))))]++;
+      const total = hist.reduce((a, b) => a + b, 0), at = (q) => { let c = 0; for (let v = 0; v < 256; v++) if ((c += hist[v]) >= q * total) return v; return 255; };
+      const cut1 = at(0.33), cut2 = at(0.67), mid = at(0.5);
+      const dark = Math.min(at(0.12), mid - 34), light = Math.max(at(0.88), mid + 34), pull = 0.4 + 0.5 * s;
+      const soft = (v, c) => 1 / (1 + Math.exp(-(v - c) / 5));
+      for (let o = 0; o < pixels.length; o += 4) {
+        const L = lum(o), up = soft(L, cut1), top = soft(L, cut2);
+        const target = dark + (mid - dark) * up + (light - mid) * top;
+        const d = (target - L) * pull;
+        pixels[o] += d; pixels[o + 1] += d; pixels[o + 2] += d;
+      }
+    } else if (law.key === "warmcool") {
+      // Warm in the light, cool in the shade (the other way round by moonlight).
+      const sign = plan.light?.key === "moon" ? -1 : 1;
+      for (let o = 0; o < pixels.length; o += 4) {
+        const t = sign * s * Math.max(-1, Math.min(1, (lum(o) - mean) / 90));
+        pixels[o] += 18 * t; pixels[o + 1] += 3 * t; pixels[o + 2] -= 18 * t;
+      }
+    } else if (law.key === "highkey" || law.key === "lowkey") {
+      // All in the upper values, or all in the lower.
+      const k = 0.45 * s, high = law.key === "highkey";
+      for (let o = 0; o < pixels.length; o += 4) {
+        const L = lum(o), d = high ? (255 - L) * k * 0.8 : -L * k * 0.7;
+        pixels[o] += d; pixels[o + 1] += d; pixels[o + 2] += d;
+      }
+    } else if (law.key === "brightshade") {
+      // Shadows in colour, not grey: richer and a little lighter below the middle value.
+      for (let o = 0; o < pixels.length; o += 4) {
+        const L = lum(o);
+        if (L >= mean) continue;
+        const k = s * Math.min(1, (mean - L) / 70), rich = 1 + 0.9 * k;
+        for (let c = 0; c < 3; c++) pixels[o + c] = L + (pixels[o + c] - L) * rich + 14 * k;
+      }
+    }
+    yield;
+  }
+  return pixels;
+}
+
+/* ── Frames: each painting made from the one before ─────────────────────
+ * A painting begins on the canvas the last one left - unless that one was
+ * rejected - the way a painter reuses a canvas: what the new picture can use
+ * of the old stays, the rest is painted over. Which is its frame law's to
+ * say, read over the two pictures as masses (each a grid of block colours:
+ * the abstraction of a frame), cell by cell:
+ *   conserve    keeps the old paint where it already has the new picture's colour
+ *   palimpsest  lets the old show thinly through the new
+ *   abrade      scrapes the new back to the old where the two disagree, most
+ *               where the old was worked
+ *   weft        weaves the two in bands, the way the new painting's hand runs
+ *   graft       moves the old over a little, and keeps it where it fits there
+ *   relic       keeps the old painting's main thing whole, a soft-edged island
+ *               of it where it stood, if that is out in the new one's background
+ * - and only out in the new painting's background (its things and words are
+ * always its own), more of a painting you kept, never more than about half
+ * of it. What is kept is put into what the brush paints toward, so the
+ * brushes leave it be: a kept passage stays the old painting's own strokes,
+ * and can outlive several paintings while it keeps fitting.
+ *   cell   the masses' grid, a fraction of the short side
+ *   agree  how near two masses' colours must be to count as the same
+ *   cap    the most of the new painting that may be the old
+ *   kept   how much more of a painting you kept is kept */
+const FRAMES = { cell: 1 / 24, agree: 40, cap: 0.45, kept: 1.3 };
+let pendingFrame = null;
+/* Taken the moment a new painting is asked for (changeSeed), before anything
+ * else touches the canvas - the search used to wash it in one colour first. */
+let heldFrame = null;
+// The canvas as a painting ends, to be the next one's ground - none if it was rejected or barely begun.
+function takeFrame(plan, width, height) {
+  if (!plan || plan.styleVotes?.rejected || !((strokePainter.strokes || 0) > 400) || !vctx || view.width !== width || view.height !== height) return null;
+  // (And where its main thing was - its best passage, for a relic.)
+  const main = (plan.scene?.items || []).find((item) => item.box && item.entry?.kind === "subject" && !item.lettering)?.box || null;
+  return { pixels: vctx.getImageData(0, 0, width, height).data, width, height, kept: Boolean(plan.styleVotes?.kept), words: plan.sceneText || "",
+    main: main ? { x: main.x, y: main.y, w: main.w, h: main.h } : null };
+}
+function frameKeep(frame, pixels, width, height, plan, law) {
+  const c = Math.max(8, Math.round(Math.min(width, height) * FRAMES.cell)), cols = Math.ceil(width / c), rows = Math.ceil(height / c);
+  const A = frame.pixels, calm = backgroundCalm(plan, width, height);
+  const rng = mulberry32(((Number(plan.drawSeed) || 0) ^ 0xf4a3e) >>> 0);
+  // Graft: the old picture moved over, a tenth of the way, before it is matched.
+  const shift = law.key === "graft" ? [Math.round((rng() - 0.5) * 0.24 * width), Math.round((rng() - 0.5) * 0.12 * height)] : [0, 0];
+  const at = (src, x, y) => (Math.max(0, Math.min(height - 1, y)) * width + Math.max(0, Math.min(width - 1, x))) * 4;
+  const smooth = (t) => (t = Math.max(0, Math.min(1, t))) * t * (3 - 2 * t);
+  // Weft: bands across the hand's way, a seventh of the picture apart.
+  const hand = (Number(strokePainter.settleAngle) || -0.5) + Math.PI / 2, bx = Math.cos(hand), by = Math.sin(hand), period = Math.max(width, height) / 7;
+  const strength = (0.6 + 0.4 * law.s) * (frame.kept ? FRAMES.kept : 1);
+  const grid = new Float32Array(cols * rows), groundAt = new Float32Array(cols * rows);
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const x0 = i * c, y0 = j * c, x1 = Math.min(width, x0 + c), y1 = Math.min(height, y0 + c);
+      const a = [0, 0, 0], b = [0, 0, 0];
+      let n = 0, sL = 0, sL2 = 0;
+      for (let y = y0; y < y1; y += 3) {
+        for (let x = x0; x < x1; x += 3) {
+          const oa = at(A, x - shift[0], y - shift[1]), ob = at(pixels, x, y);
+          for (let k = 0; k < 3; k++) { a[k] += A[oa + k]; b[k] += pixels[ob + k]; }
+          const L = 0.299 * A[oa] + 0.587 * A[oa + 1] + 0.114 * A[oa + 2];
+          sL += L; sL2 += L * L; n++;
+        }
+      }
+      if (!n) continue;
+      const d = (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2])) / (3 * n);
+      const agree = 1 - smooth(d / FRAMES.agree), worked = smooth(Math.sqrt(Math.max(0, sL2 / n - (sL / n) ** 2)) / 30);
+      const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+      // Only out in its background: its things and words are always its own.
+      const ground = calm ? smooth((calm.at(cx, cy) - 0.35) / 0.5) : 1;
+      groundAt[j * cols + i] = ground;
+      let keep;
+      if (law.key === "conserve" || law.key === "graft") keep = smooth((agree - 0.3) / 0.5);
+      else if (law.key === "palimpsest") keep = 0.38;
+      else if (law.key === "abrade") keep = 0.7 * smooth((0.75 - agree) / 0.5) * (0.4 + 0.6 * worked);
+      else if (law.key === "weft") keep = 0.75 * smooth(0.5 + 2.2 * Math.cos(2 * Math.PI * (cx * bx + cy * by) / period));
+      else keep = 0;
+      grid[j * cols + i] = Math.min(0.95, keep * ground * strength);
+    }
+  }
+  if (law.key === "relic") {
+    /* The old painting's main thing, where it stood, if the new one's
+     * background has room for it there - kept whole. (Not some other passage
+     * instead: a corner of plain sky kept for its own sake said nothing.) */
+    const main = frame.main;
+    const roomAt = (i, j, r) => {
+      let room = 1;
+      for (let dj = -r; dj <= r; dj++) {
+        for (let di = -r; di <= r; di++) {
+          const ii = i + di, jj = j + dj;
+          if (ii < 0 || jj < 0 || ii >= cols || jj >= rows || di * di + dj * dj > r * r) continue;
+          // (Its middle well out in the background; its rim may come nearer the new things.)
+          room = Math.min(room, di * di + dj * dj <= r * r / 4 ? groundAt[jj * cols + ii] : 0.5 + groundAt[jj * cols + ii]);
+        }
+      }
+      return room;
+    };
+    if (main) {
+      const mi = Math.round((main.x + main.w / 2) / c - 0.5), mj = Math.round((main.y + main.h / 2) / c - 0.5);
+      const reach = Math.max(2, Math.round(0.6 * Math.max(main.w, main.h) / c));
+      if (mi >= 0 && mj >= 0 && mi < cols && mj < rows && roomAt(mi, mj, reach) > 0.5) {
+        for (let j = 0; j < rows; j++) {
+          for (let i = 0; i < cols; i++) {
+            const d = Math.hypot(i - mi, j - mj) / reach;
+            grid[j * cols + i] = Math.min(0.95, 0.95 * smooth((1.15 - d) / 0.45) * groundAt[j * cols + i] * Math.min(1, strength));
+          }
+        }
+      }
+    }
+  }
+  // Never more than about half of the new painting.
+  let share = grid.reduce((a, v) => a + v, 0) / grid.length;
+  if (share > FRAMES.cap) { const k = FRAMES.cap / share; for (let i = 0; i < grid.length; i++) grid[i] *= k; share = FRAMES.cap; }
+  return { c, cols, rows, grid, shift, share };
+}
+// The new painting's reference with what it keeps of the last one put in.
+function* applyFrameSteps(pixels, width, height, plan) {
+  const frame = plan.frame, law = (plan.laws || []).find((l) => LAWS[l.key]?.kind === "frame");
+  if (!frame || !law || frame.width !== width || frame.height !== height || frame.pixels.length !== pixels.length) return pixels;
+  if (!frame.keep) { frame.keep = frameKeep(frame, pixels, width, height, plan, law); frame.share = frame.keep.share; yield; }
+  const { c, cols, rows, grid, shift } = frame.keep, A = frame.pixels;
+  for (let y = 0; y < height; y++) {
+    const gy = Math.max(0, Math.min(rows - 1, y / c - 0.5)), j0 = Math.floor(gy), j1 = Math.min(rows - 1, j0 + 1), ty = gy - j0;
+    const sy = Math.max(0, Math.min(height - 1, y - shift[1]));
+    for (let x = 0, o = y * width * 4; x < width; x++, o += 4) {
+      const gx = Math.max(0, Math.min(cols - 1, x / c - 0.5)), i0 = Math.floor(gx), i1 = Math.min(cols - 1, i0 + 1), tx = gx - i0;
+      const top = grid[j0 * cols + i0] + (grid[j0 * cols + i1] - grid[j0 * cols + i0]) * tx;
+      const K = top + (grid[j1 * cols + i0] + (grid[j1 * cols + i1] - grid[j1 * cols + i0]) * tx - top) * ty;
+      if (K < 0.01) continue;
+      const oa = (sy * width + Math.max(0, Math.min(width - 1, x - shift[0]))) * 4;
+      pixels[o] += (A[oa] - pixels[o]) * K; pixels[o + 1] += (A[oa + 1] - pixels[o + 1]) * K; pixels[o + 2] += (A[oa + 2] - pixels[o + 2]) * K;
+    }
+  }
+  return pixels;
 }
 
 /* ── The director ───────────────────────────────────────────────────────
@@ -43154,6 +43620,8 @@ function recordStyleOutcome(plan, source) {
   let taste;
   try { taste = finishedPictureTaste(); } catch { return null; }
   if (!Number.isFinite(taste)) return null;
+  // (How it came out, for the next painting's laws: Laws.)
+  plan.outcomeTaste = taste;
   const row = { id: "so_" + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36),
     at: Date.now(), chain: planStyleChain(plan), taste: +taste.toFixed(4), source };
   styleOutcomes = [row, ...styleOutcomes].slice(0, STYLE_OUTCOME_CAP);
@@ -43349,6 +43817,7 @@ function recordStyleVote(plan, liked) {
   if (plan.opening) openingRuleOutcome(plan.opening, { vote: liked ? 1 : -1 });
   runOutcome(plan, liked ? 1 : -1);
   criticOutcome(plan, liked ? 1 : -1);
+  lawOutcome(plan, liked ? 1 : -1);
   return row;
 }
 
@@ -44663,18 +45132,26 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
      * in steps (prepareNewPainting). Meanwhile the canvas is toned at once, so
      * the new painting visibly begins, and nothing else paints until it is
      * ready. */
+    /* Unless it was rejected, the painting before stays on the canvas as the
+     * new one's ground, and its laws are the new one's parents (Frames, Laws). */
+    const frame = heldFrame?.frame && heldFrame.plan === strokePainter.plan && heldFrame.frame.width === width && heldFrame.frame.height === height ? heldFrame.frame : null;
+    heldFrame = null;
+    noteLawParent(strokePainter.plan);
     const token = {};
     strokePainter.preparing = token;
+    pendingFrame = frame ? { frame, token } : null;
     strokePainter.plan = null;
     strokePainter.enhanced = null;
     strokePainter.enhancedKey = null;
     strokePainter.enhancedPlan = null;
     hideFinishLayer();
-    const quickTone = paintTonedGround(raw, width, height);
+    // (On the last painting there is no toning: it is the ground.)
+    const quickTone = frame ? null : paintTonedGround(raw, width, height);
     /* How it begins (Openings): copied from the master, or sprayed / blobbed
      * by a rule onto the canvas now - and then the canvas, as it is, is read
      * and developed into what the painting paints toward. */
     const opening = chooseOpening(result?.drawSeed, result?.params);
+    if (frame && opening.key !== "copy") { opening.key = "copy"; opening.name = OPENING_NAMES.copy; }
     let source = raw;
     if (opening.key !== "copy") {
       // Laid down now; read, sprayed again and developed in the preparation's
@@ -44709,7 +45186,8 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
     // its scene, light and air), so the sketch moves toward the painting.
     let draft = source;
     const sketching = (async () => {
-      for (let batch = 0; batch < SKETCH_BATCHES && alive(); batch++) {
+      // (Not over the last painting: what it keeps is decided when the plan is ready.)
+      for (let batch = 0; batch < (frame ? 0 : SKETCH_BATCHES) && alive(); batch++) {
         await new Promise((resolve) => setTimeout(resolve, batch ? SKETCH_GAP : 0));
         if (!alive()) return;
         await paintTowardReference({ drawSeed: result?.drawSeed, params: result?.params }, draft, width, height,
@@ -44733,12 +45211,15 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
       // (The staining a task of its own, before the first batch.)
       const tone = toneOf(ready.reference);
       let stained = Promise.resolve();
-      if (opening.key === "copy" && !(strokePainter.strokes > 0) && Math.hypot(tone[0] - quickTone[0], tone[1] - quickTone[1], tone[2] - quickTone[2]) > 10) {
+      if (!quickTone) {
+        // (Begun on the last painting: nothing is bare.)
+      } else if (opening.key === "copy" && !(strokePainter.strokes > 0) && Math.hypot(tone[0] - quickTone[0], tone[1] - quickTone[1], tone[2] - quickTone[2]) > 10) {
         paintTonedGround(ready.reference, width, height);
       } else {
         stained = new Promise((resolve) => setTimeout(() => {
           if (strokePainter.plan === ready.plan) restainBareGround(quickTone, ready.reference, width, height);
-          resolve();
+          // (Resolved a task later: a promise resolved here ran the first batch in this same task.)
+          setTimeout(resolve, 0);
         }, 0));
       }
       updateWordPaints();
@@ -45185,7 +45666,8 @@ function generate() {
        * that has not been scored. draw() overwrites this the moment the search
        * ranks, and a search that improves on what you are already looking at is
        * a far better failure mode than a blank frame that may never resolve. */
-      if (!current) {
+      // (Not over a painting the next one is painted on: it is the prepared canvas - Frames.)
+      if (!current && !heldFrame?.frame) {
         const opener = planSearchCandidate(text, $("style").value, 0);
         /* Do not preview a complete field while search is running. The field is
          * most of the eventual artwork, so that preview made the real paint
@@ -45869,6 +46351,8 @@ function autonomousReseed(auto = false) {
 let pendingSeedChange = false;
 
 function changeSeed(auto = false) {
+  // The painting as it stands, to be the next one's ground (Frames).
+  try { heldFrame = { plan: strokePainter.plan, frame: takeFrame(strokePainter.plan, view?.width, view?.height) }; } catch { heldFrame = null; }
   /* An explicit seed request owns the next pass.  Cancel the unattended
    * refinement timer before looking at the overlay; otherwise a timer that
    * was armed by the old painting can wake during the queue/watchdog window
