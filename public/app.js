@@ -31085,6 +31085,11 @@ function updatePainterStatus(result) {
     label.textContent = "finished · KEEP keeps it up longer, REJECT moves on";
     return;
   }
+  if (strokePainter.plan?.study && current?.params) {
+    const S = strokePainter.plan.study;
+    label.textContent = "study · " + S.name + (S.label ? " · " + S.label : "") + " · " + (Number(strokePainter.strokes) || 0).toLocaleString() + " strokes";
+    return;
+  }
   if (strokePainter.plan && current?.params) {
     const plan = strokePainter.plan, layers = plan ? maxStrokeLayer(plan) + 1 : 0;
     label.textContent = "painting" + (layers ? " · brush " + (Math.min(strokePainter.layer, layers - 1) + 1) + " of " + layers : "") +
@@ -34758,6 +34763,15 @@ function paintingChoices(plan) {
   const scene = plan.scene, out = [];
   // (A choice that is set, not chosen - PINNED_CHOICES - is not offered: a vote on it would teach nothing.)
   const add = (label, word, axis = null) => { if (label && /^[a-z]{1,24}$/.test(word) && !(axis && PINNED_CHOICES[axis])) out.push({ label, word }); };
+  if (plan.study) {
+    // A study's own choices (Studies).
+    const S = plan.study;
+    add(S.name, "study" + S.kind);
+    add({ below: "under the horizon", across: "across the horizon", above: "over the horizon" }[S.level], "level" + S.level);
+    if (S.planes) add(S.planes + (S.planes === 1 ? " plane" : " planes"), "planes" + ["", "one", "two", "three"][S.planes]);
+    add("light from the " + (S.light.side < 0 ? "left" : "right"), S.light.side < 0 ? "lightleft" : "lightright");
+    return out;
+  }
   if (plan.manner) add(plan.manner.name || plan.manner.key, mannerVoteWord(plan.manner.key), "manner");
   if (plan.abstraction) add(plan.abstraction.name, abstractionVoteWord(plan.abstraction.key), "abstraction");
   if (plan.turn) add("turned " + plan.turn.name, turnVoteWord(plan.turn.key), "turn");
@@ -34811,6 +34825,7 @@ function recordChoiceVote(word, liked) {
   // A vote on one freedom's settings goes to the ledger as that freedom's alone (Degrees of freedom).
   if (word.startsWith("pieces")) dofFreedomVote(plan, "structure", liked ? 1 : -1);
   if (word === "tealeaves") dofFreedomVote(plan, "chance", liked ? 1 : -1);
+  if (plan.study && /^(study|level|planes|light)/.test(word)) dofFreedomVote(plan, "form", liked ? 1 : -1);
   for (let n = 0; n < 2; n++) {
     const vote = { word, liked: Boolean(liked), size: 0, hue: 0, light: 0, literal: 0 };
     visualLexiconAdd(vote);
@@ -44468,7 +44483,20 @@ function strokeLightFill(ctx, stroke, from, to) {
   return fill;
 }
 
+/* A stroke laid inside a shape (`clip`, a study's plane): only what falls
+ * inside it shows, so the plane ends in one clean edge - as a painter cuts
+ * an edge in, or paints up to a mask - while its brush marks show within. */
 function drawPaintStroke(ctx, stroke) {
+  const clip = stroke.clip;
+  if (!clip || clip.length < 3) return drawPaintStrokeFree(ctx, stroke);
+  ctx.save();
+  ctx.beginPath();
+  clip.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.closePath();
+  ctx.clip();
+  try { drawPaintStrokeFree(ctx, stroke); } finally { ctx.restore(); }
+}
+function drawPaintStrokeFree(ctx, stroke) {
   const pts = stroke.points;
   const tip = stroke.tip || (stroke.tip = chooseStrokeTip(stroke));
   /* The overlap rule (Overlap): a stroke, as it goes on, sends what is under
@@ -45623,9 +45651,86 @@ async function saveTimelapse() {
 let masterPixels = { params: null, drawSeed: null, text: null, pixels: null };
 // Set while the main painter plans a batch in the critic's turn (strokesTowardReference).
 let criticTurnBatch = false;
+/* ── Studies ──────────────────────────────────────────────────────────
+ * No pictures to copy any more: each painting is a study (words/
+ * hexfield-study.js) - a sphere, a cube or a tetrahedron in a plain room,
+ * its eye level through the middle of the canvas - mapped first (which of
+ * its planes show, and how, against the horizon) and then built stroke by
+ * stroke by the rules of application, far to near, each stroke done as it
+ * goes on. The first is a sphere, the first exercise; then each in turn.
+ * ?scenes paints the drawn scenes as before. */
+const STUDY_MODE = (() => { try { return !new URLSearchParams(location.search).has("scenes"); } catch { return true; } })();
+let studyCount = 0;
+const studyOn = () => STUDY_MODE && Boolean(globalThis.HexfieldStudy?.make);
+function beginStudy(result, width, height) {
+  const Study = globalThis.HexfieldStudy;
+  const kind = Study.KINDS[studyCount % Study.KINDS.length];
+  const seed = (Number(result?.drawSeed) || Date.now()) >>> 0;
+  // (The first exercise sits on the floor, its shadow beside it.)
+  const study = Study.make(width, height, seed, kind, studyCount++ ? {} : { level: "below" });
+  const L = study.light.L;
+  const plan = { study, drawSeed: seed, lightAngle: Math.atan2(-L[1], L[0]), words: study.name };
+  // What it bounds (Degrees of freedom): the form, where it lies against the horizon, how many planes show, the light's side.
+  dofNote(plan, "form", "study", { kind, level: study.level, planes: study.planes, light: study.light.side < 0 ? "left" : "right" });
+  heldFrame = null;
+  pendingFrame = null;
+  strokePainter.preparing = null;
+  strokePainter.plan = plan;
+  strokePainter.enhanced = null;
+  strokePainter.enhancedKey = null;
+  strokePainter.enhancedPlan = null;
+  strokePainter.layer = 0;
+  strokePainter.layerBatches = 0;
+  strokePainter.strokes = 0;
+  hideFinishLayer();
+  // A toned ground in the wall's colour; the study paints the rest.
+  const wall = study.palette.wall;
+  vctx.save();
+  vctx.globalAlpha = 1;
+  vctx.fillStyle = `rgb(${wall.map((c) => Math.round(c * 0.8)).join(",")})`;
+  vctx.fillRect(0, 0, width, height);
+  vctx.restore();
+  strokeLog.newPainting = true;
+  strokeLog.history = [];
+  paintRevision++;
+  view.dataset.paintRevision = String(paintRevision);
+  // Its words: what it is.
+  const box = document.getElementById("wordPrompt");
+  if (box) box.value = study.name;
+  const shown = document.getElementById("autoWords");
+  if (shown) shown.textContent = study.name;
+  paintStudyBatch(result, plan);
+  return true;
+}
+// The study's next step, laid; false once it has laid its last.
+function paintStudyBatch(result, plan) {
+  const S = plan.study;
+  if (!S || S.done || !view?.width) return false;
+  let next = S.steps.next();
+  while (!next.done && !next.value.strokes.length) next = S.steps.next();
+  if (next.done) { S.done = true; return false; }
+  S.step = (S.step || 0) + 1;
+  S.label = next.value.label;
+  const strokes = next.value.strokes;
+  markPaintTimingStarted(result);
+  const animation = ++activePaintAnimation;
+  strokeLogBegin(vctx.getImageData(0, 0, view.width, view.height).data, view.width, view.height);
+  result.paintStrokeCount = strokes.length;
+  result.paintBrush = {
+    families: ["study"], textures: ["flat"], signatures: [], lineageObjects: [], source: "study", lifts: 0, smudges: 0,
+    minSize: Math.min(...strokes.map((x) => x.width)), maxSize: Math.max(...strokes.map((x) => x.width)),
+    nonRedundancy: 0.5, count: (Number(result.paintBrush?.count) || 0) + strokes.length, wordHand: S.name + " · " + S.label,
+  };
+  visiblePaintCompletion = animateLoggedStrokes(result, strokes, animation).then((landed) => { updatePainterStatus(result); return landed; });
+  updatePainterStatus(result);
+  return true;
+}
+
 function continueMasterDetail(result) {
   // A new painting still being prepared has nothing to detail yet.
   if (strokePainter.preparing) return false;
+  // A study lays its own steps (Studies).
+  if (strokePainter.plan?.study) return paintStudyBatch(result, strokePainter.plan);
   const source = bestRun?.params ? bestRun : current?.params ? current : result;
   if (!source?.params || !view?.width || !view?.height) return false;
   result.paintCanvasCoverage = 1;
@@ -45929,6 +46034,8 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
     const raw = target.getContext("2d").getImageData(0, 0, width, height).data;
     // The painting being replaced is scored, finish and all, before it goes.
     recordStyleOutcome(strokePainter.plan, "replaced");
+    // A study: its own room and solid, painted by the rules of application - nothing prepared to copy (Studies).
+    if (studyOn()) return beginStudy(result, width, height);
     /* A new painting, a new plan: focus, value scheme and palette - prepared
      * in steps (prepareNewPainting). Meanwhile the canvas is toned at once, so
      * the new painting visibly begins, and nothing else paints until it is
@@ -47153,7 +47260,7 @@ let pendingSeedChange = false;
 
 function changeSeed(auto = false) {
   // The painting as it stands, to be the next one's ground (Frames).
-  try { heldFrame = { plan: strokePainter.plan, frame: takeFrame(strokePainter.plan, view?.width, view?.height) }; } catch { heldFrame = null; }
+  try { heldFrame = strokePainter.plan?.study ? null : { plan: strokePainter.plan, frame: takeFrame(strokePainter.plan, view?.width, view?.height) }; } catch { heldFrame = null; }
   /* An explicit seed request owns the next pass.  Cancel the unattended
    * refinement timer before looking at the overlay; otherwise a timer that
    * was armed by the old painting can wake during the queue/watchdog window
