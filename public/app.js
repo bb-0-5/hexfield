@@ -45653,11 +45653,12 @@ let masterPixels = { params: null, drawSeed: null, text: null, pixels: null };
 let criticTurnBatch = false;
 /* ── Studies ──────────────────────────────────────────────────────────
  * No pictures to copy any more: each painting is a study (words/
- * hexfield-study.js) - a sphere, a cube or a tetrahedron in a plain room,
- * its eye level through the middle of the canvas - mapped first (which of
- * its planes show, and how, against the horizon) and then built stroke by
- * stroke by the rules of application, far to near, each stroke done as it
- * goes on. The first is a sphere, the first exercise; then each in turn.
+ * hexfield-study.js) - a sphere, a cube, a tetrahedron or an octahedron,
+ * or one of them standing on a cube, in a plain room, its eye level through
+ * the middle of the canvas - mapped first (which of its planes show, and
+ * how, against the horizon) and then built stroke by stroke by the rules of
+ * application, far to near, each stroke done as it goes on. The first is a
+ * sphere, the first exercise; then each in turn.
  * ?scenes paints the drawn scenes as before. */
 const STUDY_MODE = (() => { try { return !new URLSearchParams(location.search).has("scenes"); } catch { return true; } })();
 let studyCount = 0;
@@ -45671,7 +45672,7 @@ function beginStudy(result, width, height) {
   const L = study.light.L;
   const plan = { study, drawSeed: seed, lightAngle: Math.atan2(-L[1], L[0]), words: study.name };
   // What it bounds (Degrees of freedom): the form, where it lies against the horizon, how many planes show, the light's side.
-  dofNote(plan, "form", "study", { kind, level: study.level, planes: study.planes, light: study.light.side < 0 ? "left" : "right" });
+  dofNote(plan, "form", "study", { kind, top: study.entries?.[1]?.kind || "none", level: study.level, planes: study.planes, light: study.light.side < 0 ? "left" : "right" });
   heldFrame = null;
   pendingFrame = null;
   strokePainter.preparing = null;
