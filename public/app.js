@@ -31086,8 +31086,9 @@ function updatePainterStatus(result) {
     return;
   }
   if (strokePainter.plan?.study && current?.params) {
-    const S = strokePainter.plan.study;
-    label.textContent = "study · " + S.name + (S.label ? " · " + S.label : "") + " · " + (Number(strokePainter.strokes) || 0).toLocaleString() + " strokes";
+    // A study: its medium, what it is doing, the step, how far off what was meant the last change came out, and its strokes so far.
+    const S = strokePainter.plan.study, error = S.error ? "off " + Math.round(S.error.rate * 100) + "%" : "";
+    label.textContent = [S.medium, S.action, S.label, error, (Number(strokePainter.strokes) || 0).toLocaleString() + " strokes"].filter(Boolean).join(" · ");
     return;
   }
   if (strokePainter.plan && current?.params) {
@@ -34764,11 +34765,13 @@ function paintingChoices(plan) {
   // (A choice that is set, not chosen - PINNED_CHOICES - is not offered: a vote on it would teach nothing.)
   const add = (label, word, axis = null) => { if (label && /^[a-z]{1,24}$/.test(word) && !(axis && PINNED_CHOICES[axis])) out.push({ label, word }); };
   if (plan.study) {
-    // A study's own choices (Studies).
-    const S = plan.study;
-    add(S.name, "study" + S.kind);
-    add({ below: "under the horizon", across: "across the horizon", above: "over the horizon" }[S.level], "level" + S.level);
-    if (S.planes) add(S.planes + (S.planes === 1 ? " plane" : " planes"), "planes" + ["", "one", "two", "three"][S.planes]);
+    // A study's own choices (Studies): its medium, how its paint was last handled, what it began from, its light.
+    const S = plan.study, app = S.lastApp;
+    add(S.medium, "medium" + S.medium);
+    if (app?.wet) add(app.wet, app.wet === "on dry" ? "wetondry" : "wetintowet");
+    if (app?.handling) add(app.handling, "handling" + app.handling);
+    if (app?.load) add(app.load + " paint", "load" + app.load);
+    add("began with " + (S.kind === "stack" ? "a stack" : globalThis.HexfieldStudy?.NAMES?.[S.kind] || S.kind), "study" + S.kind);
     add("light from the " + (S.light.side < 0 ? "left" : "right"), S.light.side < 0 ? "lightleft" : "lightright");
     return out;
   }
@@ -34825,7 +34828,11 @@ function recordChoiceVote(word, liked) {
   // A vote on one freedom's settings goes to the ledger as that freedom's alone (Degrees of freedom).
   if (word.startsWith("pieces")) dofFreedomVote(plan, "structure", liked ? 1 : -1);
   if (word === "tealeaves") dofFreedomVote(plan, "chance", liked ? 1 : -1);
-  if (plan.study && /^(study|level|planes|light)/.test(word)) dofFreedomVote(plan, "form", liked ? 1 : -1);
+  if (plan.study) {
+    if (word.startsWith("medium")) dofFreedomVote(plan, "medium", liked ? 1 : -1);
+    else if (/^(wet|handling|load)/.test(word)) dofFreedomVote(plan, "application · " + plan.study.medium, liked ? 1 : -1);
+    else if (/^(study|light)/.test(word)) dofFreedomVote(plan, "form", liked ? 1 : -1);
+  }
   for (let n = 0; n < 2; n++) {
     const vote = { word, liked: Boolean(liked), size: 0, hue: 0, light: 0, literal: 0 };
     visualLexiconAdd(vote);
@@ -42374,7 +42381,7 @@ function lawLabel(plan, law) {
  *   explore  how often a choice from the map is something else instead
  *   steps    the bins a number setting is mapped in */
 const DOF_KEY = "hexfield.dof.v1";
-const DOF = { keep: 200, explore: 0.3, steps: { sigma: 2, rho: 4, beta: 0.3 } };
+const DOF = { keep: 300, explore: 0.3, steps: { sigma: 2, rho: 4, beta: 0.3 } };
 let dofBook = null, dofMapCache = null;
 function dofLedger() {
   if (dofBook) return dofBook;
@@ -44474,6 +44481,13 @@ function lightStroke(stroke, plan, width, height) {
 // A stroke's paint: its colour, or its light along it from the shaded end to the lit one.
 function strokeLightFill(ctx, stroke, from, to) {
   const [r, g, b] = stroke.colour, l = stroke.light;
+  if (!l && stroke.smear && from && to && (from[0] !== to[0] || from[1] !== to[1])) {
+    // Laid into wet paint, it drags some of it along: toward its end it is more of what it was laid into (Mediums).
+    const drag = ctx.createLinearGradient(from[0], from[1], to[0], to[1]);
+    drag.addColorStop(0, `rgb(${r},${g},${b})`);
+    drag.addColorStop(1, `rgb(${stroke.smear[0]},${stroke.smear[1]},${stroke.smear[2]})`);
+    return drag;
+  }
   if (!l || !from || !to || (from[0] === to[0] && from[1] === to[1])) return `rgb(${r},${g},${b})`;
   const [s, e] = l.end ? [from, to] : [to, from];
   const fill = ctx.createLinearGradient(s[0], s[1], e[0], e[1]);
@@ -44485,16 +44499,121 @@ function strokeLightFill(ctx, stroke, from, to) {
 
 /* A stroke laid inside a shape (`clip`, a study's plane): only what falls
  * inside it shows, so the plane ends in one clean edge - as a painter cuts
- * an edge in, or paints up to a mask - while its brush marks show within. */
-function drawPaintStroke(ctx, stroke) {
-  const clip = stroke.clip;
-  if (!clip || clip.length < 3) return drawPaintStrokeFree(ctx, stroke);
-  ctx.save();
-  ctx.beginPath();
-  clip.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+ * an edge in, or paints up to a mask - while its brush marks show within.
+ * And (Mediums) inside the part of the picture being worked again
+ * (`within`, any of its shapes), never over what stands in front of it
+ * (`clipOut`, each shape kept out), and as its medium puts it on: over
+ * what is there by the medium's rule (`blend`: a glaze multiplies, wet
+ * into wet only darkens) and into the ground's tooth (`grain`) - those
+ * drawn on a sheet of their own first, so the stroke goes on as one layer. */
+const CLIP_ALL = 1e5;
+function tracePolygon(ctx, poly, upright = false) {
+  // (Upright: every shape wound the same way round, so shapes traced together make their union.)
+  let turn = 0;
+  if (upright) for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) turn += (poly[j][0] - poly[i][0]) * (poly[j][1] + poly[i][1]);
+  (turn < 0 ? poly.slice().reverse() : poly).forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
   ctx.closePath();
-  ctx.clip();
-  try { drawPaintStrokeFree(ctx, stroke); } finally { ctx.restore(); }
+}
+function drawPaintStroke(ctx, stroke) {
+  const clip = stroke.clip, within = stroke.within, out = stroke.clipOut;
+  if ((!clip || clip.length < 3) && !within?.length && !out?.length && !stroke.blend && !stroke.grain) return drawPaintStrokeFree(ctx, stroke);
+  ctx.save();
+  try {
+    if (clip && clip.length >= 3) {
+      ctx.beginPath();
+      tracePolygon(ctx, clip);
+      ctx.clip();
+    }
+    if (within?.length) {
+      ctx.beginPath();
+      for (const shape of within) tracePolygon(ctx, shape, true);
+      ctx.clip("nonzero");
+    }
+    for (const shape of out || []) {
+      ctx.beginPath();
+      ctx.rect(-CLIP_ALL, -CLIP_ALL, 2 * CLIP_ALL, 2 * CLIP_ALL);
+      tracePolygon(ctx, shape);
+      ctx.clip("evenodd");
+    }
+    if (stroke.blend) ctx.globalCompositeOperation = stroke.blend;
+    if (stroke.blend || stroke.grain) drawLayeredStroke(ctx, stroke);
+    else drawPaintStrokeFree(ctx, stroke);
+  } finally {
+    ctx.restore();
+  }
+}
+/* A stroke on a sheet of its own, laid on the painting in one go: the
+ * ground's tooth taken out of it first (its hollows hold less paint), then
+ * put on by the medium's rule (the composite its caller set). The sheet
+ * covers only the stroke, in the pixels it lands on, and the tooth is
+ * anchored to the painting - a print-size replay has the same paper at its
+ * own scale. */
+let strokeSheet = null, paperTooth = null;
+function toothTile() {
+  if (paperTooth) return paperTooth;
+  // Value noise wrapped round on itself, so the tile repeats without a seam; its opacity is the hollows. Its own seed: the same paper every time.
+  const n = 192, canvas = paintBuffer(n, n), g = canvas.getContext("2d", { willReadFrequently: true }), img = g.createImageData(n, n), rnd = mulberry32(0x70074);
+  // (Two smooth octaves and a speckle of fibres; a finer lattice showed as a grid.)
+  const octaves = [[8, 0.55], [24, 0.3]].map(([cells, weight]) => ({ cells, weight, v: Float32Array.from({ length: cells * cells }, () => rnd()) }));
+  const smooth = (t) => t * t * (3 - 2 * t);
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      let v = 0.15 * rnd();
+      for (const { cells, weight, v: lattice } of octaves) {
+        const fx = x / n * cells, fy = y / n * cells, i = Math.floor(fx), j = Math.floor(fy), tx = smooth(fx - i), ty = smooth(fy - j);
+        const at = (a, b) => lattice[(b % cells) * cells + (a % cells)];
+        const top = at(i, j) + (at(i + 1, j) - at(i, j)) * tx, bottom = at(i, j + 1) + (at(i + 1, j + 1) - at(i, j + 1)) * tx;
+        v += (top + (bottom - top) * ty) * weight;
+      }
+      img.data[(y * n + x) * 4 + 3] = Math.round(255 * Math.max(0, Math.min(1, (v - 0.46) * 3.2)));
+    }
+  }
+  g.putImageData(img, 0, 0);
+  return (paperTooth = canvas);
+}
+function drawLayeredStroke(ctx, stroke) {
+  const m = ctx.getTransform(), scale = Math.sqrt(Math.abs(m.a * m.d - m.b * m.c)) || 1;
+  const pad = (stroke.width * (0.8 + 0.7 * (Number(stroke.bleed) || 0)) + 2) * scale;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [x, y] of stroke.points) {
+    const px = m.a * x + m.c * y + m.e, py = m.b * x + m.d * y + m.f;
+    x0 = Math.min(x0, px); y0 = Math.min(y0, py); x1 = Math.max(x1, px); y1 = Math.max(y1, py);
+  }
+  x0 = Math.max(0, Math.floor(x0 - pad)); y0 = Math.max(0, Math.floor(y0 - pad));
+  x1 = Math.min(ctx.canvas.width, Math.ceil(x1 + pad)); y1 = Math.min(ctx.canvas.height, Math.ceil(y1 + pad));
+  const w = x1 - x0, h = y1 - y0;
+  if (w < 1 || h < 1) return;
+  if (!strokeSheet) strokeSheet = paintBuffer(Math.max(256, w), Math.max(256, h));
+  else if (strokeSheet.width < w || strokeSheet.height < h) {
+    strokeSheet.width = Math.max(strokeSheet.width, w);
+    strokeSheet.height = Math.max(strokeSheet.height, h);
+  }
+  const g = strokeSheet.getContext("2d", { willReadFrequently: true });
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalCompositeOperation = "source-over";
+  g.globalAlpha = 1;
+  g.clearRect(0, 0, w, h);
+  g.setTransform(m.a, m.b, m.c, m.d, m.e - x0, m.f - y0);
+  drawPaintStrokeFree(g, stroke);
+  const grain = Math.min(1, Number(stroke.grain) || 0);
+  if (grain > 0) {
+    const tooth = g.createPattern(toothTile(), "repeat");
+    if (tooth) {
+      if (tooth.setTransform && typeof DOMMatrix === "function") tooth.setTransform(new DOMMatrix([m.a, m.b, m.c, m.d, m.e - x0, m.f - y0]));
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.globalCompositeOperation = "destination-out";
+      g.globalAlpha = grain;
+      g.fillStyle = tooth;
+      g.fillRect(0, 0, w, h);
+      g.globalCompositeOperation = "source-over";
+      g.globalAlpha = 1;
+    }
+  }
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  ctx.drawImage(strokeSheet, 0, 0, w, h, x0, y0, w, h);
+  ctx.restore();
 }
 function drawPaintStrokeFree(ctx, stroke) {
   const pts = stroke.points;
@@ -44596,9 +44715,12 @@ function drawPaintStrokeFree(ctx, stroke) {
     ctx.closePath();
   };
   ctx.fillStyle = strokeLightFill(ctx, stroke, spine[0], spine[n - 1]);
-  if (tip === "soft") {
-    // Feathered: wide and faint outside, fuller toward the middle.
-    for (const [scale, a] of [[1.4, 0.24], [1.1, 0.36], [0.75, 0.62]]) {
+  const bleed = Number(stroke.bleed) || 0;
+  if (tip === "soft" || bleed) {
+    // Feathered: wide and faint outside, fuller toward the middle - and laid into wet paint, run out wider still (Mediums).
+    // (A wet wash runs out evenly: where two such edges overlap they come to what a middle does.)
+    const layers = bleed ? [[1 + 0.7 * bleed, 0.35], [1 + 0.3 * bleed, 0.45], [0.8, 0.6]] : [[1.4, 0.24], [1.1, 0.36], [0.75, 0.62]];
+    for (const [scale, a] of layers) {
       ctx.globalAlpha = alpha * a;
       body(scale);
       ctx.fill();
@@ -44627,13 +44749,33 @@ function drawPaintStrokeFree(ctx, stroke) {
     }
   }
   // A glaze's pigment gathers at its edge: a thin darker rim, so where washes
-  // overlap the edge reads as a line of its own.
-  if (glaze) {
-    ctx.globalAlpha = Math.min(1, alpha * 1.2) * glaze;
+  // overlap the edge reads as a line of its own (a wash dried on dry paper, too: Mediums).
+  const rim = Math.max(glaze, Number(stroke.rim) || 0);
+  if (rim) {
+    ctx.globalAlpha = Math.min(1, alpha * 1.2) * rim;
     ctx.strokeStyle = tipShade(stroke.colour, -30);
     ctx.lineWidth = Math.max(0.8, w * 0.06);
     ctx.lineJoin = "round";
     for (const edge of [left, right]) {
+      ctx.beginPath();
+      edge.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      ctx.stroke();
+    }
+  }
+  /* Paint with body stands up off the canvas: the edge of a stroke toward
+   * the light catches it, the edge away throws a hair of shadow (Mediums:
+   * oil's impasto, thickest where it is light). */
+  if (stroke.body && w >= 4 && n > 1) {
+    const [k, lx, ly] = stroke.body;
+    let nx = 0, ny = 0;
+    for (const [a, b] of normals) { nx += a; ny += b; }
+    const litLeft = nx * lx + ny * ly > 0;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.lineWidth = Math.max(0.7, Math.min(2.4, w * 0.05));
+    for (const [edge, by, a] of [[litLeft ? left : right, 46, 0.55], [litLeft ? right : left, -40, 0.4]]) {
+      ctx.globalAlpha = Math.min(1, alpha * a * k);
+      ctx.strokeStyle = tipShade(stroke.colour, by);
       ctx.beginPath();
       edge.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
       ctx.stroke();
@@ -45653,26 +45795,52 @@ let masterPixels = { params: null, drawSeed: null, text: null, pixels: null };
 let criticTurnBatch = false;
 /* ── Studies ──────────────────────────────────────────────────────────
  * No pictures to copy any more: each painting is a study (words/
- * hexfield-study.js) - a sphere, a cube, a tetrahedron or an octahedron,
- * or one of them standing on a cube, in a plain room, its eye level through
- * the middle of the canvas - mapped first (which of its planes show, and
- * how, against the horizon) and then built stroke by stroke by the rules of
- * application, far to near, each stroke done as it goes on. The first is a
+ * hexfield-study.js) - a sphere, a cube, a tetrahedron or an octahedron in
+ * a plain room, its eye level through the middle of the canvas, mapped
+ * first (which of its planes show, and how, against the horizon) and built
+ * stroke by stroke by the rules of application - and then built on without
+ * end: another solid connected to it, on its top or against its side, one
+ * taken away and what it hid painted back, one reworked. The first is a
  * sphere, the first exercise; then each in turn.
- * ?scenes paints the drawn scenes as before. */
+ *
+ * Mediums: each painting is in one medium (oil, gouache, watercolour or
+ * charcoal) - in turn, from wherever the first one starts - whose rules of
+ * work come from what its paint does. The painter shows the study its
+ * canvas before each step (it looks, and corrects), and the study tells the
+ * ledger how near each change came to what was meant with the handling it
+ * chose for that form (studyReport), so the handling that leaves the least
+ * error for each form comes up more (Degrees of freedom).
+ * ?scenes paints the drawn scenes as before; ?medium=watercolour (or oil,
+ * gouache, charcoal) keeps to one medium. */
 const STUDY_MODE = (() => { try { return !new URLSearchParams(location.search).has("scenes"); } catch { return true; } })();
-let studyCount = 0;
+const STUDY_MEDIUM = (() => { try { return new URLSearchParams(location.search).get("medium") || null; } catch { return null; } })();
+let studyCount = 0, studyMediumFrom = null;
 const studyOn = () => STUDY_MODE && Boolean(globalThis.HexfieldStudy?.make);
+function studyMedium() {
+  const media = globalThis.HexfieldStudy.MEDIUMS;
+  if (media.includes(STUDY_MEDIUM)) return STUDY_MEDIUM;
+  // Each in turn the first time round; after that, the ledger's choice (votes on a medium count there).
+  studyMediumFrom ??= Math.floor(Math.random() * media.length);
+  if (studyCount < media.length) return media[(studyMediumFrom + studyCount) % media.length];
+  return dofChoose("medium", "medium", media, Math.random);
+}
 function beginStudy(result, width, height) {
   const Study = globalThis.HexfieldStudy;
   const kind = Study.KINDS[studyCount % Study.KINDS.length];
   const seed = (Number(result?.drawSeed) || Date.now()) >>> 0;
-  // (The first exercise sits on the floor, its shadow beside it.)
-  const study = Study.make(width, height, seed, kind, studyCount++ ? {} : { level: "below" });
+  const medium = studyMedium();
+  let plan = null;
+  const study = Study.make(width, height, seed, kind, {
+    medium,
+    choose: (freedom, key, options) => dofChoose(freedom, key, options, Math.random),
+    report: (row) => studyReport(plan, row),
+  });
+  studyCount++;
   const L = study.light.L;
-  const plan = { study, drawSeed: seed, lightAngle: Math.atan2(-L[1], L[0]), words: study.name };
-  // What it bounds (Degrees of freedom): the form, where it lies against the horizon, how many planes show, the light's side.
-  dofNote(plan, "form", "study", { kind, top: study.entries?.[1]?.kind || "none", level: study.level, planes: study.planes, light: study.light.side < 0 ? "left" : "right" });
+  plan = { study, drawSeed: seed, lightAngle: Math.atan2(-L[1], L[0]), words: study.name };
+  // What it bounds (Degrees of freedom): the form it starts from and its light, and its medium.
+  dofNote(plan, "form", "study", { kind, light: study.light.side < 0 ? "left" : "right" });
+  dofNote(plan, "medium", "medium", { medium });
   heldFrame = null;
   pendingFrame = null;
   strokePainter.preparing = null;
@@ -45684,38 +45852,84 @@ function beginStudy(result, width, height) {
   strokePainter.layerBatches = 0;
   strokePainter.strokes = 0;
   hideFinishLayer();
-  // A toned ground in the wall's colour; the study paints the rest.
-  const wall = study.palette.wall;
+  // The ground the medium is laid on: a toned canvas, toned paper, white paper.
   vctx.save();
   vctx.globalAlpha = 1;
-  vctx.fillStyle = `rgb(${wall.map((c) => Math.round(c * 0.8)).join(",")})`;
+  vctx.globalCompositeOperation = "source-over";
+  vctx.fillStyle = `rgb(${study.ground.join(",")})`;
   vctx.fillRect(0, 0, width, height);
   vctx.restore();
   strokeLog.newPainting = true;
   strokeLog.history = [];
   paintRevision++;
   view.dataset.paintRevision = String(paintRevision);
-  // Its words: what it is.
-  const box = document.getElementById("wordPrompt");
-  if (box) box.value = study.name;
-  const shown = document.getElementById("autoWords");
-  if (shown) shown.textContent = study.name;
+  showStudyWords(study.name);
   paintStudyBatch(result, plan);
   return true;
 }
-// The study's next step, laid; false once it has laid its last.
+// Its words: what it is now.
+function showStudyWords(words) {
+  const box = document.getElementById("wordPrompt");
+  if (box) box.value = words;
+  const shown = document.getElementById("autoWords");
+  if (shown) shown.textContent = words;
+}
+/* How a change came out, for the ledger: the handling the study chose for
+ * a form in its medium, and how near the canvas came to what was meant -
+ * one row a painting for each form and handling, its score the share of
+ * the canvas that came out right, averaged over every change made so. */
+function studyReport(plan, report) {
+  if (!plan?.study || !report?.app || strokePainter.plan !== plan) return;
+  const freedom = "application · " + report.medium, settings = { process: "application" };
+  for (const [key, value] of Object.entries(report.app)) if (key !== "form") settings[key + " · " + report.app.form] = value;
+  // (The latest, for a vote on it.)
+  dofNote(plan, freedom, "application", settings);
+  const book = dofLedger();
+  plan.dofId ||= "d" + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36);
+  const id = plan.dofId + ":" + JSON.stringify(settings);
+  let row = book.rows.find((r) => r.id === id);
+  if (!row) {
+    row = { id, at: Date.now(), dof: { [freedom]: settings }, changes: 0, taste: 0 };
+    book.rows.unshift(row);
+    book.rows.length = Math.min(book.rows.length, DOF.keep);
+  }
+  row.taste = +((row.taste * row.changes + (1 - report.rate)) / (row.changes + 1)).toFixed(4);
+  row.changes++;
+  row.at = Date.now();
+  dofMapCache = null;
+  saveDof();
+}
+/* The study's next steps, laid - a few together, up to STUDY_BATCH strokes,
+ * so a line or two is not a batch of its own - but never past a look: what
+ * comes after one is made seeing the canvas as it is (Mediums). It never runs
+ * out: a study is built on for as long as it is left to go on. */
+const STUDY_BATCH = 90;
 function paintStudyBatch(result, plan) {
   const S = plan.study;
   if (!S || S.done || !view?.width) return false;
-  let next = S.steps.next();
-  while (!next.done && !next.value.strokes.length) next = S.steps.next();
-  if (next.done) { S.done = true; return false; }
+  // (A breath after each change, so it can be seen before the next - once what it found to do last is on.)
+  if (S.restAfter) { S.restUntil = Date.now() + S.restAfter; S.restAfter = 0; }
+  if (S.restUntil && Date.now() < S.restUntil) return true;
+  const pixels = vctx.getImageData(0, 0, view.width, view.height).data;
+  S.seen = { pixels, width: view.width, height: view.height };
+  const strokes = [];
+  let label = "";
+  for (let pulls = 0; pulls < 60 && strokes.length < STUDY_BATCH; pulls++) {
+    const next = S.steps.next();
+    if (next.done) { S.done = true; break; }
+    // (A look with strokes still to lay: they go on first, and it looks at them next time.)
+    if (next.value.look && strokes.length) { if (next.value.rest) S.restAfter = next.value.rest; break; }
+    if (next.value.rest) { S.restUntil = Date.now() + next.value.rest; break; }
+    for (const stroke of next.value.strokes) strokes.push(stroke);
+    if (next.value.strokes.length) label = next.value.label;
+  }
+  if (S.name !== plan.words) { plan.words = S.name; showStudyWords(S.name); }
+  if (!strokes.length) return !S.done;
   S.step = (S.step || 0) + 1;
-  S.label = next.value.label;
-  const strokes = next.value.strokes;
+  S.label = label;
   markPaintTimingStarted(result);
   const animation = ++activePaintAnimation;
-  strokeLogBegin(vctx.getImageData(0, 0, view.width, view.height).data, view.width, view.height);
+  strokeLogBegin(pixels, view.width, view.height);
   result.paintStrokeCount = strokes.length;
   result.paintBrush = {
     families: ["study"], textures: ["flat"], signatures: [], lineageObjects: [], source: "study", lifts: 0, smudges: 0,
