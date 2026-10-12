@@ -46100,6 +46100,8 @@ function paintStudyBatch(result, plan) {
     nonRedundancy: 0.5, count: (Number(result.paintBrush?.count) || 0) + strokes.length, wordHand: S.name + " · " + S.label,
   };
   visiblePaintCompletion = animateLoggedStrokes(result, strokes, animation).then((landed) => { updatePainterStatus(result); return landed; });
+  // (A word it has just finished lettering, pictured once the strokes that finished it have landed - and its taste noted, once judged: Its own words.)
+  if (S.renders?.length || S.rendersPending?.length) visiblePaintCompletion.then(() => takeWordRenders(S)).catch(() => {});
   updatePainterStatus(result);
   return true;
 }
@@ -48314,7 +48316,8 @@ function checkPaintingFinished() {
     paintingFinishedAt = 0;
     stagnation = Math.min(stagnation, BOLD_AFTER_STAGNATION);
   }
-  if (!paintingFinishedAt && loopMode === "refine" && current &&
+  // (A study is never finished: it goes on making the same painting better until REJECT moves on.)
+  if (!paintingFinishedAt && loopMode === "refine" && current && !strokePainter.plan?.study &&
       stagnation >= FINISH_AFTER_STAGNATION && painterPass >= FINISH_MIN_PASSES &&
       now - lastInteractionAt > 20000) {
     paintingFinishedAt = now;
@@ -51123,24 +51126,91 @@ function keepSnapshot() {
   renderKeptStrip();
   return true;
 }
+/* ── Its own words ─────────────────────────────────────────────────────
+ * Every word the painter letters - stood up in letters, spelled through
+ * the shapes already standing, cut into a solid - leaves a small picture
+ * of itself in the same strip, edged in amber: its own catalogue of the
+ * words it has rendered, the newest RENDERED.most kept on this device,
+ * each with the face it was set in, its look and medium, and how the
+ * painting took it. (What it learns from them - a word lettered well
+ * coming back in its own face - it keeps in its own memory.) */
+const RENDERED = { key: "hexfield.words.v1", most: 24, size: 360, pad: 14, quality: 0.8 };
+function renderedList() {
+  try {
+    const list = JSON.parse(localStorage.getItem(RENDERED.key) || "[]");
+    return Array.isArray(list) ? list.filter((k) => k && typeof k.url === "string" && k.url.startsWith("data:image/")) : [];
+  } catch { return []; }
+}
+function saveRendered(list) {
+  // (Where the device has no room for all of them, the oldest go first.)
+  while (list.length) {
+    try { localStorage.setItem(RENDERED.key, JSON.stringify(list)); return; } catch { list.pop(); }
+  }
+}
+// A word's place in the picture, pictured small - with the stripes, where it is seen through them.
+function cropRender([x0, y0, x1, y1]) {
+  if (typeof document === "undefined" || !view?.width || !view?.height) return null;
+  const pad = RENDERED.pad, a = Math.max(0, Math.floor(x0 - pad)), b = Math.max(0, Math.floor(y0 - pad));
+  const w = Math.min(view.width, Math.ceil(x1 + pad)) - a, h = Math.min(view.height, Math.ceil(y1 + pad)) - b;
+  if (!(w >= 8 && h >= 8)) return null;
+  const k = Math.min(1, RENDERED.size / Math.max(w, h)), c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(w * k));
+  c.height = Math.max(1, Math.round(h * k));
+  const g = c.getContext("2d");
+  g.drawImage(view, a, b, w, h, 0, 0, c.width, c.height);
+  if (munkerLayer && munkerLayer.style.display !== "none" && munkerLayer.width) g.drawImage(munkerLayer, a, b, w, h, 0, 0, c.width, c.height);
+  let url = null;
+  try { url = c.toDataURL("image/jpeg", RENDERED.quality); } catch { url = null; }
+  c.width = 0;
+  return url?.startsWith("data:image/") ? url : null;
+}
+// The words a study has finished since it was last asked, pictured as they stand now; and how the painting took the ones pictured before, once judged.
+function takeWordRenders(S) {
+  if (!S) return false;
+  let list = null;
+  for (const r of S.renders?.splice(0) || []) {
+    const url = cropRender(r.box);
+    if (!url) continue;
+    list ||= renderedList();
+    list.unshift({ id: r.id, url, text: r.text, face: r.faceName, look: r.look, medium: r.medium, view: r.view, how: r.how, at: r.at, taste: null });
+    (S.rendersPending ||= []).push(r);
+  }
+  const judged = (S.rendersPending || []).filter((r) => Number.isFinite(r.taste));
+  if (judged.length) {
+    list ||= renderedList();
+    for (const r of judged) { const row = list.find((x) => x.id === r.id); if (row) row.taste = r.taste; }
+    S.rendersPending = S.rendersPending.filter((r) => !judged.includes(r));
+  }
+  if (!list) return false;
+  saveRendered(list.slice(0, RENDERED.most));
+  renderKeptStrip();
+  return true;
+}
+const LOOK_NAMES = { toon: "a cartoon", munker: "seen through stripes", plain: "painted" };
+function aboutRender(r) {
+  const took = !Number.isFinite(r.taste) ? "" : r.taste > 0.02 ? " · the painting took it well" : r.taste < -0.02 ? " · the painting took it badly" : " · the painting took it as it was";
+  return "its own \u201c" + r.text + "\u201d" + (r.face ? ", in " + r.face + " letters" : "") + " · " + (r.how || "lettered") + " · " + (LOOK_NAMES[r.look] || "painted") + (r.medium ? ", in " + r.medium : "") + took + " · " + new Date(r.at).toLocaleString();
+}
 function renderKeptStrip() {
   const strip = typeof document !== "undefined" ? document.getElementById("keptStrip") : null;
   if (!strip) return;
-  const list = keptList();
+  // (What you kept and the words it lettered, newest first, side by side.)
+  const list = [...keptList().map((k) => ({ ...k, word: false })), ...renderedList().map((r) => ({ ...r, word: true }))].sort((a, b) => (b.at || 0) - (a.at || 0));
   strip.replaceChildren();
   if (!list.length) {
     const hint = document.createElement("span");
     hint.className = "hint";
-    hint.textContent = "what you KEEP is kept here";
+    hint.textContent = "what you KEEP, and the words it letters, are kept here";
     strip.append(hint);
     return;
   }
   for (const kept of list) {
     const button = document.createElement("button"), img = document.createElement("img");
     button.type = "button";
-    button.title = (kept.name ? kept.name + " · " : "") + "kept " + new Date(kept.at).toLocaleString();
+    if (kept.word) button.className = "word";
+    button.title = kept.word ? aboutRender(kept) : (kept.name ? kept.name + " · " : "") + "kept " + new Date(kept.at).toLocaleString();
     img.src = kept.url;
-    img.alt = kept.name ? "kept: " + kept.name : "a painting you kept";
+    img.alt = kept.word ? "its own word: " + kept.text : kept.name ? "kept: " + kept.name : "a painting you kept";
     button.append(img);
     button.addEventListener("click", () => showKept(kept));
     strip.append(button);
@@ -51156,7 +51226,7 @@ function showKept(kept) {
     document.addEventListener("keydown", (event) => { if (event.key === "Escape") box.hidden = true; });
   }
   box.querySelector("img").src = kept.url;
-  box.querySelector("p").textContent = (kept.name ? kept.name + " · " : "") + "kept " + new Date(kept.at).toLocaleString();
+  box.querySelector("p").textContent = kept.word ? aboutRender(kept) : (kept.name ? kept.name + " · " : "") + "kept " + new Date(kept.at).toLocaleString();
   box.hidden = false;
   box.querySelector("button")?.focus();
 }

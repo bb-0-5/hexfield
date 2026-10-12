@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- autodeploy-check: workers-builds-verify-8f2c1a -->
-<!-- hexfield build 350 (2026-10-12) -->
+<!-- hexfield build 351 (2026-10-12) -->
 <html lang="en">
 <head>
 <script>
@@ -571,6 +571,7 @@
   #keptStrip button { flex: 0 0 auto; width: auto; height: 40px; min-height: 0 !important; padding: 0 !important; margin: 0; border: 1px solid rgba(109,201,242,.4) !important;
                       border-radius: 4px; background: #0d151d !important; overflow: hidden; cursor: pointer; transform: none !important; }
   #keptStrip button:hover { border-color: var(--pride-amber) !important; }
+  #keptStrip button.word { border-color: rgba(242,186,96,.55) !important; border-style: dashed !important; }
   #keptStrip img { display: block; height: 38px; width: auto; }
   #keptView { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
               padding: 16px; box-sizing: border-box; background: rgba(4,8,12,.92); }
@@ -799,8 +800,8 @@
       <input id="askText" type="text" maxlength="48" enterkeyhint="go" placeholder="ask: a blue cube on the dome · make it gold · &quot;your words&quot; · undo" aria-label="ask the painter in words">
       <button id="askGo" type="submit">ASK</button>
     </form>
-    <!-- What you KEEP, kept on this device: tap one to see it bigger. -->
-    <div id="keptStrip" aria-label="paintings you kept"><span class="hint">what you KEEP is kept here</span></div>
+    <!-- What you KEEP, and the words it letters, kept on this device: tap one to see it bigger. -->
+    <div id="keptStrip" aria-label="paintings you kept, and the words it lettered"><span class="hint">what you KEEP, and the words it letters, are kept here</span></div>
     <div id="localLearningStatus" aria-live="polite">teach it directly, or let the resident painter keep learning in the background</div>
     <!-- Inside #autonomousControls on purpose. The autonomous presentation
          blacks out the sidebar with `aside > div:not(#autonomousControls)`, so
@@ -820,7 +821,7 @@
     <div id="colourChoice">colour: choosing…</div>
     <div id="robBossMood" aria-live="polite">rob boss: waking up · show me 4–8 clear choices</div>
     <div id="painterStatus">seed held · preparing the first paint pass</div>
-    <div id="buildBadge">build 350</div>
+    <div id="buildBadge">build 351</div>
     <div id="bootErrors" style="display:none;color:#ff6b6b;font-size:10px;white-space:pre-wrap;margin-top:4px;"></div>
   </div>
   <div id="shopEssentials" aria-label="print controls"></div>
