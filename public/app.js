@@ -45897,6 +45897,10 @@ function beginStudy(result, width, height) {
   dofNote(plan, "form", "study", { kind, light: study.light.side < 0 ? "left" : "right" });
   dofNote(plan, "medium", "medium", { medium });
   dofNote(plan, "view", "view", { view: study.view.id });
+  // (Its colour key, its composition and its look: chosen by the ledger, learned from KEEP and REJECT - nothing to set.)
+  dofNote(plan, "colour", "key", { harmony: study.palette.relation, chroma: study.palette.chroma, key: study.palette.key });
+  dofNote(plan, "composition", "scheme", { scheme: study.composition?.key || "golden" });
+  dofNote(plan, "look", "look", { look: study.look || "plain" });
   heldFrame = null;
   pendingFrame = null;
   strokePainter.preparing = null;
@@ -45908,6 +45912,7 @@ function beginStudy(result, width, height) {
   strokePainter.layerBatches = 0;
   strokePainter.strokes = 0;
   hideFinishLayer();
+  hideMunkerLayer();
   // The ground the medium is laid on: a toned canvas, toned paper, white paper.
   vctx.save();
   vctx.globalAlpha = 1;
@@ -45970,6 +45975,7 @@ function studyReport(plan, report) {
 }
 // A fresh sheet for a study: the ground laid over everything, as at its start.
 function studyFreshSheet(S, colour) {
+  hideMunkerLayer();
   vctx.save();
   vctx.globalAlpha = 1;
   vctx.globalCompositeOperation = "source-over";
@@ -45983,6 +45989,34 @@ function studyFreshSheet(S, colour) {
   S.seen = null;
   S.laidSince = true;
 }
+/* The Munker-White look (Studies): its stripes on a layer of their own over
+ * the painting - not paint, so the painter's looking and correcting never
+ * takes them for a mistake - laid again after each change, gone with a
+ * fresh sheet until the next change is made. */
+let munkerLayer = null;
+function hideMunkerLayer() {
+  if (munkerLayer) munkerLayer.style.display = "none";
+}
+function refreshMunkerLayer(plan = strokePainter.plan) {
+  const S = plan?.study, st = S && globalThis.HexfieldStudy?.stripes?.(S);
+  if (!st || !view?.width || typeof document === "undefined") { hideMunkerLayer(); return; }
+  if (!munkerLayer) {
+    munkerLayer = document.createElement("canvas");
+    munkerLayer.id = "munkerView";
+    munkerLayer.setAttribute("aria-hidden", "true");
+    munkerLayer.style.cssText = "position:absolute;pointer-events:none;display:none;border-radius:5px;background:transparent";
+    view.insertAdjacentElement("afterend", munkerLayer);
+  }
+  if (munkerLayer.width !== view.width || munkerLayer.height !== view.height) { munkerLayer.width = view.width; munkerLayer.height = view.height; }
+  const g = munkerLayer.getContext("2d");
+  g.clearRect(0, 0, munkerLayer.width, munkerLayer.height);
+  for (const row of st.rows) for (const seg of row.segs) {
+    g.fillStyle = `rgb(${seg.colour.join(",")})`;
+    g.fillRect(seg.x0, row.y - st.thick / 2, seg.x1 - seg.x0, st.thick);
+  }
+  Object.assign(munkerLayer.style, { left: view.offsetLeft + "px", top: view.offsetTop + "px", width: view.offsetWidth + "px", height: view.offsetHeight + "px", display: "block" });
+}
+if (typeof window !== "undefined") window.addEventListener("resize", () => { if (munkerLayer && munkerLayer.style.display !== "none") refreshMunkerLayer(); });
 /* The study's next steps, laid - a few together, up to STUDY_BATCH strokes,
  * so a line or two is not a batch of its own - but never past a look: what
  * comes after one is made seeing the canvas as it is (Mediums); and never
@@ -46021,7 +46055,7 @@ function paintStudyBatch(result, plan) {
     if (next.value.strokes.length) label = next.value.label;
   }
   if (S.name !== plan.words) { plan.words = S.name; showStudyWords(S.name); }
-  if (S.moves !== plan.toldMoves) { plan.toldMoves = S.moves; showStudyLearning(); renderChoiceCard(true); }
+  if (S.moves !== plan.toldMoves) { plan.toldMoves = S.moves; showStudyLearning(); renderChoiceCard(true); refreshMunkerLayer(plan); }
   // (Stopped mid-thought with nothing to lay yet: it goes on as soon as the page has had its turn.)
   S.thinking = !strokes.length && !S.done && !(S.restUntil && Date.now() < S.restUntil) && !S.restAfter;
   if (!strokes.length) return !S.done;
@@ -46369,6 +46403,7 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
     strokePainter.enhancedKey = null;
     strokePainter.enhancedPlan = null;
     hideFinishLayer();
+    hideMunkerLayer();
     // (On the last painting there is no toning: it is the ground.)
     const quickTone = frame ? null : paintTonedGround(raw, width, height);
     /* How it begins (Openings): copied from the master, or sprayed / blobbed
