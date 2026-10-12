@@ -45919,8 +45919,12 @@ function beginStudy(result, width, height) {
   dofNote(plan, "view", "view", { view: study.view.id });
   // (Its colour key, its composition and its look: chosen by the ledger, learned from KEEP and REJECT - nothing to set.)
   dofNote(plan, "colour", "key", { harmony: study.palette.relation, chroma: study.palette.chroma, key: study.palette.key, centre: study.palette.tone });
+  // (Its palette said where it can be seen: found new, or one of its own come back changed.)
+  const colourNote = typeof document !== "undefined" ? document.getElementById("colourChoice") : null;
+  if (colourNote) colourNote.textContent = "colour: " + (study.palette.genes?.parent ? "a palette of its own, changed" : "a new palette") + " · " + study.palette.relation + " · " + study.palette.chroma + " · " + study.palette.key + " · " + study.palette.tone + " centre";
   dofNote(plan, "composition", "scheme", { scheme: study.composition?.key || "golden" });
   dofNote(plan, "look", "look", { look: study.look || "plain" });
+  dofNote(plan, "arrangement", "arrange", { arrange: study.arrange || "cluster" });
   heldFrame = null;
   pendingFrame = null;
   strokePainter.preparing = null;

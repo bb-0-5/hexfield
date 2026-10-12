@@ -455,6 +455,24 @@
     for (let i = 0; i < w.length; i++) { const a = w[i], b = w[(i + 1) % w.length]; x += (a[1] - b[1]) * (a[2] + b[2]); y += (a[2] - b[2]) * (a[0] + b[0]); z += (a[0] - b[0]) * (a[1] + b[1]); }
     return unit([x, y, z]);
   }
+  /* A box whose edges bend (Mutation): its sides in strips from its foot
+   * up, each level turned a little more (twisted), swollen out toward its
+   * middle (swollen), drawn in or flared toward its top (tapering,
+   * flaring), or carried further over the higher it is (leaning) - each
+   * side one panel however many strips it is in, so only its own edges are
+   * drawn, and its light turns across it strip by strip. */
+  function bentSolid(e, st = [1, 1, 1], bend, k = 6) {
+    const hx = e / 2 * st[0], hz = e / 2 * st[2], H = e * st[1], verts = [], faces = [];
+    for (let j = 0; j <= k; j++) {
+      const t = j / k, a = bend.twist * t, c = Math.cos(a), sn = Math.sin(a), sc = (1 + bend.bow * Math.sin(Math.PI * t)) * (1 - bend.taper * t), off = bend.lean * t * t * H;
+      for (const [x, z] of [[-hx, -hz], [hx, -hz], [hx, hz], [-hx, hz]]) verts.push([x * sc * c - z * sc * sn + off, -H / 2 + t * H, x * sc * sn + z * sc * c]);
+    }
+    // (Each face wound anticlockwise seen from outside: its way out is its own, however it bends.)
+    faces.push({ name: "bottom", idx: [0, 1, 2, 3] }, { name: "top", idx: [k * 4 + 3, k * 4 + 2, k * 4 + 1, k * 4] });
+    for (let i = 0; i < 4; i++) for (let j = 0; j < k; j++) { const i1 = (i + 1) % 4; faces.push({ name: "side", panel: "side " + i, idx: [j * 4 + i, (j + 1) * 4 + i, (j + 1) * 4 + i1, j * 4 + i1] }); }
+    return { verts, faces, low: -H / 2, high: H / 2, wound: true, bent: true };
+  }
+  const bendWord = (b) => b.way;
   // A solid stretched along its three ways: a cube into a box, squares into rectangles (Mutation).
   const stretched = (shape, st) => (!st || st.every((v) => v === 1) ? shape
     : { ...shape, verts: shape.verts.map(([x, y, z]) => [x * st[0], y * st[1], z * st[2]]), low: shape.low * st[1], high: shape.high * st[1] });
@@ -474,6 +492,7 @@
    * sides); and any of them stretched. */
   function shapeOf(kind, e, form = {}) {
     let shape;
+    if (kind === "cube" && form.bend) return bentSolid(e, form.stretch, form.bend);
     if (kind === "cube") shape = cubeSolid(e);
     else if (kind === "tetrahedron") shape = tetraSolid(e);
     else if (kind === "octahedron") shape = octaSolid(e, true);
@@ -487,6 +506,7 @@
   // What a solid is called, as its form makes it.
   function nameFor(kind, form = {}) {
     const st = form.stretch || [1, 1, 1], wide = Math.max(st[0], st[2]);
+    if (kind === "cube" && form.bend) return "a " + form.bend.way + " " + (st[1] > 1.25 * wide ? "tower" : st[1] < 0.75 * Math.min(st[0], st[2]) ? "slab" : "box");
     if (kind === "cube") return st.every((v) => Math.abs(v - 1) < 0.06) ? "a cube" : st[1] > 1.25 * wide ? "a tall box" : st[1] < 0.75 * Math.min(st[0], st[2]) ? "a slab" : "a box";
     if (kind === "pyramid") return "a " + (["three", "four", "five", "six", "seven", "eight"][(form.sides || 4) - 3] || "many") + "-sided pyramid";
     if (kind === "cylinder") return st[1] < 0.6 ? "a disc" : "a cylinder";
@@ -532,7 +552,8 @@
       e.upright = Math.abs(solid.verts[e.a][0] - solid.verts[e.b][0]) < 1e-6 && Math.abs(solid.verts[e.a][2] - solid.verts[e.b][2]) < 1e-6;
       e.outline = e.faces.length === 1;
     }
-    return { pts, faces, visible, planes: visible.length, edges: [...edges.values()], horizonY: cam.horizon };
+    // (A bent side is one plane, however many strips it is in.)
+    return { pts, faces, visible, planes: new Set(visible.map((f, i) => f.panel || i)).size, edges: [...edges.values()], horizonY: cam.horizon };
   }
   /* Turned until it shows the planes wanted - never more than three -
    * trying the square-on turns and then all the way round; among the turns
@@ -575,31 +596,95 @@
     triadic: { support: [120, 240], accent: [240, 120], wall: "dominant" },
   };
   // How strong the colour is: the saturation of the dominant, the support, the accent and the room.
-  const CHROMAS = { muted: [0.2, 0.14, 0.45, 0.05], moderate: [0.34, 0.24, 0.6, 0.09], rich: [0.52, 0.36, 0.74, 0.14] };
+  const CHROMAS = { muted: [0.2, 0.14, 0.45, 0.05], moderate: [0.34, 0.24, 0.6, 0.09], rich: [0.52, 0.36, 0.74, 0.14], vivid: [0.72, 0.55, 0.88, 0.22] };
   // Where the values sit: the wall's, the floor's and the solids' lightness (a dark room keeps its solids light).
   const VALUE_KEYS = { light: { wall: [0.8, 0.9], floor: [0.64, 0.76], solid: [0.48, 0.66] }, middle: { wall: [0.6, 0.72], floor: [0.44, 0.56], solid: [0.4, 0.62] },
-    dark: { wall: [0.2, 0.3], floor: [0.3, 0.4], solid: [0.5, 0.7] } };
+    dark: { wall: [0.2, 0.3], floor: [0.3, 0.4], solid: [0.5, 0.7] }, night: { wall: [0.08, 0.16], floor: [0.14, 0.24], solid: [0.42, 0.66] },
+    pale: { wall: [0.86, 0.94], floor: [0.74, 0.84], solid: [0.62, 0.8] } };
+  /* ── Discovering colour ───────────────────────────────────────────────
+   * No one scheme for every painting. A palette is a handful of genes -
+   * where its hues stand to its dominant, how strong each is, where its
+   * values sit, how far the room takes its colour and from which hue, what
+   * everything far off settles toward - and each painting's is found anew:
+   * often one never painted before, invented (a harmony bent, or hues set
+   * where no rule puts them, the room grey or coloured right through);
+   * otherwise one of its own that went well, changed. Never one too like
+   * the last few it painted. What each did - the votes on its paintings -
+   * is kept in its catalogue of palettes, so the liked ones come back,
+   * varied, and the rest fade.
+   *   discover  how often a palette is invented rather than recalled
+   *   apart     how unlike the last few a new one must be; `recent`, how many count
+   *   most      palettes kept in its catalogue */
+  const PALETTES = { discover: 0.5, apart: 0.22, recent: 6, most: 40 };
+  function inventPalette(rng, choose) {
+    // (What it has learned of colour has a say half the time: the other half, it looks somewhere it would not have chosen.)
+    const one = (list) => list[Math.floor(rng() * list.length)], chosen = choose && rng() < 0.5 ? (key, options) => choose("colour", key, options) : (key, options) => one(options);
+    const family = rng() < 0.4 ? "discovered" : chosen("harmony", Object.keys(HARMONIES)), H = HARMONIES[family];
+    const sign = () => (rng() < 0.5 ? -1 : 1);
+    const support = H ? one(H.support) + (rng() - 0.5) * 24 : sign() * (18 + rng() * 172), accent = H ? one(H.accent) + (rng() - 0.5) * 30 : sign() * (40 + rng() * 140);
+    const chroma = chosen("chroma", Object.keys(CHROMAS)), key = chosen("key", Object.keys(VALUE_KEYS)), C = CHROMAS[chroma], K = VALUE_KEYS[key];
+    const at = ([a, b]) => a + rng() * (b - a), vary = (v, by) => clamp(v * (1 - by + rng() * 2 * by), 0, 1);
+    // (The room grey, tinted, or coloured right through - from the dominant, the support, the accent or the dominant's opposite.)
+    const room = one([C[3], C[3], C[3] * 2.2, 0.32 + rng() * 0.3]);
+    return { id: Math.floor(rng() * 1e9).toString(36), family, hue: rng() * 360, support, accent, chroma, key,
+      sat: [vary(C[0], 0.25), vary(C[1], 0.3), vary(C[2], 0.2), clamp(room, 0.02, 0.62)], wall: at(K.wall), floor: at(K.floor), solid: K.solid.slice(),
+      roomHue: one(["dominant", "dominant", "support", "accent", "opposite"]), floorTurn: sign() * (14 + rng() * 26), tone: chosen("centre", ["neutral", "warm", "cool", "dominant", "complement"]) };
+  }
+  // One of its own palettes again, changed: its hues turned a little (now and then right round), its strengths and values moved.
+  function mutatePalette(g, rng) {
+    const jitter = (v, by) => v + (rng() - 0.5) * 2 * by;
+    return { ...g, id: Math.floor(rng() * 1e9).toString(36), parent: g.id, hue: (rng() < 0.2 ? rng() * 360 : jitter(g.hue, 30) + 360) % 360, support: jitter(g.support, 14), accent: jitter(g.accent, 20),
+      sat: g.sat.map((v, i) => clamp(v * (0.8 + rng() * 0.45), i === 3 ? 0.02 : 0.05, i === 3 ? 0.62 : 0.9)), wall: clamp(jitter(g.wall, 0.07), 0.05, 0.95), floor: clamp(jitter(g.floor, 0.07), 0.08, 0.9),
+      solid: g.solid.map((v) => clamp(jitter(v, 0.05), 0.2, 0.9)), floorTurn: jitter(g.floorTurn, 10) };
+  }
+  // How unlike two palettes are, 0 (the same) to about 1: their hues, how their hues stand, their strengths, their values.
+  function paletteApart(a, b) {
+    const turn = (x, y) => Math.abs(((x - y) % 360 + 540) % 360 - 180) / 180;
+    return 0.3 * turn(a.hue, b.hue) + 0.15 * (turn(a.support, b.support) + turn(a.accent, b.accent)) / 2 + 0.3 * a.sat.reduce((t, v, i) => t + Math.abs(v - b.sat[i]), 0) / 2
+      + 0.25 * (Math.abs(a.wall - b.wall) + Math.abs(a.floor - b.floor)) / 1.2 + (a.chroma !== b.chroma ? 0.08 : 0) + (a.key !== b.key ? 0.08 : 0);
+  }
+  // The palette for a painting: invented or recalled-and-changed, never too like the last few.
+  function paletteGenes(rng, choose) {
+    const M = memory(), book = (M.palettes ||= []), recent = (M.recentPalettes ||= []), liked = book.filter((p) => p.n > 0 && p.mean > 0.05);
+    let g = null;
+    for (let t = 0; t < 14 && !g; t++) {
+      const recall = liked.length && rng() > PALETTES.discover;
+      const cand = recall ? mutatePalette(liked[Math.floor(Math.pow(rng(), 1.6) * liked.length)].genes, rng) : inventPalette(rng, choose);
+      if (t === 13 || recent.every((r) => paletteApart(cand, r) > PALETTES.apart)) g = cand;
+    }
+    recent.push(g);
+    if (recent.length > PALETTES.recent) recent.splice(0, recent.length - PALETTES.recent);
+    liked.sort((a, b) => b.mean - a.mean);
+    return g;
+  }
+  // What a palette did: its paintings' votes, kept against it in the catalogue (the worst-known forgotten first when it is full).
+  function notePalette(g, vote) {
+    if (!g?.id) return;
+    const M = memory(), book = (M.palettes ||= []);
+    let row = book.find((p) => p.genes.id === g.id);
+    if (!row) { row = { genes: g, n: 0, mean: 0 }; book.push(row); }
+    row.n++;
+    row.mean += (vote - row.mean) / Math.min(row.n, 6);
+    if (book.length > PALETTES.most) { book.sort((a, b) => b.mean - a.mean || b.n - a.n); book.length = PALETTES.most; }
+  }
   function palette(rng, choose = null) {
-    const chosen = (key, options) => (choose ? choose("colour", key, options) : options[Math.floor(rng() * options.length)]);
-    const relation = chosen("harmony", Object.keys(HARMONIES)), chroma = chosen("chroma", Object.keys(CHROMAS)), key = chosen("key", Object.keys(VALUE_KEYS));
-    const H = HARMONIES[relation], C = CHROMAS[chroma], K = VALUE_KEYS[key], at = ([a, b]) => a + rng() * (b - a), one = (list) => list[Math.floor(rng() * list.length)];
-    // (The accent stands somewhere the support does not, where the harmony has room for it.)
-    const hue = rng() * 360, sOff = one(H.support), aOff = one(H.accent.filter((a) => Math.abs(a - sOff) > 20).concat(H.accent.length > 1 ? [] : H.accent));
-    const support = (hue + sOff + 360) % 360, accent = (hue + (aOff ?? H.accent[0]) + (rng() - 0.5) * 16 + 360) % 360;
-    const wallHue = (H.wall === "support" ? support : hue) + (rng() - 0.5) * 20, floorHue = wallHue + (rng() < 0.5 ? -1 : 1) * (14 + rng() * 26);
+    const g = paletteGenes(rng, choose), H = HARMONIES[g.family], at = ([a, b]) => a + rng() * (b - a);
+    const hue = g.hue, support = (hue + g.support + 720) % 360, accent = (hue + g.accent + (rng() - 0.5) * 8 + 720) % 360;
+    const roomHue = { dominant: hue, support, accent, opposite: hue + 180 }[g.roomHue] + (rng() - 0.5) * 20, floorHue = roomHue + g.floorTurn;
     /* Its tonal centre: what everything far off settles toward - the value
      * the key sets (light, middle, dark) in a colour of its own: neutral,
-     * warm, cool, the dominant's hue or its opposite. The room leans to it. */
-    const tone = chosen("centre", ["neutral", "warm", "cool", "dominant", "complement"]);
-    const toneHue = { neutral: wallHue, warm: 28 + rng() * 20, cool: 200 + rng() * 28, dominant: hue, complement: hue + 180 }[tone];
-    const centre = hsl((toneHue + 360) % 360, tone === "neutral" ? 0.05 : 0.22 + rng() * 0.16, { light: 0.72 + rng() * 0.1, middle: 0.44 + rng() * 0.12, dark: 0.16 + rng() * 0.1 }[key]);
-    const lean = tone === "neutral" ? 0.15 : 0.35;
+     * warm, cool, the dominant's hue or its opposite. The room leans to it
+     * (less, the more the room is coloured). */
+    const tone = g.tone, toneHue = { neutral: roomHue, warm: 28 + rng() * 20, cool: 200 + rng() * 28, dominant: hue, complement: hue + 180 }[tone];
+    const centre = hsl((toneHue + 360) % 360, tone === "neutral" ? 0.05 : 0.22 + rng() * 0.16, clamp(g.wall * 0.7 + 0.15 + (rng() - 0.5) * 0.08, 0.12, 0.85));
+    const lean = (tone === "neutral" ? 0.15 : 0.35) * (1 - Math.min(0.8, g.sat[3] * 1.4));
     return {
-      relation, chroma, key, hue, support, accent, sat: C, light: K.solid, tone, centre,
-      wall: mix(hsl((wallHue + 360) % 360, C[3] * (0.6 + rng() * 0.6), at(K.wall)), centre, lean),
-      floor: mix(hsl((floorHue + 360) % 360, C[3] * (0.9 + rng() * 0.7), at(K.floor)), centre, lean * 0.6),
-      solid: hsl(hue, C[0] * (0.85 + rng() * 0.3), at(K.solid)),
-      solid2: hsl(support, C[1] * (0.85 + rng() * 0.3), at(K.solid)),
+      relation: g.family === "discovered" ? "discovered" : g.family, chroma: g.chroma, key: g.key, hue, support, accent, sat: g.sat, light: g.solid, tone, centre, genes: g,
+      monochrome: H ? H.support.every((o) => o === 0) : false,
+      wall: mix(hsl((roomHue + 720) % 360, g.sat[3] * (0.75 + rng() * 0.5), g.wall), centre, lean),
+      floor: mix(hsl((floorHue + 720) % 360, g.sat[3] * (0.9 + rng() * 0.6), g.floor), centre, lean * 0.6),
+      solid: hsl(hue, g.sat[0] * (0.85 + rng() * 0.3), at(g.solid)),
+      solid2: hsl(support, g.sat[1] * (0.85 + rng() * 0.3), at(g.solid)),
     };
   }
   // A colour's hue (degrees), saturation and lightness (0 to 1).
@@ -1075,7 +1160,7 @@
   function shadowOutline(S, E, h) {
     const L = S.light.L, down = (p) => (p[1] <= h + 1e-6 ? [p[0], h, p[2]] : [p[0] - L[0] * (p[1] - h) / L[1], h, p[2] - L[2] * (p[1] - h) / L[1]]);
     // (A shape that is not convex throws its own outline, carried down the light: Form.)
-    if (E.placed?.wound) return E.placed.faces[0].idx.map((i) => down(E.placed.verts[i]));
+    if (E.placed?.wound && !E.placed.bent) return E.placed.faces[0].idx.map((i) => down(E.placed.verts[i]));
     if (E.kind !== "sphere") return hull(E.placed.verts.map(down), h);
     const u = unit([-L[2], 0, L[0]]), v = unit([L[1] * L[0], -(L[0] * L[0] + L[2] * L[2]), L[1] * L[2]]), pts = [];
     for (let k = 0; k < 40; k++) {
@@ -1088,6 +1173,8 @@
   const hull = (points, h) => hull2(points.map((q) => [q[0], q[2]])).map(([x, z]) => [x, h, z]);
   function* shadowSteps(S, E, ground, label) {
     if (S.cam.flat) return;
+    // (A letter whose face drops its shadow parallel to it throws none on the floor: Typefaces.)
+    if (droppedShadow(E)) { if (ground === S.floor) yield* droppedSteps(S, E); return; }
     const { cam } = S, out = [], h = ground.h;
     // (A thing of many parts throws the shadows of its parts: Type, Plants.)
     const shapes = (E.parts || [E]).map((q) => shadowOutline(S, q, h)), shots = shapes.map((shape) => shape.map((p) => project(cam, p)));
@@ -1297,9 +1384,32 @@
     }
     return best;
   }
+  /* A letter's shadow dropped parallel to it, as type's own shadow is: its
+   * face's shape set back behind it and moved away from the light across
+   * its own plane - down, and to the side the light is not - laid over
+   * whatever is behind it, that darkened; never below the floor. */
+  const droppedShadow = (P) => P?.kind === "letter" && P.face?.shadow === "parallel" && Boolean(P.glyph);
+  function* droppedSteps(S, L) {
+    const G = L.glyph, { cam } = S, N = L.front, U = [-N[2], 0, N[0]], V = [0, 1, 0], h = Math.max(0.05, L.high - L.low), Lt = S.light.L;
+    const lu = dot(Lt, U), lv = Math.max(0.35, dot(Lt, V)), l = Math.hypot(lu, lv) || 1, by = h * 0.13;
+    const away = add(add(times(U, -lu / l * by), times(V, -lv / l * by)), times(N, -(L.face.depth * h + h * 0.08)));
+    const P0 = S.paint, shots = [], holes = [];
+    for (const f of G.placed.faces.filter((x) => x.name === "front")) {
+      const ring = overLevel(f.idx.map((i) => add(G.placed.verts[i], away)), 0.005);
+      if (ring.length >= 3) shots.push(ring.map((p) => project(cam, p)));
+      for (const hole of f.holes || []) holes.push(hole.map((i) => project(cam, add(G.placed.verts[i], away))));
+    }
+    if (!shots.length) return;
+    (L.shot ||= {}).floor = hull2(shots.flat());
+    // (What is there already, darkened: the shadow is of the light it keeps off whatever is behind the letter.)
+    const darkAt = (x, y) => { const k = cellAt(P0, x, y); return k < 0 ? S.palette.wall.map((v) => v * 0.55) : [P0.colour[k * 3] * 0.56, P0.colour[k * 3 + 1] * 0.56, P0.colour[k * 3 + 2] * 0.6]; };
+    const band = clamp(L.face.weight * h * scaleAt(cam, L.middle || L.placed.middle) * 0.7, 2.5, 8);
+    const out = shots.flatMap((shot) => rowsIn(S, shot, band, darkAt, "soft", { clip: clipOf(shot, 0.3), ...(holes.length ? { clipOut: holes } : {}), meant: darkAt }));
+    yield* inSteps("the shadow of " + theOf(L) + ", dropped behind it", out);
+  }
   // A solid's shadow painted on another: in the other's own colour there, out of the light.
   function* castSteps(S, A, B) {
-    if (S.cam.flat) return;
+    if (S.cam.flat || droppedShadow(A)) return;
     const marks = castOn(S, A, B), out = [], { cam } = S;
     (A.shot.on ||= new Map()).set(B.id, marks.map((m) => clipOf(m.shot, 2)));
     for (const m of marks) {
@@ -1810,6 +1920,8 @@
     };
     const key = (a, b) => (a < b ? a + "-" + b : b + "-" + a);
     const placed = new Set(), lines = new Set();
+    // (Between two strips of one panel of a bent solid, no edge is drawn: Mutation.)
+    for (const e of map.edges) if (e.faces.length === 2 && e.faces[0].panel && e.faces[0].panel === e.faces[1].panel) lines.add(key(e.a, e.b));
     let first = null;
     if (E.host) {
       /* Built on another: drawn out of the seed's lines, not found again
@@ -2287,7 +2399,7 @@
       P.low = foot[1]; P.high = foot[1] + shape.high - shape.low;
       P.foot = hull2(P.placed.verts.map((v) => [v[0], v[2]]));
       // (Each face carved or not, decided now - the far ones too: Carving.)
-      if (!P.round && size >= 0.45 && pick(S.rng, [{ c: 1, feats: ["carved faces"] }, { c: 0, feats: ["plain faces"] }]).c) P.carve = carvingsFor(S, P);
+      if (!P.round && !form.bend && size >= 0.45 && pick(S.rng, [{ c: 1, feats: ["carved faces"] }, { c: 0, feats: ["plain faces"] }]).c) P.carve = carvingsFor(S, P);
       // (A cylinder, a cone or a form painted along its guides, or as it was before them: Guidelines.)
       if (GUIDED[kind]) P.guided = pick(S.rng, [{ c: true, feats: [GUIDED[kind][0]] }, { c: false, feats: [GUIDED[kind][1]] }]).c;
     }
@@ -2386,8 +2498,8 @@
       const oc = sub(P.middle, o), b = dot(d, oc), q = b * b - (dot(oc, oc) - P.radius * P.radius);
       return q < 0 || b - Math.sqrt(q) <= 0 ? Infinity : b - Math.sqrt(q);
     }
-    if (P.placed?.wound) {
-      // (Not convex: the nearest face the ray passes through.)
+    if (P.placed?.wound && !P.placed.bent) {
+      // (Not convex: the nearest face the ray passes through. A bent box is near enough convex to be met as one.)
       let best = Infinity;
       for (const f of P.map.faces) {
         const den = dot(f.normal, d);
@@ -2516,10 +2628,10 @@
   /* A solid standing free on the floor, touching nothing: near `near`, the
    * way asked (in front toward the eye, behind, to the left or right), or
    * anywhere in view - asked for where nothing else would take it. */
-  function placeFree(S, kind, near = null, rel = null) {
+  function placeFree(S, kind, near = null, rel = null, tries = 40) {
     const way = { front: [0, -1], behind: [0, 1], left: [-1, 0], right: [1, 0] }[rel], base = near && (near.low > 0.01 && near.host ? near.host : near);
     const size = kind === "sphere" ? 0.32 : kind === "dome" ? 0.42 : kind === "cube" ? 0.7 : 0.75, form = kind === "blob" ? { outline: formOutline(S.rng) } : {};
-    for (let t = 0; t < 40; t++) {
+    for (let t = 0; t < tries; t++) {
       let x, z;
       if (base && t < 24) {
         const m = base.middle || base.placed.middle, reach = Math.max(...base.foot.map(([fx, fz]) => Math.hypot(fx - m[0], fz - m[2]))), d = reach + size * 0.9 + 0.1 + S.rng() * 0.6;
@@ -2618,7 +2730,7 @@
     if (!role && known.length >= 2 && rng() < 0.55) return known[Math.floor(rng() * known.length)].slice();
     if (!role) {
       const small = !P || !S.seed || P.high - P.low < 0.75 * (S.seed.high - S.seed.low);
-      role = small && (S.accents || 0) < 2 && S.pieces.length >= 2 && rng() < 0.16 ? "accent" : K.relation !== "monochrome" && rng() < 0.32 ? "support" : "dominant";
+      role = small && (S.accents || 0) < 2 && S.pieces.length >= 2 && rng() < 0.16 ? "accent" : !K.monochrome && rng() < 0.32 ? "support" : "dominant";
     }
     if (role === "accent") S.accents = (S.accents || 0) + 1;
     const [sd, ss, sa] = K.sat, [l0, l1] = K.light, hue = role === "accent" ? K.accent : role === "support" ? K.support : K.hue;
@@ -2781,7 +2893,7 @@
   // Adding a solid: its shadows, then it - built out of what it meets, kept out from behind what stands in front of it - then a look.
   function* addPiece(S, P) {
     const name = theOf(P), since = S.paint.clock;
-    S.action = P.kind === "plant" ? "growing " + P.name + (P.host ? " in " + theOf(P.host) : "") + ": " + P.rules.whys[P.rules.whys.length - 1] : P.host ? "adding " + P.name + " " + P.how + " " + theOf(P.host) : P.kind === "letter" ? "lettering \u201c" + (S.word?.text || P.char) + "\u201d in " + S.word?.face.name + " letters" : "setting up " + P.name;
+    S.action = P.kind === "plant" ? "growing " + P.name + (P.host ? " in " + theOf(P.host) : "") + ": " + P.rules.whys[P.rules.whys.length - 1] : P.host ? "adding " + P.name + " " + P.how + " " + theOf(P.host) : P.kind === "letter" ? "lettering \u201c" + (S.word?.text || P.char) + "\u201d in " + S.word?.face.name + " letters" + (S.word?.found ? ", its " + S.word.found.char + " " + theOf(S.word.found.piece) : "") : "setting up " + P.name;
     P.base ||= pieceColour(S);
     if (!S.colours.some((c) => apart(c, P.base) < 4)) S.colours.push(P.base.slice());
     S.pieces.push(P);
@@ -2939,7 +3051,45 @@
     8: [[[0, 0, 1], [0, 1, 1], [0.62, 1, 1], [0.62, 0, 1], [0, 0, 1]], [[0, 0.52], [0.62, 0.52]]],
     9: [[[0.64, 0], [0.64, 1, 1], [0, 1, 1], [0, 0.46, 1], [0.64, 0.46]]],
   };
-  const glyphWide = (ch) => (ch === " " ? 0.45 : Math.max(...GLYPHS[ch].flat().map((q) => q[0])));
+  const glyphWide = (ch, face = null) => (ch === " " ? 0.45 * (face?.width || 1) : face ? glyphBones(ch, face).wide : Math.max(...GLYPHS[ch].flat().map((q) => q[0])));
+  /* A letter's bones as a face sets them: set wider or narrower, leaning,
+   * moved a little by a hand's wobble (its baseline and its cap kept),
+   * its corners cut, and - a stencil face - each stroke broken across its
+   * longest run. Each bone knows whether it curves, whether it closes on
+   * itself, and where each of its points came from (for what is upright). */
+  const BONES = new Map();
+  function glyphBones(ch, face) {
+    const key = [ch, face.width, face.slant, face.wobble, face.seed, face.cut, face.stencil, face.weight].join("|");
+    if (BONES.has(key)) return BONES.get(key);
+    if (BONES.size > 600) BONES.clear();
+    const rng = seeded(((face.seed || 0) * 131 + ch.charCodeAt(0) * 7919) >>> 0), width = face.width || 1, slant = face.slant || 0, wob = face.wobble || 0, out = [];
+    GLYPHS[ch].forEach((raw) => {
+      const cut = cutCorners(raw, face.cut ? 0.2 : 0), moved = new Map(), curved = raw.some((q) => q[2]);
+      const to = (q) => {
+        if (!moved.has(q)) {
+          const dy = q[1] < 0.01 || q[1] > 0.99 ? 0 : (rng() - 0.5) * 2 * wob, y = q[1] + dy;
+          moved.set(q, Object.assign([q[0] * width + slant * y + (rng() - 0.5) * 2 * wob, y], { from: q }));
+        }
+        return moved.get(q);
+      };
+      const pts = cut.map(to), closed = pts.length > 2 && pts[0] === pts[pts.length - 1];
+      // (A stencil's break: across the longest run of an open stroke, or of a closed one - which then opens there.)
+      let at = -1, long = 0.45;
+      if (face.stencil) for (let i = 0; i + 1 < pts.length; i++) { const l = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]); if (l > long) { long = l; at = i; } }
+      if (at < 0) { out.push({ pts, curved, closed }); return; }
+      const a = pts[at], b = pts[at + 1], gap = face.weight * 0.55 / long, mid = 0.5;
+      const m1 = Object.assign([a[0] + (b[0] - a[0]) * (mid - gap), a[1] + (b[1] - a[1]) * (mid - gap)], { from: a.from }), m2 = Object.assign([a[0] + (b[0] - a[0]) * (mid + gap), a[1] + (b[1] - a[1]) * (mid + gap)], { from: b.from });
+      if (closed) out.push({ pts: [m2, ...pts.slice(at + 1, -1), ...pts.slice(0, at + 1), m1], curved, closed: false });
+      else { out.push({ pts: [...pts.slice(0, at + 1), m1], curved, closed: false }); out.push({ pts: [m2, ...pts.slice(at + 1)], curved, closed: false }); }
+    });
+    const bones = { strokes: out, wide: Math.max(...out.flatMap((b) => b.pts.map((q) => q[0]))) };
+    BONES.set(key, bones);
+    return bones;
+  }
+  // How thick a stroke going (dx, dy) is: its stems the full weight, its crossing strokes thinner by the face's contrast.
+  const strokeWeight = (face, dx, dy) => face.weight * ((face.contrast ?? 1) + (1 - (face.contrast ?? 1)) * Math.abs(dy) / (Math.hypot(dx, dy) || 1));
+  // Whether a bone runs upright where it ends (as it was drawn, before the face leaned it).
+  const uprightAt = (end, next) => Math.abs((next.from || next)[0] - (end.from || end)[0]) < 1e-6;
   // A stroke's rounded corners cut across (`by`, a cap's share), or kept: closed strokes round their ends too.
   function cutCorners(stroke2, by) {
     const closed = stroke2.length > 2 && stroke2[0][0] === stroke2[stroke2.length - 1][0] && stroke2[0][1] === stroke2[stroke2.length - 1][1];
@@ -2953,27 +3103,88 @@
     if (closed) out.push(out[0]);
     return out;
   }
-  /* A painting's typeface: what its letters are built of, chosen by what
-   * those solids have done (their best mutants) and what letters built of
-   * them have done. */
-  function faceOf(S) {
-    const v = (f) => memory().values[f]?.[1] ?? 0, r = S.rng, better = (a, b, lean = 0.5) => (Math.abs(v(a) - v(b)) > 0.02 ? v(a) > v(b) : r() < lean);
-    const face = {
-      stems: opened("turn") && v("adding a cylinder") + v("letters of cylinders") > v("adding a tall box") + v("letters of boxes") + 0.02 ? "cylinder" : "box",
-      serifs: better("letters on slab feet", "letters without feet", v("adding a slab") > 0.04 ? 0.7 : 0.25),
-      cut: better("letters with cut corners", "letters with square corners", v("adding a tetrahedron") + v("adding an octahedron") >= 2 * v("adding a cube") ? 0.8 : 0.4),
-      balls: better("letters ending in balls", "letters ending plain", v("adding a sphere") > 0.05 ? 0.7 : 0.2),
-      bold: better("bold letters", "light letters", v("flattened") > v("stretched tall") ? 0.7 : 0.35),
-      soft: opened("soften") && v("softened corners") > 0 ? 0.14 : 0,
-      clear: opened("clear") && v("seen through") > 0.05 ? 0.7 : 1,
+  /* ── Typefaces ───────────────────────────────────────────────────────
+   * A face is a set of genes over the letters' bones: what its stems are
+   * built of (boxes or cylinders), its feet, its cut corners, balls where
+   * its curves end free; how wide it is set (condensed to extended), how
+   * far it leans, how heavy it is and how much thinner its crossing
+   * strokes are than its stems (contrast), how far apart its letters
+   * stand, how deep it is, stencil breaks, a hand's wobble; and how its
+   * shadow falls - thrown by the light onto the floor, or dropped behind
+   * it, parallel to it, as type's own shadow is. Each word's face is found
+   * anew: often one never set before (what the solids it is built of have
+   * done still leaning it), else one of its own that did well, changed -
+   * never one too like the last few. Votes on the word are kept against
+   * its face in its catalogue of faces.
+   *   discover  how often a face is invented rather than recalled
+   *   apart     how unlike the last few it must be; `recent`, how many count
+   *   most      faces kept */
+  const FACES = { discover: 0.5, apart: 0.24, recent: 5, most: 30 };
+  function inventFace(S, r) {
+    const v = (f) => memory().values[f]?.[1] ?? 0, learned = r() < 0.5;
+    // (Half the time what it has learned leans each one; half the time it looks somewhere else.)
+    const better = (a, b, lean = 0.5) => (learned && Math.abs(v(a) - v(b)) > 0.02 ? v(a) > v(b) : r() < lean);
+    const weight = 0.09 + r() * 0.17;
+    return {
+      id: Math.floor(r() * 1e9).toString(36), seed: Math.floor(r() * 1e6),
+      stems: opened("turn") && (learned ? v("adding a cylinder") + v("letters of cylinders") > v("adding a tall box") + v("letters of boxes") + 0.02 : r() < 0.4) ? "cylinder" : "box",
+      serifs: better("letters on slab feet", "letters without feet", 0.35), cut: better("letters with cut corners", "letters with square corners", 0.45),
+      balls: better("letters ending in balls", "letters ending plain", 0.25), weight,
+      width: r() < 0.3 ? 1 : 0.68 + r() * 0.7, slant: r() < 0.65 ? 0 : 0.08 + r() * 0.22, contrast: r() < 0.5 ? 1 : 0.38 + r() * 0.45,
+      spacing: 0.12 + r() * 0.38, depth: 0.14 + r() * 0.46, stencil: r() < 0.18, wobble: r() < 0.6 ? 0 : 0.015 + r() * 0.045,
+      shadow: r() < 0.4 ? "parallel" : "cast",
+      soft: opened("soften") && v("softened corners") > 0 ? 0.14 : 0, clear: opened("clear") && v("seen through") > 0.05 ? 0.7 : 1,
     };
-    // (Now and then one thing about it tried the other way: the untried get their chance.)
-    if (r() < 0.3) { const k = ["serifs", "cut", "balls", "bold"][Math.floor(r() * 4)]; face[k] = !face[k]; }
-    face.weight = face.bold ? 0.2 : 0.14;
-    face.depth = face.stems === "cylinder" ? face.weight : face.bold ? 0.45 : 0.3;
+  }
+  // One of its own faces again, changed: a gene or two moved, now and then one switched.
+  function mutateFace(g, r) {
+    const out = { ...g, id: Math.floor(r() * 1e9).toString(36), parent: g.id, seed: Math.floor(r() * 1e6) }, jitter = (x, by, lo, hi) => clamp(x + (r() - 0.5) * 2 * by, lo, hi);
+    out.weight = jitter(g.weight, 0.03, 0.08, 0.27); out.width = jitter(g.width, 0.12, 0.62, 1.42); out.spacing = jitter(g.spacing, 0.08, 0.1, 0.55); out.depth = jitter(g.depth, 0.1, 0.12, 0.62);
+    if (g.slant) out.slant = jitter(g.slant, 0.05, 0.04, 0.32);
+    if (g.contrast < 1) out.contrast = jitter(g.contrast, 0.1, 0.32, 0.95);
+    const flip = ["serifs", "cut", "balls", "stencil"][Math.floor(r() * 4)];
+    if (r() < 0.35) out[flip] = !out[flip];
+    return out;
+  }
+  // How unlike two faces are, 0 (the same) to about 1.
+  const faceApart = (a, b) => 0.18 * (a.stems !== b.stems) + 0.1 * ((a.serifs !== b.serifs) + (a.cut !== b.cut) + (a.balls !== b.balls) + (a.stencil !== b.stencil)) / 2
+    + Math.abs(a.weight - b.weight) * 1.6 + Math.abs(a.width - b.width) * 0.5 + Math.abs(a.slant - b.slant) * 1.2 + Math.abs(a.contrast - b.contrast) * 0.4 + Math.abs(a.spacing - b.spacing) * 0.4;
+  // What a face did: the votes on a word set in it, kept against it in the catalogue.
+  function noteFace(g, vote) {
+    if (!g?.id) return;
+    const book = (memory().faces ||= []);
+    let row = book.find((f) => f.genes.id === g.id);
+    if (!row) { row = { genes: g, n: 0, mean: 0 }; book.push(row); }
+    row.n++;
+    row.mean += (vote - row.mean) / Math.min(row.n, 6);
+    if (book.length > FACES.most) { book.sort((a, b) => b.mean - a.mean || b.n - a.n); book.length = FACES.most; }
+  }
+  // A word's typeface: invented, or one of its own come back changed - never too like the last few.
+  function faceOf(S) {
+    const r = S.rng, M = memory(), recent = (M.recentFaces ||= []), liked = (M.faces || []).filter((f) => f.n > 0 && f.mean > 0.05).sort((a, b) => b.mean - a.mean);
+    let g = null;
+    for (let t = 0; t < 12 && !g; t++) {
+      const cand = liked.length && r() > FACES.discover ? mutateFace(liked[Math.floor(Math.pow(r(), 1.6) * liked.length)].genes, r) : inventFace(S, r);
+      if (t === 11 || recent.every((x) => faceApart(cand, x) > FACES.apart)) g = cand;
+    }
+    recent.push(g);
+    if (recent.length > FACES.recent) recent.splice(0, recent.length - FACES.recent);
+    return faceFrom(g);
+  }
+  // A face from its genes: what it is called, and the features it is learned by.
+  function faceFrom(g) {
+    // (Set narrow, a heavy face would close its counters: no heavier than its width leaves room for them.)
+    const face = { ...g, genes: g, weight: Math.min(g.weight, 0.1 + 0.15 * (g.width || 1)) };
+    face.bold = face.weight > 0.17;
+    // (A round stem's depth is its own width; else as deep as the face is set.)
+    face.depth = face.stems === "cylinder" ? face.weight : g.depth;
+    const width = g.width < 0.86 ? "condensed" : g.width > 1.16 ? "wide" : "";
     face.feats = [face.stems === "cylinder" ? "letters of cylinders" : "letters of boxes", face.serifs ? "letters on slab feet" : "letters without feet",
-      face.cut ? "letters with cut corners" : "letters with square corners", face.balls ? "letters ending in balls" : "letters ending plain", face.bold ? "bold letters" : "light letters"];
-    face.name = [face.bold ? "bold" : "light", face.stems === "cylinder" ? "round-stemmed" : "square-stemmed", face.cut ? "cut-cornered" : "square-cornered", face.serifs ? "slab-footed" : "", face.balls ? "ball-ended" : ""].filter(Boolean).join(", ");
+      face.cut ? "letters with cut corners" : "letters with square corners", face.balls ? "letters ending in balls" : "letters ending plain", face.bold ? "bold letters" : "light letters",
+      width ? width + " letters" : "letters of the usual width", g.slant ? "slanted letters" : "upright letters", g.contrast < 0.8 ? "letters thick and thin" : "letters of an even stroke",
+      g.stencil ? "stencil letters" : "unbroken letters", g.shadow === "parallel" ? "letters with dropped shadows" : "letters with thrown shadows"];
+    face.name = [face.bold ? "bold" : "light", width, g.slant ? "slanted" : "", g.contrast < 0.8 ? "thick-and-thin" : "", face.stems === "cylinder" ? "round-stemmed" : "square-stemmed",
+      face.cut ? "cut-cornered" : "", face.serifs ? "slab-footed" : "", face.balls ? "ball-ended" : "", g.stencil ? "stencil" : "", g.wobble ? "hand-cut" : ""].filter(Boolean).join(", ");
     return face;
   }
   /* A letter's parts in the room: `at` the left end of its baseline, `h` a
@@ -2982,7 +3193,7 @@
     const V = [0, 1, 0], w = face.weight * h, dep = face.depth * h, parts = [];
     // (Its feet on the floor: the lowest bar's underside, not its middle, on the baseline.)
     const world = (x, y, z) => add(at, add(times(U, x * h), add(times(V, y * h + w / 2), times(N, z))));
-    const strokes2 = GLYPHS[ch].map((st) => cutCorners(st, face.cut ? 0.2 : 0));
+    const bones = glyphBones(ch, face).strokes, strokes2 = bones.map((b) => b.pts);
     const segs = strokes2.flatMap((pts) => pts.slice(1).map((q, i) => [pts[i], q]));
     const along = (p, [a, b]) => {
       const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy || 1, t = clamp(((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2, 0, 1);
@@ -2993,22 +3204,22 @@
     for (const [p, q] of segs) {
       const dx = q[0] - p[0], dy = q[1] - p[1], len = Math.hypot(dx, dy);
       if (len < 1e-6) continue;
-      const mid = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2], upright = Math.abs(dx) < 1e-6;
+      const mid = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2], upright = uprightAt(p, q) && !face.slant, ws = strokeWeight(face, dx, dy) * h;
       if (upright && face.stems === "cylinder") {
         const tall = len * h + w, shape = prismSolid(w / 2, tall, 14), centre = world(mid[0], mid[1], dep / 2);
         parts.push({ kind: "cylinder", round: true, name: "a stem", form: {}, radius: w / 2, placed: place(shape, 0, centre), low: centre[1] - tall / 2, high: centre[1] + tall / 2, size: tall });
       } else {
         const e1 = add(times(U, dx / len), times(V, dy / len)), e2 = add(times(U, -dy / len), times(V, dx / len));
-        parts.push(barPart(world(mid[0], mid[1], dep / 2), e1, e2, N, len * h + w, w, dep, "a bar"));
+        parts.push(barPart(world(mid[0], mid[1], dep / 2), e1, e2, N, len * h + ws, ws, dep, "a bar"));
       }
     }
     for (let i = 0; i < strokes2.length; i++) {
-      const pts = strokes2[i], closed = pts.length > 2 && pts[0] === pts[pts.length - 1];
+      const pts = strokes2[i], { closed, curved } = bones[i];
       if (closed) continue;
-      const own = segs.filter(([a, b]) => pts.includes(a) && pts.includes(b)), curved = GLYPHS[ch][i].some((q) => q[2]);
+      const own = segs.filter(([a, b]) => pts.includes(a) && pts.includes(b));
       for (const end of [pts[0], pts[pts.length - 1]]) {
         if (!free(end, own)) continue;
-        const next = end === pts[0] ? pts[1] : pts[pts.length - 2], upright = Math.abs(next[0] - end[0]) < 1e-6;
+        const next = end === pts[0] ? pts[1] : pts[pts.length - 2], upright = uprightAt(end, next);
         // A slab foot under (or over) a stem that ends free at the baseline or the cap.
         if (face.serifs && upright && (end[1] < 0.01 || end[1] > 0.99)) parts.push(barPart(world(end[0], end[1], dep / 2), U, V, N, 0.36 * h, w * 0.75, dep, "a foot"));
         // A ball where a curve ends free.
@@ -3028,31 +3239,31 @@
    * lines as say it. In a cap's units: across, and up from the baseline. */
   const GLYPH_OUTLINES = new Map();
   function glyphOutline(ch, face) {
-    const key = [ch, face.weight, face.cut, face.serifs, face.balls].join("|");
+    const key = [ch, face.weight, face.cut, face.serifs, face.balls, face.width, face.slant, face.wobble, face.seed, face.contrast, face.stencil].join("|");
     if (!GLYPH_OUTLINES.has(key)) { if (GLYPH_OUTLINES.size > 400) GLYPH_OUTLINES.clear(); GLYPH_OUTLINES.set(key, traceGlyph(ch, face)); }
     return GLYPH_OUTLINES.get(key);
   }
   function traceGlyph(ch, face) {
-    const w = face.weight, hw = w / 2, strokes2 = GLYPHS[ch].map((st) => cutCorners(st, face.cut ? 0.2 : 0)), fields = [];
+    const w = face.weight, hw = w / 2, bones = glyphBones(ch, face).strokes, strokes2 = bones.map((b) => b.pts), fields = [];
     const box = (mx, my, ux, uy, hx, hy) => (x, y) => { const ax = (x - mx) * ux + (y - my) * uy, ay = -(x - mx) * uy + (y - my) * ux, qx = Math.abs(ax) - hx, qy = Math.abs(ay) - hy; return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0); };
     const segs = strokes2.flatMap((pts) => pts.slice(1).map((q, i) => [pts[i], q]));
     for (const [p, q] of segs) {
       const dx = q[0] - p[0], dy = q[1] - p[1], len = Math.hypot(dx, dy);
-      if (len > 1e-6) fields.push(box((p[0] + q[0]) / 2, (p[1] + q[1]) / 2, dx / len, dy / len, len / 2 + hw, hw));
+      if (len > 1e-6) fields.push(box((p[0] + q[0]) / 2, (p[1] + q[1]) / 2, dx / len, dy / len, len / 2 + hw, strokeWeight(face, dx, dy) / 2));
     }
     // (Its feet and its balls, where its strokes end free - as its parts are found.)
     const along = (pt, [a, b]) => { const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy || 1, t = clamp(((pt[0] - a[0]) * dx + (pt[1] - a[1]) * dy) / l2, 0, 1); return Math.hypot(pt[0] - a[0] - dx * t, pt[1] - a[1] - dy * t); };
     strokes2.forEach((pts, i) => {
-      if (pts.length > 2 && pts[0] === pts[pts.length - 1]) return;
-      const own = segs.filter(([a, b]) => pts.includes(a) && pts.includes(b)), curved = GLYPHS[ch][i].some((q) => q[2]);
+      if (bones[i].closed) return;
+      const own = segs.filter(([a, b]) => pts.includes(a) && pts.includes(b)), curved = bones[i].curved;
       for (const end of [pts[0], pts[pts.length - 1]]) {
         if (segs.some((sg) => !own.includes(sg) && along(end, sg) < w * 0.6)) continue;
-        const next = end === pts[0] ? pts[1] : pts[pts.length - 2], upright = Math.abs(next[0] - end[0]) < 1e-6;
+        const next = end === pts[0] ? pts[1] : pts[pts.length - 2], upright = uprightAt(end, next);
         if (face.serifs && upright && (end[1] < 0.01 || end[1] > 0.99)) fields.push(box(end[0], end[1], 1, 0, 0.18, w * 0.375));
         else if (face.balls && !upright && curved) fields.push((x, y) => Math.hypot(x - end[0], y - end[1]) - w * 0.85);
       }
     });
-    const res = 0.022, x0 = -0.3, y0 = -0.4, nx = Math.ceil((glyphWide(ch) + 0.6) / res) + 1, ny = Math.ceil(1.8 / res) + 1, g = new Float32Array(nx * ny);
+    const res = 0.022, x0 = -0.3, y0 = -0.4, nx = Math.ceil((glyphWide(ch, face) + 0.6) / res) + 1, ny = Math.ceil(1.8 / res) + 1, g = new Float32Array(nx * ny);
     for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { const x = x0 + i * res, y = y0 + j * res; let d = Infinity; for (const f of fields) d = Math.min(d, f(x, y)); g[j * nx + i] = d; }
     // Marching squares: each cell's crossings, joined edge to edge into rings.
     const at = (i, j) => g[j * nx + i], crossing = (id) => {
@@ -3134,12 +3345,12 @@
     while (chars[chars.length - 1] === " ") chars.pop();
     if (!chars.length) return null;
     const standing = alive(S).filter((P) => !P.parts), a = rowTurn(S), U = [Math.cos(a), 0, Math.sin(a)], N = [Math.sin(a), 0, -Math.cos(a)];
-    const gap = 0.26, wide = chars.reduce((t, c) => t + glyphWide(c) + face.weight, 0) + gap * (chars.length - 1);
+    const gap = face.spacing ?? 0.26, wide = chars.reduce((t, c) => t + glyphWide(c, face) + face.weight, 0) + gap * (chars.length - 1);
     const feet = standing.flatMap((P) => P.foot), xs = feet.map(([x]) => x), zs = feet.map(([, z]) => z);
     const front = zs.length ? Math.min(...zs) : BUILD.near + 2, behind = zs.length ? Math.max(...zs) : BUILD.near + 2;
     const mx = standing.length ? standing.reduce((t, P) => t + (P.middle || P.placed.middle)[0], 0) / standing.length : 0, mz = zs.length ? (front + behind) / 2 : front;
     const left = xs.length ? Math.min(...xs) : mx, right = xs.length ? Math.max(...xs) : mx;
-    const prev = block?.prev || null, base = prev?.base || pieceColour(S, null, null, S.palette.relation === "monochrome" ? "dominant" : "support"), h0 = clamp((S.seed?.high || 1) * 0.5, 0.3, 0.7);
+    const prev = block?.prev || null, base = prev?.base || pieceColour(S, null, null, S.palette.monochrome ? "dominant" : "support"), h0 = clamp((S.seed?.high || 1) * 0.5, 0.3, 0.7);
     // (In front of what stands, if there is room between it and the eye; else to one side of it; else behind it - or only the one place asked.)
     // (A row after the first of one text: in front of the row before it, in its colour and as big as it if it can be - they read down, as on a page.)
     const more = block ? block.rows - 1 - block.row : 0, flat = S.cam.flat;
@@ -3189,13 +3400,53 @@
             if (!fitsLetter(S, L, others.length ? others.concat(letters) : letters)) { ok = false; break; }
             letters.push(L);
           }
-          x += glyphWide(c) + face.weight + gap;
+          x += glyphWide(c, face) + face.weight + gap;
         }
         // (Built as solids only once they have somewhere to stand.)
         if (ok && letters.length) { for (const L of letters) { glyphOf(S, L, L.built()); delete L.built; } letters.spot = { cx, z: back, h, base, half: wide * h / 2 }; return letters; }
       }
     }
     return null;
+  }
+  /* ── Letters found in the shapes ──────────────────────────────────────
+   * Now and then a word is spelled with what already stands - the solid
+   * painted as it was, put to another use: a sphere for its O, a tall box
+   * or an upright cylinder for its I, a tetrahedron, a pyramid or a cone
+   * for its A. The rest of the word is built round it, as tall as it and in
+   * its colour, the row running through it. */
+  const tallness = (P) => { const xs = P.foot.map((f) => f[0]), zs = P.foot.map((f) => f[1]); return (P.high - P.low) / Math.max(1e-3, Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs))); };
+  const FOUND = { O: (P) => P.kind === "sphere", "0": (P) => P.kind === "sphere", I: (P) => (P.kind === "cylinder" || P.kind === "cube") && tallness(P) > 1.6,
+    "1": (P) => (P.kind === "cylinder" || P.kind === "cube") && tallness(P) > 1.6, A: (P) => ["tetrahedron", "pyramid", "cone"].includes(P.kind) };
+  function foundLetters(S, text, face) {
+    const chars = [...String(text).toUpperCase()].filter((c) => GLYPHS[c] || c === " ").slice(0, LETTERS_ROW), standing = alive(S).filter((P) => !P.parts && P.low < 0.01 && !P.engraved);
+    const options = [];
+    chars.forEach((c, i) => { if (FOUND[c]) for (const P of standing) if (FOUND[c](P)) options.push({ i, P, k: S.rng() }); });
+    for (const { i, P } of options.sort((a, b) => a.k - b.k).slice(0, 6)) { const got = spellThrough(S, chars, i, P, face); if (got) return got; }
+    return null;
+  }
+  // The word set out along the row through a solid standing, the solid its letter `i`.
+  function spellThrough(S, chars, i, F, face) {
+    const a = rowTurn(S), U = [Math.cos(a), 0, Math.sin(a)], N = [Math.sin(a), 0, -Math.cos(a)], h = (F.high - F.low) / (1 + face.weight);
+    if (h < 0.2 || h > 1.6) return null;
+    const gap = (face.spacing ?? 0.26) * h, dep = face.depth * h, us = F.foot.map(([x, z]) => x * U[0] + z * U[2]), m = F.middle || F.placed.middle;
+    const n0 = m[0] * N[0] + m[2] * N[2] - dep / 2, base = F.base.slice(), letters = [];
+    const put = (c, u) => {
+      const at = add(times(U, u), times(N, n0)), L = compound(S, "letter", "the letter " + c, letterParts(c, face, h, at, U, N), base, { char: c, front: N, face, form: face.clear < 1 ? { opacity: face.clear } : {} });
+      L.built = () => glyphSolid(c, face, h, at, U, N);
+      if (!fitsLetter(S, L, letters)) return false;
+      letters.push(L);
+      return true;
+    };
+    let cursor = Math.min(...us) - gap;
+    for (let k = i - 1; k >= 0; k--) { const c = chars[k]; cursor -= (glyphWide(c, face) + face.weight) * h; if (c !== " " && !put(c, cursor)) return null; cursor -= gap; }
+    // (In the order they are read: those before it were set out from it leftward.)
+    letters.reverse();
+    cursor = Math.max(...us) + gap;
+    for (let k = i + 1; k < chars.length; k++) { const c = chars[k]; if (c !== " " && !put(c, cursor)) return null; cursor += (glyphWide(c, face) + face.weight) * h + gap; }
+    if (!letters.length) return null;
+    for (const L of letters) { glyphOf(S, L, L.built()); delete L.built; }
+    letters.found = { piece: F, char: chars[i] };
+    return letters;
   }
   /* A text in rows set out as one - all of its rows, or none: the first
    * row tried at each of its places in turn, each row after it in front of
@@ -3263,7 +3514,11 @@
   const ownWord = (S) => (S.rng() < 0.6 && S.seed ? seedWord(S) : ["HEX", "FIELD", "HEXFIELD"][Math.floor(S.rng() * 3)]);
   // A word lettered: its letters, one after another, each with its shadow and a look.
   function* addWord(S, m) {
-    // (Asked for, and nowhere it fits: the eye steps back to make room - twice at most - and it is set out again;)
+    // (Asked for, and nowhere it fits: set narrower and closer - its face condensed - and, still nowhere, the eye steps back to make room, twice at most;)
+    if (!m.letters && (m.face.width > 0.8 || m.face.spacing > 0.16)) {
+      m.face = faceFrom({ ...m.face.genes, id: m.face.genes.id + "c", width: Math.min(m.face.genes.width, 0.78), spacing: 0.14 });
+      m.letters = yield* setOut(S, m);
+    }
     for (let k = 0; k < 2 && !m.letters; k++) {
       yield* closer(S, 0.78);
       m.letters = yield* setOut(S, m);
@@ -3276,7 +3531,7 @@
       S.wordAgain = S.moves + 5; m.pieces = [];
       return;
     }
-    S.word = { text: m.text, face: m.face, letters: m.letters };
+    S.word = { text: m.text, face: m.face, letters: m.letters, found: m.found || null };
     for (const L of m.letters) yield* addPiece(S, L);
     m.pieces = m.letters;
   }
@@ -3318,7 +3573,7 @@
     };
   }
   // A row's width, in letters' heights.
-  const rowWide = (row, T) => [...row].reduce((t, c) => t + glyphWide(c) + T.weight, 0) + 0.26 * (row.length - 1);
+  const rowWide = (row, T) => [...row].reduce((t, c) => t + glyphWide(c, T) + T.weight, 0) + (T.spacing ?? 0.26) * (row.length - 1);
   // Words broken into `k` rows as even as they can be.
   function evenRows(words, k, T) {
     if (k === 1) return [words.join(" ")];
@@ -3356,8 +3611,12 @@
       fit = (W, H) => { let lo = 0, hi = 4; for (let i = 0; i < 22; i++) { const h = (lo + hi) / 2; if (inside(W * h / 2 * 1.12, H * h / 2 * 1.2)) lo = h; else hi = h; } return lo; };
     }
     let best = null;
-    for (let k = 1; k <= Math.min(4, words.length); k++) {
-      const rows = evenRows(words, k, T), W = Math.max(...rows.map((r) => rowWide(r, T))), H = k + (k - 1) * 0.45 + T.weight, h = fit(W, H);
+    // (One long word may be broken over two rows, where that makes it bigger.)
+    const splits = [];
+    for (let k = 1; k <= Math.min(4, words.length); k++) splits.push(evenRows(words, k, T));
+    if (words.length === 1 && words[0].length >= 6) { const w = words[0], cut = Math.ceil(w.length / 2); splits.push([w.slice(0, cut), w.slice(cut)]); }
+    for (const rows of splits) {
+      const k = rows.length, W = Math.max(...rows.map((r) => rowWide(r, T))), H = k + (k - 1) * 0.45 + T.weight, h = fit(W, H);
       if (!best || h > best.h) best = { rows, h, H };
     }
     // (On a dome, between what it was made with - its openings and ribs - if turning a little round finds room.)
@@ -3369,7 +3628,7 @@
     }
     // (Too small to be read where it would go: not cut.)
     const at = surfaceOf(P, cut);
-    if (!best || best.h * scaleAt(cam, at(0, 0).p) < 7) return null;
+    if (!best || best.h * scaleAt(cam, at(0, 0).p) < 6) return null;
     return { ...cut, rows: best.rows, h: best.h, top: best.H * best.h / 2, typeface: T, text: words.join(" ") };
   }
   // The words cut into a solid, as the eye sees them now: a step for each letter.
@@ -3383,9 +3642,9 @@
       const v0 = cut.top - r * 1.45 * h - h - w / 2;
       let x = -rowWide(row, T) / 2;
       for (const ch of row) {
-        const step = glyphWide(ch) + T.weight + 0.26, out = [];
+        const step = glyphWide(ch, T) + T.weight + (T.spacing ?? 0.26), out = [];
         if (!GLYPHS[ch]) { x += step; continue; }
-        const u0 = x * h + w / 2, place = ([gx, gy]) => at(u0 + gx * h, v0 + gy * h + w / 2), mid = place([glyphWide(ch) / 2, 0.5]);
+        const u0 = x * h + w / 2, place = ([gx, gy]) => at(u0 + gx * h, v0 + gy * h + w / 2), mid = place([glyphWide(ch, T) / 2, 0.5]);
         x += step;
         // (Only where the eye meets it: round a round solid, not past where it turns away.)
         if (facingOf(cam, mid.n, mid.p) <= 0.15 * Math.hypot(...sub([0, cam.eye, 0], mid.p))) continue;
@@ -3395,8 +3654,8 @@
         const lit = dot(mid.n, L) > 0;
         // Its floor: out of most of the light, in the stroke of the letter.
         const floor = shade(S, P.base, mid.n, Z, { at: mid.p, self: P, direct: 0.3 }).map((v) => v * 0.88);
-        for (const st of GLYPHS[ch]) {
-          const pts = cutCorners(st, T.cut ? 0.2 : 0).map((q) => project(cam, place(q).p));
+        for (const bone of glyphBones(ch, T).strokes) {
+          const pts = bone.pts.map((q) => project(cam, place(q).p));
           out.push(stroke(S, pts.length > 1 ? pts : [pts[0], [pts[0][0] + 0.5, pts[0][1] + 0.5]], Math.max(1.5, w * scr * 1.15), floor, "flat", { ...keep, meant: () => floor }));
         }
         // Its walls: in runs alike - turned from the light, the rim's shadow along the floor by it; turned to it, the wall catching the light.
@@ -3984,6 +4243,7 @@
     { id: "join", name: "joining solids", needs: [] },
     { id: "stack", name: "stacking them", needs: ["join"] },
     { id: "stretch", name: "stretching squares into rectangles", needs: ["join"] },
+    { id: "bend", name: "bending edges: twisting, swelling, tapering, flaring, leaning", needs: ["join"] },
     { id: "turn", name: "turning a sphere into a cylinder, triangles into pyramids and cones", needs: ["stretch", "stack"] },
     { id: "soften", name: "softening corners", needs: ["stretch"] },
     { id: "forms", name: "building the forms it learned", needs: ["join", "stack"] },
@@ -4058,6 +4318,13 @@
       rules.push("stretch");
     }
     if (opened("soften") && !ROUND.has(kind) && S.rng() < 0.35) { form.soft = +(0.1 + S.rng() * 0.18).toFixed(2); rules.push("soften"); }
+    // (A box's edges bent: one way of bending at a time - Mutation.)
+    if (opened("bend") && kind === "cube" && !form.soft && S.rng() < 0.4) {
+      const r = S.rng, way = ["twisted", "swollen", "tapering", "flaring", "leaning"][Math.floor(r() * 5)], sign = r() < 0.5 ? -1 : 1;
+      form.bend = { way, twist: way === "twisted" ? sign * (0.35 + r() * 0.55) : 0, bow: way === "swollen" ? 0.1 + r() * 0.18 : 0,
+        taper: way === "tapering" ? 0.2 + r() * 0.25 : way === "flaring" ? -(0.15 + r() * 0.2) : 0, lean: way === "leaning" ? sign * (0.12 + r() * 0.16) : 0 };
+      rules.push("bend");
+    }
     if (opened("clear") && S.rng() < 0.2) { form.opacity = +(0.5 + S.rng() * 0.35).toFixed(2); rules.push("clear"); }
     return { kind, form, rules };
   }
@@ -4075,6 +4342,7 @@
     if (S.seed && P !== S.seed) f.push(P.high > S.seed.high + 0.02 ? "rising over the seed" : P.high < S.seed.high - 0.02 ? "lower than the seed" : "as high as the seed");
     if (P.form.stretch) f.push(stretchWord(P.form.stretch));
     if (P.form.soft) f.push("softened corners");
+    if (P.form.bend) f.push("bent edges", "bent edges, " + bendWord(P.form.bend));
     if ((P.form.opacity ?? 1) < 0.95) f.push("seen through");
     if (P.carve) f.push("carved faces", "carved faces, " + P.carve.way); else if (P.placed && !P.round && !P.parts) f.push("plain faces");
     if (GUIDED[P.kind] && P.guided !== undefined) f.push(GUIDED[P.kind][P.guided ? 0 : 1]);
@@ -4083,18 +4351,46 @@
   }
   const labelOf = (P) => (P.host ? P.name + " " + P.how + " " + theOf(P.host) : P.name);
   // Places another solid could go - each connected to one standing, each as its rules let it be (a beat after each one that fits, and every few tried).
+  /* How a painting's structure grows (each painting one way, chosen as
+   * the ledger leans - and now and then looked for elsewhere):
+   *   cluster  anything joined to anything, on top or beside (as it always did)
+   *   row      a line, each new solid at the end of it, the same way on
+   *   tower    up: on the highest top there is, more than beside
+   *   ring     round the seed, each one a quarter turn on from the last
+   *   scatter  apart: standing free on the floor more than joined
+   *   steps    a stair: each one beside the last, the same way on, and bigger
+   * and how far its sizes spread: some paintings keep their solids alike,
+   * others set small against large. */
+  const ARRANGEMENTS = { cluster: { on: 0.45 }, row: { on: 0.12 }, tower: { on: 0.85 }, ring: { on: 0.1 }, scatter: { on: 0.2, free: 0.6 }, steps: { on: 0.1 } };
   function* candidates(S, count, out) {
-    const standing = alive(S).filter((P) => !P.parts);
+    const standing = alive(S).filter((P) => !P.parts), plan = ARRANGEMENTS[S.arrange] || ARRANGEMENTS.cluster;
+    const tops = standing.filter((P) => P.top), end = S.rowEnd?.alive ? S.rowEnd : S.seed;
     for (let t = 0; t < BUILD.tries && out.length < count && standing.length; t++) {
       if (t && t % 6 === 0) yield BEAT;
-      const host = standing[Math.floor(S.rng() * standing.length)], on = opened("stack") && host.top && S.rng() < 0.45;
+      // (Which it joins, and how, as the painting's arrangement has it - half the time; the other half, anywhere.)
+      const loose = S.rng() < 0.5 && t > 2, scheme = loose ? "cluster" : S.arrange || "cluster";
+      let host = standing[Math.floor(S.rng() * standing.length)];
+      if (!loose && (scheme === "row" || scheme === "steps") && end?.alive && !end.parts) host = end;
+      if (!loose && scheme === "tower" && tops.length) host = tops.reduce((a, b) => (b.high > a.high ? b : a));
+      if (!loose && scheme === "ring" && S.seed?.alive) host = S.seed;
+      const on = opened("stack") && host.top && S.rng() < (loose ? 0.45 : plan.on);
       if (!on && host.low > 0.01) continue;
-      const m = mutated(S, pickKind(S));
-      const P = on ? placeOn(S, host, m.kind, { form: m.form }) : placeBeside(S, host, m.kind, { form: m.form });
+      const m = mutated(S, pickKind(S)), size = sizeFor(S, host, m.kind, scheme);
+      const axis = scheme === "row" || scheme === "steps" ? S.rowAxis : scheme === "ring" ? (S.ringTurn = ((S.ringTurn ?? Math.floor(S.rng() * 4)) + 1) % 4) : undefined;
+      const P = !loose && scheme === "scatter" && S.rng() < plan.free ? placeFree(S, m.kind, null, null, 6)
+        : on ? placeOn(S, host, m.kind, { form: m.form }) : placeBeside(S, host, m.kind, { form: m.form, axis, size });
       if (!P) continue;
       P.base = pieceColour(S);
-      if (fits(S, P)) { out.push({ piece: P, rules: [on ? "stack" : "join", ...m.rules] }); yield BEAT; }
+      if (fits(S, P)) { P.scheme = scheme; out.push({ piece: P, rules: [on ? "stack" : "join", ...m.rules] }); yield BEAT; }
     }
+  }
+  // A new solid's size, as the arrangement has it: a stair's each a step up from the last; else spread as far as the painting spreads its sizes.
+  function sizeFor(S, host, kind, scheme) {
+    if (kind === "sphere" || kind === "blob" || kind === "dome") return undefined;
+    if (scheme === "steps" && host.size && kind === "cube") return clamp(host.size * 1.18, 0.4, 1.5);
+    if (!S.spread) return undefined;
+    const base = kind === "cube" ? 0.8 : kind === "cylinder" ? 0.75 : kind === "cone" ? 0.85 : 1;
+    return clamp(base * Math.exp((S.rng() - 0.5) * 2 * S.spread), 0.3, 1.6);
   }
   // A step with nothing laid in it: where whoever lays the steps may stop a while (thinking takes time too).
   const BEAT = Object.freeze({ label: "thinking", strokes: Object.freeze([]), beat: true });
@@ -4180,7 +4476,14 @@
   }
   // A word's letters set out where they can stand - more loosely, if it was asked for.
   function* setOut(S, m) {
-    const rows = m.rows || [m.text], got = yield* placeRows(S, rows, m.face);
+    const rows = m.rows || [m.text];
+    // (Now and then spelled with what already stands - a sphere its O: Letters found in the shapes.)
+    if (rows.length === 1 && !m.tried && pick(S.rng, [{ c: true, feats: ["letters found in the shapes"] }, { c: false, feats: ["letters all built"] }]).c) {
+      const found = foundLetters(S, rows[0], m.face) || (m.asked ? loosely(S, () => foundLetters(S, rows[0], m.face)) : null);
+      if (found) { m.found = found.found; m.feats?.push("letters found in the shapes"); return found; }
+    }
+    m.tried = true;
+    const got = yield* placeRows(S, rows, m.face);
     if (got || !m.asked) return got;
     S.relaxed = true;
     try { return yield* placeRows(S, rows, m.face); } finally { S.relaxed = false; }
@@ -4298,7 +4601,7 @@
     M.moves++;
     M.skill = Math.max(0, +(M.skill + (reward > 0.02 ? 1 : reward < -0.02 ? -0.5 : 0)).toFixed(2));
     Object.assign(m, { reward, taste, fresh });
-    if (m.type === "add") m.piece.reward = reward;
+    if (m.type === "add") { m.piece.reward = reward; if (m.piece.scheme === "row" || m.piece.scheme === "steps") S.rowEnd = m.piece; }
     if (m.type === "plant") m.plant.reward = reward;
     S.history.push(m);
     if (S.history.length > 12) S.history.shift();
@@ -4711,6 +5014,9 @@
       if (m.form) teachForm(m.form, r);
     });
     if (!last && vote > 0) for (const P of alive(S)) if (P.host?.host) rememberForm(S, [P.host, P], vote * 0.5);
+    // (The painting's palette, kept against the vote - a whole-painting vote counts in full.)
+    if (!last) notePalette(S.palette?.genes, vote);
+    if (!last && S.word?.face) noteFace(S.word.face.genes, vote);
     remember();
   }
   // What it has learned, to be shown: what has done best and worst, its rules, its forms, how much it takes on.
@@ -4773,7 +5079,9 @@
     const composition = compositionOf(rng, choose), cam = camera(W, H, view, composition), light = lighting(rng), colours = palette(rng, choose);
     // (Now and then a look over the whole picture - Munker-White - chosen as the ledger leans.)
     const style = rng() < 0.35 ? choose("look", "look", ["plain", "munker"]) : "plain";
-    const S = { kind, cam, view, composition, look: style, light, palette: colours, rng, medium, M: MEDIA[medium], rules: rulesOf(MEDIA[medium]), level: "below",
+    // (How its structure grows, and how far its sizes spread: chosen as the ledger leans, or - a third of the time - anywhere.)
+    const arrange = rng() < 0.34 ? Object.keys(ARRANGEMENTS)[Math.floor(rng() * 6)] : choose("arrangement", "arrange", Object.keys(ARRANGEMENTS)), spread = [0, 0, 0.25, 0.5][Math.floor(rng() * 4)];
+    const S = { kind, cam, view, composition, look: style, arrange, spread, rowAxis: Math.floor(rng() * 4), light, palette: colours, rng, medium, M: MEDIA[medium], rules: rulesOf(MEDIA[medium]), level: "below",
       pieces: [], front: new Map(), nextId: 1, square: view.square ?? null, colours: [colours.solid, colours.solid2], queue: [], error: null, action: "", label: "",
       notes: { kept: 0, lifted: 0, corrected: 0, added: 0, removed: 0, reworked: 0 },
       choose, report: wants.report || null,
