@@ -3906,6 +3906,13 @@
   function askedMove(S, a) {
     if (a.type === "plant" && PLANTS[a.kind]) return { type: "plant", kind: a.kind, asked: true, feats: ["growing a plant", "growing " + plantName(a.kind)], label: "growing " + plantName(a.kind) };
     if (a.type === "word" && a.text) { const face = faceOf(S); return { type: "word", text: String(a.text).toUpperCase().slice(0, 9), face, asked: true, feats: ["lettering a word", ...face.feats], label: "lettering \u201c" + a.text + "\u201d" }; }
+    // (A solid asked for by name - in the colour asked, where one was: Asking.)
+    if (a.type === "solid") {
+      const P = findPlace(S, null, a.kind);
+      if (!P) return null;
+      if (a.colour) P.base = a.colour.slice();
+      return { type: "add", piece: P, asked: true, feats: addFeatures(S, P, []), label: labelOf(P) };
+    }
     // (Turned round: the seed, with all that is built off it - Turning.)
     if (a.type === "turn" && S.seed?.alive) return { type: "turn", piece: S.seed, asked: true, feats: ["turning it round", "turning " + S.seed.name + " round"], label: "turning " + theOf(S.seed) + " round" };
     if (a.type === "view" && VIEWS[a.view] && a.view !== S.view.id) return { type: "view", view: VIEWS[a.view], asked: true, feats: ["seeing it again", "seeing it " + VIEWS[a.view].name, "rule: views"], label: "seeing it again, " + VIEWS[a.view].name };
@@ -3925,6 +3932,55 @@
     const ids = Object.keys(VIEWS).filter((id) => id !== S.view.id), id = ids[Math.floor(r() * ids.length)];
     out.push(S.seed?.alive && r() < 0.5 ? { label: "turn it round", request: { type: "turn" } } : { label: VIEW_ASKS[id], request: { type: "view", view: id } });
     return out;
+  }
+  /* Asked in words, typed: a plant it names is grown; a solid it names is
+   * added (in a colour named just before it, brought into the painting's
+   * key); a way of seeing it ("from above", "below", "flat", "square on",
+   * "turned") or turning it ("turn", "spin") is done; and what is left is
+   * lettered - as many of its words as go in nine letters. Four asks at
+   * most from one line. */
+  const SOLID_WORDS = { cube: "cube", cubes: "cube", box: "cube", boxes: "cube", sphere: "sphere", spheres: "sphere", ball: "sphere", balls: "sphere",
+    tetrahedron: "tetrahedron", tetrahedra: "tetrahedron", octahedron: "octahedron", octahedra: "octahedron", pyramid: "pyramid", pyramids: "pyramid",
+    cylinder: "cylinder", cylinders: "cylinder", cone: "cone", cones: "cone", dome: "dome", domes: "dome", form: "blob", forms: "blob", blob: "blob", bean: "blob" };
+  const VIEW_WORDS = { above: "above", top: "above", overhead: "above", below: "below", under: "below", beneath: "below", flat: "flat", square: "one", front: "one", turned: "two", corner: "two" };
+  const TURN_WORDS = new Set(["turn", "rotate", "spin", "round", "around"]);
+  const COLOUR_HUES = { red: 2, orange: 28, yellow: 52, gold: 45, green: 125, teal: 175, cyan: 188, blue: 220, navy: 228, purple: 275, violet: 268, pink: 330, magenta: 310, brown: 25 };
+  const COLOUR_GREYS = { white: 0.92, grey: 0.55, gray: 0.55, black: 0.12 };
+  const QUIET = new Set(["a", "an", "the", "of", "and", "on", "in", "at", "to", "with", "from", "please", "some", "it", "its", "see", "make", "add", "grow", "letter", "write", "me", "view", "seen", "look"]);
+  function askText(S, text) {
+    const words = String(text || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").trim().split(/\s+/).filter(Boolean);
+    if (!S || !words.length) return [];
+    const asked = [], rest = [], K = S.palette;
+    let colour = null, colourWord = null;
+    for (const w of words) {
+      if (COLOUR_HUES[w] !== undefined || COLOUR_GREYS[w] !== undefined) {
+        if (colourWord) rest.push(colourWord);
+        colourWord = w;
+        colour = COLOUR_GREYS[w] !== undefined ? hsl(K.hue, 0.04, COLOUR_GREYS[w]) : hsl(COLOUR_HUES[w], clamp(K.sat[0] * 1.6, 0.35, 0.75), 0.5);
+        continue;
+      }
+      if (PLANT_WORDS[w]) {
+        const kind = PLANT_WORDS[w] === "any" ? GROWN.filter((k) => plantRules(k).flower)[Math.floor(S.rng() * 7)] : PLANT_WORDS[w];
+        asked.push({ type: "plant", kind, label: "grow " + plantName(kind) });
+      } else if (SOLID_WORDS[w]) {
+        const kind = SOLID_WORDS[w];
+        asked.push({ type: "solid", kind, colour, label: "add " + (colourWord ? colourWord + " " : "") + nameFor(kind, kind === "pyramid" ? { sides: 4 } : {}).replace(/^an? /, "") });
+      } else if (VIEW_WORDS[w]) {
+        if (VIEW_WORDS[w] !== S.view.id) asked.push({ type: "view", view: VIEW_WORDS[w], label: VIEW_ASKS[VIEW_WORDS[w]] });
+      } else if (TURN_WORDS.has(w)) asked.push({ type: "turn", label: "turn it round" });
+      else if (!QUIET.has(w)) { if (colourWord) rest.push(colourWord); rest.push(w); }
+      if (!(COLOUR_HUES[w] !== undefined || COLOUR_GREYS[w] !== undefined)) { colour = null; colourWord = null; }
+    }
+    if (colourWord) rest.push(colourWord);
+    // (What is left, lettered: whole words, as many as go in nine letters.)
+    if (rest.length) {
+      let line = "";
+      for (const w of rest) { const next = line ? line + " " + w : w; if (next.length > 9) { if (!line) line = w.slice(0, 9); break; } line = next; }
+      asked.push({ type: "word", text: line.toUpperCase(), label: "letter “" + line.toUpperCase() + "”" });
+    }
+    const seen = new Set(), out = [];
+    for (const a of asked) { const key = a.type + a.kind + a.view + a.text; if (seen.has(key) || out.length >= 4) continue; seen.add(key); out.push(a); ask(S, a); }
+    return out.map((a) => a.label);
   }
   /* A vote. On the painting (KEEP, REJECT): the changes just made take it,
    * the latest most; a painting kept keeps its forms. On its last move:
@@ -4044,5 +4100,5 @@
   }
 
   global.HexfieldStudy = { KINDS, SOLIDS, NAMES, ROOM, BUILD, MEDIA, MEDIUMS, LOOK, LEARN, RULES, VIEWS, PLANTS, COMPOSITIONS, HARMONIES, make, premap, camera, project, cubeSolid, tetraSolid, octaSolid, pyramidSolid, prismSolid, place,
-    rulesOf, freedomsOf, credit, learned, seedKind, memory, ask, suggestions, stripes };
+    rulesOf, freedomsOf, credit, learned, seedKind, memory, ask, askText, suggestions, stripes };
 })(typeof globalThis !== "undefined" ? globalThis : this);

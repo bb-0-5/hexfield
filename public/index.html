@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- autodeploy-check: workers-builds-verify-8f2c1a -->
-<!-- hexfield build 346 (2026-10-12) -->
+<!-- hexfield build 347 (2026-10-12) -->
 <html lang="en">
 <head>
 <script>
@@ -558,6 +558,13 @@
                                   color: #bfe9fa !important; cursor: pointer; transform: none !important; }
   #choiceCard button.choice.ask:hover:not(:disabled) { background: rgba(109,201,242,.18) !important; }
   #choiceCard button.choice.ask.asked { border-style: solid !important; border-color: var(--pride-amber) !important; color: #f3dca6 !important; opacity: .85; cursor: default; }
+  /* Asking in words: one fixed-height row, the box and its button. */
+  #askForm { display: flex; gap: 5px; height: 30px; min-height: 30px; margin-top: 5px; }
+  #askText { flex: 1 1 auto; min-width: 0; height: 30px; box-sizing: border-box; padding: 0 9px; border-radius: 5px; font: inherit; font-size: 11px;
+             border: 1px solid rgba(109,201,242,.45); background: rgba(20,29,38,.88); color: #e8f4f8; outline: none; }
+  #askText:focus { border-color: rgba(109,201,242,.9); }
+  #askText::placeholder { color: #7f8aa0; }
+  #askGo { width: auto; flex: 0 0 auto; min-height: 0 !important; height: 30px; padding: 0 12px !important; font-size: 10px; }
   #localLearningStatus { margin-top: 4px; color: #aeb6cf; font-size: 8px; line-height: 1.3;
                          height: 22px; min-height: 22px; max-height: 22px; overflow: hidden; }
   /* Live diagnostics may change words, not geometry. */
@@ -774,6 +781,11 @@
     </div>
     <!-- What can be asked for with a tap (a study's plants, words, views), then the painting's own choices, each to be liked or disliked by itself. -->
     <div id="choiceCard" aria-label="ask for something, or like or dislike each of this painting's choices"></div>
+    <!-- Or ask in words: a plant, a solid (a colour before it), a way of seeing it, a turn - anything else is lettered. -->
+    <form id="askForm" autocomplete="off">
+      <input id="askText" type="text" maxlength="48" enterkeyhint="go" placeholder="ask it: a red dome, a tulip, from above, turn, HELLO" aria-label="ask the painter in words">
+      <button id="askGo" type="submit">ASK</button>
+    </form>
     <div id="localLearningStatus" aria-live="polite">teach it directly, or let the resident painter keep learning in the background</div>
     <!-- Inside #autonomousControls on purpose. The autonomous presentation
          blacks out the sidebar with `aside > div:not(#autonomousControls)`, so
@@ -793,7 +805,7 @@
     <div id="colourChoice">colour: choosing…</div>
     <div id="robBossMood" aria-live="polite">rob boss: waking up · show me 4–8 clear choices</div>
     <div id="painterStatus">seed held · preparing the first paint pass</div>
-    <div id="buildBadge">build 346</div>
+    <div id="buildBadge">build 347</div>
     <div id="bootErrors" style="display:none;color:#ff6b6b;font-size:10px;white-space:pre-wrap;margin-top:4px;"></div>
   </div>
   <div id="shopEssentials" aria-label="print controls"></div>

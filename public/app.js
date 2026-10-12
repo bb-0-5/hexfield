@@ -34867,6 +34867,26 @@ function askChip(study, label, request) {
   return chip;
 }
 
+/* Asking in words (Studies): whatever is typed goes to the study as asks -
+ * a plant it names grown, a solid it names added, a way of seeing it or a
+ * turn done, the rest lettered - each made next, in turn. */
+function askInWords(text) {
+  const study = strokePainter.plan?.study, Study = globalThis.HexfieldStudy, status = document.getElementById("localLearningStatus");
+  if (!String(text || "").trim()) return false;
+  if (!study || !Study?.askText) { if (status) status.textContent = "asking works while a study is painting"; return false; }
+  const asked = Study.askText(study, text);
+  if (status) status.textContent = asked.length ? "asked: " + asked.join(" \u00b7 ") + " - it will do " + (asked.length > 1 ? "them" : "it") + " next" : "nothing in that to make";
+  renderChoiceCard(true);
+  return asked.length > 0;
+}
+if (typeof document !== "undefined") {
+  const form = document.getElementById("askForm"), box = document.getElementById("askText");
+  form?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (askInWords(box?.value)) { box.value = ""; box.blur(); }
+  });
+}
+
 let choiceCardFor = null;
 function renderChoiceCard(force = false) {
   const card = typeof document !== "undefined" ? document.getElementById("choiceCard") : null;
