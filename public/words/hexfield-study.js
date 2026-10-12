@@ -57,6 +57,32 @@
  * from what was meant, corrects the worst of it as far as the medium
  * allows, and reports the error, so it learns which handling suits which
  * form.
+ *
+ * Mutation. The platonic solids are where it starts, not all it can make:
+ * a square stretched into a rectangle - taller, flatter, longer - a sphere
+ * turned into a cylinder, a tetrahedron's triangles into a pyramid of more
+ * sides or a cone, its corners softened, the solid made to be seen through.
+ *
+ * Light between the solids. A solid's shadow runs along the floor, and
+ * where it meets an upright plane - a side of another solid, the wall - it
+ * climbs it: each corner carried down the light onto that plane, so the
+ * shadow is turned to the plane's angle and pressed by its tilt, beginning
+ * nearest the light; on a curved solid it wraps round it. The shadows of
+ * one solid are worked out and painted first, then what the next throws.
+ * Clutter shuts out some of the light from round about - the nearer and
+ * the more a surface faces it, the more (occlusion) - and each solid gives
+ * some of its colour to what faces it (diffusion), so the light is carved
+ * into peaks and valleys of colour, not laid flat.
+ *
+ * Learning. Each change is judged - the picture as a whole, before and
+ * after, by the taste learned from votes - and what it did is kept against
+ * what the change was, across paintings; the next change is chosen by what
+ * such changes have done, the untried given their chance, the same
+ * arrangement made again counting against itself. Two changes that did
+ * well together are kept as a form and built again, varied. Its rules come
+ * one at a time, each only once those it stands on have gone well (RULES):
+ * joining before stacking, stretching before turning or softening, forms
+ * before varying them. What it has learned sets how much it takes on.
  */
 (function (global) {
   "use strict";
@@ -92,7 +118,6 @@
   const KINDS = ["sphere", "cube", "tetrahedron", "octahedron", "stack"];
   const SOLIDS = ["sphere", "cube", "tetrahedron", "octahedron"];
   const NAMES = { sphere: "a sphere", cube: "a cube", tetrahedron: "a tetrahedron", octahedron: "an octahedron" };
-  const PLURALS = { sphere: "spheres", cube: "cubes", tetrahedron: "tetrahedra", octahedron: "octahedra" };
   const theOf = (P) => P.name.replace(/^an? /, "the ");
 
   /* The room and the eye. World units (a cube's edge is one): the eye is
@@ -106,18 +131,15 @@
    *   turns    turns tried for the first solid to show the planes wanted
    *   rest     ms the painting is left to be seen after each change */
   const ROOM = { eye: 2, wall: 10, lens: 1.15, size: 0.24, foot: 0.93, rings: 9, batch: 90, turns: 120, rest: 1600 };
-  /* The structure.
-   *   most     solids standing at once (then it mostly takes away and reworks)
+  /* The structure (how much of it there is, and how it changes, is learned: Learning).
    *   tries    places tried for a new solid
    *   near     the nearest a solid may stand to the eye; `back`, its room before the wall
    *   margin   the canvas's edge kept clear
    *   hidden   how much of a new solid may stand hidden behind others; `covers`, how much of one it may hide
-   *   remove   the chance of taking one away: from four standing, and more for each one more
-   *   rework   the chance of reworking one
    *   dark     how much of where a solid goes may be too dark to paint it over, in a medium that cannot cover
    *   touch    how near two solids may come (they touch, never pass into each other)
    *   kinds    how often each solid is the next */
-  const BUILD = { most: 9, tries: 40, near: 2.8, back: 0.6, margin: 0.03, hidden: 0.55, covers: 0.8, dark: 0.04, remove: [0.1, 0.06], rework: 0.14, touch: 0.006,
+  const BUILD = { tries: 40, near: 2.8, back: 0.6, margin: 0.03, hidden: 0.55, covers: 0.8, dark: 0.04, touch: 0.006,
     kinds: { cube: 0.45, sphere: 0.2, tetrahedron: 0.2, octahedron: 0.15 } };
 
   /* ── Mediums ──────────────────────────────────────────────────────────
@@ -219,15 +241,62 @@
     const ys = verts.map((v) => v[1]);
     return { verts, faces, low: Math.min(...ys), high: Math.max(...ys) };
   }
+  /* A pyramid: `sides` triangles round a level base of radius `r`, `h`
+   * high - three make a tetrahedron's shape, many a cone's. */
+  function pyramidSolid(r, sides, h) {
+    const verts = [];
+    for (let k = 0; k < sides; k++) {
+      const t = Math.PI / 2 + k * 2 * Math.PI / sides;
+      verts.push([r * Math.cos(t), -h / 4, r * Math.sin(t)]);
+    }
+    verts.push([0, h * 3 / 4, 0]);
+    const faces = [{ name: "base", idx: Array.from({ length: sides }, (_, k) => sides - 1 - k) }];
+    for (let k = 0; k < sides; k++) faces.push({ name: "side", idx: [k, (k + 1) % sides, sides] });
+    return { verts, faces, low: -h / 4, high: h * 3 / 4 };
+  }
+  // A prism of `sides` round a level ring of radius `r`, `h` high: with many sides, a cylinder's frame.
+  function prismSolid(r, h, sides) {
+    const verts = [];
+    for (const y of [-h / 2, h / 2]) for (let k = 0; k < sides; k++) verts.push([r * Math.cos(k * 2 * Math.PI / sides), y, r * Math.sin(k * 2 * Math.PI / sides)]);
+    const faces = [{ name: "bottom", idx: Array.from({ length: sides }, (_, k) => sides - 1 - k) }, { name: "top", idx: Array.from({ length: sides }, (_, k) => sides + k) }];
+    for (let k = 0; k < sides; k++) faces.push({ name: "side", idx: [k, (k + 1) % sides, sides + (k + 1) % sides, sides + k] });
+    return { verts, faces, low: -h / 2, high: h / 2 };
+  }
+  // A solid stretched along its three ways: a cube into a box, squares into rectangles (Mutation).
+  const stretched = (shape, st) => (!st || st.every((v) => v === 1) ? shape
+    : { ...shape, verts: shape.verts.map(([x, y, z]) => [x * st[0], y * st[1], z * st[2]]), low: shape.low * st[1], high: shape.high * st[1] });
   // Turned about the upright by `yaw`, its middle carried to `at`.
   function place(solid, yaw, at) {
     const c = Math.cos(yaw), s = Math.sin(yaw);
     const verts = solid.verts.map(([x, y, z]) => [x * c + z * s + at[0], y + at[1], -x * s + z * c + at[2]]);
     return { ...solid, verts, middle: at };
   }
-  const SIZES = { cube: 1, tetrahedron: 1.25, octahedron: 1.05 };
-  // A flat-sided solid that can stand: an octahedron rests on a face.
-  const shapeOf = (kind, e) => (kind === "cube" ? cubeSolid(e) : kind === "tetrahedron" ? tetraSolid(e) : octaSolid(e, true));
+  const SIZES = { cube: 1, tetrahedron: 1.25, octahedron: 1.05, pyramid: 1.1, cylinder: 0.9, cone: 1 };
+  // The solids that are curved: painted round, in strokes that follow the curve; the rest are built plane by plane.
+  const ROUND = new Set(["sphere", "cylinder", "cone"]);
+  /* A solid that can stand, as its form says (Mutation): an octahedron on a
+   * face; a pyramid of so many sides; a cylinder or a cone (a frame of many
+   * sides); and any of them stretched. */
+  function shapeOf(kind, e, form = {}) {
+    let shape;
+    if (kind === "cube") shape = cubeSolid(e);
+    else if (kind === "tetrahedron") shape = tetraSolid(e);
+    else if (kind === "octahedron") shape = octaSolid(e, true);
+    else if (kind === "pyramid") shape = pyramidSolid(e / (2 * Math.sin(Math.PI / (form.sides || 4))), form.sides || 4, e * 0.95);
+    else if (kind === "cylinder") shape = prismSolid(e / 2, e, 24);
+    else shape = pyramidSolid(e / 2, 24, e * 1.15);
+    return stretched(shape, form.stretch);
+  }
+  // What a solid is called, as its form makes it.
+  function nameFor(kind, form = {}) {
+    const st = form.stretch || [1, 1, 1], wide = Math.max(st[0], st[2]);
+    if (kind === "cube") return st.every((v) => Math.abs(v - 1) < 0.06) ? "a cube" : st[1] > 1.25 * wide ? "a tall box" : st[1] < 0.75 * Math.min(st[0], st[2]) ? "a slab" : "a box";
+    if (kind === "pyramid") return "a " + (["three", "four", "five", "six", "seven", "eight"][(form.sides || 4) - 3] || "many") + "-sided pyramid";
+    if (kind === "cylinder") return st[1] < 0.6 ? "a disc" : "a cylinder";
+    if (kind === "cone") return "a cone";
+    return NAMES[kind];
+  }
+  const plural = (name) => { const w = name.replace(/^an? /, ""); return /hedron$/.test(w) ? w.replace(/on$/, "a") : /(x|s)$/.test(w) ? w + "es" : w + "s"; };
 
   /* ── Premap ───────────────────────────────────────────────────────────
    * Before any paint: every corner in the picture, every plane facing the
@@ -239,7 +308,9 @@
     const faces = solid.faces.map((f) => {
       const world = f.idx.map((i) => solid.verts[i]);
       const centre = times(world.reduce(add, [0, 0, 0]), 1 / world.length);
-      const normal = unit(sub(centre, solid.middle));
+      // (Square to the face itself, outward: a stretched solid's faces no longer face away from its middle.)
+      let normal = unit(cross(sub(world[1], world[0]), sub(world[2], world[1])));
+      if (dot(normal, sub(centre, solid.middle)) < 0) normal = times(normal, -1);
       const facing = dot(normal, sub(eyeAt, centre));
       const level = Math.abs(normal[1]) > 0.99;
       // A level plane under the horizon shows its top, over it its underside; on it, only its edge.
@@ -302,11 +373,32 @@
    * it, toward the ambient where it turns away; the floor's light bounced
    * up into what faces down; the light's shine where it mirrors to the eye;
    * and the air over it the farther off it is (far is neutral, near is
-   * rich). */
-  function shade(S, base, n, Z, { shine = 0, bounce = 0.6, lift = 0 } = {}) {
+   * rich). Where it is (`at`, a point), the solids standing near it count
+   * too: clutter shuts out some of the light from all round - the nearer
+   * and the more it faces them, the more (occlusion) - and each gives back
+   * some of its own colour onto what faces it (diffusion of nearby
+   * colours); and close over what a solid stands on, in the crevice, it is
+   * darker. `direct: 0` is the surface out of the light (in a shadow). */
+  function shade(S, base, n, Z, { shine = 0, bounce = 0.6, lift = 0, at = null, self = null, direct = 1 } = {}) {
     const { L, colour: lit, ambient: amb } = S.light;
-    const d = Math.max(0, dot(n, L));
-    let c = base.map((b, i) => b * (0.5 * amb[i] / 255 + 0.78 * d * lit[i] / 255) + lift);
+    const d = Math.max(0, dot(n, L)) * direct;
+    let keep = 1, give = null;
+    if (at && S.pieces?.length) {
+      let occ = 0, w = 0;
+      const tint = [0, 0, 0];
+      for (const Q of S.pieces) {
+        if (!Q.alive || Q === self || !Q.base) continue;
+        const m = Q.middle || Q.placed.middle, dv = sub(m, at), dist = Math.hypot(dv[0], dv[1], dv[2]) || 1;
+        const near = clamp(((Q.high - Q.low) * 0.55 + 0.15) / dist, 0, 1) ** 2, facing = Math.max(0, dot(n, dv) / dist);
+        occ += near * (0.3 + 0.7 * facing);
+        if (near * facing > 0) { for (let i = 0; i < 3; i++) tint[i] += Q.base[i] * near * facing; w += near * facing; }
+      }
+      if (self && n[1] < 0.9) occ += 0.3 * Math.exp(-Math.max(0, at[1] - self.low) / 0.15);
+      keep = 1 - clamp(occ * 0.5, 0, 0.45);
+      if (w > 0) give = { colour: tint.map((v) => v / w), amount: clamp(w * 0.4, 0, 0.24) };
+    }
+    let c = base.map((b, i) => b * (0.5 * keep * amb[i] / 255 + 0.78 * d * lit[i] / 255) + lift);
+    if (give) c = c.map((v, i) => v + base[i] * give.colour[i] / 255 * give.amount * (1 - 0.5 * d));
     if (n[1] < 0 && bounce) c = c.map((v, i) => v + S.palette.floor[i] * 0.2 * bounce * -n[1] * (1 - d));
     if (shine) {
       const h = unit(add(L, [0, 0, -1]));
@@ -431,7 +523,8 @@
     const probe = cells.length ? cells : s.points.map(([x, y]) => cellAt(P, x, y)).filter((k) => k >= 0);
     if (!probe.length) return null;
     if (!s.intended) s.intended = s.colour;
-    const full = A.load !== "thin", lumAt = (k) => 0.299 * C[k * 3] + 0.587 * C[k * 3 + 1] + 0.114 * C[k * 3 + 2];
+    // (A solid seen through carries thinner paint: Mutation.)
+    const full = A.load !== "thin", see = A.opacity ?? 1, lumAt = (k) => 0.299 * C[k * 3] + 0.587 * C[k * 3 + 1] + 0.114 * C[k * 3 + 2];
     const under = [0, 0, 0];
     let wet = 0;
     for (const k of probe) {
@@ -464,7 +557,7 @@
       S.notes.lifted++;
     } else if (R.darkenOnly) {
       let space = 0;
-      const light = lum(meant) + 3, load = full ? 0.9 : 0.62;
+      const light = lum(meant) + 3, load = (full ? 0.9 : 0.62) * see;
       for (const k of probe) if (lumAt(k) > light) space++;
       if (intoWet && R.bleeds) {
         // Into its own wet wash it runs together with it - lighter or darker, a bloom where it is lighter - and spreads.
@@ -506,7 +599,7 @@
       const put0 = push(m0), put1 = p ? mix(m1, under, p) : m1;
       ends(put0, put1);
       if (p && !s.smear) s.smear = paint(put1);
-      s.alpha = Math.min(1, M.cover * (full ? 1 : 0.85));
+      s.alpha = Math.min(1, M.cover * (full ? 1 : 0.85) * see);
       // Thick where it is light (fat over lean): its ridges catch the light. A soft brush leaves none.
       if (M.body && !s.line && s.tip !== "soft" && A.form !== "broad") s.body = [+(M.body * (full ? 1 : 0.4) * (0.35 + 0.65 * lum(meant) / 255)).toFixed(3), S.lightX, S.lightY];
       if (M.grain) s.grain = +(M.grain * (full ? 1 : 2.2)).toFixed(3);
@@ -643,10 +736,10 @@
   /* ── The room: wall, then floor, far to near ─────────────────────────── */
   function* room(S) {
     const { cam } = S, W = cam.W, H = cam.H, side = S.light.side;
-    const meet = cam.cy + cam.f * cam.eye / ROOM.wall;
+    const meet = meetOf(cam);
     const wallLit = shade(S, S.palette.wall, [0, 0, -1], ROOM.wall);
     const wallAt = (x, y) => wallLit.map((v) => v * (1 + 0.16 * side * (x / W - 0.5) * 2 - 0.05 * (1 - clamp(y, 0, meet) / meet)));
-    const floorAt = (x, y) => shade(S, S.palette.floor, [0, 1, 0], Math.min(ROOM.wall, planeDepth(cam, Math.max(y, meet)))).map((v) => v * (1 + 0.12 * side * (x / W - 0.5) * 2));
+    const floorAt = (x, y) => { const Z = Math.min(ROOM.wall, planeDepth(cam, Math.max(y, meet))); return shade(S, S.palette.floor, [0, 1, 0], Z, { at: [(x - cam.cx) * Z / cam.f, 0, Z] }).map((v) => v * (1 + 0.12 * side * (x / W - 0.5) * 2)); };
     // The wall: soft and even, a little lighter toward the light.
     const rowW = Math.max(6, (meet / 9)), wall = wallStrokes(S, meet, rowW, wallAt);
     yield* inSteps("the wall", wall);
@@ -711,15 +804,18 @@
     const lowest = E.kind === "sphere" ? E.middle[1] - E.radius : Math.min(...E.placed.verts.map((v) => v[1]));
     const standing = Math.abs(lowest - h) < 0.02, contact = E.kind === "sphere" ? E.middle : E.placed.middle;
     const ys = shot.map((p) => p[1]), top = Math.min(...ys), foot = Math.max(...ys);
-    const reach = Math.max(...shape.map((p) => Math.hypot(p[0] - contact[0], p[2] - contact[2]))) || 1;
+    const reach = Math.max(...shape.map((p) => Math.hypot(p[0] - contact[0], p[2] - contact[2]))) || 1, clear = 0.8 * (1 - (E.form?.opacity ?? 1));
     // The shadow's colour where it falls: the plane's own, without the light, deepest at the solid's foot.
     const darkAt = (x, y) => {
       const Z = planeDepth(cam, Math.max(y, cam.cy + 1), h), X = (x - cam.cx) * Z / cam.f;
       const far = clamp(Math.hypot(X - contact[0], Z - contact[2]) / reach, 0, 1);
-      return shade(S, ground.base, [0, 1, 0], Z).map((v, i) => v * (0.38 + 0.25 * far) + S.light.ambient[i] * 0.06);
+      // (A solid seen through lets some light through its shadow.)
+      const dark = shade(S, ground.base, [0, 1, 0], Z, { at: [X, h, Z] }).map((v, i) => v * (0.38 + 0.25 * far) + S.light.ambient[i] * 0.06);
+      return clear ? mix(dark, shade(S, ground.base, [0, 1, 0], Z), clear) : dark;
     };
     const rows = Math.max(4, Math.round((foot - top) / Math.max(3, cam.W * 0.012)));
-    const extra = ground.clip ? { clip: ground.clip } : {};
+    // (On the floor only as far as the wall: past it, the shadow climbs the wall.)
+    const climbs = h === 0 && shape.some((p) => p[2] > ROOM.wall), extra = ground.clip ? { clip: ground.clip } : climbs ? { clip: floorOf(cam) } : {};
     for (let r = 0; r < rows && foot > cam.cy; r++) {
       const y = top + (r + 0.5) * (foot - top) / rows, band = (foot - top) / rows;
       if (y <= cam.cy) continue;
@@ -738,6 +834,7 @@
       }
     }
     yield* inSteps(label, out);
+    if (climbs) yield* castSteps(S, E, wallOf(S));
     if (!standing) return;
     // Where it touches, the light is shut out.
     const touch = [];
@@ -757,6 +854,187 @@
     if (touch.length) yield { label: "where " + theOf(E) + " stands", strokes: touch };
   }
 
+  /* A solid's shadow on another: each corner of the one - or, for a
+   * sphere, the line where the light leaves it - carried down the light
+   * onto the plane of each face of the other that the light reaches (from
+   * the light's side of it), and the outline of those cut to the face. So
+   * the shadow that runs along the floor climbs the side it meets, turned to
+   * that face's angle and pressed by its tilt, beginning nearest the light.
+   * A curved solid takes it on the plane through its middle square to the
+   * light, cut to its outline. */
+  function castOn(S, A, B) {
+    const L = S.light.L, out = [];
+    const points = A.kind === "sphere" ? rimOf(S, A) : A.placed.verts;
+    const faces = ROUND.has(B.kind) ? [discOf(S, B)] : B.map.visible;
+    for (const f of faces) {
+      const nl = dot(f.normal, L);
+      if (nl < 0.05) continue;
+      const proj = [];
+      for (const p of points) {
+        const t = dot(f.normal, sub(p, f.centre)) / nl;
+        if (t > 1e-3) proj.push(sub(p, times(L, t)));
+      }
+      if (proj.length < 3) continue;
+      const u = unit(sub(f.world[1], f.world[0])), v = cross(f.normal, u);
+      const flat = (p) => [dot(sub(p, f.centre), u), dot(sub(p, f.centre), v)];
+      const cut = clipConvex(hull2(proj.map(flat)), f.world.map(flat));
+      if (cut.length < 3 || Math.abs(areaOf(cut)) < 1e-4) continue;
+      let world = cut.map(([a, b]) => add(f.centre, add(times(u, a), times(v, b))));
+      // (On a curved solid, each point of it carried on up the light from the plane through its middle to where the light meets it, so the shadow wraps round it.)
+      if (f.curved) world = densify(world, 6).map((q) => onSurface(S, B, q));
+      out.push({ face: f, world, shot: world.map((p) => project(S.cam, p)) });
+    }
+    return out;
+  }
+  const densify = (poly, k) => poly.flatMap((p, i) => Array.from({ length: k }, (_, j) => mix(p, poly[(i + 1) % poly.length], j / k)));
+  // A point on a curved solid's middle plane, carried up the light to its surface (where the light first meets it there).
+  function onSurface(S, B, q) {
+    const L = S.light.L;
+    if (B.kind === "sphere") { const d = sub(q, B.middle); return add(q, times(L, Math.sqrt(Math.max(0, B.radius ** 2 - dot(d, d))))); }
+    const m = B.placed.middle, level = Math.hypot(L[0], L[2]) || 1e-3, a = dot(sub(q, m), unit([-L[2], 0, L[0]]));
+    const radius = (y) => (B.kind === "cone" ? B.radius * clamp((B.high - y) / (B.high - B.low), 0, 1) : B.radius);
+    let t = Math.sqrt(Math.max(0, radius(q[1]) ** 2 - a * a)) / level;
+    // (A cone narrows as the light climbs it: once more at the height it reaches.)
+    if (B.kind === "cone") t = Math.sqrt(Math.max(0, radius(q[1] + L[1] * t) ** 2 - a * a)) / level;
+    const p = add(q, times(L, t));
+    return [p[0], Math.min(p[1], B.high), p[2]];
+  }
+  // A curved solid's surface where the eye meets it at a point of the picture: its normal there (as its own painting reads it).
+  function roundNormal(S, B, x, y) {
+    const { cam } = S;
+    if (B.kind === "sphere") {
+      const [cx, cy] = project(cam, B.middle), r = cam.f * B.radius / B.middle[2], nx = clamp((x - cx) / r, -1, 1), ny = clamp(-(y - cy) / r, -1, 1);
+      return [nx, ny, -Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny))];
+    }
+    const m = B.placed.middle, r = cam.f * B.radius / m[2], nx = clamp((x - project(cam, m)[0]) / r, -1, 1), nz = -Math.sqrt(Math.max(0, 1 - nx * nx));
+    return B.kind === "cone" ? unit([nx * (B.high - B.low), B.radius, nz * (B.high - B.low)]) : [nx, 0, nz];
+  }
+  /* The wall, as somewhere a shadow can climb: the one upright plane every
+   * solid stands before, square to the eye, facing the light (the light is
+   * always on the eye's side of the solids). */
+  const wallOf = (S) => (S.wall ||= { id: "wall", kind: "wall", name: "the wall", low: 0, high: 30, get base() { return S.palette.wall; },
+    map: { visible: [{ normal: [0, 0, -1], centre: [0, 15, ROOM.wall], world: [[-40, 0, ROOM.wall], [40, 0, ROOM.wall], [40, 30, ROOM.wall], [-40, 30, ROOM.wall]] }] } });
+  // Where the floor meets the wall, in the picture; and the floor below it.
+  const meetOf = (cam) => cam.cy + cam.f * cam.eye / ROOM.wall;
+  const floorOf = (cam) => [[-cam.W, meetOf(cam)], [2 * cam.W, meetOf(cam)], [2 * cam.W, 2 * cam.H], [-cam.W, 2 * cam.H]];
+  // Where the light leaves a sphere: the ring square to the light round its middle.
+  function rimOf(S, A) {
+    const L = S.light.L, u = unit([-L[2], 0, L[0]]), v = unit(cross(L, u)), pts = [];
+    for (let k = 0; k < 32; k++) { const t = k / 32 * Math.PI * 2; pts.push(add(A.middle, add(times(u, A.radius * Math.cos(t)), times(v, A.radius * Math.sin(t))))); }
+    return pts;
+  }
+  // A curved solid's stand-in plane for a shadow: through its middle, turned to the light, as wide and high as it.
+  function discOf(S, B) {
+    const L = S.light.L, m = B.middle || B.placed.middle, r = B.radius;
+    const normal = B.kind === "sphere" ? L : unit([L[0], 0, L[2]]), u = unit(cross([0, 1, 0], normal)), v = cross(normal, u);
+    const world = B.kind === "sphere" ? Array.from({ length: 24 }, (_, k) => add(m, add(times(u, r * Math.cos(k / 24 * 2 * Math.PI)), times(v, r * Math.sin(k / 24 * 2 * Math.PI)))))
+      : B.kind === "cone" ? [add([m[0], B.low, m[2]], times(u, -r)), add([m[0], B.low, m[2]], times(u, r)), [m[0], B.high, m[2]]]
+        : [add([m[0], B.low, m[2]], times(u, -r)), add([m[0], B.low, m[2]], times(u, r)), add([m[0], B.high, m[2]], times(u, r)), add([m[0], B.high, m[2]], times(u, -r))];
+    return { normal, centre: times(world.reduce(add, [0, 0, 0]), 1 / world.length), world, curved: true };
+  }
+  const areaOf = (poly) => poly.reduce((t, p, i) => { const q = poly[(i + 1) % poly.length]; return t + p[0] * q[1] - q[0] * p[1]; }, 0) / 2;
+  // A convex shape cut to a convex shape (each edge of the cutter, in turn).
+  function clipConvex(subject, cutter) {
+    const sign = areaOf(cutter) > 0 ? 1 : -1;
+    let out = subject;
+    for (let i = 0; i < cutter.length && out.length; i++) {
+      const a = cutter[i], b = cutter[(i + 1) % cutter.length], input = out, d1 = [b[0] - a[0], b[1] - a[1]];
+      const inside = (p) => sign * (d1[0] * (p[1] - a[1]) - d1[1] * (p[0] - a[0])) >= 0;
+      out = [];
+      for (let j = 0; j < input.length; j++) {
+        const p = input[j], q = input[(j + 1) % input.length], pin = inside(p), qin = inside(q);
+        if (pin) out.push(p);
+        if (pin !== qin) {
+          const d2 = [q[0] - p[0], q[1] - p[1]], den = d1[0] * d2[1] - d1[1] * d2[0];
+          const t = Math.abs(den) < 1e-12 ? 0 : (d1[0] * (a[1] - p[1]) - d1[1] * (a[0] - p[0])) / den;
+          out.push([p[0] + d2[0] * t, p[1] + d2[1] * t]);
+        }
+      }
+    }
+    return out;
+  }
+  // Strokes across a shape in the picture, in rows: each row's runs inside it (a long run in lengths of at most `most`, each in its own colour).
+  function rowsIn(S, shot, band, colourAt, tip, extra, most = Infinity) {
+    const ys = shot.map((p) => p[1]), xs = shot.map((p) => p[0]), top = Math.min(...ys), foot = Math.max(...ys), left = Math.min(...xs), right = Math.max(...xs);
+    const rows = Math.max(1, Math.round((foot - top) / band)), step = Math.max(2, S.cam.W * 0.006), out = [];
+    for (let r = 0; r < rows; r++) {
+      const y = top + (r + 0.5) * (foot - top) / rows, h = (foot - top) / rows;
+      let start = null;
+      for (let x = left - step; x <= right + step; x += step) {
+        const isIn = inPoly(shot, x, y);
+        if (isIn && start === null) start = x;
+        if (!isIn && start !== null) {
+          const from = start - step * 0.5, to = x - step * 0.5, n = Math.max(1, Math.ceil((to - from) / most));
+          for (let k = 0; k < n; k++) {
+            const a = from + (to - from) * k / n, b = from + (to - from) * (k + 1) / n, mid = n === 1 ? (start + x) / 2 : (a + b) / 2;
+            out.push(stroke(S, [[a, y], [mid, y + (S.rng() - 0.5) * h * 0.15], [b, y]], h * 1.8, colourAt(mid, y), tip, extra));
+          }
+          start = null;
+        }
+      }
+    }
+    return out;
+  }
+  // How far a shape on a level plane (x, z) reaches from a point inside it, the way of another point.
+  function reachToward(shape, [mx, mz], [x, z]) {
+    const l = Math.hypot(x - mx, z - mz) || 1e-9, ux = (x - mx) / l, uz = (z - mz) / l;
+    let best = Infinity;
+    for (let i = 0; i < shape.length; i++) {
+      const [ax, az] = shape[i], [bx, bz] = shape[(i + 1) % shape.length], ex = bx - ax, ez = bz - az, den = ux * ez - uz * ex;
+      if (Math.abs(den) < 1e-12) continue;
+      const t = ((ax - mx) * ez - (az - mz) * ex) / den, k = ((ax - mx) * uz - (az - mz) * ux) / den;
+      if (t > 0 && k >= 0 && k <= 1) best = Math.min(best, t);
+    }
+    return best;
+  }
+  // A solid's shadow painted on another: in the other's own colour there, out of the light.
+  function* castSteps(S, A, B) {
+    const marks = castOn(S, A, B), out = [], { cam } = S, o = [0, cam.eye, 0];
+    (A.shot.on ||= new Map()).set(B.id, marks.map((m) => clipOf(m.shot, 2)));
+    for (const m of marks) {
+      const f = m.face, clip = clipOf(m.shot, 0.6);
+      const darkAt = (x, y) => {
+        const d = [(x - cam.cx) / cam.f, -(y - cam.cy) / cam.f, 1], den = dot(f.normal, d), t = Math.abs(den) < 1e-6 ? f.centre[2] : dot(f.normal, sub(f.centre, o)) / den;
+        const p = t > 0 ? add(o, times(d, t)) : f.centre;
+        return shade(S, B.base, f.curved ? roundNormal(S, B, x, y) : f.normal, p[2], { at: p, self: B, direct: 0 });
+      };
+      out.push(...rowsIn(S, m.shot, Math.max(3, cam.W * 0.012), darkAt, f.curved ? "soft" : "filbert", { clip, meant: darkAt }));
+    }
+    if (out.length) yield* inSteps("the shadow of " + theOf(A) + " on " + theOf(B), out);
+  }
+  /* The ground round a solid where it stands, gone over again once it is
+   * there: darker close in, where it shuts out the light from round about
+   * (occlusion), and touched with its colour (diffusion). */
+  function* groundSteps(S, P) {
+    const g = P.ground, h = g.h, { cam } = S, m = P.middle || P.placed.middle, ring = P.foot.map(([x, z]) => [m[0] + (x - m[0]) * 1.8, h, m[2] + (z - m[2]) * 1.8]);
+    const shot = hull2(ring.map((p) => project(cam, p))), crosses = h === 0 && ring.some((p) => p[2] > ROOM.wall);
+    if (shot.length < 3 || Math.max(...shot.map((p) => p[1])) <= cam.cy) return;
+    const base = h > 0 ? P.host.base : S.palette.floor, side = S.light.side, self = h > 0 ? P.host : null, middle = [m[0], m[2]];
+    const groundAt = (x, y) => {
+      const Z = planeDepth(cam, Math.max(y, cam.cy + 1), h), at = [(x - cam.cx) * Z / cam.f, h, Z], near = Math.min(ROOM.wall, Z);
+      // (Shut in where it stands, opening out to the ground as it was by the ring's edge: no edge where it ends.)
+      const foot = reachToward(P.foot, middle, [at[0], at[2]]), d = Math.hypot(at[0] - m[0], at[2] - m[2]), open = Number.isFinite(foot) ? clamp((d - foot) / (foot * 0.8), 0, 1) : 1;
+      const c = mix(shade(S, base, [0, 1, 0], near, { at, self }), shade(S, base, [0, 1, 0], near), open * open * (3 - 2 * open));
+      return h > 0 ? c : c.map((v) => v * (1 + 0.12 * side * (x / cam.W - 0.5) * 2));
+    };
+    yield* inSteps("the ground round " + theOf(P), rowsIn(S, shot, Math.max(4, cam.W * 0.016), groundAt, "soft", { meant: groundAt, ...(g.clip ? { clip: g.clip } : crosses ? { clip: floorOf(cam) } : {}) }, cam.W * 0.03));
+  }
+  /* What stands near a new solid takes some of its colour, and loses some
+   * light to it: their faces turned to it gone over again, lightly, where
+   * they are near it. */
+  function* nearSteps(S, P) {
+    const m = P.middle || P.placed.middle, out = [];
+    for (const Q of alive(S)) {
+      if (Q === P || Q.round || Q.kind === "sphere") continue;
+      for (const f of Q.map.visible) {
+        if (dot(f.normal, sub(m, f.centre)) <= 0 || Math.hypot(...sub(m, f.centre)) > 1.8) continue;
+        const fill = f.idx.length > 4 ? fillPolygon(S, f, Q.base, Q) : fillPlane(S, f, Q.base, Q), fronts = outsFor(S, Q);
+        for (const s of fill) out.push(Object.assign(s, { faint: true, app: Q.app, clipOut: fronts }));
+      }
+    }
+    if (out.length) yield* inSteps("what stands near " + theOf(P) + " takes its colour", out);
+  }
+
   /* ── A sphere: brush shapes stacked inside its volume ─────────────────
    * Rings from the rim (the farthest of it that can be seen) to the front,
    * each ring's strokes going round it from its darkest side, so the light
@@ -769,7 +1047,7 @@
     const dark = Math.atan2(L[1], -L[0]);   // in the picture: away from the light
     const colourAt = (x, y) => {
       const nx = clamp((x - cx) / r, -1, 1), ny = clamp(-(y - cy) / r, -1, 1), nz = -Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny));
-      return shade(S, E.base, [nx, ny, nz], C[2] + R * nz, { shine: 0.55 });
+      return shade(S, E.base, [nx, ny, nz], C[2] + R * nz, { shine: 0.55, at: add(C, times([nx, ny, nz], R)), self: E });
     };
     const h = unit(add(L, [0, 0, -1])), hx = cx + h[0] * r * 0.92, hy = cy - h[1] * r * 0.92;
     const keep = S.rules.reserve ? [oval(hx, hy, ring * 0.6, ring * 0.45, 14)] : null;
@@ -903,13 +1181,106 @@
       const plane = (face.level ? (face.horizon === "above" ? "underside" : "top") : face.name.startsWith("face") || face.name.startsWith("side") ? "face" : face.name + " face") +
         (face.seed === "level" ? ", the seed's top carried on" : face.seed === "below" ? ", under the seed's top" : face.seed === "above" ? ", over the seed's top" : "");
       if (build.length) yield { label: "the corners of " + name + "'s " + plane, strokes: build };
-      yield* inSteps(name + "'s " + plane, fillPlane(S, face, E.base));
-      yield* glazes(S, E, face.screen, name + "'s " + plane, () => fillPlane(S, face, E.base));
+      const fill = () => (face.idx.length > 4 ? fillPolygon(S, face, E.base, E) : fillPlane(S, face, E.base, E));
+      yield* inSteps(name + "'s " + plane, fill());
+      yield* glazes(S, E, face.screen, name + "'s " + plane, fill);
       done.push(face);
     }
+    if (E.form?.soft) yield* softEdges(S, E);
     if (E.app?.handling === "blended") yield* softenSteps(S, E);
   }
-  // The edges of a solid lying against the one it is built on or against.
+  /* Softened corners (Mutation): where two of its planes meet, the edge is
+   * rounded off - a soft stroke along it in the light of a surface turned
+   * halfway between the two, so an edge turned to the light catches it (a
+   * peak) and one turned away falls between them. */
+  function* softEdges(S, E) {
+    const { cam } = S, v = E.placed.verts, out = [], soft = E.form.soft, clip = clipOf(E.outline, 0.5);
+    for (const e of E.map.edges) {
+      if (e.faces.length !== 2) continue;
+      const n = unit(add(e.faces[0].normal, e.faces[1].normal)), mid = times(add(v[e.a], v[e.b]), 0.5);
+      const width = Math.max(3, cam.f * E.size * soft / Math.max(1, mid[2]));
+      const at = (x, y) => shade(S, E.base, n, mid[2], { at: mid, self: E, shine: 0.25 });
+      out.push(stroke(S, [E.map.pts[e.a], E.map.pts[e.b]], width, at(), "soft", { meant: at, clip, edge: true }));
+    }
+    yield* inSteps("softening the corners of " + theOf(E), out);
+  }
+  /* A plane of many corners (a cylinder's top) filled in rows level across
+   * the picture, far to near, each in the plane's light where it lies. */
+  function fillPolygon(S, face, base, E) {
+    const { cam } = S, w = face.world, n = face.normal, c = face.centre;
+    const u = Math.abs(n[1]) > 0.9 ? [1, 0, 0] : unit(cross([0, 1, 0], n)), v = unit(cross(n, u));
+    const flat = w.map((p) => [dot(sub(p, c), u), dot(sub(p, c), v)]), vs = flat.map((q) => q[1]);
+    const v0 = Math.min(...vs), v1 = Math.max(...vs), back = (a, b) => add(c, add(times(u, a), times(v, b)));
+    const deep = Math.hypot(...sub(project(cam, back(0, v0)), project(cam, back(0, v1)))), brush = Math.max(5, Math.min(cam.W, cam.H) * 0.034);
+    const rows = Math.max(2, Math.round(deep / (brush * 0.8))), band = (v1 - v0) / rows, clip = clipOf(face.screen);
+    const o = [0, cam.eye, 0];
+    const meantAt = (x, y) => {
+      const d = [(x - cam.cx) / cam.f, -(y - cam.cy) / cam.f, 1], den = dot(n, d), t = Math.abs(den) < 1e-6 ? c[2] : dot(n, sub(c, o)) / den;
+      return shade(S, base, n, t > 0 ? t : c[2], { at: t > 0 ? add(o, times(d, t)) : c, self: E });
+    };
+    const out = [];
+    for (let r = 0; r < rows; r++) {
+      const vv = v0 + (r + 0.5) * band;
+      let a = Infinity, b = -Infinity;
+      for (let i = 0; i < flat.length; i++) {
+        const [pu, pv] = flat[i], [qu, qv] = flat[(i + 1) % flat.length];
+        if ((pv - vv) * (qv - vv) > 0 || pv === qv) continue;
+        const uu = pu + (qu - pu) * (vv - pv) / (qv - pv);
+        a = Math.min(a, uu); b = Math.max(b, uu);
+      }
+      if (!(b > a)) continue;
+      const pa = back(a - band * 0.2, vv), pb = back(b + band * 0.2, vv), m = back((a + b) / 2, vv);
+      const width = Math.hypot(...sub(project(cam, back(0, vv - band * 0.75)), project(cam, back(0, vv + band * 0.75))));
+      out.push({ z: m[2], s: stroke(S, [project(cam, pa), project(cam, m), project(cam, pb)], Math.max(3, width), meantAt(...project(cam, m)), "flat", { alpha: 0.97, clip, meant: meantAt }) });
+    }
+    return out.sort((p, q) => q.z - p.z).map((x) => x.s);
+  }
+  /* A cylinder, built like the sphere from what is farthest of it in to
+   * what faces the eye: its side in upright strokes from where it turns
+   * away, on either hand, in to the front, each in the light it turns to;
+   * then its top, if the eye is over it, as a plane. */
+  function* cylinderSteps(S, E) {
+    const { cam } = S, [mx, , mz] = E.placed.middle, r = E.radius, lo = E.low, hi = E.high, eye = [0, cam.eye, 0], N = 44, clip = clipOf(E.outline, 0.6);
+    const sides = () => {
+      const side = [];
+      for (let k = 0; k < N; k++) {
+        const t = (k + 0.5) / N * 2 * Math.PI, n = [Math.cos(t), 0, Math.sin(t)], p = [mx + r * n[0], (lo + hi) / 2, mz + r * n[2]];
+        if (dot(n, sub(eye, p)) <= 0) continue;
+        const a = project(cam, [p[0], lo, p[2]]), b = project(cam, [p[0], hi, p[2]]), q = [mx + r * Math.cos(t + 2 * Math.PI / N), lo, mz + r * Math.sin(t + 2 * Math.PI / N)];
+        const width = Math.hypot(...sub(project(cam, q), a)) * 1.7 + 2;
+        const meant = () => shade(S, E.base, n, p[2], { at: p, self: E, shine: 0.3 });
+        side.push({ far: Math.hypot(...sub(p, eye)), s: stroke(S, [a, off(S, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], 1), b], width, meant(), "flat", { meant, clip }) });
+      }
+      return side.sort((p, q) => q.far - p.far).map((x) => x.s);
+    };
+    yield* inSteps(theOf(E) + "'s side", sides());
+    yield* glazes(S, E, E.outline, E.name + "'s side", sides);
+    const top = E.map.faces.find((f) => f.name === "top" && f.visible);
+    if (top) yield* inSteps(theOf(E) + "'s top", fillPolygon(S, top, E.base, E));
+    if (E.app?.handling === "blended") yield* softenSteps(S, E);
+  }
+  /* A cone: in strokes up its slope from the rim toward the point, far to
+   * near round it, each in the light its slope turns to; the point last. */
+  function* coneSteps(S, E) {
+    const { cam } = S, [mx, , mz] = E.placed.middle, r = E.radius, lo = E.low, hi = E.high, eye = [0, cam.eye, 0], N = 40, clip = clipOf(E.outline, 0.6);
+    const h = hi - lo, apex = [mx, hi, mz];
+    const slopes = () => {
+      const side = [];
+      for (let k = 0; k < N; k++) {
+        const t = (k + 0.5) / N * 2 * Math.PI, n = unit([Math.cos(t) * h, r, Math.sin(t) * h]), base = [mx + r * Math.cos(t), lo, mz + r * Math.sin(t)];
+        const p = mix(base, apex, 0.35);
+        if (dot(n, sub(eye, p)) <= 0) continue;
+        const a = project(cam, base), b = project(cam, mix(base, apex, 0.88)), q = [mx + r * Math.cos(t + 2 * Math.PI / N), lo, mz + r * Math.sin(t + 2 * Math.PI / N)];
+        const width = Math.hypot(...sub(project(cam, q), a)) * 1.8 + 2;
+        const meant = () => shade(S, E.base, n, p[2], { at: p, self: E, shine: 0.3 });
+        side.push({ far: Math.hypot(...sub(p, eye)), s: stroke(S, [a, project(cam, mix(base, apex, 0.45)), b], width, meant(), "round", { meant, clip }) });
+      }
+      return side.sort((p, q) => q.far - p.far).map((x) => x.s);
+    };
+    yield* inSteps(theOf(E) + "'s slope", slopes());
+    yield* glazes(S, E, E.outline, E.name + "'s slope", slopes);
+    if (E.app?.handling === "blended") yield* softenSteps(S, E);
+  }
   function contactEdges(E) {
     const H = E.host, v = E.placed.verts;
     const against = (p) => (H.kind === "sphere" ? Math.hypot(...sub(p, H.middle)) - H.radius < 0.03 : H.map.faces.every((f) => dot(f.normal, sub(p, f.centre)) < 0.03));
@@ -919,7 +1290,7 @@
    * across on a level one, along its lowest edge on a slanted one), laid
    * from its far end to its near end, each in the plane's own light at the
    * depth it lies. */
-  function fillPlane(S, face, base) {
+  function fillPlane(S, face, base, E = null) {
     const { cam } = S, w = face.world, n = face.normal;
     const corners = w.length;
     // Which way its strokes run (they are laid one after another across it, far to near).
@@ -954,7 +1325,8 @@
       const t = Math.abs(den) < 1e-6 ? c0[2] : dot(n, sub(c0, o)) / den;
       return t > 0 ? t : c0[2];
     };
-    const meant = (x, y) => shade(S, base, n, depthAt(x, y));
+    const pointAt = (x, y) => { const d = [(x - cam.cx) / cam.f, -(y - cam.cy) / cam.f, 1], z = depthAt(x, y); return add(o, times(d, z)); };
+    const meant = (x, y) => shade(S, base, n, depthAt(x, y), { at: pointAt(x, y), self: E });
     /* Rows across the plane, ordered far to near by where each lies, laid
      * inside its edges (each stroke clipped to the plane's shape, a hair
      * outside it so two planes meet without a gap) - so the lines its corners
@@ -976,7 +1348,7 @@
         const a = project(cam, at(u0, v)), b = project(cam, at(u1, v)), m = at((u0 + u1) / 2, v);
         // (Wide enough to meet the next row: two rows set in from the edges stand further apart than a band.)
         const width = deep * Math.max(band * 1.25, gap * 1.15) * (1 + 0.12 * clamp((4 - m[2]) / 2, -1, 1));
-        const colour = shade(S, base, n, m[2]).map((c) => c + (S.rng() - 0.5) * 4);
+        const colour = shade(S, base, n, m[2], { at: m, self: E }).map((c) => c + (S.rng() - 0.5) * 4);
         out.push(stroke(S, [a, off(S, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], width * 0.04), b], width, colour, "flat", { alpha: 0.97, clip, meant }));
       }
     }
@@ -997,9 +1369,10 @@
             ring * 1.4, [0, 0, 0], "soft", { soften: true }));
         }
       }
-    } else {
+    } else if (!E.round) {
       for (const face of E.map.visible) {
-        fillPlane(S, face, E.base).forEach((s, i) => { if (i % 2 === 0) out.push(Object.assign(s, { soften: true, width: s.width * 0.8, tip: "soft", meant: null })); });
+        const fill = face.idx.length > 4 ? fillPolygon(S, face, E.base, E) : fillPlane(S, face, E.base, E);
+        fill.forEach((s, i) => { if (i % 2 === 0) out.push(Object.assign(s, { soften: true, width: s.width * 0.8, tip: "soft", meant: null })); });
       }
     }
     yield* inSteps("blending " + theOf(E), out);
@@ -1018,8 +1391,8 @@
    * its corners and planes in the picture (premap), its footprint on the
    * level it stands on, its outline in the picture and what it covers
    * there, and the ground it throws its shadow on. */
-  function makePiece(S, kind, size, foot, yaw = 0, host = null, how = null) {
-    const { cam } = S, P = { id: S.nextId++, kind, name: NAMES[kind], size, yaw, host, how, alive: true, shot: {} };
+  function makePiece(S, kind, size, foot, yaw = 0, host = null, how = null, form = {}) {
+    const { cam } = S, P = { id: S.nextId++, kind, form, name: nameFor(kind, form), size, yaw, host, how, alive: true, shot: {} };
     if (kind === "sphere") {
       P.radius = size; P.middle = [foot[0], foot[1] + size, foot[2]];
       P.low = foot[1]; P.high = foot[1] + 2 * size; P.top = null; P.planes = 0;
@@ -1027,8 +1400,11 @@
       const [cx, cy] = project(cam, P.middle), r = cam.f * size / P.middle[2];
       P.outline = oval(cx, cy, r, r, 28);
     } else {
-      const shape = shapeOf(kind, size);
+      const shape = shapeOf(kind, size, form);
       P.placed = place(shape, yaw, [foot[0], foot[1] - shape.low, foot[2]]);
+      // (A cylinder or a cone: its frame of many sides is for where it stands, what it hides and the shadow it throws; it is painted round.)
+      P.round = ROUND.has(kind);
+      if (P.round) P.radius = size / 2 * ((form.stretch || [1])[0]);
       P.map = premap(cam, P.placed);
       P.low = foot[1]; P.high = foot[1] + shape.high - shape.low;
       P.foot = hull2(P.placed.verts.map((v) => [v[0], v[2]]));
@@ -1046,7 +1422,8 @@
     // What it covers in the picture, its drawing with it.
     P.cover = clipOf(P.outline, S.lineW * 0.7 + 1.2);
     P.coverBox = boxOf([P.cover]);
-    P.ground = host ? { h: host.high, get base() { return host.base; }, clip: host.top?.visible ? clipOf(host.top.screen, 0.5) : null } : S.floor;
+    // (Set on another, it stands on that one's top; set beside one, on the floor.)
+    P.ground = host && how === "on" ? { h: host.high, get base() { return host.base; }, clip: host.top?.visible ? clipOf(host.top.screen, 0.5) : null } : S.floor;
     return P;
   }
   const alive = (S) => S.pieces.filter((P) => P.alive);
@@ -1127,7 +1504,7 @@
     const zs = P.kind === "sphere" ? [P.middle[2] - P.radius, P.middle[2] + P.radius] : P.placed.verts.map((v) => v[2]);
     if (Math.min(...zs) < BUILD.near || Math.max(...zs) > ROOM.wall - BUILD.back) return false;
     if (b.x0 < cam.W * m || b.x1 > cam.W * (1 - m) || b.y0 < cam.H * m || b.y1 > cam.H * ROOM.foot || b.x1 - b.x0 < cam.W * 0.04) return false;
-    if (P.map && P.map.planes > 3) return false;
+    if (P.map && !P.round && P.map.planes > 3) return false;
     const standing = alive(S);
     if (standing.some((Q) => collide(P, Q))) return false;
     const near = standing.filter((Q) => boxesMeet(P.coverBox, Q.coverBox));
@@ -1152,19 +1529,19 @@
    * or in line - so its lines run to the seed's vanishing points, not to
    * ones of its own. (A sphere begun with has no edges: the first solid
    * with edges is the seed's square then.) */
-  function edgeTurn(kind) {
-    const shape = shapeOf(kind, 1);
+  function edgeTurn(kind, form = {}) {
+    const shape = shapeOf(kind, 1, form);
     const bottom = shape.faces.map((f) => ({ f, y: f.idx.reduce((t, i) => t + shape.verts[i][1], 0) / f.idx.length })).reduce((a, b) => (b.y < a.y ? b : a)).f;
     const a = shape.verts[bottom.idx[0]], b = shape.verts[bottom.idx[1]];
     return Math.atan2(b[2] - a[2], b[0] - a[0]);
   }
-  const squareYaw = (S, kind) => (S.square === null ? S.rng() * Math.PI * 2 : S.square + edgeTurn(kind) + Math.floor(S.rng() * 4) * Math.PI / 2);
+  const squareYaw = (S, kind, form) => (S.square === null ? S.rng() * Math.PI * 2 : S.square + edgeTurn(kind, form) + Math.floor(S.rng() * 4) * Math.PI / 2);
   // The seed's square, from the first solid with edges.
   function squareTo(S, P) {
-    if (S.square === null && P.kind !== "sphere") S.square = P.yaw - edgeTurn(P.kind);
+    if (S.square === null && !P.round && P.kind !== "sphere") S.square = P.yaw - edgeTurn(P.kind, P.form);
   }
   // A solid set on another's top: smaller than it, square to the seed, standing wholly on it.
-  function placeOn(S, host, kind) {
+  function placeOn(S, host, kind, want = {}) {
     const top = host.top.world.map((v) => [v[0], v[2]]);
     const mx = top.reduce((t, q) => t + q[0], 0) / top.length, mz = top.reduce((t, q) => t + q[1], 0) / top.length;
     let inner = Infinity;
@@ -1172,10 +1549,11 @@
       const [x0, z0] = top[i], [x1, z1] = top[(i + 1) % top.length], l = Math.hypot(x1 - x0, z1 - z0) || 1;
       inner = Math.min(inner, Math.abs((x1 - x0) * (z0 - mz) - (z1 - z0) * (x0 - mx)) / l);
     }
-    const k = 0.5 + S.rng() * 0.4;
-    const size = kind === "sphere" ? inner * (0.5 + S.rng() * 0.4) : inner * 2 * k / (kind === "cube" ? Math.SQRT2 : 1.16);
-    const yaw = squareYaw(S, kind), a = S.rng() * Math.PI * 2, d = S.rng() * inner * 0.3;
-    const P = makePiece(S, kind, size, [mx + Math.cos(a) * d, host.high, mz + Math.sin(a) * d], yaw, host, "on");
+    const k = 0.5 + S.rng() * 0.4, form = want.form || {}, spread = Math.max(...(form.stretch || [1, 1, 1]).filter((v, i) => i !== 1));
+    const size = want.size || (kind === "sphere" ? inner * (0.5 + S.rng() * 0.4)
+      : inner * 2 * k / (kind === "cube" ? Math.SQRT2 : ROUND.has(kind) ? 1 : 1.16) / spread);
+    const yaw = squareYaw(S, kind, form), a = S.rng() * Math.PI * 2, d = S.rng() * inner * 0.3;
+    const P = makePiece(S, kind, size, [mx + Math.cos(a) * d, host.high, mz + Math.sin(a) * d], yaw, host, "on", form);
     P.away = [0, 1, 0];
     const stands = kind === "sphere" ? inPoly(top, P.middle[0], P.middle[2]) : P.foot.every(([x, z]) => inPoly(top, x, z));
     return stands ? P : null;
@@ -1183,12 +1561,14 @@
   /* A solid set against another's side on the floor: square to the seed,
    * moved in along one of the seed's own edges - slid a little along the
    * side it meets - until the two touch. */
-  function placeBeside(S, host, kind) {
-    const size = kind === "sphere" ? 0.3 + S.rng() * 0.25 : kind === "cube" ? [1, 0.8, 0.6][Math.floor(S.rng() * 3)] : kind === "tetrahedron" ? 0.9 + S.rng() * 0.4 : 0.75 + S.rng() * 0.3;
-    const at = host.kind === "sphere" ? host.middle : host.placed.middle, yaw = squareYaw(S, kind);
-    const t = S.square === null ? S.rng() * Math.PI * 2 : -S.square + Math.floor(S.rng() * 4) * Math.PI / 2;
+  function placeBeside(S, host, kind, want = {}) {
+    const form = want.form || {};
+    const size = want.size || (kind === "sphere" ? 0.3 + S.rng() * 0.25 : kind === "cube" ? [1, 0.8, 0.6][Math.floor(S.rng() * 3)] : kind === "tetrahedron" ? 0.9 + S.rng() * 0.4
+      : kind === "pyramid" ? 0.8 + S.rng() * 0.3 : kind === "cylinder" ? 0.6 + S.rng() * 0.3 : kind === "cone" ? 0.7 + S.rng() * 0.3 : 0.75 + S.rng() * 0.3);
+    const at = host.kind === "sphere" ? host.middle : host.placed.middle, yaw = squareYaw(S, kind, form);
+    const t = S.square === null ? S.rng() * Math.PI * 2 : -S.square + (want.axis ?? Math.floor(S.rng() * 4)) * Math.PI / 2;
     const way = [Math.cos(t), Math.sin(t)], across = [-way[1], way[0]];
-    const shape = kind === "sphere" ? null : shapeOf(kind, size), c = Math.cos(yaw), sn = Math.sin(yaw);
+    const shape = kind === "sphere" ? null : shapeOf(kind, size, form), c = Math.cos(yaw), sn = Math.sin(yaw);
     const local = shape ? hull2(shape.verts.map(([x, , z]) => [x * c + z * sn, -x * sn + z * c])) : oval(0, 0, size, size, 16);
     const reach = Math.max(...host.foot.map(([x, z]) => Math.hypot(x - at[0], z - at[2])));
     const slide = S.rng() < 0.5 ? 0 : (S.rng() - 0.5) * reach * 0.7;
@@ -1199,7 +1579,7 @@
     for (let i = 0; i < 14; i++) { const mid = (lo + hi) / 2; if (overlaps(footAt(mid), host.foot)) lo = mid; else hi = mid; }
     const d = hi + BUILD.touch;
     const P = makePiece(S, kind, size, [at[0] + way[0] * d + across[0] * slide, 0, at[2] + way[1] * d + across[1] * slide], yaw, host,
-      way[1] < -0.7 ? "in front of" : way[1] > 0.7 ? "behind" : "beside");
+      way[1] < -0.7 ? "in front of" : way[1] > 0.7 ? "behind" : "beside", form);
     P.away = [way[0], 0, way[1]];
     return P;
   }
@@ -1227,9 +1607,7 @@
   function pieceColour(S, not = null) {
     const known = S.colours.filter((c) => !not || apart(c, not) > 30);
     if (known.length >= 2 && S.rng() < 0.7) return known[Math.floor(S.rng() * known.length)].slice();
-    const c = hsl((S.palette.hue + S.colours.length * 137.5 + (S.rng() - 0.5) * 40) % 360, 0.35 + S.rng() * 0.4, 0.46 + S.rng() * 0.18);
-    S.colours.push(c);
-    return c.slice();
+    return hsl((S.palette.hue + S.colours.length * 137.5 + (S.rng() - 0.5) * 40) % 360, 0.35 + S.rng() * 0.4, 0.46 + S.rng() * 0.18);
   }
   // How the paint is handled for a form: each freedom the medium leaves, chosen (by the ledger, where there is one).
   function chooseApp(S, P) {
@@ -1241,10 +1619,10 @@
   function nameOf(S) {
     const standing = alive(S);
     if (standing.length === 2 && standing[1].host === standing[0] && standing[1].how === "on") return standing[1].name + " on " + standing[0].name;
-    const count = {};
-    for (const P of standing) count[P.kind] = (count[P.kind] || 0) + 1;
+    const count = new Map();
+    for (const P of standing) count.set(P.name, (count.get(P.name) || 0) + 1);
     const numbers = ["", "a", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
-    const parts = SOLIDS.filter((k) => count[k]).map((k) => (count[k] === 1 ? NAMES[k] : (numbers[count[k]] || count[k]) + " " + PLURALS[k]));
+    const parts = [...count].map(([name, n]) => (n === 1 ? name : (numbers[n] || n) + " " + plural(name)));
     return parts.length > 1 ? parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1] : parts[0] || "an empty room";
   }
   // Lifted (twice, if once is not enough) where a solid is meant lighter than what is there now: what cannot cover has to take back off first.
@@ -1253,7 +1631,9 @@
     for (let pass = 0; pass < 2; pass++) {
       yield look(label);
       if (!needsLift(S, P)) return;
-      yield* laid(S, liftSteps(S, [P.cover], label + (pass ? ", again" : "")), { within: [P.cover], box: P.coverBox, out: front });
+      // (A curved solid has no drawn edge to cover the rim of a lift: it is lifted just where it will be painted.)
+      const where = P.round ? clipOf(P.outline, 0.6) : P.cover;
+      yield* laid(S, liftSteps(S, [where], label + (pass ? ", again" : "")), { within: [where], box: P.coverBox, out: front });
     }
   }
   // Whether a solid is meant lighter than what is now where it will go (a transparent medium has to lift that first).
@@ -1265,7 +1645,7 @@
     const under = cells.reduce((t, k) => t + lum([S.paint.colour[k * 3], S.paint.colour[k * 3 + 1], S.paint.colour[k * 3 + 2]]), 0) / cells.length;
     return under < lum(S.rules.value ? valueOf(lightest) : lightest) - 12;
   }
-  const pieceSteps = (S, P) => (P.kind === "sphere" ? sphereSteps(S, P) : facetedSteps(S, P));
+  const pieceSteps = (S, P) => (P.kind === "sphere" ? sphereSteps(S, P) : P.kind === "cylinder" ? cylinderSteps(S, P) : P.kind === "cone" ? coneSteps(S, P) : facetedSteps(S, P));
 
   /* ── Changes ──────────────────────────────────────────────────────────
    * Each step's strokes laid by the medium, in order: inside the part
@@ -1278,8 +1658,11 @@
       const out = [];
       for (const s of step.strokes) {
         if (ctx.within) {
+          // (Only the parts of the place being worked again that it reaches: fewer to draw it through, and none at all for one that reaches none.)
           if (!strokeMeets(s, ctx.box)) continue;
-          s.within = ctx.within;
+          const boxes = (ctx.boxes ||= ctx.within.map((w) => boxOf([w]))), reach = ctx.within.filter((w, i) => strokeMeets(s, boxes[i]));
+          if (!reach.length) continue;
+          s.within = reach.length === ctx.within.length ? ctx.within : reach;
         }
         if (ctx.out?.length) s.clipOut = s.clipOut ? s.clipOut.concat(ctx.out) : ctx.out;
         if (ctx.app && !s.app) s.app = ctx.app;
@@ -1316,6 +1699,7 @@
     const name = theOf(P), since = S.paint.clock;
     S.action = P.host ? "adding " + P.name + " " + P.how + " " + theOf(P.host) : "setting up " + P.name;
     P.base ||= pieceColour(S);
+    if (!S.colours.some((c) => apart(c, P.base) < 4)) S.colours.push(P.base.slice());
     S.pieces.push(P);
     squareTo(S, P);
     P.app = chooseApp(S, P);
@@ -1326,9 +1710,15 @@
     yield* liftFor(S, P, front, "lifting the ground for " + name);
     // (Where nothing can cover, its shadows are painted round it, not under it: it could never hide them.)
     const own = S.rules.darkenOnly ? [P.outline] : [];
+    yield* laid(S, groundSteps(S, P), { out: (P.how === "on" ? outsFor(S, P.host).filter((c) => c !== P.cover) : others.map((Q) => Q.cover)).concat(own) });
     yield* laid(S, shadowSteps(S, P, S.floor, "the shadow of " + name), { out: others.map((Q) => Q.cover).concat(own) });
-    if (P.host && P.ground.clip) yield* laid(S, shadowSteps(S, P, P.ground, "its shadow on " + theOf(P.host)), { out: outsFor(S, P.host).filter((c) => c !== P.cover).concat(own) });
+    if (P.how === "on" && P.ground.clip) yield* laid(S, shadowSteps(S, P, P.ground, "its shadow on " + theOf(P.host)), { out: outsFor(S, P.host).filter((c) => c !== P.cover).concat(own) });
+    // Its shadow on the solids it reaches - the floor's shadow climbing their sides - then it, then theirs on it.
+    for (const Q of others) yield* laid(S, castSteps(S, P, Q), { out: outsFor(S, Q).filter((c) => c !== P.cover).concat(own) });
     yield* laid(S, pieceSteps(S, P), { out: front, app: P.app });
+    for (const Q of others) yield* laid(S, castSteps(S, Q, P), { out: front });
+    // What stands near takes some of its colour, and loses some light to it.
+    yield* laid(S, nearSteps(S, P));
     S.name = nameOf(S);
     yield* lookAgain(S, since, name, P);
   }
@@ -1345,7 +1735,8 @@
       const l = Math.hypot(x1 - x0, y1 - y0) || 1, nx = -(y1 - y0) / l * w, ny = (x1 - x0) / l * w, ex = (x1 - x0) / l * w, ey = (y1 - y0) / l * w;
       return [[x0 + nx - ex, y0 + ny - ey], [x1 + nx + ex, y1 + ny + ey], [x1 - nx + ex, y1 - ny + ey], [x0 - nx - ex, y0 - ny - ey]];
     });
-    const region = [clipOf(P.outline, S.lineW * 1.8 + 2), ...(P.shot.floor ? [clipOf(P.shot.floor, 3)] : []), ...(P.shot.top ? [clipOf(P.shot.top, 3)] : []), ...guides];
+    const cast = P.shot.on ? [...P.shot.on.values()].flat() : [];
+    const region = [clipOf(P.outline, S.lineW * 1.8 + 2), ...(P.shot.floor ? [clipOf(P.shot.floor, 3)] : []), ...(P.shot.top ? [clipOf(P.shot.top, 3)] : []), ...guides, ...cast];
     const box = boxOf(region), standing = alive(S), covers = standing.map((Q) => Q.cover), prefix = "where " + name + " was: ";
     S.name = nameOf(S);
     if (S.rules.darkenOnly) yield* laid(S, liftSteps(S, region, "lifting " + name + " off"), { within: region, box, out: covers });
@@ -1355,59 +1746,368 @@
     }
     // The solids it hid, each after what it stands on, each with its shadow on that first.
     for (const Q of standing) {
-      if (Q.host && Q.ground.clip && Q.shot.top && boxesMeet(boxOf([Q.shot.top]), box)) {
+      if (Q.how === "on" && Q.ground.clip && Q.shot.top && boxesMeet(boxOf([Q.shot.top]), box)) {
         yield* laid(S, shadowSteps(S, Q, Q.ground, "the shadow of " + theOf(Q) + " on " + theOf(Q.host)), { within: region, box, out: outsFor(S, Q.host).filter((c) => c !== Q.cover), prefix });
       }
-      if (boxesMeet(Q.coverBox, box)) yield* laid(S, pieceSteps(S, Q), { within: region, box, out: outsFor(S, Q), app: Q.app, prefix });
+      if (boxesMeet(Q.coverBox, box)) {
+        yield* laid(S, pieceSteps(S, Q), { within: region, box, out: outsFor(S, Q), app: Q.app, prefix });
+        // (And the shadows the others still throw on it.)
+        for (const C of standing) if (C !== Q) yield* laid(S, castSteps(S, C, Q), { within: region, box, out: outsFor(S, Q), prefix });
+      }
     }
     yield* lookAgain(S, since, "where " + name + " was", null);
   }
   // Reworking a solid: painted again over itself - in a new colour, or the same with the handling chosen afresh - and what stands on it throws its shadow on it again.
-  function* reworkPiece(S, P) {
+  function* reworkPiece(S, P, recolour = false) {
     // (A medium that cannot cover restates a solid in its own colour, deeper; it cannot put another over it.)
-    const name = theOf(P), since = S.paint.clock, recolour = !S.rules.darkenOnly && S.rng() < 0.5;
+    const name = theOf(P), since = S.paint.clock;
+    recolour = recolour && !S.rules.darkenOnly;
     S.action = (recolour ? "repainting " : "restating ") + name;
     S.notes.reworked++;
-    if (recolour) P.base = pieceColour(S, P.base);
+    if (recolour) {
+      P.base = pieceColour(S, P.base);
+      if (!S.colours.some((c) => apart(c, P.base) < 4)) S.colours.push(P.base.slice());
+    }
     P.app = chooseApp(S, P);
     S.lastApp = P.app;
     const front = outsFor(S, P);
     yield* liftFor(S, P, front, "lifting " + name);
     yield* laid(S, pieceSteps(S, P), { out: front, app: P.app });
     for (const Q of alive(S)) {
-      if (Q.host === P && Q.ground.clip) yield* laid(S, shadowSteps(S, Q, Q.ground, "the shadow of " + theOf(Q) + " on it"), { out: outsFor(S, P).filter((c) => c !== Q.cover) });
+      if (Q.host === P && Q.how === "on" && Q.ground.clip) yield* laid(S, shadowSteps(S, Q, Q.ground, "the shadow of " + theOf(Q) + " on it"), { out: outsFor(S, P).filter((c) => c !== Q.cover) });
+      if (Q !== P) yield* laid(S, castSteps(S, Q, P), { out: front });
     }
     yield* lookAgain(S, since, name, P);
   }
-  // What can be taken away: nothing standing on it, never the last one; the one that came out worst, as often as not.
-  function removable(S) {
-    const standing = alive(S);
-    if (standing.length < 2) return null;
-    const free = standing.filter((P) => !standing.some((Q) => Q.host === P));
-    if (!free.length) return null;
-    if (S.rng() < 0.5) return free.reduce((a, b) => ((b.rate || 0) > (a.rate || 0) ? b : a));
-    return free[Math.floor(S.rng() * free.length)];
+  /* ── Learning ─────────────────────────────────────────────────────────
+   * It learns what to build. Every change it makes is described by what it
+   * was - adding a sphere on a cube, rising over the seed, smaller than what
+   * it joins, stretched tall, on the left, into a crowd; taking away the
+   * oldest; restating a cube; a form it learned - and the picture is judged
+   * as a whole before and after it, by its taste as learned from your votes
+   * (`judge`). What the change did - better or worse to look at, something
+   * new or an arrangement made before, near what was meant or not - is kept
+   * against each of those features, across paintings (memory). Each next
+   * change is chosen from several it could make by what their features
+   * have done, with room for what it has not tried; the same arrangement
+   * made again counts against itself. Two changes that did well together,
+   * one built on the other, are kept as a form and built again - varied -
+   * as one move, so what it builds with grows. Its rules come one at a time
+   * (RULES), each only once the rules it stands on have gone well: joining
+   * before stacking, stretching before turning or softening, forms before
+   * varying them - never a rule before what it needs. What it has learned
+   * sets how much it takes on: it starts with a few solids, and builds
+   * bigger as it does well. KEEP and REJECT, and a vote on its last move,
+   * count most.
+   *   taste    a change's worth for each unit of taste it adds to the picture
+   *   fresh    what an arrangement never made before is worth; `stale`, what each time it was made before costs
+   *   error    what being off what was meant costs, per share of the canvas off
+   *   rate     the least what it has learned moves by, each time
+   *   explore  what the untried is worth for not being known yet
+   *   warmth   how loosely it picks among its options (0: always the best)
+   *   start    solids it takes on at first; `per`, net good changes for each one more; `grow`, changes in a painting for each one more; `most`, the most ever
+   *   form     what two changes together must have done for a form to be kept
+   *   forms    forms kept at most; `seen`, arrangements remembered
+   *   master   uses of a rule before what stands on it can open; `pass`, how well they must have gone
+   *   vote     what a vote is worth; `recent`, changes back a vote reaches */
+  const LEARN = { key: "hexfield.study.memory.v1", taste: 12, fresh: 0.12, stale: 0.04, error: 0.5, rate: 0.1, explore: 0.25, warmth: 0.12,
+    start: 3, per: 4, grow: 8, most: 14, form: 0.06, forms: 24, seen: 300, master: 3, pass: -0.02, vote: 0.8, recent: 6 };
+  const RULES = [
+    { id: "join", name: "joining solids", needs: [] },
+    { id: "stack", name: "stacking them", needs: ["join"] },
+    { id: "stretch", name: "stretching squares into rectangles", needs: ["join"] },
+    { id: "turn", name: "turning a sphere into a cylinder, triangles into pyramids and cones", needs: ["stretch", "stack"] },
+    { id: "soften", name: "softening corners", needs: ["stretch"] },
+    { id: "forms", name: "building the forms it learned", needs: ["join", "stack"] },
+    { id: "vary", name: "varying its forms", needs: ["forms", "stretch"] },
+    { id: "clear", name: "making solids that can be seen through", needs: ["soften", "turn"] },
+  ];
+  let MEMORY = null;
+  function memory() {
+    if (MEMORY) return MEMORY;
+    let m = null;
+    try { m = JSON.parse(global.localStorage?.getItem(LEARN.key) || "null"); } catch { m = null; }
+    if (!m || typeof m !== "object" || !m.values || !Array.isArray(m.forms) || !m.seen) m = { values: {}, forms: [], seen: {}, skill: 0, moves: 0 };
+    return (MEMORY = m);
   }
-  // The next change: build on, take away, or rework - the more there is, the likelier something goes.
+  function remember() {
+    try { global.localStorage?.setItem(LEARN.key, JSON.stringify(memory())); } catch { /* none here, or full */ }
+  }
+  // What a change did, kept against one thing about it: a running mean that never stops moving.
+  function teach(f, r) {
+    const v = memory().values, cell = v[f] || (v[f] = [0, 0]);
+    cell[0]++;
+    cell[1] = +(cell[1] + (r - cell[1]) * Math.max(LEARN.rate, 1 / cell[0])).toFixed(4);
+  }
+  // What a change is expected to do: what its features have done, the untried worth something for being untried.
+  function worth(feats) {
+    const M = memory(), spread = Math.log(1 + M.moves);
+    let sum = 0;
+    for (const f of feats) { const [n, mean] = M.values[f] || [0, 0]; sum += mean + LEARN.explore * Math.sqrt(spread / (1 + n)); }
+    return feats.length ? sum / feats.length : 0;
+  }
+  // How well it knows a change: the fewest times any of its features was tried, and what they did on the whole.
+  function known(feats) {
+    const M = memory();
+    let n = Infinity, sum = 0;
+    for (const f of feats) { const c = M.values[f] || [0, 0]; n = Math.min(n, c[0]); sum += c[1]; }
+    return { n: Number.isFinite(n) ? n : 0, mean: feats.length ? sum / feats.length : 0 };
+  }
+  // One of the options by what each is worth - loosely, so the less tried still come up.
+  function pick(rng, options) {
+    const scores = options.map((o) => worth(o.feats) + (o.prior || 0)), top = Math.max(...scores);
+    const weights = scores.map((v) => Math.exp((v - top) / LEARN.warmth)), total = weights.reduce((a, b) => a + b, 0);
+    let r = rng() * total;
+    for (let i = 0; i < options.length; i++) if ((r -= weights[i]) <= 0) return options[i];
+    return options[options.length - 1];
+  }
+  const ruleRow = (id) => memory().values["rule: " + id] || [0, 0];
+  const mastered = (id) => { const [n, mean] = ruleRow(id); return n >= LEARN.master && mean >= LEARN.pass; };
+  const opened = (id) => RULES.find((r) => r.id === id).needs.every(mastered);
+  // How many solids it takes on: more as it has done well - and, in each painting, more the longer it goes on.
+  const most = (S = null) => clamp(LEARN.start + Math.floor(memory().skill / LEARN.per) + (S ? Math.floor((S.moves || 0) / LEARN.grow) : 0), LEARN.start, LEARN.most);
+  /* A solid to add, as far as its rules have opened (Mutation): a platonic
+   * solid; or turned - a sphere into a cylinder, triangles into a pyramid of
+   * more sides or a cone; stretched taller, flatter or longer; its corners
+   * softened; seen through. */
+  function mutated(S, kind) {
+    const form = {}, rules = [], was = kind;
+    if (opened("turn") && S.rng() < 0.4) {
+      if (kind === "sphere") kind = "cylinder";
+      else if (kind === "tetrahedron" || kind === "octahedron") kind = S.rng() < 0.5 ? "cone" : "pyramid";
+      else if (kind === "cube" && S.rng() < 0.3) kind = "cylinder";
+      if (kind !== was) rules.push("turn");
+    }
+    if (kind === "pyramid") form.sides = 4 + Math.floor(S.rng() * 3);
+    if (opened("stretch") && kind !== "sphere" && S.rng() < 0.5) {
+      const st = [1, 1, 1], r = S.rng();
+      if (r < 0.4 || ROUND.has(kind)) st[1] = r < 0.7 ? 1.3 + S.rng() * 0.6 : 0.45 + S.rng() * 0.3;
+      else if (r < 0.65) st[1] = 0.45 + S.rng() * 0.3;
+      else st[S.rng() < 0.5 ? 0 : 2] = 1.3 + S.rng() * 0.6;
+      form.stretch = st.map((v) => +v.toFixed(2));
+      rules.push("stretch");
+    }
+    if (opened("soften") && !ROUND.has(kind) && S.rng() < 0.35) { form.soft = +(0.1 + S.rng() * 0.18).toFixed(2); rules.push("soften"); }
+    if (opened("clear") && S.rng() < 0.2) { form.opacity = +(0.5 + S.rng() * 0.35).toFixed(2); rules.push("clear"); }
+    return { kind, form, rules };
+  }
+  const stretchWord = (st) => (st[1] > 1.25 ? "stretched tall" : st[1] < 0.8 ? "flattened" : Math.max(st[0], st[2]) > 1.25 ? "stretched long" : "kept square");
+  // What a solid added is, as features to learn by.
+  function addFeatures(S, P, rules) {
+    const n = alive(S).length, x = (P.box.x0 + P.box.x1) / 2 / S.cam.W;
+    const f = ["adding " + P.name, x < 0.36 ? "on the left" : x > 0.64 ? "on the right" : "in the middle", n <= 2 ? "into an empty room" : n <= 5 ? "among a few" : "into a crowd"];
+    if (P.host) {
+      f.push(P.name + " " + P.how + " " + P.host.name, P.how === "on" ? "set on top of another" : "set " + P.how + " another");
+      const h = (P.high - P.low) / Math.max(1e-3, P.host.high - P.host.low);
+      f.push(h < 0.75 ? "smaller than what it joins" : h > 1.3 ? "bigger than what it joins" : "as big as what it joins");
+      f.push(apart(P.base, P.host.base) < 25 ? "in the colour of what it joins" : "in another colour");
+    }
+    if (S.seed && P !== S.seed) f.push(P.high > S.seed.high + 0.02 ? "rising over the seed" : P.high < S.seed.high - 0.02 ? "lower than the seed" : "as high as the seed");
+    if (P.form.stretch) f.push(stretchWord(P.form.stretch));
+    if (P.form.soft) f.push("softened corners");
+    if ((P.form.opacity ?? 1) < 0.95) f.push("seen through");
+    for (const r of rules) f.push("rule: " + r);
+    return f;
+  }
+  const labelOf = (P) => (P.host ? P.name + " " + P.how + " " + theOf(P.host) : P.name);
+  // Places another solid could go - each connected to one standing, each as its rules let it be (a beat after each one that fits, and every few tried).
+  function* candidates(S, count, out) {
+    const standing = alive(S);
+    for (let t = 0; t < BUILD.tries && out.length < count && standing.length; t++) {
+      if (t && t % 6 === 0) yield BEAT;
+      const host = standing[Math.floor(S.rng() * standing.length)], on = opened("stack") && host.top && S.rng() < 0.45;
+      if (!on && host.low > 0.01) continue;
+      const m = mutated(S, pickKind(S));
+      const P = on ? placeOn(S, host, m.kind, { form: m.form }) : placeBeside(S, host, m.kind, { form: m.form });
+      if (!P) continue;
+      P.base = pieceColour(S);
+      if (fits(S, P)) { out.push({ piece: P, rules: [on ? "stack" : "join", ...m.rules] }); yield BEAT; }
+    }
+  }
+  // A step with nothing laid in it: where whoever lays the steps may stop a while (thinking takes time too).
+  const BEAT = Object.freeze({ label: "thinking", strokes: Object.freeze([]), beat: true });
+  // What can be taken away: nothing standing on it, never the seed - the one that came out worst, the oldest, any.
+  function removables(S) {
+    const standing = alive(S), free = standing.filter((P) => P !== S.seed && !standing.some((Q) => Q.host === P));
+    if (!free.length) return [];
+    const worst = free.reduce((a, b) => ((b.reward ?? 0) < (a.reward ?? 0) ? b : a)), oldest = free.reduce((a, b) => (b.id < a.id ? b : a));
+    const any = free[Math.floor(S.rng() * free.length)], out = [[worst, "what came out worst"]];
+    if (oldest !== worst) out.push([oldest, "the oldest"]);
+    if (any !== worst && any !== oldest) out.push([any, "one at random"]);
+    return out;
+  }
+  // The structure as an arrangement: what stands on or against what, wherever it is.
+  const arrangement = (S) => alive(S).map((P) => P.name + (P.host ? (P.how === "on" ? " on " : " by ") + P.host.name : "")).sort().join(", ");
+  /* The next change, chosen from those it could make by what it has
+   * learned of each: adding (as its rules let it), building a form it
+   * learned, taking something away (likelier the fuller it is, and seldom
+   * in a medium that cannot take paint back off), or reworking. */
   function* nextAction(S) {
-    const standing = alive(S), n = standing.length, forced = S.queue.shift();
+    const standing = alive(S), n = standing.length, cap = most(S), forced = S.queue.shift();
     if (forced) {
       const P = findPlace(S, forced.how, forced.kind);
-      if (P) { yield* addPiece(S, P); return; }
+      if (P) { yield* move(S, { type: "add", piece: P, feats: addFeatures(S, P, [forced.how === "on" ? "stack" : "join"]), label: labelOf(P) }); return; }
     }
-    // (What cannot be taken back off is seldom taken away: a transparent medium's restraint.)
-    const r = S.rng(), away = (n >= 4 ? BUILD.remove[0] + BUILD.remove[1] * (n - 4) : 0) * (S.rules.darkenOnly ? S.M.lift : 1), full = n >= BUILD.most;
-    if ((full && r < 0.6 * (S.rules.darkenOnly ? S.M.lift : 1)) || (!full && r < away)) {
-      const P = removable(S);
-      if (P) { yield* removePiece(S, P); return; }
+    const options = [];
+    if (n < LEARN.most) {
+      // (Past what it takes on, adding is still open - crowded, worth less the further past.)
+      const over = n < cap ? 0.04 : -0.12 * (n - cap + 1);
+      const found = [];
+      yield* candidates(S, n < cap ? 5 : 2, found);
+      for (const c of found) options.push({ type: "add", piece: c.piece, feats: addFeatures(S, c.piece, c.rules), label: labelOf(c.piece), prior: over });
+      if (opened("forms") && n < cap) {
+        const forms = memory().forms.filter((f) => f.mean > -0.05 && !S.unbuilt.has(f.sig)).sort((a, b) => b.mean - a.mean).slice(0, 3);
+        for (const form of forms) options.push({ type: "form", form, feats: ["building a form it learned", "the form " + form.name, "rule: forms"], label: form.name, prior: 0.03 });
+      }
     }
-    if (full || r < away + BUILD.rework) { yield* reworkPiece(S, standing[Math.floor(S.rng() * n)]); return; }
-    const P = findPlace(S);
-    if (P) { yield* addPiece(S, P); return; }
-    const Q = n > 2 ? removable(S) : null;
-    if (Q) yield* removePiece(S, Q);
-    else yield* reworkPiece(S, standing[Math.floor(S.rng() * n)]);
+    const restraint = S.rules.darkenOnly ? Math.log(Math.max(0.05, S.M.lift)) * 0.25 : 0, crowd = n >= cap ? 0.2 : -0.5 + 0.45 * n / cap;
+    for (const [P, why] of removables(S)) options.push({ type: "remove", piece: P, feats: ["taking away " + P.name, "taking away " + why], label: "taking away " + theOf(P), prior: crowd + restraint });
+    if (n) {
+      const P = standing[Math.floor(S.rng() * n)], recolour = !S.rules.darkenOnly && S.rng() < 0.5;
+      options.push({ type: "rework", piece: P, recolour, feats: [(recolour ? "repainting " : "restating ") + P.name], label: (recolour ? "repainting " : "restating ") + theOf(P), prior: n >= cap ? 0.05 : -0.15 });
+    }
+    if (options.length) yield* move(S, pick(S.rng, options));
   }
+  // A change made, and learned from.
+  function* move(S, m) {
+    // (A form with nowhere to go now is passed over for the rest of the painting: not judged, not learned from.)
+    if (m.type === "form" && !(m.plan = planForm(S, m))) { S.unbuilt.add(m.form.sig); return; }
+    const before = judged(S), k = known(m.feats);
+    S.why = m.type === "form" ? "a form it learned" + (m.form.n ? " (" + (m.form.mean >= 0 ? "+" : "") + m.form.mean.toFixed(2) + ", built " + m.form.n + "×)" : "")
+      : k.n ? (k.mean >= 0 ? "it has done well " : "it has gone badly ") + "(" + (k.mean >= 0 ? "+" : "") + k.mean.toFixed(2) + ", " + k.n + "×)" : "something it has not tried";
+    if (m.type === "add") yield* addPiece(S, m.piece);
+    else if (m.type === "form") yield* buildForm(S, m);
+    else if (m.type === "remove") yield* removePiece(S, m.piece);
+    else yield* reworkPiece(S, m.piece, m.recolour);
+    learnFrom(S, m, before);
+  }
+  // The picture judged as it is - once for each state of it: the judging after one change is the judging before the next.
+  function judged(S) {
+    if (!S.judge) return null;
+    if (S.judgedAt?.clock !== S.paint.clock) S.judgedAt = { clock: S.paint.clock, value: S.judge() };
+    return S.judgedAt.value;
+  }
+  // After a change: the picture judged again, and what the change did kept against what it was.
+  function learnFrom(S, m, before) {
+    const M = memory(), after = judged(S);
+    const taste = Number.isFinite(before) && Number.isFinite(after) ? +clamp((after - before) * LEARN.taste, -1, 1).toFixed(4) : 0;
+    const shape = arrangement(S), times = M.seen[shape] || 0, fresh = times ? -LEARN.stale * Math.min(times, 5) : LEARN.fresh;
+    delete M.seen[shape];
+    M.seen[shape] = times + 1;
+    const keys = Object.keys(M.seen);
+    for (const k of keys.slice(0, Math.max(0, keys.length - LEARN.seen))) delete M.seen[k];
+    const reward = +(taste + fresh - LEARN.error * (S.error?.rate || 0)).toFixed(4);
+    for (const f of m.feats) teach(f, reward);
+    teach("beginning with " + (S.kind === "stack" ? "a stack" : NAMES[S.kind]), reward * 0.3);
+    if (m.form) teachForm(m.form, reward);
+    // (The solids a form put up are learned about too, at half the weight.)
+    for (const P of m.pieces || []) for (const f of addFeatures(S, P, [])) teach(f, reward * 0.5);
+    M.moves++;
+    M.skill = Math.max(0, +(M.skill + (reward > 0.02 ? 1 : reward < -0.02 ? -0.5 : 0)).toFixed(2));
+    Object.assign(m, { reward, taste, fresh });
+    if (m.type === "add") m.piece.reward = reward;
+    S.history.push(m);
+    if (S.history.length > 12) S.history.shift();
+    S.lastMove = m;
+    S.moves = (S.moves || 0) + 1;
+    keepForm(S, m);
+    remember();
+  }
+  function teachForm(form, r) {
+    form.n++;
+    form.mean = +(form.mean + (r - form.mean) * Math.max(LEARN.rate, 1 / form.n)).toFixed(4);
+  }
+  /* Two changes that did well together, one built on the other, kept as a
+   * form: the solid built on and the one built on it, as they stood - what
+   * each is, how it joins, how big against what it joins, which way. */
+  function keepForm(S, m) {
+    if (m.type !== "add" || !m.piece?.host?.host) return;
+    const P = m.piece, H = P.host, prior = S.history.find((h) => h.type === "add" && h.piece === H);
+    if (!prior || (prior.taste + m.taste) / 2 + (prior.fresh + m.fresh) / 4 < LEARN.form) return;
+    rememberForm(S, [H, P], (prior.reward + m.reward) / 2);
+  }
+  function axisOf(S, P) {
+    if (S.square === null || !P.away || P.how === "on") return null;
+    return ((Math.round((Math.atan2(P.away[2], P.away[0]) + S.square) / (Math.PI / 2)) % 4) + 4) % 4;
+  }
+  const formName = (steps) => steps.map((st, i) => (i ? (st.how === "on" ? " carrying " : " with ") : "") + nameFor(st.kind, st.form) + (i && st.how !== "on" ? " beside it" : "")).join("");
+  function rememberForm(S, chain, value) {
+    const M = memory(), steps = chain.map((P, i) => ({ kind: P.kind, form: P.form, how: P.how === "on" ? "on" : "beside",
+      scale: +((P.high - P.low) / Math.max(1e-3, P.host.high - P.host.low)).toFixed(3), axis: axisOf(S, P), parent: i }));
+    const sig = steps.map((st) => [st.kind, JSON.stringify(st.form), st.how, st.parent, st.axis ?? "-"].join("/")).join("|");
+    let form = M.forms.find((f) => f.sig === sig);
+    if (!form) {
+      form = { sig, name: formName(steps), steps, n: 0, mean: 0, at: Date.now() };
+      M.forms.push(form);
+      if (M.forms.length > LEARN.forms) M.forms.splice(M.forms.indexOf(M.forms.reduce((a, b) => (b.mean < a.mean ? b : a))), 1);
+      S.newForm = form;
+    }
+    teachForm(form, value);
+    return form;
+  }
+  /* A form it learned, built again from something standing - varied, once
+   * it may vary them (another solid in one place, another way, another
+   * size), so what it knows keeps turning into something new. */
+  // Where a form's first solid would go (varied first, if its rules let it): or nowhere, now.
+  function planForm(S, m) {
+    const steps = m.form.steps.map((st) => ({ ...st, form: { ...st.form } }));
+    if (opened("vary") && S.rng() < 0.5) {
+      const st = steps[Math.floor(S.rng() * steps.length)], r = S.rng();
+      if (r < 0.4) { const v = mutated(S, SOLIDS[Math.floor(S.rng() * SOLIDS.length)]); st.kind = v.kind; st.form = v.form; }
+      else if (r < 0.7 && st.axis !== null) st.axis = (st.axis + 1 + Math.floor(S.rng() * 3)) % 4;
+      else st.scale *= 0.75 + S.rng() * 0.5;
+      m.feats.push("varying a form", "rule: vary");
+    }
+    const first = steps[0], anchors = alive(S).filter((Q) => (first.how === "on" ? Q.top : Q.low < 0.01));
+    let P = null;
+    for (let t = 0; t < 8 && anchors.length && !P; t++) P = placeStep(S, anchors[Math.floor(S.rng() * anchors.length)], first);
+    return P ? { steps, first: P } : null;
+  }
+  function* buildForm(S, m) {
+    const { steps, first: P } = m.plan, made = [P];
+    yield* addPiece(S, P);
+    for (let i = 1; i < steps.length; i++) {
+      const Q = placeStep(S, made[steps[i].parent - 1] || made[made.length - 1], steps[i]);
+      if (!Q) break;
+      made.push(Q);
+      yield* addPiece(S, Q);
+    }
+    m.pieces = made;
+    return made.length;
+  }
+  function placeStep(S, host, step) {
+    if (step.how === "on" ? !host.top : host.low > 0.01) return null;
+    const unitHigh = step.kind === "sphere" ? 2 : (() => { const sh = shapeOf(step.kind, 1, step.form); return sh.high - sh.low; })();
+    const size = clamp(step.scale * (host.high - host.low) / unitHigh, 0.15, 2.5);
+    const P = step.how === "on" ? placeOn(S, host, step.kind, { size, form: step.form }) : placeBeside(S, host, step.kind, { size, axis: step.axis ?? undefined, form: step.form });
+    if (!P) return null;
+    P.base = pieceColour(S);
+    return fits(S, P) ? P : null;
+  }
+  /* A vote. On the painting (KEEP, REJECT): the changes just made take it,
+   * the latest most; a painting kept keeps its forms. On its last move:
+   * that one alone. */
+  function credit(S, vote, last = false) {
+    if (!S?.history?.length) return;
+    const moves = last ? S.history.slice(-1) : S.history.slice(-LEARN.recent).reverse();
+    moves.forEach((m, i) => {
+      const r = vote * LEARN.vote * Math.pow(0.75, i);
+      for (const f of m.feats) teach(f, r);
+      if (m.form) teachForm(m.form, r);
+    });
+    if (!last && vote > 0) for (const P of alive(S)) if (P.host?.host) rememberForm(S, [P.host, P], vote * 0.5);
+    remember();
+  }
+  // What it has learned, to be shown: what has done best and worst, its rules, its forms, how much it takes on.
+  function learned() {
+    const M = memory(), rows = Object.entries(M.values).filter(([f, [n]]) => n >= 2 && !f.startsWith("rule: ") && !f.startsWith("beginning"));
+    const up = rows.filter(([, [, v]]) => v > 0.03).sort((a, b) => b[1][1] - a[1][1]).slice(0, 3).map(([f]) => f);
+    const down = rows.filter(([, [, v]]) => v < -0.03).sort((a, b) => a[1][1] - b[1][1]).slice(0, 2).map(([f]) => f);
+    const rules = RULES.map((r) => ({ id: r.id, name: r.name, state: mastered(r.id) ? "learned" : opened(r.id) ? "learning" : "waiting", uses: ruleRow(r.id)[0] }));
+    return { up, down, rules, forms: M.forms.filter((f) => f.mean > 0).map((f) => f.name), most: most(), moves: M.moves, skill: M.skill };
+  }
+  // What to begin a painting with: what has done well, the untried worth something for being untried.
+  const seedKind = (rng = Math.random) => pick(rng, KINDS.map((k) => ({ k, feats: ["beginning with " + (k === "stack" ? "a stack" : NAMES[k])] }))).k;
   // The first solid: on the floor near the middle, far enough back that its foot is well inside the canvas.
   function firstPiece(S, kind, wants) {
     const { cam } = S, short = Math.min(cam.W, cam.H);
@@ -1436,7 +2136,8 @@
     const S = { kind, cam, light, palette: colours, rng, medium, M: MEDIA[medium], rules: rulesOf(MEDIA[medium]), level: "below",
       pieces: [], front: new Map(), nextId: 1, square: null, colours: [colours.solid, colours.solid2], queue: [], error: null, action: "", label: "",
       notes: { kept: 0, lifted: 0, corrected: 0, added: 0, removed: 0, reworked: 0 },
-      choose: wants.choose || ((freedom, key, options) => options[Math.floor(rng() * options.length)]), report: wants.report || null };
+      choose: wants.choose || ((freedom, key, options) => options[Math.floor(rng() * options.length)]), report: wants.report || null,
+      judge: wants.judge || null, history: [], moves: 0, unbuilt: new Set() };
     Object.defineProperty(S, "entries", { get: () => alive(S) });
     S.air = mix(shade({ light, palette: colours, air: colours.wall }, colours.wall, [0, 0, -1], 0), light.colour, 0.25);
     const l2 = Math.hypot(light.L[0], light.L[1]) || 1;
@@ -1476,5 +2177,6 @@
     return S;
   }
 
-  global.HexfieldStudy = { KINDS, SOLIDS, NAMES, ROOM, BUILD, MEDIA, MEDIUMS, LOOK, make, premap, camera, project, cubeSolid, tetraSolid, octaSolid, place, rulesOf, freedomsOf };
+  global.HexfieldStudy = { KINDS, SOLIDS, NAMES, ROOM, BUILD, MEDIA, MEDIUMS, LOOK, LEARN, RULES, make, premap, camera, project, cubeSolid, tetraSolid, octaSolid, pyramidSolid, prismSolid, place,
+    rulesOf, freedomsOf, credit, learned, seedKind, memory };
 })(typeof globalThis !== "undefined" ? globalThis : this);

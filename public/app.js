@@ -31088,7 +31088,7 @@ function updatePainterStatus(result) {
   if (strokePainter.plan?.study && current?.params) {
     // A study: its medium, what it is doing, the step, how far off what was meant the last change came out, and its strokes so far.
     const S = strokePainter.plan.study, error = S.error ? "off " + Math.round(S.error.rate * 100) + "%" : "";
-    label.textContent = [S.medium, S.action, S.label, error, (Number(strokePainter.strokes) || 0).toLocaleString() + " strokes"].filter(Boolean).join(" · ");
+    label.textContent = [S.medium, S.action, S.why, S.label, error, (Number(strokePainter.strokes) || 0).toLocaleString() + " strokes"].filter(Boolean).join(" · ");
     return;
   }
   if (strokePainter.plan && current?.params) {
@@ -34767,6 +34767,8 @@ function paintingChoices(plan) {
   if (plan.study) {
     // A study's own choices (Studies): its medium, how its paint was last handled, what it began from, its light.
     const S = plan.study, app = S.lastApp;
+    // Its last move, to be liked or not by itself (Learning).
+    if (S.lastMove) add(S.lastMove.label, "move" + letterCount(S.moves));
     add(S.medium, "medium" + S.medium);
     if (app?.wet) add(app.wet, app.wet === "on dry" ? "wetondry" : "wetintowet");
     if (app?.handling) add(app.handling, "handling" + app.handling);
@@ -34819,6 +34821,8 @@ function sayWhatItLearned(plan, liked) {
   renderChoiceCard(true);
 }
 
+// A count in letters (a, b, ... z, ba, bb ...), for a vote word that is new each time.
+const letterCount = (n) => { let out = ""; n = Math.max(0, Math.floor(n)); do { out = String.fromCharCode(97 + (n % 26)) + out; n = Math.floor(n / 26); } while (n); return out; };
 function recordChoiceVote(word, liked) {
   const plan = strokePainter.plan;
   if (!plan || !/^[a-z]{1,24}$/.test(word)) return false;
@@ -34829,7 +34833,8 @@ function recordChoiceVote(word, liked) {
   if (word.startsWith("pieces")) dofFreedomVote(plan, "structure", liked ? 1 : -1);
   if (word === "tealeaves") dofFreedomVote(plan, "chance", liked ? 1 : -1);
   if (plan.study) {
-    if (word.startsWith("medium")) dofFreedomVote(plan, "medium", liked ? 1 : -1);
+    if (word.startsWith("move")) globalThis.HexfieldStudy?.credit(plan.study, liked ? 1 : -1, true);
+    else if (word.startsWith("medium")) dofFreedomVote(plan, "medium", liked ? 1 : -1);
     else if (/^(wet|handling|load)/.test(word)) dofFreedomVote(plan, "application · " + plan.study.medium, liked ? 1 : -1);
     else if (/^(study|light)/.test(word)) dofFreedomVote(plan, "form", liked ? 1 : -1);
   }
@@ -42495,6 +42500,15 @@ function refreshDofPanel() {
       lines.push(`  ${key}: ` + cells.map(([bin, c]) => `${bin}${now && dofBin(key, now[key]) === bin ? "*" : ""} ${c.mean.toFixed(2)}·${c.n}`).join("  "));
     }
   }
+  // What the studies have learned (Learning): their rules, best and worst, forms.
+  const L = globalThis.HexfieldStudy?.learned?.();
+  if (L) {
+    lines.push(`\nstudies · ${L.moves} changes · skill ${L.skill} · takes on up to ${L.most}`);
+    lines.push("  rules: " + L.rules.map((r) => `${r.id} ${r.state === "learned" ? "\u2713" : r.state === "learning" ? "\u2026" + r.uses : "\u00b7"}`).join("  "));
+    if (L.up.length) lines.push("  \u2191 " + L.up.join(" \u00b7 "));
+    if (L.down.length) lines.push("  \u2193 " + L.down.join(" \u00b7 "));
+    if (L.forms.length) lines.push("  forms: " + L.forms.join(" \u00b7 "));
+  }
   dofPanel.textContent = lines.join("\n");
 }
 if (SHOW_DOF_MAP && typeof window !== "undefined") setInterval(refreshDofPanel, 2000);
@@ -44277,6 +44291,8 @@ function styleOutcomeLean(axis, key) {
  * once each way per painting. */
 function recordStyleVote(plan, liked) {
   if (!plan) return null;
+  // (A study's last changes take the vote, the latest most; a study kept keeps its forms: Learning.)
+  if (plan.study && !plan.styleVotes?.[liked ? "kept" : "rejected"]) globalThis.HexfieldStudy?.credit(plan.study, liked ? 1 : -1);
   const source = liked ? "kept" : "rejected";
   plan.styleVotes ||= {};
   if (plan.styleVotes[source]) return null;
@@ -45826,7 +45842,8 @@ function studyMedium() {
 }
 function beginStudy(result, width, height) {
   const Study = globalThis.HexfieldStudy;
-  const kind = Study.KINDS[studyCount % Study.KINDS.length];
+  // (The first exercise is a sphere; after that it begins with what it has learned to begin with: Learning.)
+  const kind = studyCount ? Study.seedKind(Math.random) : "sphere";
   const seed = (Number(result?.drawSeed) || Date.now()) >>> 0;
   const medium = studyMedium();
   let plan = null;
@@ -45834,6 +45851,8 @@ function beginStudy(result, width, height) {
     medium,
     choose: (freedom, key, options) => dofChoose(freedom, key, options, Math.random),
     report: (row) => studyReport(plan, row),
+    // How the picture as a whole looks to its taste (learned from your votes), before and after each change.
+    judge: () => { try { const t = finishedPictureTaste(); return Number.isFinite(t) ? t : null; } catch { return null; } },
   });
   studyCount++;
   const L = study.light.L;
@@ -45866,6 +45885,19 @@ function beginStudy(result, width, height) {
   showStudyWords(study.name);
   paintStudyBatch(result, plan);
   return true;
+}
+/* What the studies have learned, said where it can be seen: what has done
+ * best and worst, the rule it is learning now and the next one waiting,
+ * the forms it knows, how much it takes on (Learning). */
+function showStudyLearning() {
+  const status = typeof document !== "undefined" ? document.getElementById("localLearningStatus") : null, L = globalThis.HexfieldStudy?.learned?.();
+  if (!status || !L) return;
+  const learning = L.rules.filter((r) => r.state === "learning").map((r) => r.name), waiting = L.rules.find((r) => r.state === "waiting");
+  status.textContent = ["learned from " + L.moves + " changes",
+    L.up.length ? "\u2191 " + L.up.join(", ") : "", L.down.length ? "\u2193 " + L.down.join(", ") : "",
+    learning.length ? "learning " + learning.join(", ") : "", waiting ? "next: " + waiting.name : "",
+    L.forms.length ? "knows " + L.forms.length + (L.forms.length === 1 ? " form: " : " forms, like ") + L.forms[0] : "",
+    "takes on up to " + L.most].filter(Boolean).join(" \u00b7 ");
 }
 // Its words: what it is now.
 function showStudyWords(words) {
@@ -45901,20 +45933,25 @@ function studyReport(plan, report) {
 }
 /* The study's next steps, laid - a few together, up to STUDY_BATCH strokes,
  * so a line or two is not a batch of its own - but never past a look: what
- * comes after one is made seeing the canvas as it is (Mediums). It never runs
- * out: a study is built on for as long as it is left to go on. */
-const STUDY_BATCH = 90;
+ * comes after one is made seeing the canvas as it is (Mediums); and never
+ * thinking for longer than STUDY_THINK_MS at a time, so a run of steps that
+ * lay nothing (looking, a change it could not make) does not hold the page.
+ * It never runs out: a study is built on for as long as it is left to go on. */
+const STUDY_BATCH = 90, STUDY_THINK_MS = 24;
 function paintStudyBatch(result, plan) {
   const S = plan.study;
   if (!S || S.done || !view?.width) return false;
   // (A breath after each change, so it can be seen before the next - once what it found to do last is on.)
   if (S.restAfter) { S.restUntil = Date.now() + S.restAfter; S.restAfter = 0; }
   if (S.restUntil && Date.now() < S.restUntil) return true;
-  const pixels = vctx.getImageData(0, 0, view.width, view.height).data;
-  S.seen = { pixels, width: view.width, height: view.height };
-  const strokes = [];
+  // (The canvas read again only once something has been laid on it since it was last read.)
+  if (!S.seen || S.laidSince || S.seen.width !== view.width || S.seen.height !== view.height) {
+    S.seen = { pixels: vctx.getImageData(0, 0, view.width, view.height).data, width: view.width, height: view.height };
+    S.laidSince = false;
+  }
+  const pixels = S.seen.pixels, strokes = [], began = performance.now();
   let label = "";
-  for (let pulls = 0; pulls < 60 && strokes.length < STUDY_BATCH; pulls++) {
+  for (let pulls = 0; pulls < 60 && strokes.length < STUDY_BATCH && (!pulls || performance.now() - began < STUDY_THINK_MS); pulls++) {
     const next = S.steps.next();
     if (next.done) { S.done = true; break; }
     // (A look with strokes still to lay: they go on first, and it looks at them next time.)
@@ -45924,7 +45961,11 @@ function paintStudyBatch(result, plan) {
     if (next.value.strokes.length) label = next.value.label;
   }
   if (S.name !== plan.words) { plan.words = S.name; showStudyWords(S.name); }
+  if (S.moves !== plan.toldMoves) { plan.toldMoves = S.moves; showStudyLearning(); renderChoiceCard(true); }
+  // (Stopped mid-thought with nothing to lay yet: it goes on as soon as the page has had its turn.)
+  S.thinking = !strokes.length && !S.done && !(S.restUntil && Date.now() < S.restUntil) && !S.restAfter;
   if (!strokes.length) return !S.done;
+  S.laidSince = true;
   S.step = (S.step || 0) + 1;
   S.label = label;
   markPaintTimingStarted(result);
@@ -48190,8 +48231,9 @@ function paintNextBatch() {
   try { painted = continueMasterDetail(result); } catch (error) { console.warn("paint step failed", error); }
   if (painted) {
     paintIdle.steps = 0;
-    // The next batch once this one has landed.
-    Promise.resolve(visiblePaintCompletion).catch(() => false).then(() => scheduleAutoAdvance(gap));
+    // The next batch once this one has landed (a study still thinking: straight after the page's turn).
+    const soon = plan.study?.thinking ? 0 : gap;
+    Promise.resolve(visiblePaintCompletion).catch(() => false).then(() => scheduleAutoAdvance(soon));
     return;
   }
   updatePainterStatus(result);
