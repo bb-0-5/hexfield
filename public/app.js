@@ -34770,6 +34770,7 @@ function paintingChoices(plan) {
     // Its last move, to be liked or not by itself (Learning).
     if (S.lastMove) add(S.lastMove.label, "move" + letterCount(S.moves));
     add(S.medium, "medium" + S.medium);
+    add(S.view.name, "view" + S.view.id);
     if (app?.wet) add(app.wet, app.wet === "on dry" ? "wetondry" : "wetintowet");
     if (app?.handling) add(app.handling, "handling" + app.handling);
     if (app?.load) add(app.load + " paint", "load" + app.load);
@@ -34835,6 +34836,7 @@ function recordChoiceVote(word, liked) {
   if (plan.study) {
     if (word.startsWith("move")) globalThis.HexfieldStudy?.credit(plan.study, liked ? 1 : -1, true);
     else if (word.startsWith("medium")) dofFreedomVote(plan, "medium", liked ? 1 : -1);
+    else if (word.startsWith("view")) dofFreedomVote(plan, "view", liked ? 1 : -1);
     else if (/^(wet|handling|load)/.test(word)) dofFreedomVote(plan, "application · " + plan.study.medium, liked ? 1 : -1);
     else if (/^(study|light)/.test(word)) dofFreedomVote(plan, "form", liked ? 1 : -1);
   }
@@ -45830,7 +45832,10 @@ let criticTurnBatch = false;
  * gouache, charcoal) keeps to one medium. */
 const STUDY_MODE = (() => { try { return !new URLSearchParams(location.search).has("scenes"); } catch { return true; } })();
 const STUDY_MEDIUM = (() => { try { return new URLSearchParams(location.search).get("medium") || null; } catch { return null; } })();
-let studyCount = 0, studyMediumFrom = null;
+const STUDY_VIEW = (() => { try { return new URLSearchParams(location.search).get("view") || null; } catch { return null; } })();
+// The words asked of the studies - ?words=sunflower (a plant to grow) or ?words=hex (to letter) - kept for each new study.
+const STUDY_WORDS = (() => { try { return new URLSearchParams(location.search).get("words") || null; } catch { return null; } })();
+let studyCount = 0, studyMediumFrom = null, studyWords = STUDY_WORDS;
 const studyOn = () => STUDY_MODE && Boolean(globalThis.HexfieldStudy?.make);
 function studyMedium() {
   const media = globalThis.HexfieldStudy.MEDIUMS;
@@ -45846,9 +45851,15 @@ function beginStudy(result, width, height) {
   const kind = studyCount ? Study.seedKind(Math.random) : "sphere";
   const seed = (Number(result?.drawSeed) || Date.now()) >>> 0;
   const medium = studyMedium();
+  // (Typed - or cleared - by hand since a study last wrote its own words there, where the box can be typed in.)
+  const box = typeof document !== "undefined" ? document.getElementById("wordPrompt") : null;
+  if (box && box.type !== "hidden" && box.dataset.fromStudy !== box.value) studyWords = box.value.trim() || null;
   let plan = null;
   const study = Study.make(width, height, seed, kind, {
     medium,
+    words: studyWords,
+    // (The first is seen as the first exercise is, level and turned; after that, from wherever the ledger leans.)
+    view: Study.VIEWS?.[STUDY_VIEW] ? STUDY_VIEW : studyCount ? undefined : "two",
     choose: (freedom, key, options) => dofChoose(freedom, key, options, Math.random),
     report: (row) => studyReport(plan, row),
     // How the picture as a whole looks to its taste (learned from your votes), before and after each change.
@@ -45860,6 +45871,7 @@ function beginStudy(result, width, height) {
   // What it bounds (Degrees of freedom): the form it starts from and its light, and its medium.
   dofNote(plan, "form", "study", { kind, light: study.light.side < 0 ? "left" : "right" });
   dofNote(plan, "medium", "medium", { medium });
+  dofNote(plan, "view", "view", { view: study.view.id });
   heldFrame = null;
   pendingFrame = null;
   strokePainter.preparing = null;
@@ -45902,7 +45914,7 @@ function showStudyLearning() {
 // Its words: what it is now.
 function showStudyWords(words) {
   const box = document.getElementById("wordPrompt");
-  if (box) box.value = words;
+  if (box) { box.value = words; box.dataset.fromStudy = words; }
   const shown = document.getElementById("autoWords");
   if (shown) shown.textContent = words;
 }
@@ -45931,6 +45943,21 @@ function studyReport(plan, report) {
   dofMapCache = null;
   saveDof();
 }
+// A fresh sheet for a study: the ground laid over everything, as at its start.
+function studyFreshSheet(S, colour) {
+  vctx.save();
+  vctx.globalAlpha = 1;
+  vctx.globalCompositeOperation = "source-over";
+  vctx.fillStyle = `rgb(${colour.join(",")})`;
+  vctx.fillRect(0, 0, view.width, view.height);
+  vctx.restore();
+  strokeLog.newPainting = true;
+  strokeLog.history = [];
+  paintRevision++;
+  view.dataset.paintRevision = String(paintRevision);
+  S.seen = null;
+  S.laidSince = true;
+}
 /* The study's next steps, laid - a few together, up to STUDY_BATCH strokes,
  * so a line or two is not a batch of its own - but never past a look: what
  * comes after one is made seeing the canvas as it is (Mediums); and never
@@ -45944,6 +45971,8 @@ function paintStudyBatch(result, plan) {
   // (A breath after each change, so it can be seen before the next - once what it found to do last is on.)
   if (S.restAfter) { S.restUntil = Date.now() + S.restAfter; S.restAfter = 0; }
   if (S.restUntil && Date.now() < S.restUntil) return true;
+  // (A fresh sheet asked for once what was laid before it had gone on: Perspective.)
+  if (S.freshPending) { studyFreshSheet(S, S.freshPending); S.freshPending = null; }
   // (The canvas read again only once something has been laid on it since it was last read.)
   if (!S.seen || S.laidSince || S.seen.width !== view.width || S.seen.height !== view.height) {
     S.seen = { pixels: vctx.getImageData(0, 0, view.width, view.height).data, width: view.width, height: view.height };
@@ -45954,6 +45983,12 @@ function paintStudyBatch(result, plan) {
   for (let pulls = 0; pulls < 60 && strokes.length < STUDY_BATCH && (!pulls || performance.now() - began < STUDY_THINK_MS); pulls++) {
     const next = S.steps.next();
     if (next.done) { S.done = true; break; }
+    // (A fresh sheet - the same thing seen again from somewhere else - once what is laid so far has gone on.)
+    if (next.value.fresh) {
+      if (strokes.length) S.freshPending = next.value.fresh;
+      else studyFreshSheet(S, next.value.fresh);
+      break;
+    }
     // (A look with strokes still to lay: they go on first, and it looks at them next time.)
     if (next.value.look && strokes.length) { if (next.value.rest) S.restAfter = next.value.rest; break; }
     if (next.value.rest) { S.restUntil = Date.now() + next.value.rest; break; }
