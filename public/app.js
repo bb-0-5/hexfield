@@ -45918,7 +45918,7 @@ function beginStudy(result, width, height) {
   dofNote(plan, "medium", "medium", { medium });
   dofNote(plan, "view", "view", { view: study.view.id });
   // (Its colour key, its composition and its look: chosen by the ledger, learned from KEEP and REJECT - nothing to set.)
-  dofNote(plan, "colour", "key", { harmony: study.palette.relation, chroma: study.palette.chroma, key: study.palette.key });
+  dofNote(plan, "colour", "key", { harmony: study.palette.relation, chroma: study.palette.chroma, key: study.palette.key, centre: study.palette.tone });
   dofNote(plan, "composition", "scheme", { scheme: study.composition?.key || "golden" });
   dofNote(plan, "look", "look", { look: study.look || "plain" });
   heldFrame = null;
@@ -46075,7 +46075,11 @@ function paintStudyBatch(result, plan) {
     if (next.value.strokes.length) label = next.value.label;
   }
   if (S.name !== plan.words) { plan.words = S.name; showStudyWords(S.name); }
-  if (S.moves !== plan.toldMoves) { plan.toldMoves = S.moves; showStudyLearning(); renderChoiceCard(true); refreshMunkerLayer(plan); }
+  if (S.moves !== plan.toldMoves) {
+    plan.toldMoves = S.moves; showStudyLearning(); renderChoiceCard(true); refreshMunkerLayer(plan);
+    // (Painted again in another medium, as asked: the ledger notes the medium it is in now.)
+    if (plan.dof?.medium?.medium !== S.medium) dofNote(plan, "medium", "medium", { medium: S.medium });
+  }
   // (Stopped mid-thought with nothing to lay yet: it goes on as soon as the page has had its turn.)
   S.thinking = !strokes.length && !S.done && !(S.restUntil && Date.now() < S.restUntil) && !S.restAfter;
   if (!strokes.length) return !S.done;

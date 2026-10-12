@@ -587,10 +587,17 @@
     const hue = rng() * 360, sOff = one(H.support), aOff = one(H.accent.filter((a) => Math.abs(a - sOff) > 20).concat(H.accent.length > 1 ? [] : H.accent));
     const support = (hue + sOff + 360) % 360, accent = (hue + (aOff ?? H.accent[0]) + (rng() - 0.5) * 16 + 360) % 360;
     const wallHue = (H.wall === "support" ? support : hue) + (rng() - 0.5) * 20, floorHue = wallHue + (rng() < 0.5 ? -1 : 1) * (14 + rng() * 26);
+    /* Its tonal centre: what everything far off settles toward - the value
+     * the key sets (light, middle, dark) in a colour of its own: neutral,
+     * warm, cool, the dominant's hue or its opposite. The room leans to it. */
+    const tone = chosen("centre", ["neutral", "warm", "cool", "dominant", "complement"]);
+    const toneHue = { neutral: wallHue, warm: 28 + rng() * 20, cool: 200 + rng() * 28, dominant: hue, complement: hue + 180 }[tone];
+    const centre = hsl((toneHue + 360) % 360, tone === "neutral" ? 0.05 : 0.22 + rng() * 0.16, { light: 0.72 + rng() * 0.1, middle: 0.44 + rng() * 0.12, dark: 0.16 + rng() * 0.1 }[key]);
+    const lean = tone === "neutral" ? 0.15 : 0.35;
     return {
-      relation, chroma, key, hue, support, accent, sat: C, light: K.solid,
-      wall: hsl((wallHue + 360) % 360, C[3] * (0.6 + rng() * 0.6), at(K.wall)),
-      floor: hsl((floorHue + 360) % 360, C[3] * (0.9 + rng() * 0.7), at(K.floor)),
+      relation, chroma, key, hue, support, accent, sat: C, light: K.solid, tone, centre,
+      wall: mix(hsl((wallHue + 360) % 360, C[3] * (0.6 + rng() * 0.6), at(K.wall)), centre, lean),
+      floor: mix(hsl((floorHue + 360) % 360, C[3] * (0.9 + rng() * 0.7), at(K.floor)), centre, lean * 0.6),
       solid: hsl(hue, C[0] * (0.85 + rng() * 0.3), at(K.solid)),
       solid2: hsl(support, C[1] * (0.85 + rng() * 0.3), at(K.solid)),
     };
@@ -653,7 +660,7 @@
     const d = S.cam?.flat ? 0 : farness(Z);
     if (d <= 0) return c;
     const L = lum(c), keep = 1 - DEPTH.chroma * d, v = L + ((S.centre ?? L) - L) * DEPTH.value * d;
-    return mix(c.map((x) => v + (x - L) * keep), S.air || c, DEPTH.air * d);
+    return mix(c.map((x) => v + (x - L) * keep), S.air || c, (S.airAmount ?? DEPTH.air) * d);
   }
 
   /* ── Strokes ─────────────────────────────────────────────────────────
@@ -2274,7 +2281,8 @@
   }
   // Whether a new solid can go where it was put: in the room and the picture, clear of the others, mostly seen, hiding none of them whole.
   function fits(S, P) {
-    const { cam } = S, m = BUILD.margin, b = P.box;
+    // (What was asked for may stand more hidden, hide more and come nearer the edge than what it chooses itself: Asking.)
+    const { cam } = S, loose = Boolean(S.relaxed), m = loose ? 0.012 : BUILD.margin, b = P.box;
     const zs = P.kind === "sphere" ? [P.middle[2] - P.radius, P.middle[2] + P.radius] : P.placed.verts.map((v) => v[2]);
     if (Math.min(...zs) < BUILD.near || Math.max(...zs) > ROOM.wall - BUILD.back) return false;
     if (b.x0 < cam.W * m || b.x1 > cam.W * (1 - m) || b.y0 < cam.H * m || b.y1 > cam.H * ROOM.foot || b.x1 - b.x0 < cam.W * 0.04) return false;
@@ -2282,8 +2290,8 @@
     const standing = alive(S);
     if (standing.some((Q) => collide(P, Q))) return false;
     const near = standing.filter((Q) => boxesMeet(P.coverBox, Q.coverBox));
-    if (hiddenBy(P, near.filter((Q) => inFront(S, Q, P)).map((Q) => Q.cover)) > BUILD.hidden) return false;
-    if (near.some((Q) => inFront(S, P, Q) && hiddenBy(Q, [P.cover]) > BUILD.covers)) return false;
+    if (hiddenBy(P, near.filter((Q) => inFront(S, Q, P)).map((Q) => Q.cover)) > (loose ? 0.8 : BUILD.hidden)) return false;
+    if (near.some((Q) => inFront(S, P, Q) && hiddenBy(Q, [P.cover]) > (loose ? 0.95 : BUILD.covers))) return false;
     // (Where nothing can cover, not over what is darker than it can be made to look: that would show through it.)
     return !S.rules.darkenOnly || darkUnder(S, P) <= BUILD.dark;
   }
@@ -2332,6 +2340,39 @@
     P.away = [0, 1, 0];
     const stands = kind === "sphere" ? inPoly(top, P.middle[0], P.middle[2]) : P.foot.every(([x, z]) => inPoly(top, x, z));
     return stands ? P : null;
+  }
+  // Something tried by the looser rules what was asked for may stand by (Asking).
+  function loosely(S, f) { S.relaxed = true; try { return f(); } finally { S.relaxed = false; } }
+  /* A solid standing free on the floor, touching nothing: near `near`, the
+   * way asked (in front toward the eye, behind, to the left or right), or
+   * anywhere in view - asked for where nothing else would take it. */
+  function placeFree(S, kind, near = null, rel = null) {
+    const way = { front: [0, -1], behind: [0, 1], left: [-1, 0], right: [1, 0] }[rel], base = near && (near.low > 0.01 && near.host ? near.host : near);
+    const size = kind === "sphere" ? 0.32 : kind === "dome" ? 0.42 : kind === "cube" ? 0.7 : 0.75, form = kind === "blob" ? { outline: formOutline(S.rng) } : {};
+    for (let t = 0; t < 40; t++) {
+      let x, z;
+      if (base && t < 24) {
+        const m = base.middle || base.placed.middle, reach = Math.max(...base.foot.map(([fx, fz]) => Math.hypot(fx - m[0], fz - m[2]))), d = reach + size * 0.9 + 0.1 + S.rng() * 0.6;
+        const a = way ? Math.atan2(way[1], way[0]) + (S.rng() - 0.5) * 0.8 : S.rng() * Math.PI * 2;
+        x = m[0] + Math.cos(a) * d; z = m[2] + Math.sin(a) * d;
+      } else {
+        const p = onLevel(S.cam, S.cam.W * (0.15 + S.rng() * 0.7), S.cam.horizon + (S.cam.H * ROOM.foot - S.cam.horizon) * (0.25 + S.rng() * 0.7));
+        if (!p) continue;
+        x = p[0]; z = p[2];
+      }
+      const P = makePiece(S, kind, size, [x, 0, z], kind === "blob" ? (S.cam.flat ? 0 : Math.atan2(x, z)) : squareYaw(S, kind, form), null, null, form);
+      P.base = pieceColour(S, null, P);
+      if (fits(S, P)) return P;
+    }
+    return null;
+  }
+  // A solid set on the crown of a round one - a sphere's top, a dome's - small, balanced where it touches it: asked for, never chosen.
+  function placeOnCrown(S, host, kind) {
+    const m = host.middle, form = kind === "blob" ? { outline: formOutline(S.rng) } : {};
+    const size = isBall({ kind }) ? host.radius * 0.4 : host.radius * (kind === "cube" ? 0.7 : 0.8);
+    const P = makePiece(S, kind, size, [m[0], host.high, m[2]], kind === "blob" ? Math.atan2(m[0], m[2]) : squareYaw(S, kind, form), host, "on", form);
+    P.away = [0, 1, 0];
+    return P;
   }
   /* A solid set against another's side on the floor: square to the seed,
    * moved in along one of the seed's own edges - slid a little along the
@@ -2628,14 +2669,15 @@
     yield* lookAgain(S, since, "where " + name + " was", null);
   }
   // Reworking a solid: painted again over itself - in a new colour, or the same with the handling chosen afresh - and what stands on it throws its shadow on it again.
-  function* reworkPiece(S, P, recolour = false) {
+  function* reworkPiece(S, P, recolour = false, colour = null) {
     // (A medium that cannot cover restates a solid in its own colour, deeper; it cannot put another over it.)
     const name = theOf(P), since = S.paint.clock;
     recolour = recolour && !S.rules.darkenOnly;
     S.action = (recolour ? "repainting " : "restating ") + name;
     S.notes.reworked++;
     if (recolour) {
-      P.base = pieceColour(S, P.base);
+      // (The colour asked for, where one was: Asking.)
+      P.base = colour ? colour.slice() : pieceColour(S, P.base);
       if (!S.colours.some((c) => apart(c, P.base) < 4)) S.colours.push(P.base.slice());
     }
     P.app = chooseApp(S, P);
@@ -2910,8 +2952,10 @@
   /* A word set out in letters on the floor, in front of what stands (or to
    * one side): each letter a thing of many parts, all one colour, the row
    * square to the seed, as big as fits - or nowhere, if nowhere fits. */
+  // (Letters in one row at most.)
+  const LETTERS_ROW = 12;
   function placeWord(S, text, face) {
-    const chars = [...String(text).toUpperCase()].filter((c) => GLYPHS[c] || c === " ").slice(0, 9);
+    const chars = [...String(text).toUpperCase()].filter((c) => GLYPHS[c] || c === " ").slice(0, LETTERS_ROW);
     while (chars[0] === " ") chars.shift();
     while (chars[chars.length - 1] === " ") chars.pop();
     if (!chars.length) return null;
@@ -2955,8 +2999,8 @@
     const standing = alive(S);
     if (standing.some((Q) => collide(L, Q)) || earlier.some((Q) => collide(L, Q))) return false;
     const near = standing.filter((Q) => boxesMeet(L.coverBox, Q.coverBox));
-    if (hiddenBy(L, near.filter((Q) => inFront(S, Q, L)).map((Q) => Q.cover)) > 0.3) return false;
-    return !near.some((Q) => inFront(S, L, Q) && hiddenBy(Q, [L.cover]) > 0.5);
+    if (hiddenBy(L, near.filter((Q) => inFront(S, Q, L)).map((Q) => Q.cover)) > (S.relaxed ? 0.6 : 0.3)) return false;
+    return !near.some((Q) => inFront(S, L, Q) && hiddenBy(Q, [L.cover]) > (S.relaxed ? 0.85 : 0.5));
   }
   /* A letter painted: first its drawing - every edge of its bars that is
    * seen - then its planes: the sides of its bars (the letter's depth) far
@@ -3220,12 +3264,14 @@
   /* Somewhere for a plant: on the top of a solid (a pot), or on the floor
    * beside what stands - wherever it fits whole in the picture, clear of
    * the others' feet, mostly seen, hiding little of them. */
-  function placePlant(S, kind) {
+  function placePlant(S, kind, near = null, rel = null) {
     const R = plantRules(kind), standing = alive(S).filter((P) => !P.parts), scale = clamp((S.seed?.high || 1) * 1.25 / R.tall, 0.6, 2.4);
-    const pots = standing.filter((P) => P.top && P.top.visible && P.high < 1.6 && (P.kind === "cylinder" || P.kind === "cube"));
+    // (Asked for in one, or on it: there, if it has a top; asked for by one: on the floor round it - Asking.)
+    const inside = near && (rel === "in" || rel === "on") && near.top;
+    const pots = near ? (inside ? [near] : []) : standing.filter((P) => P.top && P.top.visible && P.high < 1.6 && (P.kind === "cylinder" || P.kind === "cube"));
     const spots = [];
     for (const host of pots) spots.push({ host, at: [host.top.centre[0], host.high, host.top.centre[2]] });
-    for (const Q of standing) {
+    for (const Q of near && !inside ? [near.low > 0.01 && near.host ? near.host : near] : near ? [] : standing) {
       if (Q.low > 0.01) continue;
       const m = Q.middle || Q.placed.middle, reach = Math.max(...Q.foot.map(([x, z]) => Math.hypot(x - m[0], z - m[2])));
       for (let k = 0; k < 4; k++) { const a = S.rng() * Math.PI * 2; spots.push({ host: null, at: [m[0] + Math.cos(a) * (reach + 0.25), 0, m[2] + Math.sin(a) * (reach + 0.25)] }); }
@@ -3249,8 +3295,8 @@
     const standing = alive(S).filter((Q) => Q !== P.host);
     if (standing.some((Q) => overlaps(P.foot, Q.foot) && Q.low < P.low + 0.01 && Q.high > P.low)) return false;
     const near = standing.filter((Q) => boxesMeet(P.coverBox, Q.coverBox));
-    if (hiddenBy(P, near.filter((Q) => inFront(S, Q, P)).map((Q) => Q.cover)) > 0.5) return false;
-    return !near.some((Q) => inFront(S, P, Q) && hiddenBy(Q, [P.cover]) > 0.6);
+    if (hiddenBy(P, near.filter((Q) => inFront(S, Q, P)).map((Q) => Q.cover)) > (S.relaxed ? 0.8 : 0.5)) return false;
+    return !near.some((Q) => inFront(S, P, Q) && hiddenBy(Q, [P.cover]) > (S.relaxed ? 0.9 : 0.6));
   }
   /* A plant painted, far to near, part by part: each stem along its length
    * (its lit side touched in where it is thick enough), each leaf and
@@ -3368,6 +3414,28 @@
     }
     S.name = nameOf(S);
     yield* lookAgain(S, 0, "it, " + what, null);
+  }
+
+  // Painted again in another medium, on a fresh ground for it: the same structure, the same eye, its paint handled as that medium handles it.
+  function* inMedium(S, medium) {
+    if (!MEDIA[medium] || medium === S.medium) return;
+    S.medium = medium;
+    S.M = MEDIA[medium];
+    S.rules = rulesOf(S.M);
+    groundFor(S, medium);
+    S.app = chooseApp(S, { kind: "room" });
+    for (const P of alive(S)) P.app = chooseApp(S, P);
+    S.lastApp = S.app;
+    S.action = "painting it all again in " + medium;
+    yield* paintAgain(S, "in " + medium);
+  }
+  // Nearer (`by` over 1) or further off: the eye's picture narrowed or widened - no nearer than leaves all of it in the picture - and painted again.
+  function* closer(S, by) {
+    const cam = S.cam;
+    if (cam.flat) cam.s *= by; else cam.f *= by;
+    S.cam = fitView(cam, alive(S), S.composition);
+    S.action = by > 1 ? "coming closer" : "stepping back";
+    yield* paintAgain(S, by > 1 ? "closer" : "further off");
   }
 
   /* ── Turning ──────────────────────────────────────────────────────────
@@ -3720,11 +3788,11 @@
     // (A form with nowhere to go now is passed over for the rest of the painting: not judged, not learned from.)
     if (m.type === "form" && !(m.plan = planForm(S, m))) { S.unbuilt.add(m.form.sig); return; }
     // (A word with nowhere to stand is tried again a few changes on.)
-    if (m.type === "word" && !(m.letters = placeWord(S, m.text, m.face))) { S.wordAgain = S.moves + 5; return; }
+    if (m.type === "word" && !(m.letters = placeWord(S, m.text, m.face) || (m.asked ? loosely(S, () => placeWord(S, m.text, m.face)) : null))) { S.wordAgain = S.moves + 5; return; }
     // (A turn with nowhere to go is tried again later.)
     if (m.type === "turn" && !(m.turn = planTurn(S, m.piece))) { S.turnedAt = S.moves; return; }
     if (m.type === "plant") {
-      if (!(m.plant = placePlant(S, m.kind))) { S.plantAgain = S.moves + 4; return; }
+      if (!(m.plant = placePlant(S, m.kind, m.near, m.rel) || (m.near ? placePlant(S, m.kind) : null) || (m.asked ? loosely(S, () => placePlant(S, m.kind, m.near, m.rel) || placePlant(S, m.kind)) : null))) { S.plantAgain = S.moves + 4; return; }
       m.plant.asked = m.asked || m.kind === S.wantPlant;
       m.feats.push(m.plant.host ? "a plant in a pot" : "a plant on the floor");
     }
@@ -3736,9 +3804,12 @@
     else if (m.type === "remove") yield* removePiece(S, m.piece);
     else if (m.type === "view") yield* viewAgain(S, m.view);
     else if (m.type === "turn") yield* turnAgain(S, m.piece, m.turn);
+    else if (m.type === "medium") yield* inMedium(S, m.medium);
+    else if (m.type === "clear") { for (const P of m.pieces) if (P.alive) yield* removePiece(S, P); S.word = null; }
+    else if (m.type === "zoom") yield* closer(S, m.by);
     else if (m.type === "word") yield* addWord(S, m);
     else if (m.type === "plant") yield* addPlant(S, m);
-    else yield* reworkPiece(S, m.piece, m.recolour);
+    else yield* reworkPiece(S, m.piece, m.recolour, m.colour);
     learnFrom(S, m, before);
   }
   // The picture judged as it is - once for each state of it: the judging after one change is the judging before the next.
@@ -3904,15 +3975,55 @@
     return true;
   }
   function askedMove(S, a) {
-    if (a.type === "plant" && PLANTS[a.kind]) return { type: "plant", kind: a.kind, asked: true, feats: ["growing a plant", "growing " + plantName(a.kind)], label: "growing " + plantName(a.kind) };
-    if (a.type === "word" && a.text) { const face = faceOf(S); return { type: "word", text: String(a.text).toUpperCase().slice(0, 9), face, asked: true, feats: ["lettering a word", ...face.feats], label: "lettering \u201c" + a.text + "\u201d" }; }
-    // (A solid asked for by name - in the colour asked, where one was: Asking.)
+    if (a.type === "plant" && PLANTS[a.kind]) return { type: "plant", kind: a.kind, near: onto(S, a.onto), rel: a.rel, asked: true, feats: ["growing a plant", "growing " + plantName(a.kind)], label: "growing " + plantName(a.kind) };
+    if (a.type === "word" && a.text) {
+      // (One typeface for every row of one line typed.)
+      const face = (a.group && S.faces?.[a.group]) || faceOf(S);
+      if (a.group) (S.faces ||= {})[a.group] = face;
+      return { type: "word", text: String(a.text).toUpperCase().slice(0, LETTERS_ROW), face, asked: true, feats: ["lettering a word", ...face.feats], label: "lettering “" + a.text + "”" };
+    }
+    // (A solid asked for by name: where it was asked - on another, against it - in the colour asked, where one was: Asking.)
     if (a.type === "solid") {
-      const P = findPlace(S, null, a.kind);
+      const host = onto(S, a.onto);
+      let P = null;
+      if (host && !host.parts) {
+        const up = a.rel === "on" || a.rel === "in";
+        // (On its top, if it has one; on the crown of one that is round; else against it - or, where it stands up on another, against that.)
+        if (up && host.top) P = placeOn(S, host, a.kind);
+        if (up && !P && isBall(host)) P = placeOnCrown(S, host, a.kind);
+        if (P) { P.base = pieceColour(S, null, P); if (!fits(S, P)) P = null; }
+        const ground = host.low > 0.01 && host.host ? host.host : host;
+        for (let t = 0; t < 8 && !P; t++) { const Q = placeBeside(S, ground, a.kind, { axis: wayFor(S, a.rel) }); if (Q) { Q.base = pieceColour(S, null, Q); if (fits(S, Q)) P = Q; } }
+      }
+      for (let t = 0; t < 2 && !P; t++) P = findPlace(S, null, a.kind);
+      if (!P) {
+        // (Still nowhere: more loosely - built on any of them, or standing free on the floor near what it was asked by, or anywhere in view.)
+        S.relaxed = true;
+        try { for (let t = 0; t < 3 && !P; t++) P = findPlace(S, null, a.kind); P ||= placeFree(S, a.kind, host, a.rel); } finally { S.relaxed = false; }
+      }
       if (!P) return null;
       if (a.colour) P.base = a.colour.slice();
+      (S.madeFor ||= {})[a.key] = P;
       return { type: "add", piece: P, asked: true, feats: addFeatures(S, P, []), label: labelOf(P) };
     }
+    if (a.type === "remove") {
+      const P = a.id !== undefined ? alive(S).find((Q) => Q.id === a.id) : standingOf(S, a.thing);
+      // (Not the seed - all of it stands on that - nor one with something built on it.)
+      if (!P || P === S.seed || alive(S).some((Q) => Q.host === P)) return null;
+      return { type: "remove", piece: P, asked: true, feats: ["taking away " + P.name], label: "taking away " + theOf(P) };
+    }
+    if (a.type === "clear") {
+      const letters = alive(S).filter((P) => P.kind === "letter");
+      return letters.length ? { type: "clear", pieces: letters, asked: true, feats: ["taking away the word"], label: "taking away the word" } : null;
+    }
+    if (a.type === "recolour") {
+      const solids = alive(S).filter((Q) => !Q.parts);
+      const P = a.thing ? standingOf(S, a.thing) : solids[solids.length - 1] || S.seed;
+      if (!P) return null;
+      return { type: "rework", piece: P, recolour: true, colour: a.colour, asked: true, feats: ["repainting " + P.name], label: "repainting " + theOf(P) };
+    }
+    if (a.type === "medium" && MEDIA[a.medium] && a.medium !== S.medium) return { type: "medium", medium: a.medium, asked: true, feats: ["painting it again in " + a.medium], label: "painting it again in " + a.medium };
+    if (a.type === "zoom") return { type: "zoom", by: a.by, asked: true, feats: [a.by > 1 ? "coming closer" : "stepping back"], label: a.by > 1 ? "coming closer" : "stepping back" };
     // (Turned round: the seed, with all that is built off it - Turning.)
     if (a.type === "turn" && S.seed?.alive) return { type: "turn", piece: S.seed, asked: true, feats: ["turning it round", "turning " + S.seed.name + " round"], label: "turning " + theOf(S.seed) + " round" };
     if (a.type === "view" && VIEWS[a.view] && a.view !== S.view.id) return { type: "view", view: VIEWS[a.view], asked: true, feats: ["seeing it again", "seeing it " + VIEWS[a.view].name, "rule: views"], label: "seeing it again, " + VIEWS[a.view].name };
@@ -3933,54 +4044,154 @@
     out.push(S.seed?.alive && r() < 0.5 ? { label: "turn it round", request: { type: "turn" } } : { label: VIEW_ASKS[id], request: { type: "view", view: id } });
     return out;
   }
-  /* Asked in words, typed: a plant it names is grown; a solid it names is
-   * added (in a colour named just before it, brought into the painting's
-   * key); a way of seeing it ("from above", "below", "flat", "square on",
-   * "turned") or turning it ("turn", "spin") is done; and what is left is
-   * lettered - as many of its words as go in nine letters. Four asks at
-   * most from one line. */
-  const SOLID_WORDS = { cube: "cube", cubes: "cube", box: "cube", boxes: "cube", sphere: "sphere", spheres: "sphere", ball: "sphere", balls: "sphere",
+  /* ── Asking in words ──────────────────────────────────────────────────
+   * A typed line read for what it asks, in the order it asks it:
+   *   things    a solid it names is added, a plant grown - "two", "three"
+   *             before it for more, a colour before it for its colour (in
+   *             the painting's key)
+   *   where     "on", "in", "beside", "next to", "in front of", "behind",
+   *             "left of", "right of" before another thing sets the first
+   *             there - on its top where it has one, else against it. The
+   *             thing after is one already standing if there is one ("the
+   *             dome"), else it is made first.
+   *   commands  "remove" a thing; "make it gold", "paint the cube red" (only
+   *             deeper, where the medium cannot cover); "in watercolour",
+   *             "oil", "gouache", "charcoal" - all of it painted again in
+   *             that medium; "bigger", "closer", "smaller", "further"; "from
+   *             above", "below", "flat", "square on", "turned"; "turn", "spin"
+   *   the rest  lettered: as many of its words as go in nine letters.
+   * Six asks at most from one line. */
+  const SOLID_WORDS = { cube: "cube", cubes: "cube", box: "cube", boxes: "cube", block: "cube", sphere: "sphere", spheres: "sphere", ball: "sphere", balls: "sphere",
     tetrahedron: "tetrahedron", tetrahedra: "tetrahedron", octahedron: "octahedron", octahedra: "octahedron", pyramid: "pyramid", pyramids: "pyramid",
     cylinder: "cylinder", cylinders: "cylinder", cone: "cone", cones: "cone", dome: "dome", domes: "dome", form: "blob", forms: "blob", blob: "blob", bean: "blob" };
-  const VIEW_WORDS = { above: "above", top: "above", overhead: "above", below: "below", under: "below", beneath: "below", flat: "flat", square: "one", front: "one", turned: "two", corner: "two" };
-  const TURN_WORDS = new Set(["turn", "rotate", "spin", "round", "around"]);
-  const COLOUR_HUES = { red: 2, orange: 28, yellow: 52, gold: 45, green: 125, teal: 175, cyan: 188, blue: 220, navy: 228, purple: 275, violet: 268, pink: 330, magenta: 310, brown: 25 };
-  const COLOUR_GREYS = { white: 0.92, grey: 0.55, gray: 0.55, black: 0.12 };
-  const QUIET = new Set(["a", "an", "the", "of", "and", "on", "in", "at", "to", "with", "from", "please", "some", "it", "its", "see", "make", "add", "grow", "letter", "write", "me", "view", "seen", "look"]);
+  const VIEW_PHRASES = { fromabove: "above", overhead: "above", frombelow: "below", flat: "flat", squareon: "one", front: "one", turned: "two" };
+  const REL_PHRASES = { ontopof: "on", on: "on", onto: "on", atop: "on", upon: "on", above: "on", over: "on", in: "in", inside: "in", into: "in", within: "in",
+    beside: "beside", by: "beside", nextto: "beside", near: "beside", against: "beside", under: "beside", below: "beside", beneath: "beside",
+    infrontof: "front", before: "front", behind: "behind", leftof: "left", rightof: "right" };
+  const JOINED = [["on top of", "ontopof"], ["in front of", "infrontof"], ["next to", "nextto"], ["to the left of", "leftof"], ["to the right of", "rightof"],
+    ["left of", "leftof"], ["right of", "rightof"], ["from above", "fromabove"], ["from below", "frombelow"], ["square on", "squareon"], ["take away", "remove"],
+    ["get rid of", "remove"], ["zoom in", "closer"], ["zoom out", "further"], ["step back", "further"], ["come closer", "closer"], ["move closer", "closer"]];
+  const COLOUR_HUES = { red: 2, orange: 28, yellow: 52, gold: 45, golden: 45, green: 125, teal: 175, cyan: 188, blue: 220, navy: 228, purple: 275, violet: 268, pink: 330, magenta: 310, brown: 25 };
+  const COLOUR_GREYS = { white: 0.92, grey: 0.55, gray: 0.55, silver: 0.7, black: 0.12 };
+  const MEDIUM_WORDS = { oil: "oil", oils: "oil", gouache: "gouache", watercolour: "watercolour", watercolours: "watercolour", watercolor: "watercolour", watercolors: "watercolour", charcoal: "charcoal" };
+  const ZOOM_WORDS = { bigger: 1.3, closer: 1.3, larger: 1.3, nearer: 1.3, zoom: 1.3, smaller: 0.78, further: 0.78, farther: 0.78, wider: 0.78 };
+  const NUMBER_WORDS = { two: 2, three: 3, "2": 2, "3": 3, pair: 2, couple: 2, few: 3, some: 2 };
+  const REMOVE_WORDS = new Set(["remove", "delete", "erase", "drop", "lose"]), PAINT_WORDS = new Set(["make", "paint", "colour", "color", "recolour", "recolor", "dye"]);
+  const IT_WORDS = new Set(["it", "them", "this", "that", "everything", "all"]), WORD_WORDS = new Set(["word", "words", "letters", "letter", "text"]);
+  const QUIET = new Set(["a", "an", "the", "of", "and", "at", "to", "with", "from", "please", "it", "its", "see", "add", "grow", "put", "place", "set", "build", "write", "me", "view",
+    "seen", "look", "new", "another", "more", "then", "also", "now", "is", "be", "one", "1", "plain", "some", "again", "painted", "painting", "all"]);
+  const colourOf = (S, w) => (COLOUR_GREYS[w] !== undefined ? hsl(S.palette.hue, 0.04, COLOUR_GREYS[w]) : COLOUR_HUES[w] !== undefined ? hsl(COLOUR_HUES[w], clamp(S.palette.sat[0] * 1.6, 0.35, 0.75), 0.5) : null);
+  // A thing standing of a kind (a plant's kind, or a solid's - boxes and slabs are cubes, discs cylinders): the seed if it is one, else the last made.
+  function standingOf(S, thing) {
+    const of = alive(S).filter((P) => (thing.plant ? P.kind === "plant" && (thing.kind === "any" || P.plant === thing.kind) : thing.letters ? P.kind === "letter" : P.kind === thing.kind));
+    return of.includes(S.seed) ? S.seed : of[of.length - 1] || null;
+  }
+  const nameOfThing = (thing) => (thing.plant ? plantName(thing.kind) : nameFor(thing.kind, thing.kind === "pyramid" ? { sides: 4 } : {}));
+  // Text to letter in rows of at most twelve, broken between words; three rows at most.
+  function rowsOf(text) {
+    const rows = [];
+    let row = "";
+    for (const w of String(text).toUpperCase().replace(/[^A-Z0-9 ]+/g, " ").split(/\s+/).filter(Boolean)) {
+      const next = row ? row + " " + w : w;
+      if (next.length <= LETTERS_ROW) { row = next; continue; }
+      if (row) rows.push(row);
+      row = w.slice(0, LETTERS_ROW);
+    }
+    if (row) rows.push(row);
+    return rows.slice(0, 3);
+  }
+  // The rows of a text asked to be lettered: each its own ask, one typeface; a word standing taken away first.
+  function letterAsks(S, rows, group, asks) {
+    if (!rows.length) return;
+    if (alive(S).some((P) => P.kind === "letter") && !asks.some((a) => a?.type === "clear")) asks.push({ type: "clear", label: "take away “" + (S.word?.text || "the word") + "”" });
+    for (const row of rows) asks.push({ type: "word", text: row, group, label: "letter “" + row + "”" });
+  }
   function askText(S, text) {
-    const words = String(text || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").trim().split(/\s+/).filter(Boolean);
+    const raw = String(text || "").trim();
+    if (!S || !raw) return [];
+    // (Quoted, or after "write", "letter", "say" or "spell": lettered just as it is typed - Type.)
+    const quoted = raw.match(/["\u201c\u201d'\u2018\u2019]([^"\u201c\u201d'\u2018\u2019]+)["\u201c\u201d'\u2018\u2019]/), spoken = raw.match(/^(?:write|letter|say|spell|type)\s+(.+)$/i);
+    if (quoted || spoken) {
+      const asks = [];
+      letterAsks(S, rowsOf((quoted || spoken)[1]), (S.askGroup = (S.askGroup || 0) + 1), asks);
+      for (const a of asks) ask(S, a);
+      const others = quoted ? askText(S, raw.replace(quoted[0], " ")) : [];
+      return asks.map((a) => a.label).concat(others);
+    }
+    let line = " " + raw.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ") + " ";
+    for (const [phrase, token] of JOINED) line = line.split(" " + phrase + " ").join(" " + token + " ");
+    const words = line.trim().split(" ").filter(Boolean);
     if (!S || !words.length) return [];
-    const asked = [], rest = [], K = S.palette;
-    let colour = null, colourWord = null;
-    for (const w of words) {
-      if (COLOUR_HUES[w] !== undefined || COLOUR_GREYS[w] !== undefined) {
+    const things = [], asks = [], rest = [], hasColour = words.some((w) => colourOf(S, w));
+    let colour = null, colourWord = null, count = 1, rel = null, verb = null, paintTarget = null, paintColour = null, paintWord = null;
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i];
+      if (MEDIUM_WORDS[w]) { if (MEDIUM_WORDS[w] !== S.medium) asks.push({ type: "medium", medium: MEDIUM_WORDS[w], label: "paint it again in " + MEDIUM_WORDS[w] }); rel = null; continue; }
+      if (ZOOM_WORDS[w]) { asks.push({ type: "zoom", by: ZOOM_WORDS[w], label: ZOOM_WORDS[w] > 1 ? "come closer" : "step back" }); continue; }
+      if (VIEW_PHRASES[w]) { if (VIEW_PHRASES[w] !== S.view.id) asks.push({ type: "view", view: VIEW_PHRASES[w], label: VIEW_ASKS[VIEW_PHRASES[w]] }); continue; }
+      if (["turn", "spin", "rotate"].includes(w) && !(hasColour && w === "turn")) { asks.push({ type: "turn", label: "turn it round" }); continue; }
+      if (REMOVE_WORDS.has(w)) { verb = "remove"; continue; }
+      if (PAINT_WORDS.has(w) || w === "turn") { verb = "paint"; continue; }
+      if (NUMBER_WORDS[w]) { count = NUMBER_WORDS[w]; continue; }
+      const c = colourOf(S, w);
+      if (c) {
+        if (verb === "paint") { paintColour = c; paintWord = w; continue; }
         if (colourWord) rest.push(colourWord);
-        colourWord = w;
-        colour = COLOUR_GREYS[w] !== undefined ? hsl(K.hue, 0.04, COLOUR_GREYS[w]) : hsl(COLOUR_HUES[w], clamp(K.sat[0] * 1.6, 0.35, 0.75), 0.5);
+        colour = c; colourWord = w;
         continue;
       }
-      if (PLANT_WORDS[w]) {
-        const kind = PLANT_WORDS[w] === "any" ? GROWN.filter((k) => plantRules(k).flower)[Math.floor(S.rng() * 7)] : PLANT_WORDS[w];
-        asked.push({ type: "plant", kind, label: "grow " + plantName(kind) });
-      } else if (SOLID_WORDS[w]) {
-        const kind = SOLID_WORDS[w];
-        asked.push({ type: "solid", kind, colour, label: "add " + (colourWord ? colourWord + " " : "") + nameFor(kind, kind === "pyramid" ? { sides: 4 } : {}).replace(/^an? /, "") });
-      } else if (VIEW_WORDS[w]) {
-        if (VIEW_WORDS[w] !== S.view.id) asked.push({ type: "view", view: VIEW_WORDS[w], label: VIEW_ASKS[VIEW_WORDS[w]] });
-      } else if (TURN_WORDS.has(w)) asked.push({ type: "turn", label: "turn it round" });
-      else if (!QUIET.has(w)) { if (colourWord) rest.push(colourWord); rest.push(w); }
-      if (!(COLOUR_HUES[w] !== undefined || COLOUR_GREYS[w] !== undefined)) { colour = null; colourWord = null; }
+      if (verb && IT_WORDS.has(w)) { if (verb === "paint") paintTarget = "it"; continue; }
+      if (REL_PHRASES[w] && things.length && !verb) { rel = REL_PHRASES[w]; continue; }
+      const kind = PLANT_WORDS[w] || SOLID_WORDS[w], letters = WORD_WORDS.has(w);
+      if (kind || (letters && verb)) {
+        const thing = { kind: kind || "letter", plant: Boolean(PLANT_WORDS[w]), letters, colour, colourWord, count: Math.min(3, count) };
+        colour = null; colourWord = null; count = 1;
+        if (verb === "remove") { asks.push(letters ? { type: "clear", label: "take away the word" } : { type: "remove", thing, label: "take away " + theOf({ name: nameOfThing(thing) }) }); verb = null; continue; }
+        if (verb === "paint") { paintTarget = thing; continue; }
+        // (After "on", "beside" and the rest: what the last thing named is set by.)
+        if (rel) { const from = things[things.length - 1]; from.rel = rel; from.target = thing; thing.target_of = from; rel = null; }
+        things.push(thing);
+        continue;
+      }
+      if (!QUIET.has(w) && !REL_PHRASES[w] && !IT_WORDS.has(w)) { if (colourWord) { rest.push(colourWord); colour = null; colourWord = null; } rest.push(w); }
     }
+    if (colourWord && !things.length && !paintTarget && !rest.length && !asks.length) { verb = "paint"; paintColour = colour; paintWord = colourWord; paintTarget = "it"; colourWord = null; }
     if (colourWord) rest.push(colourWord);
-    // (What is left, lettered: whole words, as many as go in nine letters.)
-    if (rest.length) {
-      let line = "";
-      for (const w of rest) { const next = line ? line + " " + w : w; if (next.length > 9) { if (!line) line = w.slice(0, 9); break; } line = next; }
-      asked.push({ type: "word", text: line.toUpperCase(), label: "letter “" + line.toUpperCase() + "”" });
+    if (verb === "paint" && paintColour) {
+      const label = "paint " + (paintTarget && paintTarget !== "it" ? theOf({ name: nameOfThing(paintTarget) }) : "it") + " " + paintWord;
+      asks.push({ type: "recolour", thing: paintTarget === "it" ? null : paintTarget, colour: paintColour, label });
     }
-    const seen = new Set(), out = [];
-    for (const a of asked) { const key = a.type + a.kind + a.view + a.text; if (seen.has(key) || out.length >= 4) continue; seen.add(key); out.push(a); ask(S, a); }
+    // Things in an order that makes what another is set by first - unless it already stands.
+    const group = (S.askGroup = (S.askGroup || 0) + 1), done = new Set();
+    const emit = (thing, idx) => {
+      if (done.has(thing)) return;
+      done.add(thing);
+      const target = thing.target ? standingOf(S, thing.target) : null;
+      if (thing.target && !target) emit(thing.target, things.indexOf(thing.target));
+      for (let n = 0; n < thing.count; n++) {
+        const key = group + ":" + idx + ":" + n, where = thing.rel ? { on: "on", in: "in", beside: "beside", front: "in front of", behind: "behind", left: "left of", right: "right of" }[thing.rel] : null;
+        const onto = thing.target ? (target ? { id: target.id } : { ref: group + ":" + things.indexOf(thing.target) + ":0" }) : null;
+        const label = (thing.plant ? "grow " : "add ") + (thing.colourWord ? thing.colourWord + " " : "") + nameOfThing(thing).replace(/^an? /, "") + (where ? " " + where + " " + theOf({ name: nameOfThing(thing.target) }) : "");
+        asks.push(thing.plant ? { type: "plant", kind: thing.kind === "any" ? GROWN.filter((k) => plantRules(k).flower)[Math.floor(S.rng() * 7)] : thing.kind, rel: thing.rel, onto, key, label }
+          : thing.letters ? null : { type: "solid", kind: thing.kind, colour: thing.colour, rel: thing.rel, onto, key, label });
+      }
+    };
+    // (A thing named only as where another goes is made only if it does not stand already - by the one that needs it.)
+    things.forEach((t, i) => { if (!t.target_of) emit(t, i); });
+    // (What is left, lettered - in rows, in place of a word standing.)
+    letterAsks(S, rowsOf(rest.join(" ")), group, asks);
+    const out = [];
+    for (const a of asks.filter(Boolean)) { if (out.length >= 6) break; out.push(a); ask(S, a); }
     return out.map((a) => a.label);
+  }
+  // A thing asked to stand by: one already standing (by its number), or one made earlier from the same line.
+  const onto = (S, o) => (!o ? null : o.id !== undefined ? alive(S).find((P) => P.id === o.id) || null : S.madeFor?.[o.ref]?.alive ? S.madeFor[o.ref] : null);
+  // Which of the seed's four ways round out from a solid goes toward where it was asked: in front (to the eye), behind, left, right, or beside (either side).
+  function wayFor(S, rel) {
+    if (S.square === null) return undefined;
+    const ways = [0, 1, 2, 3].map((k) => ({ k, t: -S.square + k * Math.PI / 2 })).map((w) => ({ ...w, x: Math.cos(w.t), z: Math.sin(w.t) }));
+    const score = { front: (w) => -w.z, behind: (w) => w.z, left: (w) => -w.x, right: (w) => w.x, beside: (w) => -Math.abs(w.z) + S.rng() * 0.2 }[rel];
+    return score ? ways.reduce((a, b) => (score(b) > score(a) ? b : a)).k : undefined;
   }
   /* A vote. On the painting (KEEP, REJECT): the changes just made take it,
    * the latest most; a painting kept keeps its forms. On its last move:
@@ -4030,6 +4241,16 @@
     return makePiece(S, kind, size, [want === 1 ? 0 : x, 0, Z], t.yaw);
   }
 
+  // The ground a medium is laid on - a toned canvas, toned paper, white paper - and what taking paint off goes back to.
+  function groundFor(S, medium) {
+    const colours = S.palette;
+    if (medium === "watercolour") S.ground = PAPER;
+    else if (medium === "charcoal") S.ground = S.choose("application \u00b7 charcoal", "ground", ["toned", "white"]) === "toned" ? valueOf(mix(colours.wall, colours.floor, 0.5)).map((v) => v * 0.8) : DRAWING_PAPER;
+    else if (medium === "gouache") S.ground = mix(colours.wall, [236, 232, 224], 0.55);
+    else S.ground = colours.wall.map((v) => v * 0.8);
+    S.ground = paint(S.ground);
+    S.bare = medium === "charcoal" ? DRAWING_PAPER : S.ground;
+  }
   /* ── A study ─────────────────────────────────────────────────────────
    * Its first solid, its light and colours, its medium (and the ground the
    * medium is laid on), and the steps that paint it - the room, the first
@@ -4053,8 +4274,10 @@
       judge: wants.judge || null, history: [], moves: 0, unbuilt: new Set() };
     Object.defineProperty(S, "entries", { get: () => alive(S) });
     // The air (far off, everything goes toward it) and the picture's tonal centre (its middle value, which far values settle on).
-    S.air = mix(shade({ light, palette: colours, cam }, colours.wall, [0, 0, -1], 0), light.colour, 0.25);
-    S.centre = lum(mix(shade({ light, palette: colours, cam }, colours.wall, [0, 0, -1], 0), shade({ light, palette: colours, cam }, colours.floor, [0, 1, 0], 0), 0.5));
+    // (Far off, all of it settles toward the painting's own tonal centre - its value, and its colour: Colour.)
+    S.air = mix(colours.centre, light.colour, 0.1);
+    S.centre = lum(colours.centre);
+    S.airAmount = colours.tone === "neutral" ? DEPTH.air : DEPTH.air * 1.8;
     const l2 = Math.hypot(light.L[0], light.L[1]) || 1;
     S.lightX = +(light.L[0] / l2).toFixed(3);
     S.lightY = +(-light.L[1] / l2).toFixed(3);
@@ -4062,12 +4285,7 @@
     S.floor = { h: 0, base: colours.floor, clip: null };
     S.app = chooseApp(S, { kind: "room" });
     // The ground the medium is laid on, and what taking paint off goes back to.
-    if (medium === "watercolour") S.ground = PAPER;
-    else if (medium === "charcoal") S.ground = S.choose("application · charcoal", "ground", ["toned", "white"]) === "toned" ? valueOf(mix(colours.wall, colours.floor, 0.5)).map((v) => v * 0.8) : DRAWING_PAPER;
-    else if (medium === "gouache") S.ground = mix(colours.wall, [236, 232, 224], 0.55);
-    else S.ground = colours.wall.map((v) => v * 0.8);
-    S.ground = paint(S.ground);
-    S.bare = medium === "charcoal" ? DRAWING_PAPER : S.ground;
+    groundFor(S, medium);
     S.paint = paintState(W, H, S.ground, S.M.grain);
     const first = firstPiece(S, kind === "stack" ? "cube" : kind, wants);
     // The seed: what every solid after it is squared to and seen against - in the key's own hue (Colour).
