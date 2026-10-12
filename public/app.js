@@ -34850,6 +34850,23 @@ function recordChoiceVote(word, liked) {
   return true;
 }
 
+// A thing to ask the study for, as a chip; asked already (no request), it waits its turn and cannot be asked again.
+function askChip(study, label, request) {
+  const chip = document.createElement("button");
+  chip.type = "button";
+  chip.className = "choice ask" + (request ? "" : " asked");
+  chip.textContent = label;
+  chip.title = request ? "ask for this - it will do it next" : "asked for - it will do it next";
+  chip.disabled = !request;
+  if (request) chip.addEventListener("click", () => {
+    if (!globalThis.HexfieldStudy?.ask(study, { ...request, label })) return;
+    renderChoiceCard(true);
+    const status = document.getElementById("localLearningStatus");
+    if (status) status.textContent = "asked: " + label + " - it will do it next";
+  });
+  return chip;
+}
+
 let choiceCardFor = null;
 function renderChoiceCard(force = false) {
   const card = typeof document !== "undefined" ? document.getElementById("choiceCard") : null;
@@ -34857,7 +34874,15 @@ function renderChoiceCard(force = false) {
   if (!card || (!force && choiceCardFor === plan && card.childElementCount)) return;
   choiceCardFor = plan;
   card.textContent = "";
-  // A grown thing's parts first, each to be liked or disliked by itself.
+  // First, what can be asked for with a tap - a plant, a word, another view - and is made next (Asking).
+  const study = plan?.study, H = globalThis.HexfieldStudy;
+  if (study && H?.suggestions) {
+    const same = (a, b) => a.type === b.type && a.kind === b.kind && a.text === b.text && a.view === b.view;
+    const pending = [study.asking, ...(study.asks || [])].filter(Boolean);
+    for (const asked of pending) if (asked.label) card.appendChild(askChip(study, asked.label, null));
+    for (const { label, request } of H.suggestions(study)) if (!pending.some((asked) => same(asked, request))) card.appendChild(askChip(study, label, request));
+  }
+  // A grown thing's parts next, each to be liked or disliked by itself.
   const G = globalThis.HexfieldGrowers;
   for (const { kind, genes } of grownThingsOf(plan).slice(0, 2)) {
     for (const { gene, value } of G?.partsOf ? G.partsOf({ ...genes, kind }) : []) {

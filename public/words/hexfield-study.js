@@ -24,8 +24,11 @@
  * in front of it.
  *
  * A solid is built by the rules of application: its shadows first; a
- * sphere as brush shapes stacked inside its volume, the outermost ring
- * first and the highlight last; a flat-sided solid by points. The seed
+ * sphere in bands round the point of it nearest the light, as lines of
+ * latitude go round a pole - each band's curve held as it is seen, so the
+ * nearer the rim the harder it bends - and the highlight last; a shadow
+ * that falls across a round solid laid along those same curves; a
+ * flat-sided solid by points. The seed
  * begins at the corner farthest from the eye, upright, square to the floor;
  * a solid built on begins where it meets what it stands on or against, then
  * the right angle off it - the edges leaving the join square to it, each
@@ -106,6 +109,9 @@
  * grows gives its shape: its stems rising toward the light, its leaves set
  * round them so none shades the next, its flowers where whatever carries
  * its pollen will see them. Grown, it is painted like the solids.
+ *
+ * Asking. Whoever watches can ask, with a tap, for a plant, a word or
+ * another view (suggestions, ask): it is made next, and counts as liked.
  */
 (function (global) {
   "use strict";
@@ -149,11 +155,10 @@
    * `wall` away; `lens` is the focal length against the canvas's short side.
    *   size     the first solid's height against the canvas's short side
    *   foot     how far down the canvas the foot of a solid may come
-   *   rings    a sphere's rings, rim to front
    *   batch    strokes to a step at most
    *   turns    turns tried for the first solid to show the planes wanted
    *   rest     ms the painting is left to be seen after each change */
-  const ROOM = { eye: 2, wall: 10, lens: 1.15, size: 0.24, foot: 0.93, rings: 9, batch: 90, turns: 120, rest: 1600 };
+  const ROOM = { eye: 2, wall: 10, lens: 1.15, size: 0.24, foot: 0.93, batch: 90, turns: 120, rest: 1600 };
   /* The structure (how much of it there is, and how it changes, is learned: Learning).
    *   tries    places tried for a new solid
    *   near     the nearest a solid may stand to the eye; `back`, its room before the wall
@@ -1021,7 +1026,12 @@
   // A point on a curved solid's middle plane, carried up the light to its surface (where the light first meets it there).
   function onSurface(S, B, q) {
     const L = S.light.L;
-    if (B.kind === "sphere") { const d = sub(q, B.middle); return add(q, times(L, Math.sqrt(Math.max(0, B.radius ** 2 - dot(d, d))))); }
+    if (B.kind === "sphere") {
+      // (A point on the edge of the many-sided disc stands for the circle: on it, where the light only grazes the sphere, it is not lifted at all.)
+      const d = sub(q, B.middle), l = Math.hypot(d[0], d[1], d[2]), rim = B.radius * Math.cos(Math.PI / 24) * 0.999;
+      if (l >= rim) return add(B.middle, times(d, B.radius / (l || 1)));
+      return add(q, times(L, Math.sqrt(Math.max(0, B.radius ** 2 - l * l))));
+    }
     const m = B.placed.middle, level = Math.hypot(L[0], L[2]) || 1e-3, a = dot(sub(q, m), unit([-L[2], 0, L[0]]));
     const radius = (y) => (B.kind === "cone" ? B.radius * clamp((B.high - y) / (B.high - B.low), 0, 1) : B.radius);
     let t = Math.sqrt(Math.max(0, radius(q[1]) ** 2 - a * a)) / level;
@@ -1125,11 +1135,13 @@
     (A.shot.on ||= new Map()).set(B.id, marks.map((m) => clipOf(m.shot, 2)));
     for (const m of marks) {
       const f = m.face, clip = clipOf(m.shot, 0.6);
+      const ball = f.curved && f.part?.kind === "sphere";
       const darkAt = (x, y) => {
-        const p = onPlane(cam, x, y, f.normal, f.centre) || f.centre;
-        return shade(S, B.base, f.curved ? roundNormal(S, f.part, x, y) : f.normal, p[2], { at: p, self: B, direct: 0 });
+        const p = ball ? sphereAt(S, f.part, x, y) : onPlane(cam, x, y, f.normal, f.centre) || f.centre;
+        return shade(S, B.base, ball ? unit(sub(p, f.part.middle)) : f.curved ? roundNormal(S, f.part, x, y) : f.normal, p[2], { at: p, self: B, direct: 0 });
       };
-      out.push(...rowsIn(S, m.shot, Math.max(3, cam.W * 0.012), darkAt, f.curved ? "soft" : "filbert", { clip, meant: darkAt }));
+      // (On a curved solid, along its own curves; on a plane, in rows across it.)
+      out.push(...(f.curved ? roundShadow(S, f.part, m.shot, darkAt, { clip, meant: darkAt }) : rowsIn(S, m.shot, Math.max(3, cam.W * 0.012), darkAt, "filbert", { clip, meant: darkAt })));
     }
     if (out.length) yield* inSteps("the shadow of " + theOf(A) + " on " + theOf(B), out);
   }
@@ -1168,65 +1180,124 @@
     if (out.length) yield* inSteps("what stands near " + theOf(P) + " takes its colour", out);
   }
 
-  /* ── A sphere: brush shapes stacked inside its volume ─────────────────
-   * Rings from the rim (the farthest of it that can be seen) to the front,
-   * each ring's strokes going round it from its darkest side, so the light
-   * strokes go on over the dark; the highlight last - or, in a medium that
-   * cannot go lighter, the ground kept bare for it from the start. */
+  /* ── A sphere: in bands round the way the light comes ─────────────────
+   * Painted as it is lit: in bands that each take the light at one angle -
+   * circles round the point of it nearest the light, as lines of latitude go
+   * round a pole. Seen, each band is an arc that runs nearly straight
+   * across the middle of the sphere and curves harder the nearer it comes to
+   * the sphere's edge, turning to run along the rim; its strokes follow it,
+   * so the shading turns with the form - and a shadow thrown on the sphere
+   * is laid along the same arcs. In paint, from the shadowed side to the
+   * light, the lights going on last over the darks; in a medium that cannot
+   * go lighter, the lights first and the darks over them, the highlight
+   * kept bare. */
   function* sphereSteps(S, E) {
-    const { cam } = S, R = E.radius, C = E.middle, L = S.light.L;
-    const [cx, cy] = project(cam, C), r = scaleAt(cam, C) * R, far = farOf(S, E);
-    // (Far back, or small, it takes fewer rings: Depth.)
-    const N = E.rings = clamp(Math.round(ROOM.rings * (1 - DEPTH.detail * far) * clamp(r / (Math.min(cam.W, cam.H) * 0.1), 0.55, 1)), 4, ROOM.rings), ring = r / N;
-    const dark = Math.atan2(L[1], -L[0]);   // in the picture: away from the light
-    const colourAt = (x, y) => {
-      const nx = clamp((x - cx) / r, -1, 1), ny = clamp(-(y - cy) / r, -1, 1), nz = -Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny));
-      return shade(S, E.base, [nx, ny, nz], C[2] + R * nz, { shine: 0.55, at: add(C, times([nx, ny, nz], R)), self: E });
-    };
-    const h = unit(add(L, [0, 0, -1])), hx = cx + h[0] * r * 0.92, hy = cy - h[1] * r * 0.92;
-    const keep = S.rules.reserve ? [oval(hx, hy, ring * 0.6, ring * 0.45, 14)] : null;
-    const extra = keep ? { meant: colourAt, clipOut: keep } : { meant: colourAt };
-    yield* rings(S, E, cx, cy, r, dark, colourAt, extra, "", N);
-    if (far < 0.55) yield* glazes(S, E, E.outline, E.name, () => [...rings(S, E, cx, cy, r, dark, colourAt, extra, ", glazed again", N)].flatMap((step) => step.strokes));
+    const { cam } = S, R = E.radius, C = E.middle, L = S.light.L, r = scaleAt(cam, C) * R, far = farOf(S, E), short = Math.min(cam.W, cam.H);
+    const toEye = cam.flat ? [0, 0, -1] : unit(sub([0, cam.eye, 0], C));
+    // (Far back, or small, it takes fewer bands: Depth.)
+    const N = E.bands = clamp(Math.round(r / (short * 0.011) * (1 - DEPTH.detail * far)), 5, 16), w = r / N;
+    const colourAt = (x, y) => { const p = sphereAt(S, E, x, y); return shade(S, E.base, unit(sub(p, C)), p[2], { shine: 0.55, at: p, self: E }); };
+    // The highlight: where the sphere turns halfway between the light and the eye.
+    const [hx, hy] = project(cam, add(C, times(unit(add(L, toEye)), R)));
+    const keep = S.rules.reserve ? [oval(hx, hy, w * 0.7, w * 0.55, 14)] : null;
+    const clip = clipOf(E.outline, 0.6), extra = keep ? { meant: colourAt, clipOut: keep, clip } : { meant: colourAt, clip };
+    yield* bandSteps(S, E, N, extra, "");
+    if (far < 0.55) yield* glazes(S, E, E.outline, E.name, () => [...bandSteps(S, E, N, extra, ", glazed again")].flatMap((step) => step.strokes));
     if (E.app?.handling === "blended") yield* softenSteps(S, E);
     // (Kept bare, the ground is its highlight.)
     if (keep) return;
     const shine = mix(S.light.colour, E.base, 0.12);
     yield {
       label: "the highlight on " + theOf(E),
-      strokes: [stroke(S, [off(S, [hx - ring * 0.35, hy], 1), [hx, hy - ring * 0.05], off(S, [hx + ring * 0.35, hy], 1)], ring * 0.8, mix(colourAt(hx, hy), shine, 0.55), "round"),
-        stroke(S, [[hx - ring * 0.12, hy], [hx + ring * 0.12, hy]], ring * 0.45, shine, "round")],
+      strokes: [stroke(S, [off(S, [hx - w * 0.35, hy], 1), [hx, hy - w * 0.05], off(S, [hx + w * 0.35, hy], 1)], w * 0.8, mix(colourAt(hx, hy), shine, 0.55), "round", { clip }),
+        stroke(S, [[hx - w * 0.12, hy], [hx + w * 0.12, hy]], w * 0.45, shine, "round", { clip })],
     };
   }
-  // A sphere's rings, rim to front, each from its darkest side round.
-  function* rings(S, E, cx, cy, r, dark, colourAt, extra, again, N = ROOM.rings) {
-    const ring = r / N;
-    for (let k = 0; k < N; k++) {
-      // On dry: each ring left to dry before the next goes over its edge.
-      if (k && E.app?.wet === "on dry") S.paint.clock += S.M.wet;
-      const outer = r - k * ring, mid = Math.max(ring * 0.35, outer - ring / 2), width = ring * (1.7 + 0.25 * k / N);
-      const strokes = [];
-      if (k === N - 1) {
-        // The front: a few touches across the last of it.
-        for (let j = 0; j < 4; j++) {
-          const a = dark + j * Math.PI / 2 + S.rng() * 0.6, x = cx + Math.cos(a) * ring * 0.3, y = cy - Math.sin(a) * ring * 0.3;
-          strokes.push(stroke(S, [off(S, [x - ring * 0.6, y], ring * 0.1), [x, y], off(S, [x + ring * 0.6, y], ring * 0.1)], width, colourAt(x, y), "filbert", extra));
-        }
-      } else {
-        const around = 2 * Math.PI * mid, count = Math.max(5, Math.ceil(around / (width * 1.25))), arc = (2 * Math.PI / count) * 1.35;
-        for (let j = 0; j < count; j++) {
-          const sideWay = j % 2 ? 1 : -1, a0 = dark + sideWay * Math.ceil(j / 2) * (2 * Math.PI / count) + (S.rng() - 0.5) * 0.15;
-          const pts = [];
-          for (let p = 0; p < 4; p++) {
-            const a = a0 - arc / 2 + arc * p / 3, rr = mid + (S.rng() - 0.5) * ring * 0.2;
-            pts.push([cx + Math.cos(a) * rr, cy - Math.sin(a) * rr]);
-          }
-          const [mx, my] = pts[1];
-          strokes.push(stroke(S, pts, width, colourAt(mx, my), k === 0 ? "soft" : "filbert", extra));
-        }
-      }
-      yield { label: E.name + ", ring " + (k + 1) + " of " + N + again, strokes };
+  // Where the eye's ray through a point of the picture meets a sphere (or, missing it, the nearest of its rim).
+  function sphereAt(S, E, x, y) {
+    const { o, d } = rayOf(S.cam, x, y), u = unit(d), oc = sub(E.middle, o), b = dot(u, oc), q = b * b - (dot(oc, oc) - E.radius ** 2);
+    if (q >= 0) return add(o, times(u, b - Math.sqrt(q)));
+    return add(E.middle, times(unit(sub(add(o, times(u, b)), E.middle)), E.radius));
+  }
+  // A sphere's bands: the point of it `t` round from the light (0 the nearest to it) and `a` round the way to the light.
+  function bandFrame(S, E) {
+    const L = S.light.L, u = unit(Math.abs(L[1]) > 0.9 ? cross(L, [1, 0, 0]) : cross(L, [0, 1, 0])), v = cross(L, u);
+    return (t, a) => add(E.middle, times(add(times(L, Math.cos(t)), add(times(u, Math.cos(a) * Math.sin(t)), times(v, Math.sin(a) * Math.sin(t)))), E.radius));
+  }
+  /* The seen part of the band `t` round from the light, in runs along it
+   * (only of the points `keep` keeps, where it is given - each run carried
+   * a point on past either end, for the clip to cut it to the exact edge). */
+  function bandRuns(S, E, at, t, keep = null, n = 56) {
+    const pts = [];
+    for (let k = 0; k < n; k++) {
+      const a = k / n * Math.PI * 2, p = at(t, a), q = project(S.cam, p), seen = facingOf(S.cam, sub(p, E.middle), p) > 0;
+      pts.push({ p, q, a, seen, in: seen && (!keep || keep(q, p)) });
     }
+    if (pts.every((x) => x.in)) return [[...pts, pts[0]]];
+    // (Begun just after a point that is out, so no run is cut by the band's own start.)
+    const from = pts.findIndex((x) => !x.in), runs = [];
+    let run = [];
+    for (let i = 1; i <= n; i++) {
+      const x = pts[(from + i) % n];
+      if (x.in) {
+        if (!run.length && keep) { const before = pts[(from + i - 1) % n]; if (before.seen) run.push(before); }
+        run.push(x);
+      } else if (run.length) { if (keep && x.seen) run.push(x); runs.push(run); run = []; }
+    }
+    if (run.length) runs.push(run);
+    return runs;
+  }
+  // A band's strokes: along each run of it, a few points at a time, each in the light where it lies.
+  function bandStrokes(S, runs, width, colourOf, tip, extra) {
+    const out = [];
+    for (const run of runs) {
+      if (run.length === 1) { out.push(stroke(S, [run[0].q, [run[0].q[0] + 0.6, run[0].q[1] + 0.4]], width, colourOf(run[0].p, run[0].q), tip, extra)); continue; }
+      for (let i = 0; i < run.length - 1; i += 4) {
+        const chunk = run.slice(i, Math.min(run.length, i + 6)), mid = chunk[Math.floor(chunk.length / 2)];
+        out.push(stroke(S, chunk.map((x) => x.q), width, colourOf(mid.p, mid.q), tip, extra));
+      }
+    }
+    return out;
+  }
+  // A sphere's bands, a step each: in paint from the shadowed side to the light; in a medium that cannot go lighter, the other way.
+  function* bandSteps(S, E, N, extra, again) {
+    const at = bandFrame(S, E), step = Math.PI / N, width = scaleAt(S.cam, E.middle) * E.radius * step * 1.75;
+    const order = Array.from({ length: N }, (_, k) => (k + 0.5) * step);
+    if (!S.rules.darkenOnly) order.reverse();
+    const colourOf = (p) => shade(S, E.base, unit(sub(p, E.middle)), p[2], { shine: 0.55, at: p, self: E });
+    let first = true;
+    for (const t of order) {
+      const runs = bandRuns(S, E, at, t);
+      if (!runs.length) continue;
+      // On dry: each band left to dry before the next goes over its edge.
+      if (!first && E.app?.wet === "on dry") S.paint.clock += S.M.wet;
+      first = false;
+      const edge = t < step * 1.5 || t > Math.PI - step * 1.5;
+      yield { label: E.name + ", its band " + Math.round(t / Math.PI * 180) + "\u00b0 from the light" + again, strokes: bandStrokes(S, runs, width, colourOf, edge ? "soft" : "filbert", extra) };
+    }
+  }
+  /* A shadow thrown on a curved solid, laid along the solid's own curves -
+   * on a sphere along its bands round the light, on a cylinder or a cone
+   * along its rulings - so it travels round the form as its shading does. */
+  function roundShadow(S, B, shot, darkAt, extra) {
+    const { cam } = S, inside = (q) => inPoly(shot, q[0], q[1]), out = [];
+    if (B.kind === "sphere") {
+      const N = B.bands || 8, at = bandFrame(S, B), step = Math.PI / N, width = scaleAt(cam, B.middle) * B.radius * step * 1.75;
+      for (let k = 0; k < N; k++) out.push(...bandStrokes(S, bandRuns(S, B, at, (k + 0.5) * step, inside, 112), width, (p, q) => darkAt(q[0], q[1]), "soft", extra));
+      return out;
+    }
+    // A cylinder's or a cone's rulings: from its foot up (to its point, on a cone), where each is seen.
+    const [mx, , mz] = B.placed.middle, r = B.radius, lo = B.low, hi = B.high, N = 40, cone = B.kind === "cone";
+    const width = Math.max(2, 2 * Math.PI * r / N * scaleAt(cam, B.placed.middle) * 1.6);
+    for (let k = 0; k < N; k++) {
+      const t = (k + 0.5) / N * Math.PI * 2, foot = [mx + r * Math.cos(t), lo, mz + r * Math.sin(t)], top = cone ? [mx, hi, mz] : [foot[0], hi, foot[2]];
+      if (facingOf(cam, cone ? [Math.cos(t) * (hi - lo), r, Math.sin(t) * (hi - lo)] : [Math.cos(t), 0, Math.sin(t)], foot) <= 0) continue;
+      let run = [];
+      const flush = () => { if (run.length > 1) { const mid = run[Math.floor(run.length / 2)]; out.push(stroke(S, run, width, darkAt(mid[0], mid[1]), "soft", extra)); } run = []; };
+      for (let i = 0; i <= 12; i++) { const q = project(cam, mix(foot, top, i / 12 * (cone ? 0.95 : 1))); if (inside(q)) run.push(q); else flush(); }
+      flush();
+    }
+    return out;
   }
 
   /* ── A flat-sided solid, built by points ─────────────────────────────
@@ -1510,18 +1581,19 @@
     yield* inSteps("losing the edge of " + theOf(P) + ", far back", out);
   }
   /* Blended: a clean brush - or the stump - drawn back through what was
-   * just laid, across a sphere's rings or along a plane's rows, so its
+   * just laid, across a sphere's bands or along a plane's rows, so its
    * marks run into each other. */
   function* softenSteps(S, E) {
     const out = [];
     if (E.kind === "sphere") {
-      const N = E.rings || ROOM.rings, [cx, cy] = project(S.cam, E.middle), r = scaleAt(S.cam, E.middle) * E.radius, ring = r / N;
-      for (let k = 1; k < N - 1; k++) {
-        const rr = r - k * ring, count = Math.max(6, Math.round(2 * Math.PI * rr / (ring * 2.6)));
-        for (let j = 0; j < count; j++) {
-          const a = (j + S.rng() * 0.6) / count * 2 * Math.PI, b = a + 0.12 * (S.rng() - 0.5);
-          out.push(stroke(S, [[cx + Math.cos(a) * (rr + ring * 0.7), cy - Math.sin(a) * (rr + ring * 0.7)], [cx + Math.cos(b) * (rr - ring * 0.7), cy - Math.sin(b) * (rr - ring * 0.7)]],
-            ring * 1.4, [0, 0, 0], "soft", { soften: true }));
+      // (Across the bands, where one meets the next: the brush drawn from the lighter into the darker.)
+      const N = E.bands || 8, at = bandFrame(S, E), step = Math.PI / N, w = scaleAt(S.cam, E.middle) * E.radius * step;
+      for (let k = 1; k < N; k++) {
+        for (const run of bandRuns(S, E, at, k * step, null, 28)) {
+          for (let i = 0; i < run.length; i += 2) {
+            const a = run[i].a + (S.rng() - 0.5) * 0.05;
+            out.push(stroke(S, [project(S.cam, at(k * step - step * 0.6, a)), project(S.cam, at(k * step + step * 0.6, a))], w * 1.3, [0, 0, 0], "soft", { soften: true, clip: clipOf(E.outline, 0.6) }));
+          }
         }
       }
     } else if (!E.round) {
@@ -1842,9 +1914,9 @@
       yield look(label);
       // (A thing of many parts is lifted part by part, each on its own, where it is meant lighter than what is under it - not the space between them.)
       const where = P.parts ? P.parts.filter((q) => q.size > 0.04 && needsLift(S, q)).map((q) => clipOf(q.outline, 0.6))
-        : needsLift(S, P) ? [P.round ? clipOf(P.outline, 0.6) : P.cover] : [];
+        : needsLift(S, P) ? [P.round || P.kind === "sphere" ? clipOf(P.outline, 0.6) : P.cover] : [];
       if (!where.length) return;
-      // (A curved solid has no drawn edge to cover the rim of a lift: it is lifted just where it will be painted.)
+      // (A curved solid - a sphere, a cylinder, a cone - has no drawn edge to cover the rim of a lift: it is lifted just where it will be painted.)
       for (const one of where) yield* laid(S, liftSteps(S, [one], label + (pass ? ", again" : "")), { within: [one], box: boxOf([one]), out: front });
     }
   }
@@ -2266,7 +2338,9 @@
     for (const q of L.parts) if (q.kind === "sphere") yield* sphereSteps(S, q);
   }
   // A word of its own when none was asked for: the name of what it began with, or of the place.
-  const ownWord = (S) => (S.rng() < 0.6 && S.seed ? S.seed.name.replace(/^an? /, "").toUpperCase() : ["HEX", "FIELD", "HEXFIELD"][Math.floor(S.rng() * 3)]);
+  // (The seed's own name, as a word short enough to letter: a tetrahedron is TETRA.)
+  const seedWord = (S) => { const w = S.seed ? S.seed.name.split(" ").pop().toUpperCase() : "HEX"; return w.length <= 9 ? w : w.replace(/HEDRON$/, "").slice(0, 9); };
+  const ownWord = (S) => (S.rng() < 0.6 && S.seed ? seedWord(S) : ["HEX", "FIELD", "HEXFIELD"][Math.floor(S.rng() * 3)]);
   // A word lettered: its letters, one after another, each with its shadow and a look.
   function* addWord(S, m) {
     S.word = { text: m.text, face: m.face, letters: m.letters };
@@ -2818,6 +2892,20 @@
    * learned, taking something away (likelier the fuller it is, and seldom
    * in a medium that cannot take paint back off), or reworking. */
   function* nextAction(S) {
+    // (Something asked for - a plant, a word, another view - comes before anything it would choose itself: Asking.)
+    const ask = S.asks?.shift();
+    if (ask) {
+      const m = askedMove(S, ask);
+      if (m) {
+        // (Asked for is liked: what it was is learned as liked, before it is even made.)
+        for (const f of m.feats) teach(f, LEARN.vote * 0.5);
+        remember();
+        S.asking = ask;
+        yield* move(S, m);
+        S.asking = null;
+        return;
+      }
+    }
     const standing = alive(S), n = standing.filter((P) => !P.parts).length, cap = most(S), forced = S.queue.shift();
     if (forced) {
       const P = findPlace(S, forced.how, forced.kind);
@@ -2867,7 +2955,7 @@
     if (m.type === "word" && !(m.letters = placeWord(S, m.text, m.face))) { S.wordAgain = S.moves + 5; return; }
     if (m.type === "plant") {
       if (!(m.plant = placePlant(S, m.kind))) { S.plantAgain = S.moves + 4; return; }
-      m.plant.asked = m.kind === S.wantPlant;
+      m.plant.asked = m.asked || m.kind === S.wantPlant;
       m.feats.push(m.plant.host ? "a plant in a pot" : "a plant on the floor");
     }
     const before = judged(S), k = known(m.feats);
@@ -2986,6 +3074,40 @@
     P.base = pieceColour(S);
     return fits(S, P) ? P : null;
   }
+  /* ── Asking ───────────────────────────────────────────────────────────
+   * Whoever watches can ask - with a tap, not a word typed - for a plant to
+   * be grown, a word to be lettered, or the structure seen from another
+   * place. What is asked for is made next, and counts as liked. What it
+   * offers to be asked for: plants it has not grown in this painting (the
+   * ones it has done well with first), a word of its own, the other views. */
+  function ask(S, request) {
+    if (!S || !request) return false;
+    (S.asks ||= []).push(request);
+    // (No waiting out the breath it takes after a change: what was asked for comes now.)
+    S.restUntil = 0;
+    S.restAfter = 0;
+    return true;
+  }
+  function askedMove(S, a) {
+    if (a.type === "plant" && PLANTS[a.kind]) return { type: "plant", kind: a.kind, asked: true, feats: ["growing a plant", "growing " + plantName(a.kind)], label: "growing " + plantName(a.kind) };
+    if (a.type === "word" && a.text) { const face = faceOf(S); return { type: "word", text: String(a.text).toUpperCase().slice(0, 9), face, asked: true, feats: ["lettering a word", ...face.feats], label: "lettering \u201c" + a.text + "\u201d" }; }
+    if (a.type === "view" && VIEWS[a.view] && a.view !== S.view.id) return { type: "view", view: VIEWS[a.view], asked: true, feats: ["seeing it again", "seeing it " + VIEWS[a.view].name, "rule: views"], label: "seeing it again, " + VIEWS[a.view].name };
+    return null;
+  }
+  const VIEW_ASKS = { one: "see it square on", two: "see it turned", above: "see it from above", below: "see it from below", flat: "see it flat" };
+  // (Three at most, one of each: a plant, a word - or, while a word stands, another plant - and a view.)
+  function suggestions(S) {
+    if (!S) return [];
+    const grown = new Set(alive(S).filter((P) => P.kind === "plant").map((P) => P.plant)), r = seeded((S.moves || 0) * 7919 + 17), out = [];
+    const kinds = GROWN.filter((k) => !grown.has(k)).map((k) => ({ k, feats: ["growing " + plantName(k)] }));
+    const plant = () => { if (!kinds.length) return; const { k } = pick(r, kinds); kinds.splice(kinds.findIndex((x) => x.k === k), 1); out.push({ label: "grow " + plantName(k), request: { type: "plant", kind: k } }); };
+    plant();
+    if (!(S.word && alive(S).some((P) => P.kind === "letter"))) { const word = S.wanted || seedWord(S); out.push({ label: "letter \u201c" + word + "\u201d", request: { type: "word", text: word } }); }
+    else plant();
+    const ids = Object.keys(VIEWS).filter((id) => id !== S.view.id), id = ids[Math.floor(r() * ids.length)];
+    out.push({ label: VIEW_ASKS[id], request: { type: "view", view: id } });
+    return out;
+  }
   /* A vote. On the painting (KEEP, REJECT): the changes just made take it,
    * the latest most; a painting kept keeps its forms. On its last move:
    * that one alone. */
@@ -3097,6 +3219,6 @@
     return S;
   }
 
-  global.HexfieldStudy = { KINDS, SOLIDS, NAMES, ROOM, BUILD, MEDIA, MEDIUMS, LOOK, LEARN, RULES, VIEWS, make, premap, camera, project, cubeSolid, tetraSolid, octaSolid, pyramidSolid, prismSolid, place,
-    rulesOf, freedomsOf, credit, learned, seedKind, memory };
+  global.HexfieldStudy = { KINDS, SOLIDS, NAMES, ROOM, BUILD, MEDIA, MEDIUMS, LOOK, LEARN, RULES, VIEWS, PLANTS, make, premap, camera, project, cubeSolid, tetraSolid, octaSolid, pyramidSolid, prismSolid, place,
+    rulesOf, freedomsOf, credit, learned, seedKind, memory, ask, suggestions };
 })(typeof globalThis !== "undefined" ? globalThis : this);
