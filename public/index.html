@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- autodeploy-check: workers-builds-verify-8f2c1a -->
-<!-- hexfield build 348 (2026-10-12) -->
+<!-- hexfield build 349 (2026-10-12) -->
 <html lang="en">
 <head>
 <script>
@@ -565,6 +565,19 @@
   #askText:focus { border-color: rgba(109,201,242,.9); }
   #askText::placeholder { color: #7f8aa0; }
   #askGo { width: auto; flex: 0 0 auto; min-height: 0 !important; height: 30px; padding: 0 12px !important; font-size: 10px; }
+  /* What you KEEP, kept: a small picture of each in a strip that scrolls across - always its height, so nothing under it jumps. */
+  #keptStrip { display: flex; align-items: center; gap: 5px; height: 44px; min-height: 44px; margin-top: 5px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+  #keptStrip .hint { color: #5d6880; font-size: 8px; white-space: nowrap; }
+  #keptStrip button { flex: 0 0 auto; width: auto; height: 40px; min-height: 0 !important; padding: 0 !important; margin: 0; border: 1px solid rgba(109,201,242,.4) !important;
+                      border-radius: 4px; background: #0d151d !important; overflow: hidden; cursor: pointer; transform: none !important; }
+  #keptStrip button:hover { border-color: var(--pride-amber) !important; }
+  #keptStrip img { display: block; height: 38px; width: auto; }
+  #keptView { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+              padding: 16px; box-sizing: border-box; background: rgba(4,8,12,.92); }
+  #keptView[hidden] { display: none; }
+  #keptView img { max-width: 92vw; max-height: 78vh; border-radius: 6px; box-shadow: 0 0 0 1px rgba(109,201,242,.35); }
+  #keptView p { margin: 0; max-width: 92vw; color: #aeb6cf; font-size: 10px; text-align: center; line-height: 1.4; }
+  #keptView button { width: auto; padding: 0 18px !important; height: 32px; min-height: 0 !important; }
   #localLearningStatus { margin-top: 4px; color: #aeb6cf; font-size: 8px; line-height: 1.3;
                          height: 22px; min-height: 22px; max-height: 22px; overflow: hidden; }
   /* Live diagnostics may change words, not geometry. */
@@ -783,9 +796,11 @@
     <div id="choiceCard" aria-label="ask for something, or like or dislike each of this painting's choices"></div>
     <!-- Or ask in words: a plant, a solid (a colour before it), a way of seeing it, a turn - anything else is lettered. -->
     <form id="askForm" autocomplete="off">
-      <input id="askText" type="text" maxlength="48" enterkeyhint="go" placeholder="ask: a blue cube on the dome · make it gold · &quot;your words&quot;" aria-label="ask the painter in words">
+      <input id="askText" type="text" maxlength="48" enterkeyhint="go" placeholder="ask: a blue cube on the dome · make it gold · &quot;your words&quot; · undo" aria-label="ask the painter in words">
       <button id="askGo" type="submit">ASK</button>
     </form>
+    <!-- What you KEEP, kept on this device: tap one to see it bigger. -->
+    <div id="keptStrip" aria-label="paintings you kept"><span class="hint">what you KEEP is kept here</span></div>
     <div id="localLearningStatus" aria-live="polite">teach it directly, or let the resident painter keep learning in the background</div>
     <!-- Inside #autonomousControls on purpose. The autonomous presentation
          blacks out the sidebar with `aside > div:not(#autonomousControls)`, so
@@ -805,7 +820,7 @@
     <div id="colourChoice">colour: choosing…</div>
     <div id="robBossMood" aria-live="polite">rob boss: waking up · show me 4–8 clear choices</div>
     <div id="painterStatus">seed held · preparing the first paint pass</div>
-    <div id="buildBadge">build 348</div>
+    <div id="buildBadge">build 349</div>
     <div id="bootErrors" style="display:none;color:#ff6b6b;font-size:10px;white-space:pre-wrap;margin-top:4px;"></div>
   </div>
   <div id="shopEssentials" aria-label="print controls"></div>
@@ -1010,5 +1025,11 @@
 <script src="hexfield-integrations.js"></script>
 <script src="app.js"></script>
 <script type="module" src="print-handoff.js"></script>
+<!-- A kept painting seen bigger: tap anywhere, or CLOSE, to go back. -->
+<div id="keptView" hidden role="dialog" aria-label="a painting you kept">
+  <img alt="a painting you kept">
+  <p></p>
+  <button type="button">CLOSE</button>
+</div>
 </body>
 </html>

@@ -34875,7 +34875,7 @@ function askInWords(text) {
   if (!String(text || "").trim()) return false;
   if (!study || !Study?.askText) { if (status) status.textContent = "asking works while a study is painting"; return false; }
   const asked = Study.askText(study, text);
-  if (status) status.textContent = asked.length ? "asked: " + asked.join(" \u00b7 ") + " - it will do " + (asked.length > 1 ? "them" : "it") + " next" : "nothing in that to make";
+  if (status) status.textContent = asked.length ? "asked: " + asked.join(" \u00b7 ") + " - it will do " + (asked.length > 1 ? "them" : "it") + " next" : /\b(undo|go back|revert)\b/i.test(text) ? "nothing to undo yet" : "nothing in that to make";
   renderChoiceCard(true);
   return asked.length > 0;
 }
@@ -51082,8 +51082,81 @@ function updateHumanVoteButtons() {
 function castHumanTasteDecision(liked) {
   if (!recordHumanTasteDecision(current, liked)) return;
   updateHumanVoteButtons();
+  if (liked) keepSnapshot();
   startHumanTasteRefinement(liked);
 }
+
+/* ── Kept ─────────────────────────────────────────────────────────────
+ * Every painting you KEEP leaves a small picture of itself in a strip
+ * under the ask box - the last twelve, kept on this device - and a tap on
+ * one shows it bigger, with what it was of and when it was kept. */
+const KEPT = { key: "hexfield.kept.v1", most: 12, size: 320, quality: 0.74 };
+function keptList() {
+  try {
+    const list = JSON.parse(localStorage.getItem(KEPT.key) || "[]");
+    return Array.isArray(list) ? list.filter((k) => k && typeof k.url === "string" && k.url.startsWith("data:image/")) : [];
+  } catch { return []; }
+}
+function keepSnapshot() {
+  if (typeof document === "undefined" || !view?.width || !view?.height) return false;
+  const k = KEPT.size / Math.max(view.width, view.height), c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(view.width * k));
+  c.height = Math.max(1, Math.round(view.height * k));
+  const g = c.getContext("2d");
+  g.drawImage(view, 0, 0, c.width, c.height);
+  // (A painting seen through the Munker-White stripes is kept with them.)
+  if (munkerLayer && munkerLayer.style.display !== "none" && munkerLayer.width) g.drawImage(munkerLayer, 0, 0, c.width, c.height);
+  let url = null;
+  try { url = c.toDataURL("image/jpeg", KEPT.quality); } catch { url = null; }
+  c.width = 0;
+  if (!url?.startsWith("data:image/")) return false;
+  const name = String(strokePainter.plan?.study?.name || current?.params?.field || "").slice(0, 140);
+  const list = [{ url, at: Date.now(), name }, ...keptList()].slice(0, KEPT.most);
+  // (Where the device has no room for all of them, the oldest go first.)
+  while (list.length) {
+    try { localStorage.setItem(KEPT.key, JSON.stringify(list)); break; } catch { list.pop(); }
+  }
+  renderKeptStrip();
+  return true;
+}
+function renderKeptStrip() {
+  const strip = typeof document !== "undefined" ? document.getElementById("keptStrip") : null;
+  if (!strip) return;
+  const list = keptList();
+  strip.replaceChildren();
+  if (!list.length) {
+    const hint = document.createElement("span");
+    hint.className = "hint";
+    hint.textContent = "what you KEEP is kept here";
+    strip.append(hint);
+    return;
+  }
+  for (const kept of list) {
+    const button = document.createElement("button"), img = document.createElement("img");
+    button.type = "button";
+    button.title = (kept.name ? kept.name + " · " : "") + "kept " + new Date(kept.at).toLocaleString();
+    img.src = kept.url;
+    img.alt = kept.name ? "kept: " + kept.name : "a painting you kept";
+    button.append(img);
+    button.addEventListener("click", () => showKept(kept));
+    strip.append(button);
+  }
+}
+function showKept(kept) {
+  const box = document.getElementById("keptView");
+  if (!box) return;
+  // (Wired when first shown: the page's own markup for it comes after this script.)
+  if (!box.dataset.wired) {
+    box.dataset.wired = "1";
+    box.addEventListener("click", () => { box.hidden = true; });
+    document.addEventListener("keydown", (event) => { if (event.key === "Escape") box.hidden = true; });
+  }
+  box.querySelector("img").src = kept.url;
+  box.querySelector("p").textContent = (kept.name ? kept.name + " · " : "") + "kept " + new Date(kept.at).toLocaleString();
+  box.hidden = false;
+  box.querySelector("button")?.focus();
+}
+if (typeof document !== "undefined") renderKeptStrip();
 
 /* What a vote does once it has taught: KEEP lets the painting carry on,
  * REJECT moves on to a new one. */

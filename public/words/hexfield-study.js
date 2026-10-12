@@ -621,10 +621,14 @@
    * and the more it faces them, the more (occlusion) - and each gives back
    * some of its own colour onto what faces it (diffusion of nearby
    * colours); and close over what a solid stands on, in the crevice, it is
-   * darker. `direct: 0` is the surface out of the light (in a shadow). */
-  function shade(S, base, n, Z, { shine = 0, bounce = 0.6, lift = 0, at = null, self = null, direct = 1 } = {}) {
+   * darker. `direct: 0` is the surface out of the light (in a shadow);
+   * `under`, how much of it still reaches a surface in a shadow - from the
+   * bright sky round the light - so a shadow on a curved solid still turns
+   * with it, darkest where the surface turns from the light. */
+  const SKY = 0.12;
+  function shade(S, base, n, Z, { shine = 0, bounce = 0.6, lift = 0, at = null, self = null, direct = 1, under = 0 } = {}) {
     const { L, colour: lit, ambient: amb } = S.light;
-    const d = Math.max(0, dot(n, L)) * direct;
+    const d = Math.max(0, dot(n, L)) * (direct + under * (1 - direct));
     let keep = 1, give = null;
     if (at && S.pieces?.length) {
       let occ = 0, w = 0;
@@ -1175,7 +1179,12 @@
         let world = cut.map(([a, b]) => add(f.centre, add(times(u, a), times(v, b))));
         // (On a curved solid, each point of it carried on up the light from the plane through its middle to where the light meets it, so the shadow wraps round it.)
         if (f.curved) world = densify(world, 6).map((q) => onSurface(S, f.part, q));
-        out.push({ face: f, world, shot: world.map((p) => project(S.cam, p)) });
+        /* Whether a point of the solid is under it: carried down the light to
+         * the plane, it lands inside the shadow there - found on the solid,
+         * not in the picture, so a shadow on the far side of a round solid is
+         * never painted onto its near side where the two overlap. */
+        const under = (p) => { const k = flat(sub(p, times(L, dot(f.normal, sub(p, f.centre)) / nl))); return inPoly(cut, k[0], k[1]); };
+        out.push({ face: f, world, shot: world.map((p) => project(S.cam, p)), under });
       }
     }
     return out;
@@ -1298,10 +1307,11 @@
       const ball = f.curved && isBall(f.part);
       const darkAt = (x, y) => {
         const p = ball ? sphereAt(S, f.part, x, y) : onPlane(cam, x, y, f.normal, f.centre) || f.centre;
-        return shade(S, B.base, ball ? unit(sub(p, f.part.middle)) : f.curved ? roundNormal(S, f.part, x, y) : f.normal, p[2], { at: p, self: B, direct: 0 });
+        return shade(S, B.base, ball ? unit(sub(p, f.part.middle)) : f.curved ? roundNormal(S, f.part, x, y) : f.normal, p[2], { at: p, self: B, direct: 0, under: f.curved ? SKY : 0 });
       };
-      // (On a curved solid, along its own curves; on a plane, in rows across it.)
-      out.push(...(f.curved ? roundShadow(S, f.part, m.shot, darkAt, { clip, meant: darkAt }) : rowsIn(S, m.shot, Math.max(3, cam.W * 0.012), darkAt, "filbert", { clip, meant: darkAt })));
+      // (On a curved solid, along its own curves - a form's face swells, so on it too; on a plane, in rows across it.)
+      out.push(...(f.curved ? roundShadow(S, f.part, m, darkAt, { clip, meant: darkAt }) : f.part.kind === "blob" && f.concave ? guideShadow(S, f.part, m, { clip })
+        : rowsIn(S, m.shot, Math.max(3, cam.W * 0.012), darkAt, "filbert", { clip, meant: darkAt })));
     }
     if (out.length) yield* inSteps("the shadow of " + theOf(A) + " on " + theOf(B), out);
   }
@@ -1413,6 +1423,7 @@
   }
   // A dome painted as a sphere is, in bands round the light over its flat face; then what it was made with, where it is seen.
   function* domeSteps(S, E) {
+    yield* guideSteps(S, E);
     yield* sphereSteps(S, E);
     if (farOf(S, E) < 0.7) yield* inSteps("what " + theOf(E) + " was made with, where it is seen", domeFeatureStrokes(S, E));
   }
@@ -1492,12 +1503,21 @@
     const before = (x, y) => { const k = cellAt(P0, x, y); if (k < 0) return S.palette.wall; const c = was.has[k] ? was.want : was.colour; return [c[k * 3], c[k * 3 + 1], c[k * 3 + 2]]; };
     const patch = () => shade(S, E.base, Nf, Z, { at, self: E }).map((v) => v * 0.92);
     const opaque = !S.rules.darkenOnly;
+    // (Where nothing lighter can go over, its guides are drawn first, on the bare ground, and show through.)
+    if (!opaque) yield* guideSteps(S, E);
     yield* inSteps("a loose patch of " + name + "'s colour", rowsIn(S, opaque ? clipOf(outline, margin * 0.45) : outline, Math.max(4, short * 0.018), patch, "soft", { meant: patch, ...(opaque ? {} : { clip }) }));
     if (opaque) yield* inSteps("the room cut back round " + name + ": its shape is what is left", rowsIn(S, clipOf(outline, margin), Math.max(3, short * 0.011), before, "filbert", { clipOut: [outline], meant: before }));
+    if (opaque) yield* guideSteps(S, E);
     // Its depth: the side of the slab the eye sees.
     const sides = E.map.visible.filter((f) => f.name === "side" && Math.abs(areaOf(f.screen)) > 2);
     if (sides.length) yield* inSteps(name + "'s side", sides.flatMap((f) => fillPlane(S, f, E.base, E)));
-    // The patch turned into a form: bands from its edge in.
+    // The patch turned into a form: across it, along its guides, each piece in the light of the surface swelling toward the eye there;
+    if (E.guided && guidesOf(S, E).curves.length) {
+      yield* inSteps(name + ", across it along its guides", alongGuides(S, E, clip, 0.25, "filbert"));
+      if (E.app?.handling === "blended") yield* softenSteps(S, E);
+      return;
+    }
+    // or in bands from its edge in.
     const K = clamp(Math.round(size / (short * 0.022) * (1 - 0.5 * far)), 5, 12), order = Array.from({ length: K }, (_, j) => j);
     if (!opaque) order.reverse();
     for (const j of order) {
@@ -1528,28 +1548,57 @@
     const L = S.light.L, u = unit(Math.abs(L[1]) > 0.9 ? cross(L, [1, 0, 0]) : cross(L, [0, 1, 0])), v = cross(L, u);
     return (t, a) => add(E.middle, times(add(times(L, Math.cos(t)), add(times(u, Math.cos(a) * Math.sin(t)), times(v, Math.sin(a) * Math.sin(t)))), E.radius));
   }
-  /* The seen part of the band `t` round from the light, in runs along it
-   * (only of the points `keep` keeps, where it is given - each run carried
-   * a point on past either end, for the clip to cut it to the exact edge). */
+  // The seen part of the band `t` round from the light, in runs along it (only of the points `keep` keeps, where it is given).
   function bandRuns(S, E, at, t, keep = null, n = 56, given = null) {
+    if (given) return runsOf(given, true, keep);
     const pts = [];
-    for (let k = 0; k < n; k++) {
-      const g = given?.[k], a = g ? g.a : k / n * Math.PI * 2, p = g ? g.p : at(t, a), q = g ? g.q : project(S.cam, p), seen = g ? g.seen : facingOf(S.cam, sub(p, E.middle), p) > 0;
-      pts.push({ p, q, a, seen, in: seen && (!keep || keep(q, p)) });
-    }
-    if (pts.every((x) => x.in)) return [[...pts, pts[0]]];
-    // (Begun just after a point that is out, so no run is cut by the band's own start.)
-    const from = pts.findIndex((x) => !x.in), runs = [];
+    for (let k = 0; k < n; k++) { const a = k / n * Math.PI * 2, p = at(t, a); pts.push({ p, q: project(S.cam, p), a, seen: facingOf(S.cam, sub(p, E.middle), p) > 0 }); }
+    return runsOf(pts, true, keep);
+  }
+  /* The seen part of a line of points on a solid (closed, a ring), in runs
+   * along it - only of the points `keep` keeps, where it is given, each run
+   * carried a point on past either end for the clip to cut it to the exact
+   * edge (and with `over`, on round the outline too). */
+  function runsOf(pts, closed, keep = null, over = false) {
+    const n = pts.length, ok = pts.map((x) => x.seen && (!keep || keep(x.q, x.p, x))), on = (x) => x && (over || (keep && x.seen));
+    if (ok.every(Boolean)) return [closed ? [...pts, pts[0]] : pts.slice()];
+    // (Begun just after a point that is out, so no run is cut by a ring's own start.)
+    const from = closed ? ok.indexOf(false) : -1, runs = [];
     let run = [];
     for (let i = 1; i <= n; i++) {
-      const x = pts[(from + i) % n];
-      if (x.in) {
-        if (!run.length && keep) { const before = pts[(from + i - 1) % n]; if (before.seen) run.push(before); }
-        run.push(x);
-      } else if (run.length) { if (keep && x.seen) run.push(x); runs.push(run); run = []; }
+      const k = closed ? (from + i) % n : i - 1;
+      if (ok[k]) {
+        const before = closed ? pts[(k - 1 + n) % n] : pts[k - 1];
+        if (!run.length && on(before)) run.push(before);
+        run.push(pts[k]);
+      } else if (run.length) { if (on(pts[k])) run.push(pts[k]); runs.push(run); run = []; }
     }
     if (run.length) runs.push(run);
     return runs;
+  }
+  // A stroke along a piece of a guide, from the colour meant at its one end to that at its other - the brush reloaded as it goes, so no step shows between pieces.
+  function pieceStroke(S, piece, width, colourOf, tip, extra) {
+    const a = piece[0].q, b = piece[piece.length - 1].q, c0 = colourOf(piece[0]), c1 = colourOf(piece[piece.length - 1]), dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy || 1;
+    const meant = (x, y) => mix(c0, c1, clamp(((x - a[0]) * dx + (y - a[1]) * dy) / l2, 0, 1));
+    return stroke(S, piece.map((x) => x.q), width, colourOf(piece[Math.floor(piece.length / 2)]), tip, { ...extra, meant });
+  }
+  /* Runs cut into pieces about `len` long in the picture, each a stroke's
+   * worth - each piece begun a point back, so they overlap; the first cut
+   * short by `first`, so where one line's pieces meet is not where the
+   * next one's do (no seam runs across them). */
+  function piecesOf(runs, len, first = 1) {
+    const out = [];
+    for (const run of runs) {
+      if (run.length < 2) continue;
+      let piece = [run[0]], d = len * (1 - first);
+      for (let i = 1; i < run.length; i++) {
+        d += Math.hypot(run[i].q[0] - run[i - 1].q[0], run[i].q[1] - run[i - 1].q[1]);
+        piece.push(run[i]);
+        if (d >= len && i < run.length - 1) { out.push(piece); piece = [run[i - 1], run[i]]; d = 0; }
+      }
+      if (piece.length > 1) out.push(piece);
+    }
+    return out;
   }
   // A band's strokes: along each run of it, a few points at a time, each in the light where it lies.
   function bandStrokes(S, runs, width, colourOf, tip, extra) {
@@ -1558,7 +1607,7 @@
       if (run.length === 1) { out.push(stroke(S, [run[0].q, [run[0].q[0] + 0.6, run[0].q[1] + 0.4]], width, colourOf(run[0].p, run[0].q), tip, extra)); continue; }
       for (let i = 0; i < run.length - 1; i += 4) {
         const chunk = run.slice(i, Math.min(run.length, i + 6)), mid = chunk[Math.floor(chunk.length / 2)];
-        out.push(stroke(S, chunk.map((x) => x.q), width, colourOf(mid.p, mid.q), tip, extra));
+        out.push(stroke(S, chunk.map((x) => x.q), width, colourOf(mid.p, mid.q, mid), tip, extra));
       }
     }
     return out;
@@ -1583,38 +1632,151 @@
     }
   }
   /* A shadow thrown on a curved solid, laid along the solid's own curves -
-   * on a sphere along its bands round the light, on a cylinder or a cone
-   * along its rulings - so it travels round the form as its shading does. */
-  function roundShadow(S, B, shot, darkAt, extra) {
-    const { cam } = S, inside = (q, p) => inPoly(shot, q[0], q[1]) && (B.kind !== "dome" || p[1] >= B.low - 1e-6), out = [];
-    if (isBall(B)) {
-      const N = B.bands || 8, at = bandFrame(S, B), step = Math.PI / N, width = scaleAt(cam, B.middle) * B.radius * step * 1.75;
-      // (Its bands' points found once for the eye as it is - every shadow on it laid along the same ones.)
-      if (B.bandPoints?.cam !== cam || B.bandPoints.middle !== B.middle || B.bandPoints.N !== N) {
-        B.bandPoints = { cam, middle: B.middle, N, bands: Array.from({ length: N }, (_, k) => Array.from({ length: 112 }, (_, i) => {
-          const a = i / 112 * Math.PI * 2, p = at((k + 0.5) * step, a);
-          return { a, p, q: project(cam, p), seen: facingOf(cam, sub(p, B.middle), p) > 0 };
-        })) };
-      }
-      const box = boxOf([shot]), near = (q, p) => q[0] >= box.x0 - 1 && q[0] <= box.x1 + 1 && q[1] >= box.y0 - 1 && q[1] <= box.y1 + 1 && inside(q, p);
-      for (let k = 0; k < N; k++) {
-        const band = B.bandPoints.bands[k];
-        if (!band.some((x) => x.seen && near(x.q, x.p))) continue;
-        out.push(...bandStrokes(S, bandRuns(S, B, at, (k + 0.5) * step, near, 112, band), width, (p, q) => darkAt(q[0], q[1]), "soft", extra));
-      }
-      return out;
+   * on a sphere along its bands round the light, on the rest along their
+   * guides - so it travels round the form as its shading does. */
+  function roundShadow(S, B, mark, darkAt, extra) {
+    if (B.kind !== "sphere") return guideShadow(S, B, mark, extra);
+    const { cam } = S, out = [];
+    const N = B.bands || 8, at = bandFrame(S, B), step = Math.PI / N, width = scaleAt(cam, B.middle) * B.radius * step * 1.75;
+    // (Its bands' points found once for the eye as it is - every shadow on it laid along the same ones.)
+    if (B.bandPoints?.cam !== cam || B.bandPoints.middle !== B.middle || B.bandPoints.N !== N) {
+      B.bandPoints = { cam, middle: B.middle, N, bands: Array.from({ length: N }, (_, k) => Array.from({ length: 112 }, (_, i) => {
+        const a = i / 112 * Math.PI * 2, p = at((k + 0.5) * step, a);
+        return { a, p, q: project(cam, p), seen: facingOf(cam, sub(p, B.middle), p) > 0 };
+      })) };
     }
-    // A cylinder's or a cone's rulings: from its foot up (to its point, on a cone), where each is seen.
-    const [mx, , mz] = B.placed.middle, r = B.radius, lo = B.low, hi = B.high, N = 40, cone = B.kind === "cone";
-    const width = Math.max(2, 2 * Math.PI * r / N * scaleAt(cam, B.placed.middle) * 1.6);
+    // (Only on its side to the light: a band past the turn from it is in its own shadow already.)
+    const L = S.light.L, near = (q, p) => dot(sub(p, B.middle), L) > 0 && mark.under(p);
     for (let k = 0; k < N; k++) {
-      const t = (k + 0.5) / N * Math.PI * 2, foot = [mx + r * Math.cos(t), lo, mz + r * Math.sin(t)], top = cone ? [mx, hi, mz] : [foot[0], hi, foot[2]];
-      if (facingOf(cam, cone ? [Math.cos(t) * (hi - lo), r, Math.sin(t) * (hi - lo)] : [Math.cos(t), 0, Math.sin(t)], foot) <= 0) continue;
-      let run = [];
-      const flush = () => { if (run.length > 1) { const mid = run[Math.floor(run.length / 2)]; out.push(stroke(S, run, width, darkAt(mid[0], mid[1]), "soft", extra)); } run = []; };
-      for (let i = 0; i <= 12; i++) { const p = mix(foot, top, i / 12 * (cone ? 0.95 : 1)), q = project(cam, p); if (inside(q, p)) run.push(q); else flush(); }
-      flush();
+      const band = B.bandPoints.bands[k];
+      if ((k + 0.5) * step >= Math.PI / 2 || !band.some((x) => x.seen && near(x.q, x.p))) continue;
+      out.push(...bandStrokes(S, bandRuns(S, B, at, (k + 0.5) * step, near, 112, band), width, (p, q) => darkAt(q[0], q[1]), "soft", extra));
     }
+    return out;
+  }
+
+  /* ── Guidelines ───────────────────────────────────────────────────────
+   * Before a curved solid is painted, the lines that find its form, run
+   * square to its longest way: round a tall cylinder or cone, level rings
+   * one over another; up a squat one from its foot, and over a dome from
+   * its foot toward its crown; across a form, from one side of its outline
+   * to the other, swelling toward the eye. (A sphere has no longest way:
+   * its guides are its bands round the light.) Each is the solid's own
+   * surface cut through and seen in perspective - nothing drawn by eye - so
+   * it runs nearly straight where it faces the eye and where it is level
+   * with the eye, and curves harder as it turns toward the outline and the
+   * farther above or below the eye it lies. With every point of a guide
+   * goes the way the surface faces there: the paint is laid along the
+   * guides, each piece of a stroke in the light its surface turns to; and a
+   * shadow thrown on the solid is laid along the same guides, so it wraps
+   * round the form and still turns with it - darker where the surface turns
+   * from the light (Lighting).
+   *   across  how they run: round, up, over or across
+   *   gap     how far apart they lie on the solid */
+  function guidesOf(S, P) {
+    const at = P.placed || P.middle;
+    if (P.cross?.cam === S.cam && P.cross.at === at) return P.cross;
+    const { cam } = S, short = Math.min(cam.W, cam.H), curves = [], scr = scaleAt(cam, P.middle || P.placed.middle);
+    const point = (p, n) => ({ p, n, q: project(cam, p), seen: facingOf(cam, n, p) > 0 });
+    let across = null, gap = 0;
+    if (P.kind === "cylinder" || P.kind === "cone") {
+      const [mx, , mz] = P.placed.middle, r = P.radius, lo = P.low, hi = P.high, h = hi - lo, cone = P.kind === "cone";
+      const normal = (c, s) => (cone ? unit([c * h, r, s * h]) : [c, 0, s]);
+      if ((cone ? Math.hypot(h, r) : h) >= 1.9 * r) {
+        // Longer up than across: level rings, from its foot up (a cone's narrowing to its point).
+        across = "round";
+        const n = clamp(Math.round(h * scr / (short * 0.02)), 5, 18);
+        gap = h / n;
+        for (let j = 0; j < n; j++) {
+          const t = (j + 0.5) / n, y = lo + h * t, rr = cone ? r * (1 - t) : r;
+          curves.push({ closed: true, t, pts: Array.from({ length: 48 }, (_, k) => { const a = k / 48 * 2 * Math.PI, c = Math.cos(a), s = Math.sin(a); return point([mx + rr * c, y, mz + rr * s], normal(c, s)); }) });
+        }
+      } else {
+        // Longer across: from its foot up its side (a cone's toward its point).
+        across = "up";
+        const n = 40;
+        gap = 2 * Math.PI * r / n;
+        for (let k = 0; k < n; k++) {
+          const a = (k + 0.5) / n * 2 * Math.PI, c = Math.cos(a), s = Math.sin(a), foot = [mx + r * c, lo, mz + r * s], top = cone ? [mx, hi, mz] : [foot[0], hi, foot[2]];
+          curves.push({ closed: false, t: (k + 0.5) / n, pts: Array.from({ length: 13 }, (_, i) => point(mix(foot, top, i / 12 * (cone ? 0.95 : 1)), normal(c, s))) });
+        }
+      }
+    } else if (P.kind === "dome") {
+      // (Its foot is its longest way.) Over it from the foot toward the crown, as a meridian runs.
+      across = "over";
+      const n = 28;
+      gap = 2 * Math.PI * P.radius / n;
+      for (let k = 0; k < n; k++) {
+        const az = (k + 0.5) / n * 2 * Math.PI;
+        curves.push({ closed: false, t: (k + 0.5) / n, pts: Array.from({ length: 15 }, (_, i) => { const p = domeAt(P, az, i / 14 * 0.96); return point(p, unit(sub(p, P.middle))); }) });
+      }
+    } else if (P.kind === "blob") {
+      /* (Taller than it is wide.) Across it, from one side of its outline to
+       * the other, swelling out of the face the eye sees - most in the
+       * middle, turning back to the outline at its sides, and toward its top
+       * and its foot. */
+      across = "across";
+      const e = P.size, ring = P.form.outline.ring.map(([x, y]) => [x * e, y * e]), tall = P.form.outline.tall * e, dep = e * 0.3, swell = dep * 0.5, k3 = 3;
+      const faced = P.map.faces.filter((f) => f.concave).sort((a, b) => b.facing - a.facing)[0], sgn = faced?.name === "back" ? 1 : -1;
+      const c = Math.cos(P.yaw || 0), s = Math.sin(P.yaw || 0), o = P.placed.middle, way = ([x, y, z]) => [x * c + z * s, y, -x * s + z * c];
+      const n = clamp(Math.round(tall * scr / (short * 0.028)), 5, 14);
+      gap = tall / n;
+      for (let j = 0; j < n; j++) {
+        // (How much it swells at this height, and how fast that changes going up.)
+        const y = tall * (j + 0.5) / n, v = 2 * y / tall - 1, av = Math.abs(v), rest = Math.max(0.02, 1 - av ** k3);
+        const ev = rest ** (1 / k3), dev = -(rest ** (1 / k3 - 1)) * av ** (k3 - 1) * Math.sign(v);
+        for (const [xa, xb] of spansAt([ring], y)) {
+          const w = (xb - xa) / 2, xm = (xa + xb) / 2;
+          if (w < e * 0.02) continue;
+          curves.push({ closed: false, t: (j + 0.5) / n, pts: Array.from({ length: 17 }, (_, i) => {
+            const u = -1 + 2 * i / 16, cu = Math.sqrt(Math.max(0, 1 - u * u)), h = swell * cu * ev;
+            const hx = -swell * ev * u / Math.max(0.15, cu) / w, hy = swell * cu * dev * 2 / tall;
+            return point(add(way([xm + u * w, y, sgn * (dep / 2 + h)]), o), unit(way([-hx, -hy, sgn])));
+          }) });
+        }
+      }
+    }
+    return (P.cross = { cam, at, across, curves, gap });
+  }
+  // The guides drawn before any paint, thin and light, where the eye sees them - a few of them, enough to find the form by.
+  function guideLines(S, E) {
+    const G = guidesOf(S, E), far = farOf(S, E);
+    if (S.cam.flat || !G.curves.length || far > 0.7) return [];
+    const light = S.rules.lines === "light", own = shade(S, E.base, [0, 0, -1], (E.middle || E.placed.middle)[2]);
+    const colour = paint(mix(light ? mix(S.bare, [70, 72, 84], 0.32) : mix(own, [30, 30, 40], 0.45), own, 0.6 * far)), width = Math.max(0.8, S.lineW * 0.55 * (light ? 0.6 : 1) * (1 - 0.45 * far));
+    const every = Math.max(1, Math.round(G.curves.length / 7)), clip = clipOf(E.outline, 0.3), len = Math.min(S.cam.W, S.cam.H) * 0.05;
+    const runs = G.curves.filter((c, i) => i % every === Math.floor(every / 2)).flatMap((c) => runsOf(c.pts, c.closed));
+    return piecesOf(runs, len).map((piece) => stroke(S, piece.map((x) => off(S, x.q, width * 0.2)), width, colour, "round", { line: true, faint: true, clip }));
+  }
+  function* guideSteps(S, E) {
+    const lines = guideLines(S, E);
+    if (lines.length) yield* inSteps("the guides " + ({ round: "round", up: "up", over: "over", across: "across" }[guidesOf(S, E).across] || "over") + " " + theOf(E) + ", square to its length", lines);
+  }
+  // Along a solid's guides, each piece of a stroke in the light its surface turns to there - far to near.
+  function alongGuides(S, E, clip, shine, tip) {
+    const G = guidesOf(S, E), { cam } = S, eye = [0, cam.eye, 0], width = G.gap * scaleAt(cam, E.middle || E.placed.middle) * 1.6 + 2;
+    const len = Math.max(width * 1.5, Math.min(cam.W, cam.H) * 0.035), out = [], lit = (x) => shade(S, E.base, x.n, x.p[2], { at: x.p, self: E, shine });
+    for (const [j, c] of G.curves.entries()) for (const piece of piecesOf(runsOf(c.pts, c.closed, null, true), len, 0.3 + 0.7 * ((j * PHI) % 1))) {
+      const s = pieceStroke(S, piece, width, lit, tip, { clip });
+      out.push({ order: S.rules.darkenOnly ? -lum(s.colour) : -Math.hypot(...sub(piece[Math.floor(piece.length / 2)].p, eye)), s });
+    }
+    // (Far to near round it - or, where nothing lighter can go over, lightest first.)
+    return out.sort((p, q) => p.order - q.order).map((x) => x.s);
+  }
+  // How each kind can be painted: along its guides, or as before them.
+  const GUIDED = { cylinder: ["painted round, along its rings", "painted in upright strokes"], cone: ["painted round, along its rings", "painted in strokes up its slope"],
+    blob: ["painted across, along its guides", "painted in bands from its edge in"] };
+  // Whether a cylinder or a cone is painted round it, along its rings: taller than it is wide, and wide enough in the picture for a ring to take a few strokes.
+  const roundIt = (S, E) => E.guided !== false && guidesOf(S, E).across === "round" && scaleAt(S.cam, E.placed.middle) * E.radius > Math.min(S.cam.W, S.cam.H) * 0.035;
+  /* A shadow thrown on a curved solid, or on a form's face, laid along its
+   * guides: each piece in the shade of the surface where it lies, so it
+   * wraps the form and turns with it. */
+  function guideShadow(S, B, mark, extra) {
+    const G = guidesOf(S, B), L = S.light.L, out = [];
+    const keep = (q, p, x) => dot(x.n, L) > 0 && mark.under(p);
+    const width = Math.max(2, G.gap * scaleAt(S.cam, B.middle || B.placed.middle) * 1.7), len = Math.max(width * 1.5, Math.min(S.cam.W, S.cam.H) * 0.03);
+    const dark = (x) => shade(S, B.base, x.n, x.p[2], { at: x.p, self: B, direct: 0, under: SKY });
+    for (const [j, c] of G.curves.entries()) for (const piece of piecesOf(runsOf(c.pts, c.closed, keep), len, 0.3 + 0.7 * ((j * PHI) % 1))) out.push(pieceStroke(S, piece, width, dark, "soft", extra));
     return out;
   }
 
@@ -1717,8 +1879,9 @@
       const fill = () => (face.idx.length > 4 ? fillPolygon(S, face, E.base, E) : fillPlane(S, face, E.base, E));
       yield* inSteps(name + "'s " + plane, fill());
       if (far < 0.55) yield* glazes(S, E, face.screen, name + "'s " + plane, fill);
-      // (Its carving, once the plane is laid: Carving.)
-      if (E.carve && far < 0.7) yield* inSteps("carving " + name + "'s " + plane + " (" + E.carve.faces[map.faces.indexOf(face)]?.type + ", " + E.carve.way + ")", carveSteps(S, E, face, map.faces.indexOf(face)));
+      // (Its carving, once the plane is laid - or the words cut into it: Carving.)
+      if (E.engraved?.face === map.faces.indexOf(face)) yield* engraveSteps(S, E, "\u201c" + E.engraved.text + "\u201d cut into " + name + "'s " + plane);
+      else if (E.carve && far < 0.7) yield* inSteps("carving " + name + "'s " + plane + " (" + E.carve.faces[map.faces.indexOf(face)]?.type + ", " + E.carve.way + ")", carveSteps(S, E, face, map.faces.indexOf(face)));
       done.push(face);
     }
     if (E.form?.soft && far < 0.6) yield* softEdges(S, E);
@@ -1916,13 +2079,15 @@
     return out.sort((p, q) => q.z - p.z).map((x) => x.s);
   }
   /* A cylinder, built like the sphere from what is farthest of it in to
-   * what faces the eye: its side in upright strokes from where it turns
-   * away, on either hand, in to the front, each in the light it turns to;
-   * then its top, if the eye is over it, as a plane. */
+   * what faces the eye: its guides first; then its side - a tall one round
+   * it, along its rings, a squat one in upright strokes - from where it
+   * turns away, on either hand, in to the front, each in the light it
+   * turns to; then its top, if the eye is over it, as a plane. */
   function* cylinderSteps(S, E) {
     const { cam } = S, [mx, , mz] = E.placed.middle, r = E.radius, lo = E.low, hi = E.high, eye = [0, cam.eye, 0], far = farOf(S, E), clip = clipOf(E.outline, 0.6);
     const N = Math.max(14, Math.round(44 * (1 - DEPTH.detail * far) * clamp(scaleAt(cam, E.placed.middle) * r / (Math.min(cam.W, cam.H) * 0.08), 0.5, 1)));
-    const sides = () => {
+    yield* guideSteps(S, E);
+    const sides = roundIt(S, E) ? () => alongGuides(S, E, clip, 0.3, "filbert") : () => {
       const side = [];
       for (let k = 0; k < N; k++) {
         const t = (k + 0.5) / N * 2 * Math.PI, n = [Math.cos(t), 0, Math.sin(t)], p = [mx + r * n[0], (lo + hi) / 2, mz + r * n[2]];
@@ -1940,13 +2105,16 @@
     if (top) yield* inSteps(theOf(E) + "'s top", fillPolygon(S, top, E.base, E));
     if (E.app?.handling === "blended") yield* softenSteps(S, E);
   }
-  /* A cone: in strokes up its slope from the rim toward the point, far to
-   * near round it, each in the light its slope turns to; the point last. */
+  /* A cone: its guides first; then a tall one round it, along its rings
+   * narrowing to the point, a squat one in strokes up its slope from the
+   * rim toward the point - far to near round it, each in the light its
+   * slope turns to. */
   function* coneSteps(S, E) {
     const { cam } = S, [mx, , mz] = E.placed.middle, r = E.radius, lo = E.low, hi = E.high, eye = [0, cam.eye, 0], far = farOf(S, E), clip = clipOf(E.outline, 0.6);
     const N = Math.max(14, Math.round(40 * (1 - DEPTH.detail * far) * clamp(scaleAt(cam, E.placed.middle) * r / (Math.min(cam.W, cam.H) * 0.08), 0.5, 1)));
     const h = hi - lo, apex = [mx, hi, mz];
-    const slopes = () => {
+    yield* guideSteps(S, E);
+    const slopes = roundIt(S, E) ? () => alongGuides(S, E, clip, 0.3, "filbert") : () => {
       const side = [];
       for (let k = 0; k < N; k++) {
         const t = (k + 0.5) / N * 2 * Math.PI, n = unit([Math.cos(t) * h, r, Math.sin(t) * h]), base = [mx + r * Math.cos(t), lo, mz + r * Math.sin(t)];
@@ -2120,6 +2288,8 @@
       P.foot = hull2(P.placed.verts.map((v) => [v[0], v[2]]));
       // (Each face carved or not, decided now - the far ones too: Carving.)
       if (!P.round && size >= 0.45 && pick(S.rng, [{ c: 1, feats: ["carved faces"] }, { c: 0, feats: ["plain faces"] }]).c) P.carve = carvingsFor(S, P);
+      // (A cylinder, a cone or a form painted along its guides, or as it was before them: Guidelines.)
+      if (GUIDED[kind]) P.guided = pick(S.rng, [{ c: true, feats: [GUIDED[kind][0]] }, { c: false, feats: [GUIDED[kind][1]] }]).c;
     }
     return frame(S, P);
   }
@@ -2501,7 +2671,11 @@
     const under = cells.reduce((t, k) => t + lum([S.paint.colour[k * 3], S.paint.colour[k * 3 + 1], S.paint.colour[k * 3 + 2]]), 0) / cells.length;
     return under < lum(S.rules.value ? valueOf(lightest) : lightest) - 12;
   }
-  const pieceSteps = (S, P) => (S.cam.flat ? flatSteps(S, P) : P.kind === "letter" ? letterSteps(S, P) : P.kind === "plant" ? plantSteps(S, P) : P.kind === "sphere" ? sphereSteps(S, P) : P.kind === "dome" ? domeSteps(S, P) : P.kind === "blob" ? formSteps(S, P) : P.kind === "cylinder" ? cylinderSteps(S, P) : P.kind === "cone" ? coneSteps(S, P) : facetedSteps(S, P));
+  function* pieceSteps(S, P) {
+    yield* (S.cam.flat ? flatSteps(S, P) : P.kind === "letter" ? letterSteps(S, P) : P.kind === "plant" ? plantSteps(S, P) : P.kind === "sphere" ? sphereSteps(S, P) : P.kind === "dome" ? domeSteps(S, P) : P.kind === "blob" ? formSteps(S, P) : P.kind === "cylinder" ? cylinderSteps(S, P) : P.kind === "cone" ? coneSteps(S, P) : facetedSteps(S, P));
+    // (Words cut into a round solid, or a form, once it is painted; a flat-sided one's go in face by face as it is built.)
+    if (P.engraved && !S.cam.flat && (P.engraved.face === undefined || P.kind === "blob")) yield* engraveSteps(S, P, "\u201c" + P.engraved.text + "\u201d cut into " + theOf(P));
+  }
   /* A solid to the flat eye: its outline on the one plane, drawn in as few
    * straight lines as say it (a curve as one round line) - each the
    * shortest way from one corner to the next - and filled in its own colour,
@@ -2954,7 +3128,7 @@
    * square to the seed, as big as fits - or nowhere, if nowhere fits. */
   // (Letters in one row at most.)
   const LETTERS_ROW = 12;
-  function placeWord(S, text, face) {
+  function placeWord(S, text, face, block = null, others = []) {
     const chars = [...String(text).toUpperCase()].filter((c) => GLYPHS[c] || c === " ").slice(0, LETTERS_ROW);
     while (chars[0] === " ") chars.shift();
     while (chars[chars.length - 1] === " ") chars.pop();
@@ -2965,14 +3139,46 @@
     const front = zs.length ? Math.min(...zs) : BUILD.near + 2, behind = zs.length ? Math.max(...zs) : BUILD.near + 2;
     const mx = standing.length ? standing.reduce((t, P) => t + (P.middle || P.placed.middle)[0], 0) / standing.length : 0, mz = zs.length ? (front + behind) / 2 : front;
     const left = xs.length ? Math.min(...xs) : mx, right = xs.length ? Math.max(...xs) : mx;
-    const base = pieceColour(S, null, null, S.palette.relation === "monochrome" ? "dominant" : "support"), h0 = clamp((S.seed?.high || 1) * 0.5, 0.3, 0.7);
-    // (In front of what stands, if there is room between it and the eye; else to one side of it; else behind it.)
-    const spots = (h) => [[mx, front - 0.3], [mx - 0.4 * wide * h, front - 0.3], [mx + 0.4 * wide * h, front - 0.3],
-      [left - wide * h / 2 - 0.3, mz], [right + wide * h / 2 + 0.3, mz], [mx, behind + 0.35 + face.depth * h]];
-    for (let shrink = 0; shrink < 4; shrink++) {
-      const h = h0 * (1 - 0.2 * shrink), dep = face.depth * h, nearest = BUILD.near + 0.08 + dep + Math.abs(U[2]) * wide * h / 2;
+    const prev = block?.prev || null, base = prev?.base || pieceColour(S, null, null, S.palette.relation === "monochrome" ? "dominant" : "support"), h0 = clamp((S.seed?.high || 1) * 0.5, 0.3, 0.7);
+    // (In front of what stands, if there is room between it and the eye; else to one side of it; else behind it - or only the one place asked.)
+    // (A row after the first of one text: in front of the row before it, in its colour and as big as it if it can be - they read down, as on a page.)
+    const more = block ? block.rows - 1 - block.row : 0, flat = S.cam.flat;
+    /* (How far in front of a row at (cx, z) - square to it, toward the eye -
+     * the next must stand for neither to hide the other as the eye sees
+     * them: its top, at either end and in the middle, under the foot of the
+     * other's front - or, more loosely, a little over it. Never, from an eye
+     * no higher than the letters.) */
+    const apart = (h, cx, z) => {
+      const top = h * (1 + face.weight) + 0.02, dep = face.depth * h, slack = S.relaxed ? 0.15 * h : 0, half = wide * h / 2;
+      const seen = (x, y, zz, k) => project(S.cam, [x + U[0] * half * k, y, zz + U[2] * half * k])[1];
+      for (let d = h * (1 + face.depth); d < 8; d *= 1.12) {
+        const nx = cx + N[0] * d, nz = z + N[2] * d;
+        if ([-1, 0, 1].every((k) => seen(nx, top, nz, k) >= seen(cx + N[0] * dep, slack, z + N[2] * dep, k))) return d;
+      }
+      return Infinity;
+    };
+    const ahead = (cx, z, d) => [cx + N[0] * d, z + N[2] * d];
+    // (Flat, there is no in front: a row after the first goes on to the right of the one before, as words along a line.)
+    const spots = (h) => (prev ? (flat ? [[prev.cx + prev.half + 0.4 * h + wide * h / 2, prev.z]] : [1, 1.25].map((k) => ahead(prev.cx, prev.z, apart(h, prev.cx, prev.z) * k)))
+      : [[mx, front - 0.3], [mx - 0.4 * wide * h, front - 0.3], [mx + 0.4 * wide * h, front - 0.3], [left - wide * h / 2 - 0.3, mz], [right + wide * h / 2 + 0.3, mz], [mx, behind + 0.35 + face.depth * h]]
+        .filter((_, i) => block?.only === undefined || i === block.only)).filter(([x, z]) => Number.isFinite(x + z));
+    for (const h of prev ? [prev.h, prev.h * 0.85, prev.h * 0.7] : [0, 1, 2, 3].map((k) => h0 * (1 - 0.2 * k))) {
+      const dep = face.depth * h, nearest = BUILD.near + 0.08 + dep + Math.abs(U[2]) * wide * h / 2;
       for (const [cx, z] of spots(h)) {
-        const back = Math.max(z, nearest);
+        // (A row after the first does not give way to the eye: it stands where it reads, or not at all.)
+        if (prev && !flat && z < nearest) continue;
+        let back = Math.max(z, nearest);
+        // (The first of several rows set back far enough for the rest to stand in front of it.)
+        if (more && !prev && !flat) {
+          for (let pass = 0; pass < 3; pass++) {
+            let at = [cx, back];
+            for (let k = 0; k < more && Number.isFinite(at[1]); k++) at = ahead(at[0], at[1], apart(h, at[0], at[1]));
+            if (!Number.isFinite(at[1])) { back = Infinity; break; }
+            if (at[1] >= nearest) break;
+            back += nearest - at[1];
+          }
+          if (!Number.isFinite(back) || back > ROOM.wall - BUILD.back - dep) continue;
+        }
         const start = add([cx, 0, back], times(U, -wide * h / 2)), letters = [];
         let x = 0, ok = true;
         for (const c of chars) {
@@ -2980,14 +3186,33 @@
             const at = add(start, times(U, x * h)), parts = letterParts(c, face, h, at, U, N);
             const L = compound(S, "letter", "the letter " + c, parts, base, { char: c, front: N, face, form: face.clear < 1 ? { opacity: face.clear } : {} });
             L.built = () => glyphSolid(c, face, h, at, U, N);
-            if (!fitsLetter(S, L, letters)) { ok = false; break; }
+            if (!fitsLetter(S, L, others.length ? others.concat(letters) : letters)) { ok = false; break; }
             letters.push(L);
           }
           x += glyphWide(c) + face.weight + gap;
         }
         // (Built as solids only once they have somewhere to stand.)
-        if (ok && letters.length) { for (const L of letters) { glyphOf(S, L, L.built()); delete L.built; } return letters; }
+        if (ok && letters.length) { for (const L of letters) { glyphOf(S, L, L.built()); delete L.built; } letters.spot = { cx, z: back, h, base, half: wide * h / 2 }; return letters; }
       }
+    }
+    return null;
+  }
+  /* A text in rows set out as one - all of its rows, or none: the first
+   * row tried at each of its places in turn, each row after it in front of
+   * the one before (a breath between tries). */
+  function* placeRows(S, rows, face) {
+    if (rows.length === 1) return placeWord(S, rows[0], face);
+    for (let only = 0; only < 6; only++) {
+      const all = [];
+      let prev = null, placed = 0;
+      for (; placed < rows.length; placed++) {
+        const got = placeWord(S, rows[placed], face, { row: placed, rows: rows.length, prev, only: placed ? undefined : only }, all);
+        if (!got) break;
+        all.push(...got);
+        prev = got.spot;
+      }
+      if (placed === rows.length) return all;
+      yield BEAT;
     }
     return null;
   }
@@ -3038,9 +3263,178 @@
   const ownWord = (S) => (S.rng() < 0.6 && S.seed ? seedWord(S) : ["HEX", "FIELD", "HEXFIELD"][Math.floor(S.rng() * 3)]);
   // A word lettered: its letters, one after another, each with its shadow and a look.
   function* addWord(S, m) {
+    // (Asked for, and nowhere it fits: the eye steps back to make room - twice at most - and it is set out again;)
+    for (let k = 0; k < 2 && !m.letters; k++) {
+      yield* closer(S, 0.78);
+      m.letters = yield* setOut(S, m);
+    }
+    if (!m.letters) {
+      // (still nowhere it can stand: cut into whichever solid has most room for it, where it reads biggest.)
+      const cuts = alive(S).filter((P) => !P.parts && !P.engraved).map((P) => ({ piece: P, cut: engraveLayout(S, P, m.text, m.face) })).filter((c) => c.cut);
+      const best = cuts.reduce((b, c) => (!b || c.cut.h * scaleAt(S.cam, c.piece.middle || c.piece.placed.middle) > b.cut.h * scaleAt(S.cam, b.piece.middle || b.piece.placed.middle) ? c : b), null);
+      if (best) { Object.assign(m, best); yield* engraveWord(S, m); m.pieces = []; return; }
+      S.wordAgain = S.moves + 5; m.pieces = [];
+      return;
+    }
     S.word = { text: m.text, face: m.face, letters: m.letters };
     for (const L of m.letters) yield* addPiece(S, L);
     m.pieces = m.letters;
+  }
+
+  /* ── Words cut into a solid ───────────────────────────────────────────
+   * Asked to write on something standing ("write HELLO on the cube"), the
+   * letters are cut into it rather than stood beside it: into the face of
+   * it most turned to the eye - round a round one, where the eye meets it -
+   * as big as the face lets them be, in as many rows (four at most) as
+   * makes them biggest. Each letter is a hollow a chisel's depth: its floor
+   * darker than the face, out of most of the light; along the walls turned
+   * from the light, the rim's shadow on the floor; along those turned to
+   * it, the wall catching the light - so one flat cut reads as two sides.
+   * Cut into the solid, it is part of it: seen from anywhere else, or
+   * turned, it is still there, on the side it was cut into.
+   *   face   which of its faces (by its place among them), or none: round it
+   *   az     round it, where (its own way round, as it was made); `el` how high
+   *   way    on a level face, which way the letters stand (its own way round)
+   *   rows   the rows; `h` how tall a letter; `top` where the first row's top is */
+  function surfaceOf(P, cut) {
+    if (cut.face !== undefined) {
+      const f = P.placed.faces[cut.face], w = f.idx.map((i) => P.placed.verts[i]), n = faceNormal(P.placed, f), c = times(w.reduce(add, [0, 0, 0]), 1 / w.length);
+      let V = sub([0, 1, 0], times(n, n[1]));
+      // (On a level face, up the letters is the way it was looked across when they were cut.)
+      if (Math.hypot(...V) < 0.2) { const a = cut.way - (P.yaw || 0), d = [Math.cos(a), 0, Math.sin(a)]; V = sub(d, times(n, dot(d, n))); }
+      V = unit(V);
+      const U = cross(n, V);
+      return (u, v) => ({ p: add(c, add(times(U, u), times(V, v))), n, U, V });
+    }
+    const m = P.middle || P.placed.middle, a0 = cut.az - (P.yaw || 0);
+    if (P.kind === "cylinder" || P.kind === "cone") {
+      const r = P.radius, h = P.high - P.low, cone = P.kind === "cone", y0 = P.low + h * cut.el, rAt = (y) => (cone ? r * clamp((P.high - y) / h, 0.05, 1) : r), r0 = rAt(y0);
+      return (u, v) => { const y = y0 + v, a = a0 + u / r0, c = Math.cos(a), s = Math.sin(a), rr = rAt(y); return { p: [m[0] + rr * c, y, m[2] + rr * s], n: cone ? unit([c * h, r, s * h]) : [c, 0, s], U: [-s, 0, c], V: [0, 1, 0] }; };
+    }
+    const R = P.radius, e0 = cut.el * Math.PI / 2;
+    return (u, v) => {
+      const e = e0 + v / R, a = a0 + u / (R * Math.max(0.3, Math.cos(e0))), ce = Math.cos(e), se = Math.sin(e), c = Math.cos(a), s = Math.sin(a), n = [ce * c, se, ce * s];
+      return { p: add(m, times(n, R)), n, U: [-s, 0, c], V: [-se * c, ce, -se * s] };
+    };
+  }
+  // A row's width, in letters' heights.
+  const rowWide = (row, T) => [...row].reduce((t, c) => t + glyphWide(c) + T.weight, 0) + 0.26 * (row.length - 1);
+  // Words broken into `k` rows as even as they can be.
+  function evenRows(words, k, T) {
+    if (k === 1) return [words.join(" ")];
+    let best = null;
+    const tryCut = (from, left, rows) => {
+      if (left === 1) { const all = rows.concat([words.slice(from).join(" ")]), w = Math.max(...all.map((r) => rowWide(r, T))); if (!best || w < best.w) best = { w, rows: all }; return; }
+      for (let i = from + 1; i <= words.length - left + 1; i++) tryCut(i, left - 1, rows.concat([words.slice(from, i).join(" ")]));
+    };
+    tryCut(0, k, []);
+    return best.rows;
+  }
+  // Where the words go on a solid, and how big: none if no face of it is seen well enough to take them.
+  function engraveLayout(S, P, text, T) {
+    const words = String(text).toUpperCase().replace(/[^A-Z0-9 ]+/g, " ").split(/\s+/).filter(Boolean).map((w) => w.slice(0, LETTERS_ROW));
+    if (!words.length || P.parts || S.cam.flat) return null;
+    const { cam } = S, eye = [0, cam.eye, 0], m = P.middle || P.placed.middle;
+    let cut, fit;
+    if (P.kind === "sphere" || ROUND.has(P.kind)) {
+      // Round it, facing the eye: as wide as it turns toward the eye well, as high as it goes.
+      const a = Math.atan2(eye[2] - m[2], eye[0] - m[0]), R = P.radius;
+      cut = { az: a + (P.yaw || 0), el: P.kind === "dome" ? 0.3 : P.kind === "cone" ? 0.32 : P.kind === "sphere" ? 0.06 : 0.5 };
+      const room = P.kind === "cylinder" ? [R * 1.7, (P.high - P.low) * 0.8] : P.kind === "cone" ? [R * 1.1, (P.high - P.low) * 0.5] : P.kind === "dome" ? [R * 1.4, R * 0.75] : [R * 1.5, R * 1.1];
+      fit = (W, H) => Math.min(room[0] / W, room[1] / H);
+    } else {
+      // The face most turned to the eye, and biggest - an upright one before a level one.
+      const faces = P.map.faces.map((f, i) => ({ f, i })).filter(({ f }) => f.visible && !f.concave !== (P.kind === "blob") && Math.abs(areaOf(f.screen)) > 300);
+      if (!faces.length) return null;
+      const score = ({ f }) => Math.abs(areaOf(f.screen)) * (0.4 + f.facing) * (Math.abs(f.normal[1]) < 0.5 ? 1.3 : 1);
+      const best = faces.reduce((b, x) => (score(x) > score(b) ? x : b));
+      cut = { face: best.i };
+      if (Math.abs(faceNormal(P.placed, P.placed.faces[best.i])[1]) > 0.98) { const d = sub(best.f.centre, eye); cut.way = Math.atan2(d[2], d[0]) + (P.yaw || 0); }
+      const at = surfaceOf(P, cut), c = at(0, 0), poly = best.f.world.map((w) => [dot(sub(w, c.p), c.U), dot(sub(w, c.p), c.V)]);
+      // (As big as a box round the rows stays inside the face, with room round it.)
+      const inside = (hw, hh) => [[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0]].every(([x, y]) => inPoly(poly, x * hw, y * hh));
+      fit = (W, H) => { let lo = 0, hi = 4; for (let i = 0; i < 22; i++) { const h = (lo + hi) / 2; if (inside(W * h / 2 * 1.12, H * h / 2 * 1.2)) lo = h; else hi = h; } return lo; };
+    }
+    let best = null;
+    for (let k = 1; k <= Math.min(4, words.length); k++) {
+      const rows = evenRows(words, k, T), W = Math.max(...rows.map((r) => rowWide(r, T))), H = k + (k - 1) * 0.45 + T.weight, h = fit(W, H);
+      if (!best || h > best.h) best = { rows, h, H };
+    }
+    // (On a dome, between what it was made with - its openings and ribs - if turning a little round finds room.)
+    if (best && P.kind === "dome") {
+      const W = Math.max(...best.rows.map((r) => rowWide(r, T))), half = W * best.h / 2 / (P.radius * Math.cos(cut.el * Math.PI / 2)) + 0.08;
+      const clear = (az) => !(P.features || []).some((f) => f.az !== undefined && Math.abs(Math.atan2(Math.sin(f.az - az), Math.cos(f.az - az))) < half + f.w * Math.PI / 4);
+      const off = [0, 0.3, -0.3, 0.6, -0.6].find((d) => clear(cut.az + d));
+      if (off) cut.az += off;
+    }
+    // (Too small to be read where it would go: not cut.)
+    const at = surfaceOf(P, cut);
+    if (!best || best.h * scaleAt(cam, at(0, 0).p) < 7) return null;
+    return { ...cut, rows: best.rows, h: best.h, top: best.H * best.h / 2, typeface: T, text: words.join(" ") };
+  }
+  // The words cut into a solid, as the eye sees them now: a step for each letter.
+  function* engraveSteps(S, P, label) {
+    const cut = P.engraved, { cam } = S;
+    if (!cut || cam.flat || farOf(S, P) > 0.85) return;
+    const face = cut.face !== undefined ? P.map?.faces?.[cut.face] : null;
+    if (cut.face !== undefined && !face?.visible) return;
+    const at = surfaceOf(P, cut), T = cut.typeface, h = cut.h, w = T.weight * h, L = S.light.L, deep = w * 0.5;
+    for (const [r, row] of cut.rows.entries()) {
+      const v0 = cut.top - r * 1.45 * h - h - w / 2;
+      let x = -rowWide(row, T) / 2;
+      for (const ch of row) {
+        const step = glyphWide(ch) + T.weight + 0.26, out = [];
+        if (!GLYPHS[ch]) { x += step; continue; }
+        const u0 = x * h + w / 2, place = ([gx, gy]) => at(u0 + gx * h, v0 + gy * h + w / 2), mid = place([glyphWide(ch) / 2, 0.5]);
+        x += step;
+        // (Only where the eye meets it: round a round solid, not past where it turns away.)
+        if (facingOf(cam, mid.n, mid.p) <= 0.15 * Math.hypot(...sub([0, cam.eye, 0], mid.p))) continue;
+        const rings = glyphOutline(ch, T).map(({ ring, hole }) => ({ ring, hole, pts: ring.map(place) })), scr = scaleAt(cam, mid.p), Z = mid.p[2];
+        const outer = rings.filter((g) => !g.hole), holes = rings.filter((g) => g.hole).map((g) => g.pts.map((q) => project(cam, q.p)));
+        const clip = outer.length === 1 ? outer[0].pts.map((q) => project(cam, q.p)) : null, keep = { ...(clip ? { clip } : {}), ...(holes.length ? { clipOut: holes } : {}) };
+        const lit = dot(mid.n, L) > 0;
+        // Its floor: out of most of the light, in the stroke of the letter.
+        const floor = shade(S, P.base, mid.n, Z, { at: mid.p, self: P, direct: 0.3 }).map((v) => v * 0.88);
+        for (const st of GLYPHS[ch]) {
+          const pts = cutCorners(st, T.cut ? 0.2 : 0).map((q) => project(cam, place(q).p));
+          out.push(stroke(S, pts.length > 1 ? pts : [pts[0], [pts[0][0] + 0.5, pts[0][1] + 0.5]], Math.max(1.5, w * scr * 1.15), floor, "flat", { ...keep, meant: () => floor }));
+        }
+        // Its walls: in runs alike - turned from the light, the rim's shadow along the floor by it; turned to it, the wall catching the light.
+        for (const g of rings) {
+          const n = g.ring.length, edges = g.ring.map((a, i) => {
+            const b = g.ring[(i + 1) % n], dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1, e = place([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
+            const wn = unit(add(times(e.U, -dy / l), times(e.V, dx / l)));
+            return { a: i, b: (i + 1) % n, toLight: lit && dot(wn, L) > 0.05, wn, inward: [-dy / l, dx / l] };
+          });
+          let from = edges.findIndex((e, i) => e.toLight !== edges[(i + n - 1) % n].toLight);
+          if (from < 0) from = 0;
+          for (let k = 0; k < n;) {
+            const first = edges[(from + k) % n], run = [first];
+            while (++k < n && edges[(from + k) % n].toLight === first.toLight) run.push(edges[(from + k) % n]);
+            // (Set in from the edge by half its width, so it lies inside the cut.)
+            const by = first.toLight ? deep * 0.3 / h : deep * 0.55 / h, pts = [];
+            for (const e of [...run, { a: run[run.length - 1].b, inward: run[run.length - 1].inward }]) {
+              const q = g.ring[e.a];
+              pts.push(project(cam, place([q[0] + e.inward[0] * by, q[1] + e.inward[1] * by]).p));
+            }
+            const colour = first.toLight ? shade(S, P.base, first.wn, Z, { at: mid.p, self: P }) : shade(S, P.base, mid.n, Z, { at: mid.p, self: P, direct: 0 }).map((v) => v * 0.8);
+            out.push(stroke(S, pts, Math.max(1, (first.toLight ? deep * 0.6 : deep * 1.1) * scr), colour, "flat", { ...keep, meant: () => colour }));
+          }
+        }
+        yield { label: label + ", its " + ch, strokes: out };
+      }
+    }
+  }
+  // Cutting words into a solid: cut once, as it is painted after; cut again, the solid restated with the new words in place of the old.
+  function* engraveWord(S, m) {
+    const P = m.piece, again = Boolean(P.engraved), since = S.paint.clock;
+    m.was = P.engraved || null;
+    P.engraved = m.cut;
+    if (again) { yield* reworkPiece(S, P); return; }
+    S.action = "cutting “" + m.cut.text + "” into " + theOf(P);
+    yield* laid(S, engraveSteps(S, P, S.action), { out: outsFor(S, P) });
+    S.name = nameOf(S);
+    yield* lookAgain(S, since, "“" + m.cut.text + "” cut into " + theOf(P), P);
   }
 
   /* ── Plants ───────────────────────────────────────────────────────────
@@ -3431,7 +3825,7 @@
   }
   // Nearer (`by` over 1) or further off: the eye's picture narrowed or widened - no nearer than leaves all of it in the picture - and painted again.
   function* closer(S, by) {
-    const cam = S.cam;
+    const cam = { ...S.cam };
     if (cam.flat) cam.s *= by; else cam.f *= by;
     S.cam = fitView(cam, alive(S), S.composition);
     S.action = by > 1 ? "coming closer" : "stepping back";
@@ -3523,7 +3917,7 @@
     const { a, dz, clear, kin, axis } = turn, deg = Math.round(Math.abs(a) * 180 / Math.PI);
     for (const Q of kin) { spin(Q, a, axis); pushBack(Q, dz); }
     for (const R of clear) { R.alive = false; S.notes.removed++; }
-    if (clear.some((R) => R.kind === "letter")) S.word = null;
+    if (clear.some((R) => R.kind === "letter")) { turn.word = S.word; S.word = null; }
     // (The seed's square goes round with it: what is built after is squared to it as it now stands.)
     if (kin.includes(S.seed) && S.square !== null) S.square += a;
     const out = alive(S).some((Q) => { const b = boxNow(S, Q); return b.x0 < 0 || b.x1 > S.cam.W || b.y0 < 0 || b.y1 > S.cam.H * ROOM.foot; });
@@ -3683,6 +4077,7 @@
     if (P.form.soft) f.push("softened corners");
     if ((P.form.opacity ?? 1) < 0.95) f.push("seen through");
     if (P.carve) f.push("carved faces", "carved faces, " + P.carve.way); else if (P.placed && !P.round && !P.parts) f.push("plain faces");
+    if (GUIDED[P.kind] && P.guided !== undefined) f.push(GUIDED[P.kind][P.guided ? 0 : 1]);
     for (const r of rules) f.push("rule: " + r);
     return f;
   }
@@ -3783,12 +4178,19 @@
     }
     if (options.length) yield* move(S, pick(S.rng, options));
   }
+  // A word's letters set out where they can stand - more loosely, if it was asked for.
+  function* setOut(S, m) {
+    const rows = m.rows || [m.text], got = yield* placeRows(S, rows, m.face);
+    if (got || !m.asked) return got;
+    S.relaxed = true;
+    try { return yield* placeRows(S, rows, m.face); } finally { S.relaxed = false; }
+  }
   // A change made, and learned from.
   function* move(S, m) {
     // (A form with nowhere to go now is passed over for the rest of the painting: not judged, not learned from.)
     if (m.type === "form" && !(m.plan = planForm(S, m))) { S.unbuilt.add(m.form.sig); return; }
-    // (A word with nowhere to stand is tried again a few changes on.)
-    if (m.type === "word" && !(m.letters = placeWord(S, m.text, m.face) || (m.asked ? loosely(S, () => placeWord(S, m.text, m.face)) : null))) { S.wordAgain = S.moves + 5; return; }
+    // (A word with nowhere to stand is tried again a few changes on - unless it was asked for: then the eye steps back to make room for it, in addWord.)
+    if (m.type === "word" && !(m.letters = yield* setOut(S, m)) && !m.asked) { S.wordAgain = S.moves + 5; return; }
     // (A turn with nowhere to go is tried again later.)
     if (m.type === "turn" && !(m.turn = planTurn(S, m.piece))) { S.turnedAt = S.moves; return; }
     if (m.type === "plant") {
@@ -3797,7 +4199,10 @@
       m.feats.push(m.plant.host ? "a plant in a pot" : "a plant on the floor");
     }
     const before = judged(S), k = known(m.feats);
-    S.why = m.type === "form" ? "a form it learned" + (m.form.n ? " (" + (m.form.mean >= 0 ? "+" : "") + m.form.mean.toFixed(2) + ", built " + m.form.n + "×)" : "")
+    // (How it was before, for the change to be undone: Undo.)
+    m.cam = S.cam;
+    if (m.type === "view") m.was = S.view; else if (m.type === "medium") m.was = S.medium; else if (m.type === "rework") m.was = m.piece.base.slice(); else if (m.type === "clear") m.word = S.word;
+    S.why = m.type === "undo" ? "asked to undo it" : m.type === "form" ? "a form it learned" + (m.form.n ? " (" + (m.form.mean >= 0 ? "+" : "") + m.form.mean.toFixed(2) + ", built " + m.form.n + "×)" : "")
       : k.n ? (k.mean >= 0 ? "it has done well " : "it has gone badly ") + "(" + (k.mean >= 0 ? "+" : "") + k.mean.toFixed(2) + ", " + k.n + "×)" : "something it has not tried";
     if (m.type === "add") yield* addPiece(S, m.piece);
     else if (m.type === "form") yield* buildForm(S, m);
@@ -3808,9 +4213,66 @@
     else if (m.type === "clear") { for (const P of m.pieces) if (P.alive) yield* removePiece(S, P); S.word = null; }
     else if (m.type === "zoom") yield* closer(S, m.by);
     else if (m.type === "word") yield* addWord(S, m);
+    else if (m.type === "engrave") yield* engraveWord(S, m);
+    else if (m.type === "undo") yield* undoMove(S, m.of);
     else if (m.type === "plant") yield* addPlant(S, m);
     else yield* reworkPiece(S, m.piece, m.recolour, m.colour);
     learnFrom(S, m, before);
+  }
+  /* ── Undo ─────────────────────────────────────────────────────────────
+   * Asked to undo, it takes back its last change by painting the change's
+   * opposite, not by wiping the canvas back: what it added, it takes away;
+   * what it took away, it brings back where it stood; a solid repainted
+   * goes back to its colour; words cut into a solid, back to what was cut
+   * there before; seen from somewhere else, nearer or further, or turned,
+   * it is seen again as it was (what a turn cleared away coming back); in
+   * another medium, back in the one it was in. Asked again, it takes back
+   * the change before that. The change undone is learned as not liked. */
+  function* undoMove(S, m) {
+    for (const f of m.feats || []) teach(f, -LEARN.vote * 0.5);
+    S.action = "undoing: " + (m.label || m.type);
+    const again = (what) => { S.cam = m.cam; return paintAgain(S, what); };
+    if (m.type === "word" && m.letters) {
+      // (Where the eye stepped back to make room for it, it comes forward again: all of it painted again as it was seen.)
+      if (m.cam !== S.cam) { for (const L of m.letters) L.alive = false; S.word = null; yield* again("without the word"); return; }
+      for (const L of m.letters.filter((Q) => Q.alive).reverse()) yield* removePiece(S, L);
+      S.word = null;
+    } else if (m.type === "add" || m.type === "form" || m.type === "plant") {
+      // (What has been built on it since goes with it, the last built first.)
+      const gone = [...new Set((m.type === "add" ? [m.piece] : m.pieces || []).filter((Q) => Q.alive).flatMap((P) => family(S, P)))];
+      for (const P of gone.sort((a, b) => S.pieces.indexOf(b) - S.pieces.indexOf(a))) if (P.alive) yield* removePiece(S, P);
+    } else if (m.type === "engrave" || m.type === "word") {
+      if (!m.piece) return;
+      m.piece.engraved = m.was;
+      if (m.cam !== S.cam) yield* again("as it was"); else yield* reworkPiece(S, m.piece);
+    } else if (m.type === "remove" || m.type === "clear") {
+      // (What has been set down where it stood since is taken away first.)
+      const back = (m.type === "remove" ? [m.piece] : m.pieces).filter((P) => !P.alive);
+      for (const Q of alive(S).filter((Q) => back.some((P) => collide(P, Q) && !(Q.host && back.includes(Q.host)))).reverse()) if (Q.alive && Q !== S.seed) yield* removePiece(S, Q);
+      for (const P of back) yield* bringBack(S, P);
+      if (m.type === "clear" && m.word) S.word = m.word;
+    } else if (m.type === "rework") yield* reworkPiece(S, m.piece, Boolean(m.recolour), m.recolour ? m.was : null);
+    else if (m.type === "medium") yield* inMedium(S, m.was);
+    else if (m.type === "view") { S.view = m.was; yield* again("seen as it was, " + m.was.name); }
+    else if (m.type === "zoom") yield* again(m.by > 1 ? "further off again" : "closer again");
+    else if (m.type === "turn") {
+      // (All that goes round with it now - what was built on it since, too - turns back; what the turn cleared away comes back, where nothing stands now.)
+      const { a, dz, clear, axis } = m.turn, kin = m.piece.alive ? family(S, m.piece) : m.turn.kin;
+      for (const Q of kin) { pushBack(Q, -dz); spin(Q, -a, axis); }
+      for (const R of clear) if (!alive(S).some((Q) => collide(R, Q))) R.alive = true;
+      if (m.turn.word) S.word = m.turn.word;
+      if (kin.includes(S.seed) && S.square !== null) S.square -= a;
+      S.turnedAt = S.moves;
+      yield* again("turned back");
+    }
+  }
+  // A solid taken away, brought back where it stood: set down again, as when it was first.
+  function* bringBack(S, P) {
+    if (P.alive) return;
+    S.pieces.splice(S.pieces.indexOf(P), 1);
+    P.alive = true;
+    frame(S, P);
+    yield* addPiece(S, P);
   }
   // The picture judged as it is - once for each state of it: the judging after one change is the judging before the next.
   function judged(S) {
@@ -3840,6 +4302,7 @@
     if (m.type === "plant") m.plant.reward = reward;
     S.history.push(m);
     if (S.history.length > 12) S.history.shift();
+    if (m.type !== "undo") { (S.undoable ||= []).push(m); if (S.undoable.length > 12) S.undoable.shift(); }
     S.lastMove = m;
     S.moves = (S.moves || 0) + 1;
     keepForm(S, m);
@@ -3980,7 +4443,19 @@
       // (One typeface for every row of one line typed.)
       const face = (a.group && S.faces?.[a.group]) || faceOf(S);
       if (a.group) (S.faces ||= {})[a.group] = face;
-      return { type: "word", text: String(a.text).toUpperCase().slice(0, LETTERS_ROW), face, asked: true, feats: ["lettering a word", ...face.feats], label: "lettering “" + a.text + "”" };
+      // (A text in rows is set out as one: the rows still to come taken with the first.)
+      const more = a.rows > 1 ? (S.asks || []).filter((b) => b.type === "word" && b.group === a.group) : [];
+      if (more.length) S.asks = S.asks.filter((b) => !more.includes(b));
+      const rows = [a, ...more].map((b) => String(b.text).toUpperCase().slice(0, LETTERS_ROW)), text = rows.join(" ");
+      return { type: "word", text, rows, face, asked: true, feats: ["lettering a word", ...face.feats], label: "lettering \u201c" + text + "\u201d" };
+    }
+    // (Words cut into a solid standing, as big as its face lets them be - or, nowhere on it they could be read, lettered standing.)
+    if (a.type === "engrave" && a.text) {
+      const P = alive(S).find((Q) => Q.id === a.id), face = (a.group && S.faces?.[a.group]) || faceOf(S);
+      if (a.group) (S.faces ||= {})[a.group] = face;
+      const cut = P && !P.parts ? engraveLayout(S, P, a.text, face) : null;
+      if (cut) return { type: "engrave", piece: P, cut, asked: true, feats: ["cutting a word into a solid", "cutting a word into " + P.name], label: "cutting \u201c" + cut.text + "\u201d into " + theOf(P) };
+      return askedMove(S, { type: "word", text: rowsOf(a.text)[0] || a.text, group: a.group });
     }
     // (A solid asked for by name: where it was asked - on another, against it - in the colour asked, where one was: Asking.)
     if (a.type === "solid") {
@@ -4024,6 +4499,13 @@
     }
     if (a.type === "medium" && MEDIA[a.medium] && a.medium !== S.medium) return { type: "medium", medium: a.medium, asked: true, feats: ["painting it again in " + a.medium], label: "painting it again in " + a.medium };
     if (a.type === "zoom") return { type: "zoom", by: a.by, asked: true, feats: [a.by > 1 ? "coming closer" : "stepping back"], label: a.by > 1 ? "coming closer" : "stepping back" };
+    // (The last change taken back - and asked again, the one before it: Undo.)
+    if (a.type === "undo") {
+      const m = a.target && S.undoable?.includes(a.target) ? a.target : null;
+      if (!m) return null;
+      S.undoable.splice(S.undoable.indexOf(m), 1);
+      return { type: "undo", of: m, asked: true, feats: ["undoing a change"], label: "undoing " + (m.label || m.type) };
+    }
     // (Turned round: the seed, with all that is built off it - Turning.)
     if (a.type === "turn" && S.seed?.alive) return { type: "turn", piece: S.seed, asked: true, feats: ["turning it round", "turning " + S.seed.name + " round"], label: "turning " + theOf(S.seed) + " round" };
     if (a.type === "view" && VIEWS[a.view] && a.view !== S.view.id) return { type: "view", view: VIEWS[a.view], asked: true, feats: ["seeing it again", "seeing it " + VIEWS[a.view].name, "rule: views"], label: "seeing it again, " + VIEWS[a.view].name };
@@ -4079,7 +4561,8 @@
   const REMOVE_WORDS = new Set(["remove", "delete", "erase", "drop", "lose"]), PAINT_WORDS = new Set(["make", "paint", "colour", "color", "recolour", "recolor", "dye"]);
   const IT_WORDS = new Set(["it", "them", "this", "that", "everything", "all"]), WORD_WORDS = new Set(["word", "words", "letters", "letter", "text"]);
   const QUIET = new Set(["a", "an", "the", "of", "and", "at", "to", "with", "from", "please", "it", "its", "see", "add", "grow", "put", "place", "set", "build", "write", "me", "view",
-    "seen", "look", "new", "another", "more", "then", "also", "now", "is", "be", "one", "1", "plain", "some", "again", "painted", "painting", "all"]);
+    "seen", "look", "new", "another", "more", "then", "also", "now", "is", "be", "one", "1", "plain", "some", "again", "painted", "painting", "all",
+    "big", "small", "little", "large", "huge", "tiny", "tall", "short", "wide", "long", "round", "nice", "pretty", "lovely"]);
   const colourOf = (S, w) => (COLOUR_GREYS[w] !== undefined ? hsl(S.palette.hue, 0.04, COLOUR_GREYS[w]) : COLOUR_HUES[w] !== undefined ? hsl(COLOUR_HUES[w], clamp(S.palette.sat[0] * 1.6, 0.35, 0.75), 0.5) : null);
   // A thing standing of a kind (a plant's kind, or a solid's - boxes and slabs are cubes, discs cylinders): the seed if it is one, else the last made.
   function standingOf(S, thing) {
@@ -4087,7 +4570,7 @@
     return of.includes(S.seed) ? S.seed : of[of.length - 1] || null;
   }
   const nameOfThing = (thing) => (thing.plant ? plantName(thing.kind) : nameFor(thing.kind, thing.kind === "pyramid" ? { sides: 4 } : {}));
-  // Text to letter in rows of at most twelve, broken between words; three rows at most.
+  // Text to letter in rows of at most twelve, broken between words; four rows at most.
   function rowsOf(text) {
     const rows = [];
     let row = "";
@@ -4098,20 +4581,41 @@
       row = w.slice(0, LETTERS_ROW);
     }
     if (row) rows.push(row);
-    return rows.slice(0, 3);
+    return rows.slice(0, 4);
   }
   // The rows of a text asked to be lettered: each its own ask, one typeface; a word standing taken away first.
   function letterAsks(S, rows, group, asks) {
     if (!rows.length) return;
     if (alive(S).some((P) => P.kind === "letter") && !asks.some((a) => a?.type === "clear")) asks.push({ type: "clear", label: "take away “" + (S.word?.text || "the word") + "”" });
-    for (const row of rows) asks.push({ type: "word", text: row, group, label: "letter “" + row + "”" });
+    rows.forEach((row, i) => asks.push({ type: "word", text: row, group, row: i, rows: rows.length, label: "letter \u201c" + row + "\u201d" }));
   }
   function askText(S, text) {
     const raw = String(text || "").trim();
     if (!S || !raw) return [];
+    // (Undo - "undo", "go back", "take that back", "undo undo": each takes back one more change.)
+    const undos = raw.toLowerCase().match(/\b(undo|go back|take (?:that|it) back|revert)\b/g);
+    if (undos && raw.toLowerCase().replace(/\b(undo|go back|take (?:that|it) back|revert|please|that|it|the|last|change)\b/g, "").trim() === "") {
+      // (Aimed, as it is typed, at the change last seen finished - the painter goes on working, and what it is doing now is not what was seen.)
+      const done = S.undoable || [], pending = (S.asks || []).filter((a) => a.type === "undo").length;
+      const asks = undos.slice(0, 6).map((_, i) => done[done.length - 1 - pending - i]).filter(Boolean).map((target) => ({ type: "undo", target, label: "undo " + (target.label || target.type) }));
+      for (const a of asks) ask(S, a);
+      return asks.map((a) => a.label);
+    }
     // (Quoted, or after "write", "letter", "say" or "spell": lettered just as it is typed - Type.)
-    const quoted = raw.match(/["\u201c\u201d'\u2018\u2019]([^"\u201c\u201d'\u2018\u2019]+)["\u201c\u201d'\u2018\u2019]/), spoken = raw.match(/^(?:write|letter|say|spell|type)\s+(.+)$/i);
+    const quoted = raw.match(/["\u201c\u201d'\u2018\u2019]([^"\u201c\u201d'\u2018\u2019]+)["\u201c\u201d'\u2018\u2019]/), spoken = raw.match(/^(?:write|letter|say|spell|type|carve|engrave|cut)\s+(.+)$/i);
     if (quoted || spoken) {
+      // (Written on something standing - "write HELLO on the cube", "\u201cHI\u201d into it" - cut into it, not stood beside it.)
+      const tail = quoted ? raw.replace(quoted[0], " ") : spoken[1];
+      const on = tail.match(/^(.*?)\s*\b(?:on|onto|into|in|across|upon)\s+(?:(?:the|that|this|its|a|an)\s+)?(?:[a-z]+\s+){0,2}?([a-z]+)\s*$/i), noun = on?.[2].toLowerCase();
+      const target = !on ? null : IT_WORDS.has(noun) ? lastSolid(S) : SOLID_WORDS[noun] ? standingOf(S, { kind: SOLID_WORDS[noun] }) : null;
+      if (target && !target.parts) {
+        const said = quoted ? quoted[1] : on[1];
+        if (said.trim()) {
+          const a = { type: "engrave", text: said.trim(), id: target.id, group: (S.askGroup = (S.askGroup || 0) + 1), label: "cut \u201c" + said.trim().toUpperCase() + "\u201d into " + theOf(target) };
+          ask(S, a);
+          return [a.label].concat(quoted && on[1].trim() ? askText(S, on[1]) : []);
+        }
+      }
       const asks = [];
       letterAsks(S, rowsOf((quoted || spoken)[1]), (S.askGroup = (S.askGroup || 0) + 1), asks);
       for (const a of asks) ask(S, a);
@@ -4184,6 +4688,8 @@
     for (const a of asks.filter(Boolean)) { if (out.length >= 6) break; out.push(a); ask(S, a); }
     return out.map((a) => a.label);
   }
+  // What "it" is, asked of: the last solid made (the seed, if none since).
+  const lastSolid = (S) => alive(S).filter((Q) => !Q.parts).slice(-1)[0] || S.seed || null;
   // A thing asked to stand by: one already standing (by its number), or one made earlier from the same line.
   const onto = (S, o) => (!o ? null : o.id !== undefined ? alive(S).find((P) => P.id === o.id) || null : S.madeFor?.[o.ref]?.alive ? S.madeFor[o.ref] : null);
   // Which of the seed's four ways round out from a solid goes toward where it was asked: in front (to the eye), behind, left, right, or beside (either side).
