@@ -1396,19 +1396,36 @@
    * A curved solid takes it on the plane through its middle square to the
    * light, cut to its outline. */
   function castOn(S, A, B) {
+    // (While nothing it depends on has changed - where each stands and how it is framed, the eye, the light - it is the shadow found already: Lighting.)
+    const key = [S.cam, S.light.L, ...[A, B].flatMap((X) => (X.parts || [X]).flatMap((q) => [q.placed, q.middle, q.a, q.b, q.world, q.map, q.outline]))];
+    const was = (A.castMemo ||= new Map()).get(B.id);
+    if (was && was.B === B && was.key.length === key.length && was.key.every((k, i) => k === key[i])) return was.marks;
+    const marks = castFresh(S, A, B);
+    A.castMemo.set(B.id, { B, key, marks });
+    return marks;
+  }
+  function castFresh(S, A, B) {
     const L = S.light.L, out = [];
+    // (Nothing to find where the one stands wholly clear of the column of shade the light throws past the other - the wall excepted, which reaches everywhere.)
+    if (B.kind !== "wall" && !reaches(S, A, B)) return out;
     // (Things of many parts throw, and take, shadows part by part: Type, Plants.)
-    const casters = (A.parts || [A]).filter((q) => A.kind !== "plant" || q.size > 0.06).map((q) => (q.kind === "sphere" ? rimOf(S, q) : q.placed.verts));
+    const casters = (A.parts || [A]).filter((q) => A.kind !== "plant" || q.size > 0.06).map((q) => ({ points: q.kind === "sphere" ? rimOf(S, q) : q.placed.verts, ball: ballOf(q) }));
+    // (Of a thing of many parts, each part only where it could reach the part it falls on.)
+    const balls = new Map(), meets = (a, q) => B.kind === "wall" || ballsMeet(L, a, balls.get(q) || balls.set(q, ballOf(q)).get(q));
     const faces = (B.parts || [B]).filter((q) => B.kind !== "plant" || q.size > 0.06).flatMap((q) => (ROUND.has(q.kind) ? [Object.assign(discOf(S, q), { part: q })].filter((f) => f.world.length >= 3) : q.map ? q.map.visible.map((f) => ({ ...f, part: q })) : []));
     for (const f of faces) {
+      // (On a round solid, found on its surface itself, not on a plane through it: its edges curve as the surface does - and found only of the parts whose shadow could reach it.)
+      // (A round part too narrow in the picture for its curve to show - a stem - takes it on the plane through its middle, as before.)
+      const fb = f.curved && (f.part.box || boxOf([f.part.outline]));
+      if (f.curved && Math.min(fb.x1 - fb.x0, fb.y1 - fb.y0) >= 14) { const depth = shadowDepth(A, (a) => meets(ballOf(a), f.part)); if (depth) out.push(...shadowOnRound(S, A, f, depth)); continue; }
       const nl = dot(f.normal, L);
       if (nl < 0.05) continue;
-      for (const points of casters) {
-        const proj = [];
-        for (const p of points) {
-          const t = dot(f.normal, sub(p, f.centre)) / nl;
-          if (t > 1e-3) proj.push(sub(p, times(L, t)));
-        }
+      for (const { points, ball } of casters) {
+        if (!meets(ball, f.part)) continue;
+        const proj = [], ts = points.map((p) => dot(f.normal, sub(p, f.centre)) / nl);
+        points.forEach((p, i) => { if (ts[i] > 1e-3) proj.push(sub(p, times(L, ts[i]))); });
+        // (Partly behind the plane: only what stands before it throws a shadow on it - cut where it passes through the plane, not cut short where its corners do.)
+        if (proj.length && proj.length < points.length) points.forEach((p, i) => { if (ts[i] > 1e-3) points.forEach((r, j) => { if (ts[j] <= 1e-3) proj.push(mix(p, r, ts[i] / (ts[i] - ts[j]))); }); });
         if (proj.length < 3) continue;
         const u = unit(sub(f.world[1], f.world[0])), v = cross(f.normal, u);
         const flat = (p) => [dot(sub(p, f.centre), u), dot(sub(p, f.centre), v)];
@@ -1428,6 +1445,153 @@
     return out;
   }
   const densify = (poly, k) => poly.flatMap((p, i) => Array.from({ length: k }, (_, j) => mix(p, poly[(i + 1) % poly.length], j / k)));
+  /* How far into a solid's shadow a point is, along `d` (toward the light):
+   * over 0 where the way to the light passes through the solid - by how
+   * far it runs through it - and under 0 where it passes it by - by how far
+   * it misses - so the edge of the shadow can be found between two points,
+   * one in it and one not, where it lies (Lighting). A sphere by how far
+   * inside its rim the way passes; a convex solid by the stretch of the way
+   * inside all its planes; one that is not convex, a stem or a leaf, only
+   * in or out. Of a thing of many parts, the deepest. */
+  function shadowDepth(A, keep = () => true) {
+    const tests = [];
+    for (const q of (A.parts || [A]).filter((q) => (A.kind !== "plant" || q.size > 0.06) && keep(q))) {
+      let test = null;
+      if (q.kind === "sphere" || q.kind === "dome") {
+        const c = q.middle, r = q.radius;
+        tests.push((o, d) => { const oc = sub(c, o), t = dot(d, oc); return t <= 0 ? -1 : r - Math.hypot(...sub(oc, times(d, t))); });
+        continue;
+      } else if (q.kind === "rod") {
+        const u = unit(sub(q.b, q.a)), len = Math.hypot(...sub(q.b, q.a));
+        test = (o, d) => { const w0 = sub(o, q.a), b = dot(d, u), dd = dot(d, w0), e = dot(u, w0), den = 1 - b * b; if (den < 1e-9) return -1; const t = (b * e - dd) / den, sl = clamp((e - b * dd) / den, 0, len); return t > 1e-4 && Math.hypot(...sub(add(o, times(d, t)), add(q.a, times(u, sl)))) <= q.r ? 1 : -1; };
+      } else if (q.kind === "blade" && q.world?.length > 2) {
+        const n = q.normal, c = q.world[0], u = unit(sub(q.world[1], q.world[0])), v = cross(n, u), flat = q.world.map((p) => [dot(sub(p, c), u), dot(sub(p, c), v)]);
+        test = (o, d) => { const den = dot(n, d); if (Math.abs(den) < 1e-9) return -1; const t = dot(n, sub(c, o)) / den; if (t <= 1e-4) return -1; const h = sub(add(o, times(d, t)), c); return inPoly(flat, dot(h, u), dot(h, v)) ? 1 : -1; };
+      } else if (q.map?.faces?.length) {
+        const faces = q.map.faces;
+        if (q.placed?.wound && !q.placed.bent) {
+          const flats = faces.map((f) => { const u = unit(sub(f.world[1], f.world[0])), v = cross(f.normal, u); return { f, u, v, poly: f.world.map((p) => [dot(sub(p, f.centre), u), dot(sub(p, f.centre), v)]) }; });
+          test = (o, d) => (flats.some(({ f, u, v, poly }) => { const den = dot(f.normal, d); if (Math.abs(den) < 1e-9) return false; const t = dot(f.normal, sub(f.centre, o)) / den; if (t <= 1e-4) return false; const h = sub(add(o, times(d, t)), f.centre); return inPoly(poly, dot(h, u), dot(h, v)); }) ? 1 : -1);
+        } else {
+          // (Each plane as its way and its distance, found once: a test for every point of a grid must be quick.)
+          const planes = faces.map((f) => [f.normal[0], f.normal[1], f.normal[2], dot(f.normal, f.centre)]);
+          test = (o, d) => {
+            let enter = 1e-4, leave = Infinity;
+            for (const n of planes) {
+              const den = n[0] * d[0] + n[1] * d[1] + n[2] * d[2], num = n[3] - (n[0] * o[0] + n[1] * o[1] + n[2] * o[2]);
+              if (Math.abs(den) < 1e-9) { if (num < 0) return num; continue; }
+              if (den < 0) enter = Math.max(enter, num / den); else leave = Math.min(leave, num / den);
+            }
+            return Number.isFinite(leave) ? leave - enter : -1;
+          };
+        }
+      }
+      if (!test) continue;
+      // (Looked at closely only where the way to the light passes near it at all - within a ball round it a quarter again as wide.)
+      const { c, r } = ballOf(q), R = 1.25 * r, inner = test;
+      tests.push((o, d) => {
+        const ox = c[0] - o[0], oy = c[1] - o[1], oz = c[2] - o[2], t = d[0] * ox + d[1] * oy + d[2] * oz;
+        if (t < -R) return -1;
+        const mx = ox - d[0] * t, my = oy - d[1] * t, mz = oz - d[2] * t;
+        return mx * mx + my * my + mz * mz > R * R ? -1 : inner(o, d);
+      });
+    }
+    if (!tests.length) return null;
+    return (o, d) => { let best = -Infinity; for (const t of tests) { const v = t(o, d); if (v > best) best = v; } return best; };
+  }
+  // The ball a solid, or a part of one, lies within: its middle and how far it reaches from it.
+  function ballOf(P) {
+    if (P.parts) {
+      const balls = P.parts.map(ballOf), c = times(balls.reduce((t, b) => add(t, b.c), [0, 0, 0]), 1 / balls.length);
+      return { c, r: Math.max(0, ...balls.map((b) => Math.hypot(...sub(b.c, c)) + b.r)) };
+    }
+    if (P.kind === "sphere" || P.kind === "dome") return { c: P.middle, r: P.radius };
+    if (P.kind === "rod") return { c: mix(P.a, P.b, 0.5), r: Math.hypot(...sub(P.b, P.a)) / 2 + (P.r || 0) };
+    const pts = (P.kind === "blade" && P.world) || P.placed?.verts || [P.middle || [0, 0, 0]], c = times(pts.reduce(add, [0, 0, 0]), 1 / pts.length);
+    return { c, r: Math.max(P.radius || 0, ...pts.map((p) => Math.hypot(...sub(p, c)))) };
+  }
+  // Whether one solid's shadow could reach another at all: the other within the column the light throws past it (their bounding balls).
+  const reaches = (S, A, B) => ballsMeet(S.light.L, ballOf(A), ballOf(B));
+  const ballsMeet = (L, a, b) => { const w = sub(b.c, a.c), along = dot(w, L); return along < a.r + b.r && Math.hypot(...sub(w, times(L, along))) < a.r + b.r; };
+  /* A shadow on a round solid, found where the eye meets it, point by point
+   * over a grid round it in the picture: in shadow where the surface turns
+   * to the light and the way to the light from it passes through the
+   * other. Its edge, traced where in-shadow meets lit, curves as the
+   * surface does - both ways on a sphere, round a cylinder one way - and a
+   * corner of the other is a corner of it only where the surface lets it be. */
+  function shadowOnRound(S, A, f, depth) {
+    const q = f.part, L = S.light.L, b = q.box || boxOf([q.outline]), c = Math.max(TOON.cell, Math.max(b.x1 - b.x0, b.y1 - b.y0) / 80);
+    const x0 = b.x0 - c, y0 = b.y0 - c, cols = Math.ceil((b.x1 - b.x0) / c) + 3, rows = Math.ceil((b.y1 - b.y0) / c) + 3;
+    const hit = isBall(q) || q.kind === "blob" ? roundHit(S, q) : planeHit(S, q), N = cols * rows, deep = new Float32Array(N).fill(NaN), turn = new Float32Array(N), field = new Float32Array(N).fill(-1);
+    for (let j = 0; j < rows; j++) {
+      const y = y0 + j * c, spans = spansAt([q.outline], y);
+      for (let i = 0; i < cols; i++) {
+        const x = x0 + i * c;
+        if (!spans.some(([a, z]) => x >= a && x <= z)) continue;
+        const h = hit(x, y);
+        if (!h) continue;
+        deep[j * cols + i] = depth(add(h.p, times(h.n, 1e-3)), L);
+        turn[j * cols + i] = 0.25 * dot(h.n, L);
+      }
+    }
+    // (The light is not a point: an edge of the shadow is not quite sharp, and a corner of it comes out a little rounded - Lighting.)
+    const soft = blurOver(deep, cols, rows, 2), has = new Uint8Array(N);
+    let any = false;
+    for (let k = 0; k < N; k++) {
+      if (Number.isNaN(deep[k])) continue;
+      // (How deep in the other's shadow - and no further than the surface still turns to the light: past its own turn it is in its own shadow.)
+      field[k] = Math.min(soft[k], turn[k]);
+      has[k] = 1;
+      any ||= field[k] > 0;
+    }
+    if (!any) return [];
+    // (Carried two cells on past the solid's outline, and then cut by the outline itself: where the shadow meets the edge of the solid, its edge is the solid's - smooth - not the grid's.)
+    for (let pass = 0; pass < 2; pass++) {
+      const had = has.slice();
+      for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+        const k = j * cols + i;
+        if (had[k]) continue;
+        let best = -Infinity;
+        for (const [a, b] of [[i - 1, j], [i + 1, j], [i, j - 1], [i, j + 1]]) if (a >= 0 && b >= 0 && a < cols && b < rows && had[b * cols + a]) best = Math.max(best, field[b * cols + a]);
+        if (best > -Infinity) { field[k] = best; has[k] = 1; }
+      }
+    }
+    const under = (p) => depth(add(p, times(L, 1e-3)), L) > 0;
+    return regionsOf({ x0, y0, c, cols, rows }, field, 0).map(({ ring }) => clipConvex(ring, q.outline)).filter((r) => r.length > 2 && Math.abs(areaOf(r)) > c * c).map((shot) => ({ face: f, world: null, shot, under }));
+  }
+  // A field blurred over a square of cells each way, counting only the cells that have a value (not NaN) - and those left as they were where none has.
+  function blurOver(F, cols, rows, r) {
+    const pass = (src, di, dj) => {
+      const out = new Float32Array(src.length).fill(NaN);
+      for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+        if (Number.isNaN(F[j * cols + i])) continue;
+        let t = 0, n = 0;
+        for (let k = -r; k <= r; k++) {
+          const a = i + k * di, b = j + k * dj;
+          if (a < 0 || b < 0 || a >= cols || b >= rows) continue;
+          const v = src[b * cols + a];
+          if (!Number.isNaN(v)) { t += v; n++; }
+        }
+        out[j * cols + i] = n ? t / n : src[j * cols + i];
+      }
+      return out;
+    };
+    return pass(pass(F, 1, 0), 0, 1);
+  }
+  // Where the eye's ray through a point of the picture meets a solid of planes (convex), and which way that plane faces.
+  function planeHit(S, q) {
+    const faces = q.map?.faces || [], planes = faces.map((f) => [f.normal[0], f.normal[1], f.normal[2], dot(f.normal, f.centre)]);
+    return (x, y) => {
+      const { o, d } = rayOf(S.cam, x, y), u = unit(d);
+      let enter = 0, leave = Infinity, face = null;
+      for (let i = 0; i < planes.length; i++) {
+        const n = planes[i], den = n[0] * u[0] + n[1] * u[1] + n[2] * u[2], num = n[3] - (n[0] * o[0] + n[1] * o[1] + n[2] * o[2]);
+        if (Math.abs(den) < 1e-9) { if (num < 0) return null; continue; }
+        if (den < 0) { if (num / den > enter) { enter = num / den; face = faces[i]; } } else leave = Math.min(leave, num / den);
+      }
+      return face && enter <= leave ? { p: add(o, times(u, enter)), n: face.normal } : null;
+    };
+  }
   // A point on a curved solid's middle plane, carried up the light to its surface (where the light first meets it there).
   function onSurface(S, B, q) {
     const L = S.light.L;
@@ -1570,9 +1734,19 @@
         const p = ball ? sphereAt(S, f.part, x, y) : onPlane(cam, x, y, f.normal, f.centre) || f.centre;
         return shade(S, B.base, ball ? unit(sub(p, f.part.middle)) : f.curved ? roundNormal(S, f.part, x, y) : f.normal, p[2], { at: p, self: B, direct: 0, under: f.curved ? SKY : 0 });
       };
+      // (A round solid's flat faces - a cylinder's top, a cone's foot - take what falls on them as any plane does: in rows across it, in its own colour out of the light.)
+      const flats = f.curved ? (f.part.map?.visible || []).filter((F) => F.world.length > 4 && F.screen?.length > 2).map((F) => ({ F, cut: clipConvex(m.shot, F.screen) })).filter(({ cut }) => cut.length > 2 && Math.abs(areaOf(cut)) > 4) : [];
+      const flatDark = (F) => (x, y) => { const p = onPlane(cam, x, y, F.normal, F.centre) || F.centre; return shade(S, B.base, F.normal, p[2], { at: p, self: B, direct: 0 }); };
+      if (S.look === "toon") {
+        // (Its curve's colour found where the shadow lies on the curve, not on a flat face of it.)
+        const onCurve = [middleOf(m.shot), ...m.shot.map((p) => mix(p, middleOf(m.shot), 0.25))].find(([x, y]) => !flats.some(({ F }) => inPoly(F.screen, x, y))) || middleOf(m.shot);
+        out.push(flatFill(S, clip, darkAt(...onCurve)), ...flats.map(({ F, cut }) => flatFill(S, clipOf(cut, 0.6), flatDark(F)(...middleOf(cut)))));
+        continue;
+      }
       // (On a curved solid, along its own curves - a form's face swells, so on it too; on a plane, in rows across it.)
-      out.push(...(S.look === "toon" ? [flatFill(S, clip, darkAt(...middleOf(m.shot)))] : f.curved ? roundShadow(S, f.part, m, darkAt, { clip, meant: darkAt }) : f.part.kind === "blob" && f.concave ? guideShadow(S, f.part, m, { clip })
+      out.push(...(f.curved ? roundShadow(S, f.part, m, darkAt, { clip, meant: darkAt }) : f.part.kind === "blob" && f.concave ? guideShadow(S, f.part, m, { clip })
         : rowsIn(S, m.shot, Math.max(3, cam.W * 0.012), darkAt, "filbert", { clip, meant: darkAt })));
+      for (const { F, cut } of flats) out.push(...rowsIn(S, cut, Math.max(3, cam.W * 0.012), flatDark(F), "filbert", { clip: clipOf(cut, 0.6), meant: flatDark(F) }));
     }
     if (out.length) yield* inSteps("the shadow of " + theOf(A) + " on " + theOf(B), out);
   }
@@ -5223,7 +5397,8 @@
     const xs = [];
     for (const poly of rings) for (let i = 0; i < poly.length; i++) {
       const [x0, y0] = poly[i], [x1, y1] = poly[(i + 1) % poly.length];
-      if ((y0 - y) * (y1 - y) > 0 || y0 === y1) continue;
+      // (An edge counts where it passes the row - one end over it, the other not - so a corner on the row is met once, not twice.)
+      if ((y0 > y) === (y1 > y)) continue;
       xs.push(x0 + (x1 - x0) * (y - y0) / (y1 - y0));
     }
     xs.sort((a, b) => a - b);
