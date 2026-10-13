@@ -46033,11 +46033,15 @@ function refreshMunkerLayer(plan = strokePainter.plan) {
   }
   if (munkerLayer.width !== view.width || munkerLayer.height !== view.height) { munkerLayer.width = view.width; munkerLayer.height = view.height; }
   const g = munkerLayer.getContext("2d");
+  g.setTransform(1, 0, 0, 1, 0, 0);
   g.clearRect(0, 0, munkerLayer.width, munkerLayer.height);
+  // (A tilted painting's stripes are turned with it, about the picture's middle.)
+  if (st.roll) { const cx = munkerLayer.width / 2, cy = munkerLayer.height / 2; g.translate(cx, cy); g.rotate(st.roll); g.translate(-cx, -cy); }
   for (const row of st.rows) for (const seg of row.segs) {
     g.fillStyle = `rgb(${seg.colour.join(",")})`;
     g.fillRect(seg.x0, row.y - st.thick / 2, seg.x1 - seg.x0, st.thick);
   }
+  g.setTransform(1, 0, 0, 1, 0, 0);
   Object.assign(munkerLayer.style, { left: view.offsetLeft + "px", top: view.offsetTop + "px", width: view.offsetWidth + "px", height: view.offsetHeight + "px", display: "block" });
 }
 if (typeof window !== "undefined") window.addEventListener("resize", () => { if (munkerLayer && munkerLayer.style.display !== "none") refreshMunkerLayer(); });

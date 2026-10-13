@@ -177,9 +177,10 @@
     return [f(0), f(8), f(4)];
   }
 
-  const KINDS = ["sphere", "cube", "tetrahedron", "octahedron", "dome", "blob", "stack"];
+  const KINDS = ["sphere", "cube", "tetrahedron", "octahedron", "icosahedron", "dodecahedron", "dome", "blob", "stack"];
   const SOLIDS = ["sphere", "cube", "tetrahedron", "octahedron"];
-  const NAMES = { sphere: "a sphere", cube: "a cube", tetrahedron: "a tetrahedron", octahedron: "an octahedron", dome: "a dome", blob: "a form" };
+  const NAMES = { sphere: "a sphere", cube: "a cube", tetrahedron: "a tetrahedron", octahedron: "an octahedron", icosahedron: "an icosahedron", dodecahedron: "a dodecahedron",
+    hexprism: "a hexagonal block", wedge: "a wedge", frustum: "a truncated pyramid", dome: "a dome", blob: "a form" };
   const theOf = (P) => P.name.replace(/^an? /, "the ");
 
   /* The room and the eye. World units (a cube's edge is one): the eye is
@@ -201,7 +202,7 @@
    *   touch    how near two solids may come (they touch, never pass into each other)
    *   kinds    how often each solid is the next */
   const BUILD = { tries: 40, near: 2.8, back: 0.6, margin: 0.03, hidden: 0.55, covers: 0.8, dark: 0.04, touch: 0.006,
-    kinds: { cube: 0.38, sphere: 0.17, tetrahedron: 0.17, octahedron: 0.13, dome: 0.08, blob: 0.07 } };
+    kinds: { cube: 0.27, sphere: 0.15, tetrahedron: 0.13, octahedron: 0.1, icosahedron: 0.05, dodecahedron: 0.05, hexprism: 0.05, wedge: 0.04, frustum: 0.03, dome: 0.07, blob: 0.06 } };
 
   /* ── Mediums ──────────────────────────────────────────────────────────
    * What a medium is: what the paint does once it leaves the brush.
@@ -288,7 +289,8 @@
    *   top    from straight over it, the floor its whole ground
    *   high   a bird's eye, from high up and well off
    *   worm   from the floor, the horizon low, all of it towering
-   *   close  close up */
+   *   close  close up
+   *   tilted the whole picture turned about its middle (`roll`), the way a hand-held eye leans - a Dutch angle */
   const VIEWS = {
     one: { id: "one", name: "one-point perspective", eye: 2, pitch: 0, square: 0 },
     two: { id: "two", name: "two-point perspective", eye: 2, pitch: 0 },
@@ -299,6 +301,7 @@
     high: { id: "high", name: "a bird's-eye view, from high up", eye: 7.5, pitch: 0.82, lens: 1.25, zoom: 2, base: "two" },
     worm: { id: "worm", name: "a worm's-eye view, from the floor", eye: 0.22, pitch: -0.2, zoom: 1.6, base: "two" },
     close: { id: "close", name: "close up", eye: 2, pitch: 0, zoom: 3, close: true, base: "two" },
+    tilted: { id: "tilted", name: "tilted, a Dutch angle", eye: 1.7, pitch: 0.05, roll: 0.21, base: "two" },
   };
   /* ── Composition ──────────────────────────────────────────────────────
    * Where the structure stands in the picture, and which way it grows, is a
@@ -333,7 +336,39 @@
     cam.horizon = cam.cy - f * Math.tan(pitch);
     // (Flat: so many pixels to a unit wherever a thing stands, and the floor a line low in the picture.)
     if (cam.flat) { cam.s = (comp?.size ?? ROOM.size) * Math.min(W, H) * 1.35; cam.base = H * (comp ? clamp(comp.horizon + 0.36, 0.62, 0.8) : 0.76); cam.horizon = cam.base; }
+    // (Tilted: leaning toward the side the structure stands on.)
+    cam.roll = view.roll && !cam.flat ? view.roll * (comp && comp.x > 0.5 ? -1 : 1) : 0;
+    cam.spread = spreadOf(cam);
     return cam;
+  }
+  /* A tilted eye: the study works level throughout; each stroke is turned
+   * about the picture's middle as it goes out to be laid (rolling), and the
+   * canvas is read back turned the other way (sync). `rollAt` turns a point
+   * of the level picture to where it lies in the turned one, `unroll` back. */
+  function rollAt(cam, back = false) {
+    const a = (back ? -1 : 1) * (cam.roll || 0), c = Math.cos(a), sn = Math.sin(a), cx = cam.W / 2, cy = cam.H / 2;
+    return ([x, y]) => [cx + (x - cx) * c - (y - cy) * sn, cy + (x - cx) * sn + (y - cy) * c];
+  }
+  // How far the room has to reach, in the level picture, to cover the whole of the turned one.
+  function spreadOf(cam) {
+    if (!cam.roll) return { x0: 0, x1: cam.W, y0: 0, y1: cam.H };
+    const b = boxOf([[[0, 0], [cam.W, 0], [cam.W, cam.H], [0, cam.H]].map(rollAt(cam, true))]);
+    return { x0: Math.floor(b.x0) - 2, x1: Math.ceil(b.x1) + 2, y0: Math.floor(b.y0) - 2, y1: Math.ceil(b.y1) + 2 };
+  }
+  function* rolling(S, steps) {
+    for (const step of steps) {
+      if (!S.cam.roll || !step.strokes?.length) { yield step; continue; }
+      const T = rollAt(S.cam), ring = (poly) => poly.map(T), c = Math.cos(S.cam.roll), sn = Math.sin(S.cam.roll);
+      yield { ...step, strokes: step.strokes.map((st) => {
+        const out = { ...st, points: st.points.map(T) };
+        if (st.clip) out.clip = ring(st.clip);
+        if (st.within) out.within = st.within.map(ring);
+        if (st.clipOut) out.clipOut = st.clipOut.map(ring);
+        // (Its ridges catch the light from where the light now is in the picture.)
+        if (st.body) out.body = [st.body[0], +(st.body[1] * c - st.body[2] * sn).toFixed(3), +(st.body[1] * sn + st.body[2] * c).toFixed(3)];
+        return out;
+      }) };
+    }
   }
   // A point as the eye has it: across, up, and how far ahead along the way it looks.
   const toEye = (cam, [X, Y, Z]) => { const y = Y - cam.eye; return [X, y * cam.cos + Z * cam.sin, Z * cam.cos - y * cam.sin]; };
@@ -425,6 +460,61 @@
     for (let k = 0; k < sides; k++) faces.push({ name: "side", idx: [k, (k + 1) % sides, sides + (k + 1) % sides, sides + k] });
     return { verts, faces, low: -h / 2, high: h / 2 };
   }
+  /* The other two platonic solids - the icosahedron, twenty triangles, and
+   * the dodecahedron, twelve pentagons - each standing on one of its
+   * faces, as far across as the others of their size. */
+  const GOLD = (1 + Math.sqrt(5)) / 2;
+  function icosaVerts() {
+    const out = [];
+    for (const a of [-1, 1]) for (const b of [-GOLD, GOLD]) out.push([0, a, b], [a, b, 0], [b, 0, a]);
+    return out;
+  }
+  // Stood on its first face (turned so that face lies level underneath), no corner further than `R` from its middle.
+  function onItsFace(verts, faces, R) {
+    const k = R / Math.max(...verts.map((v) => Math.hypot(...v)));
+    let vs = verts.map((v) => times(v, k));
+    const f0 = faces[0].idx.map((i) => vs[i]), from = unit(times(f0.reduce(add, [0, 0, 0]), 1 / f0.length)), to = [0, -1, 0];
+    const turn = cross(from, to), sn = Math.hypot(...turn), co = dot(from, to);
+    if (sn > 1e-9) { const axis = times(turn, 1 / sn); vs = vs.map((v) => { const kv = cross(axis, v), kd = dot(axis, v); return v.map((x, i) => x * co + kv[i] * sn + axis[i] * kd * (1 - co)); }); }
+    else if (co < 0) vs = vs.map(([x, y, z]) => [x, -y, -z]);
+    const ys = vs.map((v) => v[1]);
+    return { verts: vs, faces, low: Math.min(...ys), high: Math.max(...ys) };
+  }
+  function icosaSolid(e) {
+    const v = icosaVerts(), faces = [], edge = (a, b) => Math.abs(Math.hypot(...sub(v[a], v[b])) - 2) < 1e-6;
+    for (let i = 0; i < 12; i++) for (let j = i + 1; j < 12; j++) for (let k = j + 1; k < 12; k++) if (edge(i, j) && edge(j, k) && edge(i, k)) faces.push({ name: "face " + (faces.length + 1), idx: [i, j, k] });
+    return onItsFace(v, faces, e * 0.62);
+  }
+  function dodecaSolid(e) {
+    const v = [];
+    for (const a of [-1, 1]) for (const b of [-1, 1]) for (const c of [-1, 1]) v.push([a, b, c]);
+    for (const a of [-1, 1]) for (const b of [-1, 1]) v.push([0, a / GOLD, b * GOLD], [a / GOLD, b * GOLD, 0], [a * GOLD, 0, b / GOLD]);
+    // (Each face round one of the twelve ways its faces look - the corners of an icosahedron turned to it: the five corners nearest that way, in order round it.)
+    const ways = [];
+    for (const a of [-1, 1]) for (const b of [-1, 1]) ways.push([0, a * GOLD, b], [a, 0, b * GOLD], [a * GOLD, b, 0]);
+    const faces = ways.map((d0, n) => {
+      const d = unit(d0), u = unit(cross(d, Math.abs(d[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0])), w = cross(d, u);
+      const five = v.map((q, i) => ({ i, t: dot(q, d) })).sort((a, b) => b.t - a.t).slice(0, 5).map((x) => x.i);
+      return { name: "face " + (n + 1), idx: five.sort((a, b) => Math.atan2(dot(v[a], w), dot(v[a], u)) - Math.atan2(dot(v[b], w), dot(v[b], u))) };
+    });
+    return onItsFace(v, faces, e * 0.62);
+  }
+  /* A wedge: a ramp from its front edge on the floor up to its back edge,
+   * square ends either side (its middle where its weight is, so every
+   * face's way out is from it); and a pyramid cut level below its point. */
+  function wedgeSolid(e) {
+    const a = e / 2, h = e * 0.7, dy = h / 6, dz = -a / 3;
+    const verts = [[-a, -h / 2, -a], [a, -h / 2, -a], [a, -h / 2, a], [-a, -h / 2, a], [-a, h / 2, a], [a, h / 2, a]].map(([x, y, z]) => [x, y + dy, z + dz]);
+    const faces = [{ name: "bottom", idx: [0, 1, 2, 3] }, { name: "back", idx: [3, 2, 5, 4] }, { name: "slope", idx: [0, 4, 5, 1] }, { name: "left", idx: [0, 3, 4] }, { name: "right", idx: [1, 5, 2] }];
+    return { verts, faces, low: -h / 2 + dy, high: h / 2 + dy };
+  }
+  function frustumSolid(e, top = 0.55) {
+    const a = e / 2, h = e * 0.8, verts = [];
+    for (const [y, r] of [[-h / 2, a], [h / 2, a * top]]) for (const [x, z] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) verts.push([x * r, y, z * r]);
+    const faces = [{ name: "bottom", idx: [0, 1, 2, 3] }, { name: "top", idx: [7, 6, 5, 4] }];
+    for (let k = 0; k < 4; k++) faces.push({ name: "side", idx: [k, (k + 1) % 4, 4 + (k + 1) % 4, 4 + k] });
+    return { verts, faces, low: -h / 2, high: h / 2 };
+  }
   /* A dome: half a sphere of radius `r` on its flat face - a frame of rings
    * for where it stands, what it hides and the shadow it throws; it is
    * painted round, as the sphere is. */
@@ -497,7 +587,9 @@
     const verts = solid.verts.map(([x, y, z]) => [x * c + z * s + at[0], y + at[1], -x * s + z * c + at[2]]);
     return { ...solid, verts, middle: at };
   }
-  const SIZES = { cube: 1, tetrahedron: 1.25, octahedron: 1.05, pyramid: 1.1, cylinder: 0.9, cone: 1, dome: 0.65, blob: 0.75 };
+  const SIZES = { cube: 1, tetrahedron: 1.25, octahedron: 1.05, icosahedron: 1.05, dodecahedron: 1.05, hexprism: 0.9, wedge: 1, frustum: 1, pyramid: 1.1, cylinder: 0.9, cone: 1, dome: 0.65, blob: 0.75 };
+  // (Solids of many faces show more than three planes from anywhere: they are not held to three.)
+  const MANY = new Set(["icosahedron", "dodecahedron"]);
   // The solids that are curved: painted round, in strokes that follow the curve; the rest are built plane by plane.
   const ROUND = new Set(["sphere", "cylinder", "cone", "dome"]);
   // (A sphere, or half of one: painted in bands round the light, a shadow on it laid along them.)
@@ -513,6 +605,11 @@
     else if (kind === "octahedron") shape = octaSolid(e, true);
     else if (kind === "pyramid") shape = pyramidSolid(e / (2 * Math.sin(Math.PI / (form.sides || 4))), form.sides || 4, e * 0.95);
     else if (kind === "cylinder") shape = prismSolid(e / 2, e, 24);
+    else if (kind === "icosahedron") shape = icosaSolid(e);
+    else if (kind === "dodecahedron") shape = dodecaSolid(e);
+    else if (kind === "hexprism") shape = prismSolid(e / 2, e, 6);
+    else if (kind === "wedge") shape = wedgeSolid(e);
+    else if (kind === "frustum") shape = frustumSolid(e);
     else if (kind === "dome") return domeSolid(e);
     else if (kind === "blob") return formSolid(form.outline || formOutline(Math.random), e);
     else shape = pyramidSolid(e / 2, 24, e * 1.15);
@@ -525,6 +622,7 @@
     if (kind === "cube") return st.every((v) => Math.abs(v - 1) < 0.06) ? "a cube" : st[1] > 1.25 * wide ? "a tall box" : st[1] < 0.75 * Math.min(st[0], st[2]) ? "a slab" : "a box";
     if (kind === "pyramid") return "a " + (["three", "four", "five", "six", "seven", "eight"][(form.sides || 4) - 3] || "many") + "-sided pyramid";
     if (kind === "cylinder") return st[1] < 0.6 ? "a disc" : "a cylinder";
+    if (kind === "hexprism") return st[1] > 1.25 ? "a hexagonal column" : st[1] < 0.75 ? "a hexagonal tile" : "a hexagonal block";
     if (kind === "cone") return "a cone";
     return NAMES[kind];
   }
@@ -894,7 +992,9 @@
   function lay(S, s) {
     const P = S.paint, M = S.M, R = S.rules, A = s.app || S.app || {}, C = P.colour;
     const cells = cellsOf(P, s);
-    const probe = cells.length ? cells : s.points.map(([x, y]) => cellAt(P, x, y)).filter((k) => k >= 0);
+    let probe = cells.length ? cells : s.points.map(([x, y]) => cellAt(P, x, y)).filter((k) => k >= 0);
+    // (Tilted, the room laid past the level picture fills the turned one's corners: what it goes over is taken to be what is at the picture's edge nearest it.)
+    if (!probe.length && S.cam.roll) { const m = s.points[Math.floor(s.points.length / 2)], k = cellAt(P, clamp(m[0], 0, S.cam.W - 1), clamp(m[1], 0, S.cam.H - 1)); if (k >= 0) probe = [k]; }
     if (!probe.length) return null;
     if (!s.intended) s.intended = s.colour;
     // (A solid seen through carries thinner paint: Mutation.)
@@ -1014,12 +1114,17 @@
     const P = S.paint, seen = S.seen;
     if (!seen || seen === P.seen || seen.width !== S.cam.W || seen.height !== S.cam.H) return;
     P.seen = seen;
-    const px = seen.pixels, W = seen.width, H = seen.height, n = P.n, q = n / 4;
+    const px = seen.pixels, W = seen.width, H = seen.height, n = P.n, q = n / 4, T = S.cam.roll ? rollAt(S.cam) : null;
     for (let j = 0; j < P.rows; j++) {
       for (let i = 0; i < P.cols; i++) {
         let r = 0, g = 0, b = 0, lo = 255, hi = 0;
+        // (Tilted: where the cell went in the turned picture; one turned off the canvas is left as it was thought to be.)
+        if (T) { const [cx, cy] = T([(i + 0.5) * n, (j + 0.5) * n]); if (cx < 0 || cy < 0 || cx >= W || cy >= H) continue; }
         for (let s = 0; s < 4; s++) {
-          const x = Math.min(W - 1, Math.floor(i * n + (s & 1 ? 3 : 1) * q)), y = Math.min(H - 1, Math.floor(j * n + (s & 2 ? 3 : 1) * q)), o = (y * W + x) * 4;
+          let x = i * n + (s & 1 ? 3 : 1) * q, y = j * n + (s & 2 ? 3 : 1) * q;
+          if (T) [x, y] = T([x, y]);
+          x = clamp(Math.floor(x), 0, W - 1); y = clamp(Math.floor(y), 0, H - 1);
+          const o = (y * W + x) * 4;
           r += px[o]; g += px[o + 1]; b += px[o + 2];
           const l = 0.299 * px[o] + 0.587 * px[o + 1] + 0.114 * px[o + 2];
           if (l < lo) lo = l;
@@ -1126,9 +1231,10 @@
       return shade(S, S.palette.floor, [0, 1, 0], Z).map((v) => v * (1 + 0.12 * side * (x / W - 0.5) * 2));
     };
     if (toon) {
-      // (A cartoon's room: the wall one flat colour down to the floor, the floor another, meeting in a clean line.)
-      if (meet > 0) yield* inSteps("the wall, one flat colour", [flatFill(S, [[0, 0], [W, 0], [W, Math.min(H, meet)], [0, Math.min(H, meet)]], wallLit)]);
-      if (meet < H) yield* inSteps("the floor, one flat colour", [flatFill(S, [[0, Math.max(0, meet)], [W, Math.max(0, meet)], [W, H], [0, H]], floorFlat)]);
+      // (A cartoon's room: the wall one flat colour down to the floor, the floor another, meeting in a clean line - as far as the picture reaches, turned or not.)
+      const sp = cam.spread || { x0: 0, x1: W, y0: 0, y1: H };
+      if (meet > sp.y0) yield* inSteps("the wall, one flat colour", [flatFill(S, [[sp.x0, sp.y0], [sp.x1, sp.y0], [sp.x1, Math.min(sp.y1, meet)], [sp.x0, Math.min(sp.y1, meet)]], wallLit)]);
+      if (meet < sp.y1) yield* inSteps("the floor, one flat colour", [flatFill(S, [[sp.x0, Math.max(sp.y0, meet)], [sp.x1, Math.max(sp.y0, meet)], [sp.x1, sp.y1], [sp.x0, sp.y1]], floorFlat)]);
       return;
     }
     // The wall: soft and even, a little lighter toward the light.
@@ -1166,9 +1272,9 @@
   }
   // The wall in soft rows (each row begun somewhere else, so no seam runs down it).
   function wallStrokes(S, meet, rowW, wallAt) {
-    const W = S.cam.W, wall = [];
-    for (let y = rowW / 2; y < meet + rowW * 0.4; y += rowW * 0.8) {
-      for (let x = -W * (0.05 + S.rng() * 0.2); x < W * 1.05; x += W * (0.17 + S.rng() * 0.1)) {
+    const W = S.cam.W, wall = [], sp = S.cam.spread || { x0: 0, x1: W, y0: 0 };
+    for (let y = sp.y0 + rowW / 2; y < meet + rowW * 0.4; y += rowW * 0.8) {
+      for (let x = sp.x0 - W * (0.05 + S.rng() * 0.2); x < sp.x1 + W * 0.05; x += W * (0.17 + S.rng() * 0.1)) {
         const len = W * (0.24 + S.rng() * 0.08), x0 = x + (S.rng() - 0.5) * W * 0.05, y0 = Math.min(meet, y + (S.rng() - 0.5) * rowW * 0.3);
         wall.push(stroke(S, [[x0, y0], [x0 + len * 0.5, y0 + (S.rng() - 0.5) * rowW * 0.2], [x0 + len, y0]], rowW * 1.6, wallAt(x0 + len / 2, y0), "soft", { meant: wallAt }));
       }
@@ -1177,13 +1283,13 @@
   }
   // The floor from where it meets the wall down, row by row: thin and far first, broad and near last.
   function floorStrokes(S, meet, floorAt) {
-    const { cam } = S, W = cam.W, H = cam.H, floor = [];
+    const { cam } = S, W = cam.W, floor = [], sp = cam.spread || { x0: 0, x1: W, y0: 0, y1: cam.H }, H = sp.y1;
     // (From where it comes into the picture: looked down on from high up, the wall's foot is far over it.)
-    let y = Math.max(meet, -2);
+    let y = Math.max(meet, sp.y0 - 2);
     while (y < H) {
       const Z = planeDepth(cam, Math.max(y, meetOf(cam) + 0.5)), next = Math.min(H + 2, Math.max(y + 2, project(cam, [0, 0, Z / 1.13])[1])), h = Math.max(2, next - y);
       const near = clamp((ROOM.wall - Z) / (ROOM.wall - 1.5), 0, 1);
-      for (let x = -W * (0.04 + S.rng() * 0.16); x < W * 1.04; x += W * (0.14 + S.rng() * 0.08 - 0.04 * near)) {
+      for (let x = sp.x0 - W * (0.04 + S.rng() * 0.16); x < sp.x1 + W * 0.04; x += W * (0.14 + S.rng() * 0.08 - 0.04 * near)) {
         const len = W * (0.2 + S.rng() * 0.1 - 0.05 * near), x0 = x + (S.rng() - 0.5) * W * 0.04, ym = y + h / 2 + (S.rng() - 0.5) * h * 0.25;
         floor.push(stroke(S, [[x0, ym], [x0 + len * 0.5, ym + (S.rng() - 0.5) * h * 0.2], [x0 + len, ym]], h * 1.7, floorAt(x0 + len / 2, y),
           near < 0.35 ? "soft" : near < 0.7 ? "filbert" : "flat", { meant: floorAt }));
@@ -2622,11 +2728,11 @@
   // Whether a new solid can go where it was put: in the room and the picture, clear of the others, mostly seen, hiding none of them whole.
   function fits(S, P) {
     // (What was asked for may stand more hidden, hide more and come nearer the edge than what it chooses itself: Asking.)
-    const { cam } = S, loose = Boolean(S.relaxed), m = loose ? 0.012 : BUILD.margin, b = P.box;
+    const { cam } = S, loose = Boolean(S.relaxed), m = (loose ? 0.012 : BUILD.margin) + (cam.roll ? 0.08 : 0), b = P.box;
     const zs = P.kind === "sphere" ? [P.middle[2] - P.radius, P.middle[2] + P.radius] : P.placed.verts.map((v) => v[2]);
     if (Math.min(...zs) < BUILD.near || Math.max(...zs) > ROOM.wall - BUILD.back) return false;
     if (b.x0 < cam.W * m || b.x1 > cam.W * (1 - m) || b.y0 < cam.H * m || b.y1 > cam.H * ROOM.foot || b.x1 - b.x0 < cam.W * 0.04) return false;
-    if (P.map && !P.round && P.kind !== "blob" && P.map.planes > 3) return false;
+    if (P.map && !P.round && P.kind !== "blob" && !MANY.has(P.kind) && P.map.planes > 3) return false;
     const standing = alive(S);
     if (standing.some((Q) => collide(P, Q))) return false;
     const near = standing.filter((Q) => boxesMeet(P.coverBox, Q.coverBox));
@@ -3466,7 +3572,8 @@
   function noteRender(S, m, pieces, face, how) {
     const shapes = pieces.flatMap((P) => [P.outline, P.shot?.floor].filter((o) => o?.length > 2));
     if (!shapes.length) return null;
-    const b = boxOf(shapes), text = String(m.cut?.text || m.text || "").toUpperCase().trim();
+    const level = boxOf(shapes), text = String(m.cut?.text || m.text || "").toUpperCase().trim();
+    const b = S.cam.roll ? boxOf([[[level.x0, level.y0], [level.x1, level.y0], [level.x1, level.y1], [level.x0, level.y1]].map(rollAt(S.cam))]) : level;
     if (!text) return null;
     const r = { id: Math.floor(S.rng() * 1e9).toString(36), text, face: face?.genes || null, faceName: face?.name || "", look: S.look || "plain", medium: S.medium, view: S.view.id, how,
       at: Date.now(), taste: null, box: [Math.round(b.x0), Math.round(b.y0), Math.round(b.x1), Math.round(b.y1)] };
@@ -3740,8 +3847,9 @@
    * for its A. The rest of the word is built round it, as tall as it and in
    * its colour, the row running through it. */
   const tallness = (P) => { const xs = P.foot.map((f) => f[0]), zs = P.foot.map((f) => f[1]); return (P.high - P.low) / Math.max(1e-3, Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs))); };
-  const FOUND = { O: (P) => P.kind === "sphere", "0": (P) => P.kind === "sphere", I: (P) => (P.kind === "cylinder" || P.kind === "cube") && tallness(P) > 1.6,
-    "1": (P) => (P.kind === "cylinder" || P.kind === "cube") && tallness(P) > 1.6, A: (P) => ["tetrahedron", "pyramid", "cone"].includes(P.kind) };
+  const FOUND = { O: (P) => P.kind === "sphere" || P.kind === "icosahedron" || P.kind === "dodecahedron", "0": (P) => P.kind === "sphere" || P.kind === "dodecahedron",
+    I: (P) => (P.kind === "cylinder" || P.kind === "cube" || P.kind === "hexprism") && tallness(P) > 1.6,
+    "1": (P) => (P.kind === "cylinder" || P.kind === "cube" || P.kind === "hexprism") && tallness(P) > 1.6, A: (P) => ["tetrahedron", "pyramid", "cone"].includes(P.kind) };
   function foundLetters(S, text, face) {
     const chars = [...String(text).toUpperCase()].filter((c) => GLYPHS[c] || c === " ").slice(0, LETTERS_ROW), standing = alive(S).filter((P) => !P.parts && P.low < 0.01 && !P.engraved);
     const options = [];
@@ -3808,7 +3916,7 @@
   }
   // Whether a letter can stand where it was set: in the room and the picture, clear of the others, seen, hiding little.
   function fitsLetter(S, L, earlier) {
-    const { cam } = S, m = BUILD.margin, b = L.box, zs = L.placed.verts.map((v) => v[2]);
+    const { cam } = S, m = BUILD.margin + (cam.roll ? 0.08 : 0), b = L.box, zs = L.placed.verts.map((v) => v[2]);
     if (Math.min(...zs) < BUILD.near || Math.max(...zs) > ROOM.wall - BUILD.back) return false;
     // (Set out to see whether the eye would have to step back for it, the picture's edges do not count.)
     if (!S.unframed && (b.x0 < cam.W * m || b.x1 > cam.W * (1 - m) || b.y0 < cam.H * m || b.y1 > cam.H * ROOM.foot)) return false;
@@ -4555,7 +4663,8 @@
     const boxNow = () => boxOf([pts.map((p) => project(cam, p))]);
     let b = boxNow();
     // (Let out until it all shows - or, a view that may, let in where it is small; close up, until it runs off the picture's edges.)
-    const [fw, fh] = share ? [share, share] : cam.close ? [1.15, 1] : [0.84, 0.78], k = Math.min(cam.zoom || 1, cam.W * fw / Math.max(1, b.x1 - b.x0), cam.H * fh / Math.max(1, b.y1 - b.y0));
+    // (Tilted, its corners are turned away: what stands is framed inside what is left.)
+    const [fw, fh] = share ? [share * (cam.roll ? 0.85 : 1), share * (cam.roll ? 0.85 : 1)] : cam.close ? [1.15, 1] : cam.roll ? [0.7, 0.68] : [0.84, 0.78], k = Math.min(cam.zoom || 1, cam.W * fw / Math.max(1, b.x1 - b.x0), cam.H * fh / Math.max(1, b.y1 - b.y0));
     if (cam.flat) cam.s *= k; else cam.f *= k;
     b = boxNow();
     // (Its middle over the composition's point, as far as the picture's edges let it be: Composition. Let in, or close, its middle is the picture's.)
@@ -4668,8 +4777,9 @@
     const form = {}, rules = [], was = kind;
     if (opened("turn") && S.rng() < 0.4) {
       if (kind === "sphere") kind = S.rng() < 0.6 ? "cylinder" : "dome";
-      else if (kind === "tetrahedron" || kind === "octahedron") kind = S.rng() < 0.5 ? "cone" : "pyramid";
-      else if (kind === "cube" && S.rng() < 0.3) kind = "cylinder";
+      // (A face more, a point cut off, the next platonic solid - each turned from what it was: Mutation.)
+      else if (kind === "tetrahedron" || kind === "octahedron") kind = ["cone", "pyramid", "frustum", kind === "octahedron" ? "icosahedron" : "wedge", "dodecahedron"][Math.floor(S.rng() * 5)];
+      else if (kind === "cube") { const r = S.rng(); kind = r < 0.3 ? "cylinder" : r < 0.45 ? "hexprism" : r < 0.55 ? "wedge" : r < 0.62 ? "frustum" : "cube"; }
       if (kind !== was) rules.push("turn");
     }
     if (kind === "pyramid") form.sides = 4 + Math.floor(S.rng() * 3);
@@ -4807,6 +4917,8 @@
       const over = n < cap ? 0.04 : -0.12 * (n - cap + 1);
       const found = [];
       yield* candidates(S, n < cap ? 5 : 2, found);
+      // (Asked for something while it was still thinking what to do: that comes first - what it was thinking of is let go.)
+      if (S.asks?.length) return;
       for (const c of found) options.push({ type: "add", piece: c.piece, feats: addFeatures(S, c.piece, c.rules), label: labelOf(c.piece), prior: over + composed(S, c.piece) });
       if (opened("forms") && n < cap) {
         const forms = memory().forms.filter((f) => f.mean > -0.05 && !S.unbuilt.has(f.sig)).sort((a, b) => b.mean - a.mean).slice(0, 3);
@@ -5098,12 +5210,13 @@
     const room = paint(mix(K.wall, [18, 18, 26], 0.74)), tints = S.rules.value ? [[214, 212, 206], [58, 56, 62]] : [hsl(K.support, 0.72, 0.66), hsl((K.support + 180) % 360, 0.72, 0.4)];
     const turn = new Map(alive(S).map((P, i) => [P.id, i % 2]));
     const rows = [];
-    for (let y = period / 2; y < cam.H; y += period) {
-      const segs = [{ x0: 0, x1: cam.W, colour: room }];
+    const sp = cam.spread || { x0: 0, x1: cam.W, y0: 0, y1: cam.H };
+    for (let y = sp.y0 + period / 2; y < sp.y1; y += period) {
+      const segs = [{ x0: sp.x0, x1: sp.x1, colour: room }];
       for (const P of order) for (const [a, b] of spansAt(shapes(P), y)) segs.push({ x0: a, x1: b, colour: tints[turn.get(P.id)] });
       rows.push({ y, segs });
     }
-    return { period, thick: period * MUNKER.thick, rows };
+    return { period, thick: period * MUNKER.thick, rows, roll: cam.roll || 0 };
   }
   // Where a level line at `y` lies inside some rings (holes too, counted in and out): its runs, left to right.
   function spansAt(rings, y) {
@@ -5212,7 +5325,7 @@
     return null;
   }
   const VIEW_ASKS = { one: "see it square on", two: "see it turned", above: "see it from above", below: "see it from below", flat: "see it flat",
-    top: "see it from straight above", high: "see it from high up", worm: "see it from the floor", close: "come in close" };
+    top: "see it from straight above", high: "see it from high up", worm: "see it from the floor", close: "come in close", tilted: "see it tilted" };
   // (Three at most, one of each: a plant, a word - or, while a word stands, another plant - and a view.)
   function suggestions(S) {
     if (!S) return [];
@@ -5246,17 +5359,20 @@
    * Six asks at most from one line. */
   const SOLID_WORDS = { cube: "cube", cubes: "cube", box: "cube", boxes: "cube", block: "cube", sphere: "sphere", spheres: "sphere", ball: "sphere", balls: "sphere",
     tetrahedron: "tetrahedron", tetrahedra: "tetrahedron", octahedron: "octahedron", octahedra: "octahedron", pyramid: "pyramid", pyramids: "pyramid",
-    cylinder: "cylinder", cylinders: "cylinder", cone: "cone", cones: "cone", dome: "dome", domes: "dome", form: "blob", forms: "blob", blob: "blob", bean: "blob" };
+    cylinder: "cylinder", cylinders: "cylinder", cone: "cone", cones: "cone", dome: "dome", domes: "dome", form: "blob", forms: "blob", blob: "blob", bean: "blob",
+    icosahedron: "icosahedron", icosahedra: "icosahedron", icosahedrons: "icosahedron", d20: "icosahedron", dodecahedron: "dodecahedron", dodecahedra: "dodecahedron", dodecahedrons: "dodecahedron", d12: "dodecahedron",
+    hexprism: "hexprism", hexprisms: "hexprism", hexagon: "hexprism", hexagons: "hexprism", hexagonal: "hexprism", column: "hexprism", columns: "hexprism", wedge: "wedge", wedges: "wedge", ramp: "wedge", ramps: "wedge", frustum: "frustum", frustums: "frustum", frusta: "frustum" };
   const VIEW_PHRASES = { fromabove: "above", overhead: "above", frombelow: "below", flat: "flat", squareon: "one", front: "one", turned: "two",
-    topdown: "top", plan: "top", birdseye: "high", fromhigh: "high", aerial: "high", wormseye: "worm", fromfloor: "worm", lowangle: "worm", closeup: "close", macro: "close" };
+    topdown: "top", plan: "top", birdseye: "high", fromhigh: "high", aerial: "high", wormseye: "worm", fromfloor: "worm", lowangle: "worm", closeup: "close", macro: "close", tilted: "tilted", tilt: "tilted", dutch: "tilted", askew: "tilted", crooked: "tilted", canted: "tilted" };
   const REL_PHRASES = { ontopof: "on", on: "on", onto: "on", atop: "on", upon: "on", above: "on", over: "on", in: "in", inside: "in", into: "in", within: "in",
     beside: "beside", by: "beside", nextto: "beside", near: "beside", against: "beside", under: "beside", below: "beside", beneath: "beside",
     infrontof: "front", before: "front", behind: "behind", leftof: "left", rightof: "right" };
-  const JOINED = [["on top of", "ontopof"], ["in front of", "infrontof"], ["next to", "nextto"], ["to the left of", "leftof"], ["to the right of", "rightof"],
+  const JOINED = [["hexagonal columns", "hexprisms"], ["hexagonal column", "hexprism"], ["hexagonal blocks", "hexprisms"], ["hexagonal block", "hexprism"], ["hexagonal prisms", "hexprisms"],
+    ["hexagonal prism", "hexprism"], ["hexagonal tiles", "hexprisms"], ["hexagonal tile", "hexprism"], ["truncated pyramids", "frustums"], ["truncated pyramid", "frustum"], ["on top of", "ontopof"], ["in front of", "infrontof"], ["next to", "nextto"], ["to the left of", "leftof"], ["to the right of", "rightof"],
     ["left of", "leftof"], ["right of", "rightof"], ["from above", "fromabove"], ["from below", "frombelow"], ["square on", "squareon"], ["take away", "remove"], ["from straight above", "topdown"], ["from directly above", "topdown"], ["straight above", "topdown"], ["directly above", "topdown"],
     ["from right above", "topdown"], ["top down", "topdown"], ["straight down", "topdown"], ["birds eye", "birdseye"], ["bird s eye", "birdseye"],
     ["from high up", "fromhigh"], ["from up high", "fromhigh"], ["worms eye", "wormseye"], ["worm s eye", "wormseye"], ["from the floor", "fromfloor"], ["from the ground", "fromfloor"], ["low angle", "lowangle"],
-    ["close up", "closeup"], ["up close", "closeup"],
+    ["close up", "closeup"], ["up close", "closeup"], ["dutch angle", "dutch"], ["at an angle", "tilted"],
     ["get rid of", "remove"], ["zoom in", "closer"], ["zoom out", "further"], ["step back", "further"], ["come closer", "closer"], ["move closer", "closer"]];
   const COLOUR_HUES = { red: 2, orange: 28, yellow: 52, gold: 45, golden: 45, green: 125, teal: 175, cyan: 188, blue: 220, navy: 228, purple: 275, violet: 268, pink: 330, magenta: 310, brown: 25 };
   const COLOUR_GREYS = { white: 0.92, grey: 0.55, gray: 0.55, silver: 0.7, black: 0.12 };
@@ -5521,7 +5637,7 @@
     const named = asked.map((w) => PLANT_WORDS[w]).find(Boolean);
     S.wantPlant = named === "any" ? GROWN.filter((k) => plantRules(k).flower)[Math.floor(rng() * 7)] : named || null;
     S.wanted = named ? null : asked.filter((w) => !["a", "an", "the", "of", "and"].includes(w)).slice(0, 2).join(" ").toUpperCase().slice(0, 9) || null;
-    S.steps = (function* () {
+    S.steps = rolling(S, (function* () {
       S.action = "the room";
       // (Painted round the first solid where nothing lighter can go over the room afterwards and nothing lifts well.)
       yield* laid(S, room(S), { out: S.rules.reserve ? [first.outline] : null, app: S.app });
@@ -5534,7 +5650,7 @@
         if (S.paint.clock !== at) idle = 0;
         else if (++idle > 2) { idle = 0; yield look("looking"); }
       }
-    })();
+    })());
     return S;
   }
 
