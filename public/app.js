@@ -34897,7 +34897,7 @@ function renderChoiceCard(force = false) {
   // First, what can be asked for with a tap - a plant, a word, another view - and is made next (Asking).
   const study = plan?.study, H = globalThis.HexfieldStudy;
   if (study && H?.suggestions) {
-    const same = (a, b) => a.type === b.type && a.kind === b.kind && a.text === b.text && a.view === b.view;
+    const same = (a, b) => a.type === b.type && a.kind === b.kind && a.species === b.species && a.text === b.text && a.view === b.view;
     const pending = [study.asking, ...(study.asks || [])].filter(Boolean);
     for (const asked of pending) if (asked.label) card.appendChild(askChip(study, asked.label, null));
     for (const { label, request } of H.suggestions(study)) if (!pending.some((asked) => same(asked, request))) card.appendChild(askChip(study, label, request));
