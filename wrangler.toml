@@ -1,11 +1,5 @@
+# Hexfield intentionally offline. No static assets or AI bindings;
+# deleting the GitHub repository will not remove the Cloudflare route.
 name = "hexfield"
 main = "worker.js"
 compatibility_date = "2024-09-23"
-
-[assets]
-directory = "./public"
-binding = "ASSETS"
-not_found_handling = "single-page-application"
-
-[ai]
-binding = "AI"
