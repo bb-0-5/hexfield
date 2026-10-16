@@ -34,9 +34,24 @@
     } catch {
       // A tainted canvas or storage quota issue must not prevent navigation.
     }
+    let sourceImage = null;
+    try {
+      const artwork = document.getElementById('view');
+      if (artwork?.width && artwork?.height) {
+        const capture = document.createElement('canvas');
+        capture.width = 640; capture.height = 270;
+        const context = capture.getContext('2d');
+        context.fillStyle = '#13202a';
+        context.fillRect(0, 0, capture.width, capture.height);
+        context.drawImage(artwork, 0, 0, capture.width, capture.height);
+        sourceImage = capture.toDataURL('image/jpeg', 0.74);
+      }
+    } catch {
+      // Canvas can be tainted by a remote image. Original painter still works.
+    }
     try {
       sessionStorage.setItem('hexfield:volumetric-source',
-        JSON.stringify({text: word, colors}));
+        JSON.stringify({text: word, colors, image: sourceImage}));
     } catch {}
   });
 })();
