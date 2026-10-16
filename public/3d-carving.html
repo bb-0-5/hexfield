@@ -58,7 +58,36 @@
   }
 }
 </script>
-<script type="module" src="/volumetric-carving.js"></script>
+<script>
+addEventListener('error', (event) => {
+  const status = document.getElementById('geometryStatus');
+  if (!status) return;
+  const message = String(event?.message || '');
+  if (!message || /module|import|script|WebGL|CORS|fetch/i.test(message)) {
+    status.textContent = '3D engine failed to load. A script/CDN or WebGL error occurred. ' +
+      (message && message !== 'Script error.' ? message.slice(0, 180) : 'Try reloading without content blockers.');
+    status.dataset.error = 'true';
+  }
+});
+addEventListener('unhandledrejection', (event) => {
+  const status = document.getElementById('geometryStatus');
+  if (status) {
+    status.textContent = '3D engine error: ' +
+      String(event.reason?.message || event.reason || 'Unknown module failure').slice(0, 200);
+    status.dataset.error = 'true';
+  }
+});
+addEventListener('DOMContentLoaded', () => {
+  setTimeout(() => {
+    const status = document.getElementById('geometryStatus');
+    if (status && /Loading the 3D engine/i.test(status.textContent)) {
+      status.textContent = 'The 3D engine did not start. External libraries may be blocked or unavailable.';
+      status.dataset.error = 'true';
+    }
+  }, 12000);
+});
+</script>
+<script type="module" src="/3d-carving.js"></script>
 </head>
 <body>
 <header><a href="/" class="brand" aria-label="Back to Hexfield">✳ HEXFIELD</a><span>GEOMETRY EXPERIMENT / V1</span></header>
@@ -85,7 +114,7 @@
       <dt>SURFACE MATERIAL</dt><dd id="geometryMaterialName">Inherited from current work when available</dd>
       <dt>PHYSICAL MESH</dt><dd id="geometryInfo">Awaiting CSG</dd>
     </dl>
-    <p class="note">This is a separate 3D geometry test, not a replacement for the current 2D generative artwork. It reuses colours from that canvas when launched there. STL is a geometric prototype, not a guarantee of watertight manufacturability; check and repair before fabrication. The 3D engine loads external, version-pinned libraries.</p>
+    <p class="note">This is a separate 3D geometry test, not a replacement for the current painter. Open it from Hexfield to carry the current artwork pixels into a physical relief, then engrave the lettering. STL is a geometric prototype, not a guarantee of watertight manufacturability; check and repair before fabrication. The 3D engine loads external, version-pinned libraries.</p>
     <a href="/">← Return to the living 2D canvas</a>
   </aside>
   <section class="work" aria-label="Interactive 3D carved solid">
