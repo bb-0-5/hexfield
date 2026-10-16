@@ -169,7 +169,17 @@ async function hydrateSourceArtwork() {
   const g = samplingCanvas.getContext('2d', { willReadFrequently: true });
   g.drawImage(imageCanvas, 0, 0, samplingCanvas.width, samplingCanvas.height);
   samplePixels = g.getImageData(0, 0, samplingCanvas.width, samplingCanvas.height).data;
-  surfaceTexture = new THREE.CanvasTexture(imageCanvas);
+  // The alpha channel is used for the *geometric* silhouette above.
+  // Paint missing pixel areas onto a dark base rather than alpha-discarding
+  // individual fragment pixels, which makes ragged black holes in the model.
+  const pigmentCanvas = document.createElement('canvas');
+  pigmentCanvas.width = textureWidth;
+  pigmentCanvas.height = textureHeight;
+  const pigmentContext = pigmentCanvas.getContext('2d');
+  pigmentContext.fillStyle = '#203640';
+  pigmentContext.fillRect(0, 0, textureWidth, textureHeight);
+  pigmentContext.drawImage(imageCanvas, 0, 0);
+  surfaceTexture = new THREE.CanvasTexture(pigmentCanvas);
   surfaceTexture.colorSpace = THREE.SRGBColorSpace;
   surfaceTexture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
 }
@@ -183,78 +193,60 @@ function reliefGeometry(seed) {
   const indices = [];
   const idx = (x, y) => y * (nx + 1) + x;
   const src = (x, y) => ((ny - y) * (nx + 1) + x) * 4;
-  const alphaAt = (x, y) => samplePixels[src(x, y) + 3];
   const reliefAt = (x, y) => {
     const offset = src(x, y);
     const r = samplePixels[offset] / 255, g = samplePixels[offset + 1] / 255;
     const b = samplePixels[offset + 2] / 255;
     const pigment = Math.max(r, g, b) - Math.min(r, g, b);
-    const luminance = (r * .21 + g * .72 + b * .07);
-    const variation = Math.sin((x / nx * 14 + seed * .35)) *
-      Math.cos((y / ny * 11 - seed * .27));
-    return .023 + pigment * .088 + luminance * .030 + variation * .013;
+    const luminance = r * .21 + g * .72 + b * .07;
+    const variation = Math.sin(x / nx * 14 + seed * .35) *
+      Math.cos(y / ny * 11 - seed * .27);
+    return .025 + pigment * .089 + luminance * .028 + variation * .015;
   };
-  // Sample the true transparent quarry. Missing material must be missing
-  // faces, not merely alpha-blended pigments over a solid rectangular plate.
-  const shaped = sourceIsHexfield && source.sourceKind === 'uncut-hexfield-shapes';
-  const occupancy = new Uint8Array(nx * ny);
-  for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
-    const coverage = (alphaAt(x, y) + alphaAt(x + 1, y) +
-      alphaAt(x, y + 1) + alphaAt(x + 1, y + 1)) / 4;
-    occupancy[y * nx + x] = !shaped || coverage >= 68 ? 1 : 0;
-  }
-  const cell = (x, y) => x < 0 || y < 0 || x >= nx || y >= ny ?
-    0 : occupancy[y * nx + x];
-  if (shaped) {
-    // A diagonal-only contact is not a two-manifold boundary. Bridge it.
-    for (let pass = 0; pass < 2; pass++)
-      for (let y = 0; y < ny - 1; y++) for (let x = 0; x < nx - 1; x++) {
-        if (cell(x, y) && cell(x + 1, y + 1) &&
-            !cell(x + 1, y) && !cell(x, y + 1)) occupancy[y * nx + x + 1] = 1;
-        else if (cell(x + 1, y) && cell(x, y + 1) &&
-          !cell(x, y) && !cell(x + 1, y + 1)) occupancy[y * nx + x] = 1;
-      }
-    // Small detached islands and one-cell debris are CSG instability hazards.
-    // Keep the largest 4-connected volume as the print-oriented solid.
-    const visited = new Uint8Array(occupancy.length);
-    let largest = [];
-    for (let i = 0; i < occupancy.length; i++) {
-      if (!occupancy[i] || visited[i]) continue;
-      const q = [i];
-      visited[i] = 1;
-      for (let at = 0; at < q.length; at++) {
-        const n = q[at], cx = n % nx, cy = Math.floor(n / nx);
-        for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
-          const xx = cx + dx, yy = cy + dy, k = yy * nx + xx;
-          if (xx < 0 || yy < 0 || xx >= nx || yy >= ny ||
-              !occupancy[k] || visited[k]) continue;
-          visited[k] = 1;
-          q.push(k);
-        }
-      }
-      if (q.length > largest.length) largest = q;
+  const sourceAlpha = (x, y) => samplePixels[src(x, y) + 3];
+  // Convert the original transparent stack's outer silhouette into smooth
+  // top/bottom boundary curves. No staircase-style pixel/voxel cutouts.
+  const outline = [];
+  for (let x = 0; x <= nx; x++) {
+    let bottom = -1, top = -1;
+    for (let y = 0; y <= ny; y++) {
+      if (sourceAlpha(x, y) < 80) continue;
+      if (bottom < 0) bottom = y;
+      top = y;
     }
-    if (largest.length >= Math.ceil(occupancy.length * .14)) {
-      occupancy.fill(0);
-      for (const i of largest) occupancy[i] = 1;
-    } else {
-      // Never produce a broken or empty model from sparse source data.
-      occupancy.fill(1);
-    }
+    if (bottom < 0) outline.push({low:-height*.5,high:height*.5});
+    else outline.push({
+      low:(bottom / ny - .5) * height,
+      high:(top / ny - .5) * height
+    });
   }
+  const smoothed = outline.map((_, x) => {
+    let lo = 0, hi = 0, weight = 0;
+    for (let d = -2; d <= 2; d++) {
+      const k = Math.max(0, Math.min(nx, x + d));
+      const w = 3 - Math.abs(d);
+      lo += outline[k].low * w; hi += outline[k].high * w; weight += w;
+    }
+    return {
+      low: Math.min(-1.13, lo / weight),
+      high: Math.max(1.13, hi / weight)
+    };
+  });
   for (let y = 0; y <= ny; y++) {
     for (let x = 0; x <= nx; x++) {
-      const i = idx(x, y), u = x / nx, v = y / ny;
-      let px = (u - .5) * width, py = (v - .5) * height;
+      const i = idx(x, y), u = x / nx, t = y / ny;
+      const bounds = smoothed[x];
+      let px = (u - .5) * width;
+      const py = bounds.low + (bounds.high - bounds.low) * t;
+      // Original image-space coordinate: the sculpted geometry follows
+      // pigment boundaries without stretching its UVs along each column.
+      const v = py / height + .5;
       const offset = src(x, y);
       const spread = (Math.max(samplePixels[offset], samplePixels[offset + 1], samplePixels[offset + 2]) -
         Math.min(samplePixels[offset], samplePixels[offset + 1], samplePixels[offset + 2])) / 255;
-      const edgeMovement = .065 + .10 * spread +
-        .032 * Math.sin(11 * u + 7 * v + seed * .41);
+      const edgeMovement = .035 + .055 * spread + .012 * Math.sin(u * 11 + seed * .41);
       if (x === 0) px += edgeMovement;
       if (x === nx) px -= edgeMovement;
-      if (y === 0) py += edgeMovement * .66;
-      if (y === ny) py -= edgeMovement * .66;
       pos[i * 3] = px;
       pos[i * 3 + 1] = py;
       pos[i * 3 + 2] = frontFace + reliefAt(x, y);
@@ -266,22 +258,23 @@ function reliefGeometry(seed) {
       uvs[(vertexCount + i) * 2 + 1] = v;
     }
   }
-  const wall = (a, b) => {
-    indices.push(a, vertexCount + a, vertexCount + b, a, vertexCount + b, b);
-  };
   for (let y = 0; y < ny; y++) {
     for (let x = 0; x < nx; x++) {
-      if (!cell(x, y)) continue;
       const a = idx(x, y), b = idx(x + 1, y);
       const c = idx(x, y + 1), d = idx(x + 1, y + 1);
       indices.push(a, b, d, a, d, c);
       indices.push(vertexCount + a, vertexCount + d, vertexCount + b,
         vertexCount + a, vertexCount + c, vertexCount + d);
-      if (!cell(x, y - 1)) wall(a, b);
-      if (!cell(x + 1, y)) wall(b, d);
-      if (!cell(x, y + 1)) wall(d, c);
-      if (!cell(x - 1, y)) wall(c, a);
     }
+  }
+  const border = [];
+  for (let x = 0; x < nx; x++) border.push(idx(x, 0));
+  for (let y = 0; y < ny; y++) border.push(idx(nx, y));
+  for (let x = nx; x > 0; x--) border.push(idx(x, ny));
+  for (let y = ny; y > 0; y--) border.push(idx(0, y));
+  for (let i = 0; i < border.length; i++) {
+    const a = border[i], b = border[(i + 1) % border.length];
+    indices.push(a, vertexCount + a, vertexCount + b, a, vertexCount + b, b);
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -315,8 +308,7 @@ function createMaterials(seed) {
   const base = new THREE.MeshStandardMaterial({
     color: surfaceTexture ? '#ffffff' : color,
     map: surfaceTexture, metalness: 0.06, roughness: 0.72,
-    side: THREE.DoubleSide,
-    alphaTest: sourceIsHexfield && source.sourceKind === 'uncut-hexfield-shapes' ? .07 : 0
+    side: THREE.DoubleSide
   });
   const cavity = new THREE.MeshStandardMaterial({
     color: new THREE.Color(color).multiplyScalar(0.42),
