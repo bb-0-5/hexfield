@@ -46,7 +46,7 @@ const colors = sourceColors.length >= 2 ? sourceColors : defaultColors;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#101820');
 const camera = new THREE.PerspectiveCamera(39, 1, 0.1, 100);
-camera.position.set(3.15, 1.95, 9.3);
+camera.position.set(4.45, 2.35, 9.0);
 const renderer = new THREE.WebGLRenderer({
   canvas, antialias: true, powerPreference: 'default'
 });
@@ -80,6 +80,13 @@ scene.add(key);
 const fill = new THREE.DirectionalLight('#9acdec', 1.9);
 fill.position.set(4, -2, -3);
 scene.add(fill);
+const shadowBackdrop = new THREE.Mesh(
+  new THREE.PlaneGeometry(12, 7),
+  new THREE.MeshStandardMaterial({color:'#14212a',roughness:1,metalness:0,side:THREE.DoubleSide})
+);
+shadowBackdrop.position.z = -1.55;
+shadowBackdrop.receiveShadow = true;
+scene.add(shadowBackdrop);
 
 let scheduled = 0;
 function renderFrame() {
