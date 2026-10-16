@@ -35,8 +35,14 @@
       // A tainted canvas or storage quota issue must not prevent navigation.
     }
     let sourceImage = null;
+    let sourceKind = 'unavailable';
     try {
-      const artwork = document.getElementById('view');
+      // Capture the actual, untouched material quarry. The visible #view
+      // already contains the old flat cut and would duplicate the letters.
+      const uncutStack = window.__hexfield?.carving?.getStack?.()?.canvas;
+      const artwork = uncutStack?.width && uncutStack?.height
+        ? uncutStack : document.getElementById('view');
+      sourceKind = uncutStack?.width ? 'uncut-hexfield-shapes' : 'visible-canvas';
       if (artwork?.width && artwork?.height) {
         const capture = document.createElement('canvas');
         capture.width = 640; capture.height = 270;
@@ -61,7 +67,7 @@
     }
     try {
       sessionStorage.setItem('hexfield:volumetric-source',
-        JSON.stringify({text: word, colors, image: sourceImage}));
+        JSON.stringify({text: word, colors, image: sourceImage, sourceKind}));
     } catch {}
   });
 })();
