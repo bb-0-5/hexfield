@@ -46,7 +46,7 @@ const colors = sourceColors.length >= 2 ? sourceColors : defaultColors;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#101820');
 const camera = new THREE.PerspectiveCamera(39, 1, 0.1, 100);
-camera.position.set(1.15, 1.55, 9.6);
+camera.position.set(3.15, 1.95, 9.3);
 const renderer = new THREE.WebGLRenderer({
   canvas, antialias: true, powerPreference: 'default'
 });
@@ -196,7 +196,18 @@ function reliefGeometry(seed) {
   for (let y = 0; y <= ny; y++) {
     for (let x = 0; x <= nx; x++) {
       const i = idx(x, y), u = x / nx, v = y / ny;
-      const px = (u - .5) * width, py = (v - .5) * height;
+      let px = (u - .5) * width, py = (v - .5) * height;
+      // The source's sampled pigment drives a softly irregular outer cut,
+      // instead of leaving every generated solid as a perfect rectangle.
+      const sample = idx(x, y) * 4;
+      const colourSpread = (Math.max(samplePixels[sample], samplePixels[sample + 1], samplePixels[sample + 2]) -
+        Math.min(samplePixels[sample], samplePixels[sample + 1], samplePixels[sample + 2])) / 255;
+      const edgeMovement = .065 + .10 * colourSpread +
+        .032 * Math.sin(11 * u + 7 * v + seed * .41);
+      if (x === 0) px += edgeMovement;
+      if (x === nx) px -= edgeMovement;
+      if (y === 0) py += edgeMovement * .66;
+      if (y === ny) py -= edgeMovement * .66;
       pos[i * 3] = px;
       pos[i * 3 + 1] = py;
       pos[i * 3 + 2] = frontFace + reliefAt(x, y);
