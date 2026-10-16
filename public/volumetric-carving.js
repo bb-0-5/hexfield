@@ -105,39 +105,132 @@ if (typeof ResizeObserver !== 'undefined') new ResizeObserver(resize).observe(ca
 else window.addEventListener('resize', resize);
 resize();
 
-function outlineGeometry(variant) {
-  const width = 6.7, height = 2.85, depth = 0.92;
-  if (variant === 0) return new THREE.BoxGeometry(width, height, depth);
-  const hw = width / 2, hh = height / 2;
-  const shape = new THREE.Shape();
-  if (variant === 1) {
-    const k = 0.32;
-    shape.moveTo(-hw + k, -hh);
-    shape.lineTo(hw - k, -hh);
-    shape.lineTo(hw, -hh + k);
-    shape.lineTo(hw, hh - k);
-    shape.lineTo(hw - k, hh);
-    shape.lineTo(-hw + k, hh);
-    shape.lineTo(-hw, hh - k);
-    shape.lineTo(-hw, -hh + k);
-    shape.closePath();
-  } else {
-    const r = 0.4;
-    shape.moveTo(-hw + r, -hh);
-    shape.lineTo(hw - r, -hh);
-    shape.quadraticCurveTo(hw, -hh, hw, -hh + r);
-    shape.lineTo(hw, hh - r);
-    shape.quadraticCurveTo(hw, hh, hw - r, hh);
-    shape.lineTo(-hw + r, hh);
-    shape.quadraticCurveTo(-hw, hh, -hw, hh - r);
-    shape.lineTo(-hw, -hh + r);
-    shape.quadraticCurveTo(-hw, -hh, -hw + r, -hh);
-    shape.closePath();
+
+let surfaceTexture = null;
+let samplePixels = null;
+let sourceIsHexfield = false;
+const textureWidth = 640, textureHeight = 270;
+const resolutionX = matchMedia('(pointer: coarse)').matches ? 34 : 54;
+const resolutionY = Math.round(resolutionX * 2.85 / 6.7);
+const frontFace = 0.46;
+const polygonSeed = (seed) => {
+  let x = (seed + 1) >>> 0;
+  return () => {
+    x += 0x6D2B79F5;
+    let n = x;
+    n = Math.imul(n ^ (n >>> 15), n | 1);
+    n ^= n + Math.imul(n ^ (n >>> 7), n | 61);
+    return ((n ^ (n >>> 14)) >>> 0) / 4294967296;
+  };
+};
+function generatedArtwork() {
+  const c = document.createElement('canvas');
+  c.width = textureWidth; c.height = textureHeight;
+  const g = c.getContext('2d');
+  g.fillStyle = '#192c33'; g.fillRect(0, 0, c.width, c.height);
+  const rng = polygonSeed(17);
+  for (let i = 0; i < 25; i++) {
+    g.globalAlpha = .60 + rng() * .36;
+    g.fillStyle = colors[i % colors.length];
+    const x = c.width * (i / 25 + (rng() - .5) * .22);
+    const y = c.height * (.15 + rng() * .7);
+    const w = c.width * (.08 + rng() * .28);
+    const h = c.height * (.18 + rng() * .56);
+    g.save(); g.translate(x, y); g.rotate((rng() - .5) * 1.2);
+    g.beginPath();
+    g.moveTo(-w / 2, -h / 3); g.lineTo(w / 2, -h / 2);
+    g.lineTo(w / 3, h / 2); g.lineTo(-w / 2, h / 3);
+    g.closePath(); g.fill(); g.restore();
   }
-  const geometry = new THREE.ExtrudeGeometry(shape, {
-    depth, steps: 1, curveSegments: 6, bevelEnabled: false
-  });
-  geometry.translate(0, 0, -depth / 2);
+  g.globalAlpha = 1;
+  return c;
+}
+async function hydrateSourceArtwork() {
+  let imageCanvas = generatedArtwork();
+  const data = typeof source.image === 'string' && source.image.startsWith('data:image/jpeg;base64,')
+    && source.image.length < 900000 ? source.image : null;
+  if (data) {
+    try {
+      const img = new Image();
+      img.src = data;
+      await img.decode();
+      const captured = document.createElement('canvas');
+      captured.width = textureWidth; captured.height = textureHeight;
+      captured.getContext('2d').drawImage(img, 0, 0, captured.width, captured.height);
+      imageCanvas = captured;
+      sourceIsHexfield = true;
+    } catch (error) {
+      console.warn('Hexfield artwork snapshot could not be decoded', error);
+    }
+  }
+  const samplingCanvas = document.createElement('canvas');
+  samplingCanvas.width = resolutionX + 1;
+  samplingCanvas.height = resolutionY + 1;
+  const g = samplingCanvas.getContext('2d', { willReadFrequently: true });
+  g.drawImage(imageCanvas, 0, 0, samplingCanvas.width, samplingCanvas.height);
+  samplePixels = g.getImageData(0, 0, samplingCanvas.width, samplingCanvas.height).data;
+  surfaceTexture = new THREE.CanvasTexture(imageCanvas);
+  surfaceTexture.colorSpace = THREE.SRGBColorSpace;
+  surfaceTexture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+}
+function reliefGeometry(seed) {
+  if (!samplePixels) throw new Error('No source painting available for physical relief');
+  const nx = resolutionX, ny = resolutionY;
+  const width = 6.7, height = 2.85;
+  const vertexCount = (nx + 1) * (ny + 1);
+  const pos = new Float32Array(vertexCount * 2 * 3);
+  const uvs = new Float32Array(vertexCount * 2 * 2);
+  const indices = [];
+  const idx = (x, y) => y * (nx + 1) + x;
+  const reliefAt = (x, y) => {
+    const offset = idx(x, y) * 4;
+    const r = samplePixels[offset] / 255, g = samplePixels[offset + 1] / 255;
+    const b = samplePixels[offset + 2] / 255;
+    const pigment = Math.max(r, g, b) - Math.min(r, g, b);
+    const luminance = (r * .21 + g * .72 + b * .07);
+    const variation = Math.sin((x / nx * 14 + seed * .35)) *
+      Math.cos((y / ny * 11 - seed * .27));
+    // Colour variations from the actual painting alter the *physical top*.
+    return .023 + pigment * .088 + luminance * .030 + variation * .013;
+  };
+  for (let y = 0; y <= ny; y++) {
+    for (let x = 0; x <= nx; x++) {
+      const i = idx(x, y), u = x / nx, v = y / ny;
+      const px = (u - .5) * width, py = (v - .5) * height;
+      pos[i * 3] = px;
+      pos[i * 3 + 1] = py;
+      pos[i * 3 + 2] = frontFace + reliefAt(x, y);
+      pos[(vertexCount + i) * 3] = px;
+      pos[(vertexCount + i) * 3 + 1] = py;
+      pos[(vertexCount + i) * 3 + 2] = -.46;
+      uvs[i * 2] = u; uvs[i * 2 + 1] = v;
+      uvs[(vertexCount + i) * 2] = u;
+      uvs[(vertexCount + i) * 2 + 1] = v;
+    }
+  }
+  for (let y = 0; y < ny; y++) {
+    for (let x = 0; x < nx; x++) {
+      const a = idx(x, y), b = idx(x + 1, y);
+      const c = idx(x, y + 1), d = idx(x + 1, y + 1);
+      indices.push(a, b, d, a, d, c);
+      indices.push(vertexCount + a, vertexCount + d, vertexCount + b,
+        vertexCount + a, vertexCount + c, vertexCount + d);
+    }
+  }
+  const border = [];
+  for (let x = 0; x < nx; x++) border.push(idx(x, 0));
+  for (let y = 0; y < ny; y++) border.push(idx(nx, y));
+  for (let x = nx; x > 0; x--) border.push(idx(x, ny));
+  for (let y = ny; y > 0; y--) border.push(idx(0, y));
+  for (let i = 0; i < border.length; i++) {
+    const a = border[i], b = border[(i + 1) % border.length];
+    indices.push(a, vertexCount + a, vertexCount + b, a, vertexCount + b, b);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
   return geometry;
 }
 function makeCutter(word, font, depth) {
@@ -163,8 +256,8 @@ function makeCutter(word, font, depth) {
 function createMaterials(seed) {
   const color = colors[seed % colors.length];
   const base = new THREE.MeshStandardMaterial({
-    color, metalness: (seed % 3 === 1) ? 0.67 : 0.18,
-    roughness: (seed % 3 === 1) ? 0.34 : 0.63,
+    color: surfaceTexture ? '#ffffff' : color,
+    map: surfaceTexture, metalness: 0.06, roughness: 0.72,
     side: THREE.DoubleSide
   });
   const cavity = new THREE.MeshStandardMaterial({
@@ -211,9 +304,9 @@ async function rebuild() {
   // Yield a frame for the status and cancel obsolete keystroke changes.
   await new Promise((resolve) => requestAnimationFrame(resolve));
   if (build !== buildSerial) return;
-  const baseGeo = outlineGeometry(currentSeed % 3);
+  const baseGeo = reliefGeometry(currentSeed);
   const engravingDepth = 0.25 + (currentSeed % 4) * 0.035;
-  const textGeo = makeCutter(word, font, engravingDepth);
+  const textGeo = makeCutter(word, font, engravingDepth + 0.26);
   const nextMaterials = createMaterials(currentSeed);
   let result = null, sourceMesh = null;
   try {
@@ -222,7 +315,7 @@ async function rebuild() {
     const textBrush = new Brush(textGeo, nextMaterials[1]);
     // Plate front is z=+0.46. The cutter starts below the face, and extends
     // beyond it by 0.12, avoiding coplanar CSG surfaces.
-    textBrush.position.z = 0.46 - engravingDepth;
+    textBrush.position.z = frontFace - engravingDepth;
     textBrush.updateMatrixWorld(true);
     result = evaluator.evaluate(baseBrush, textBrush, SUBTRACTION);
     validateGeometry(result.geometry);
@@ -258,10 +351,8 @@ async function rebuild() {
   currentWord = word;
   wordInput.value = word;
   setComparison(isComparing);
-  const formNames = ['RECTANGULAR SOLID', 'CHAMFERED SOLID', 'ROUNDED SOLID'];
-  formName.textContent = formNames[currentSeed % 3];
-  materialName.textContent = (currentSeed % 3 === 1 ? 'METALLIC' : 'MATTE') + ' / ' +
-    colors[currentSeed % colors.length].toUpperCase();
+  formName.textContent = sourceIsHexfield ? 'YOUR CURRENT PAINTING / TRUE RELIEF' : 'AUTO-GENERATED PIGMENT / TRUE RELIEF';
+  materialName.textContent = sourceIsHexfield ? 'HEXFIELD CANVAS COLOURS + SCULPTED DEPTH' : 'GENERATIVE PIGMENT + SCULPTED DEPTH';
   geometryInfo.textContent = triangleCount(result.geometry).toLocaleString() +
     ' triangles · ' + engravingDepth.toFixed(2) + ' units deep · ' +
     Math.round(performance.now() - started) + ' ms to bake';
@@ -348,6 +439,8 @@ try {
   font = await loader.loadAsync(
     'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/fonts/helvetiker_bold.typeface.json'
   );
+  setStatus('Reading artwork pixels and constructing the physical relief…');
+  await hydrateSourceArtwork();
   setStatus('Building first physical carving…');
   await rebuild();
 } catch (error) {
