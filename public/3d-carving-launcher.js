@@ -43,7 +43,17 @@
         const context = capture.getContext('2d');
         context.fillStyle = '#13202a';
         context.fillRect(0, 0, capture.width, capture.height);
-        context.drawImage(artwork, 0, 0, capture.width, capture.height);
+        const captureRatio = capture.width / capture.height;
+        const originalRatio = artwork.width / artwork.height;
+        if (originalRatio > captureRatio) {
+          const croppedWidth = artwork.height * captureRatio;
+          context.drawImage(artwork, (artwork.width - croppedWidth) / 2, 0,
+            croppedWidth, artwork.height, 0, 0, capture.width, capture.height);
+        } else {
+          const croppedHeight = artwork.width / captureRatio;
+          context.drawImage(artwork, 0, (artwork.height - croppedHeight) / 2,
+            artwork.width, croppedHeight, 0, 0, capture.width, capture.height);
+        }
         sourceImage = capture.toDataURL('image/jpeg', 0.74);
       }
     } catch {
