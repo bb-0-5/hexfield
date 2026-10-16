@@ -47,8 +47,10 @@
         const capture = document.createElement('canvas');
         capture.width = 640; capture.height = 270;
         const context = capture.getContext('2d');
-        context.fillStyle = '#13202a';
-        context.fillRect(0, 0, capture.width, capture.height);
+        if (sourceKind !== 'uncut-hexfield-shapes') {
+          context.fillStyle = '#13202a';
+          context.fillRect(0, 0, capture.width, capture.height);
+        }
         const captureRatio = capture.width / capture.height;
         const originalRatio = artwork.width / artwork.height;
         if (originalRatio > captureRatio) {
@@ -60,7 +62,8 @@
           context.drawImage(artwork, 0, (artwork.height - croppedHeight) / 2,
             artwork.width, croppedHeight, 0, 0, capture.width, capture.height);
         }
-        sourceImage = capture.toDataURL('image/jpeg', 0.74);
+        sourceImage = sourceKind === 'uncut-hexfield-shapes' ?
+          capture.toDataURL('image/png') : capture.toDataURL('image/jpeg', 0.74);
       }
     } catch {
       // Canvas can be tainted by a remote image. Original painter still works.
