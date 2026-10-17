@@ -2330,6 +2330,9 @@
       else if (E.carve && far < 0.7) yield* inSteps("carving " + name + "'s " + plane + " (" + E.carve.faces[map.faces.indexOf(face)]?.type + ", " + E.carve.way + ")", carveSteps(S, E, face, map.faces.indexOf(face)));
       done.push(face);
     }
+    // Its edges rounded, and where it meets what it stands on, the seam.
+    yield* inSteps("rounding the edges of " + name, bevelStrokes(S, E));
+    if (E.host) yield* inSteps("the seam where " + name + " meets " + theOf(E.host), seamStrokes(S, E));
     if (E.form?.soft && far < 0.6) yield* softEdges(S, E);
     if (E.app?.handling === "blended") yield* softenSteps(S, E);
   }
@@ -2503,9 +2506,9 @@
     const v0 = Math.min(...vs), v1 = Math.max(...vs), back = (a, b) => add(c, add(times(u, a), times(v, b)));
     const deep = Math.hypot(...sub(project(cam, back(0, v0)), project(cam, back(0, v1)))), brush = Math.max(5, Math.min(cam.W, cam.H) * 0.034);
     const rows = Math.max(2, Math.round(deep / (brush * 0.8))), band = (v1 - v0) / rows, clip = face.holeScreens || face.concave ? face.screen : clipOf(face.screen);
-    const meantAt = (x, y) => {
+    const bend = swellOf(S, face), meantAt = (x, y) => {
       const p = onPlane(cam, x, y, n, c) || c;
-      return shade(S, base, n, p[2], { at: p, self: E });
+      return shade(S, base, bend(p), p[2], { at: p, self: E });
     };
     const out = [];
     // (Each row's runs inside it: where it crosses the face's edges, and its holes', taken in pairs.)
@@ -2514,7 +2517,8 @@
       const vv = v0 + (r + 0.5) * band, cuts = [];
       for (const ring of rings) for (let i = 0; i < ring.length; i++) {
         const [pu, pv] = ring[i], [qu, qv] = ring[(i + 1) % ring.length];
-        if ((pv - vv) * (qv - vv) > 0 || pv === qv) continue;
+        // (An edge counts where it passes the row - one end over it, the other not: a corner on the row is met once.)
+        if ((pv > vv) === (qv > vv)) continue;
         cuts.push(pu + (qu - pu) * (vv - pv) / (qv - pv));
       }
       cuts.sort((x, y) => x - y);
@@ -2583,8 +2587,74 @@
   }
   function contactEdges(E) {
     const H = E.host, v = E.placed.verts;
-    const against = (p) => (H.kind === "sphere" ? Math.hypot(...sub(p, H.middle)) - H.radius < 0.03 : H.map.faces.every((f) => dot(f.normal, sub(p, f.centre)) < 0.03));
+    // (A thing of many parts - a character - is met where one of its balls is: it has no planes to be inside.)
+    const against = (p) => (H.kind === "sphere" ? Math.hypot(...sub(p, H.middle)) - H.radius < 0.03 : H.parts ? H.parts.some((q) => q.kind === "sphere" && Math.hypot(...sub(p, q.middle)) - q.radius < 0.03) : H.map.faces.every((f) => dot(f.normal, sub(p, f.centre)) < 0.03));
     return E.map.edges.filter((e) => against(v[e.a]) && against(v[e.b]));
+  }
+  /* A plane as made things are, not dead flat: swelling a little from its
+   * edges to its middle, so the light across it turns as the plane does -
+   * how much, the painting's own choice (Form). The way it faces at a point
+   * of it, carried a little outward from its middle there. */
+  function swellOf(S, face) {
+    const k = S.swell ?? 0.16, c = face.centre, n = face.normal, r = Math.max(1e-6, ...face.world.map((q) => Math.hypot(...sub(q, c))));
+    return (p) => { const d = sub(p, c), along = sub(d, times(n, dot(d, n))); return unit(add(n, times(along, k / r))); };
+  }
+  /* Its edges rounded: nothing made turns from one plane to the next on a
+   * line. Along each edge where two of its planes meet, a narrow band in the
+   * light of the turn between them - lit where the turn faces the light more
+   * than either plane, quieter where it faces away; at its outline, on the
+   * side that shows. In a cartoon only where the turn catches more of the
+   * light than both its planes: one thin line of light, beside the ink. */
+  function bevelStrokes(S, E, toon = false) {
+    const map = E.map, v = E.placed?.verts, out = [], b = E.box, size = b ? Math.max(b.x1 - b.x0, b.y1 - b.y0) : 0;
+    if (!map?.edges?.length || !v || size < 24 || farOf(S, E) > 0.75) return out;
+    const w = toon ? clamp(size * 0.01, 1, 2.6) : clamp(size * 0.016, 1.4, 5.5), clip = clipOf(E.outline, 0.4);
+    for (const e of map.edges) {
+      // (Where one panel of a bent side runs on into the next there is no edge to round.)
+      if (e.faces.length === 2 && e.faces[0].panel && e.faces[0].panel === e.faces[1].panel) continue;
+      const A = e.faces[0], B = e.faces[1] || map.faces.find((f) => f !== A && f.idx.includes(e.a) && f.idx.includes(e.b));
+      if (!B || dot(A.normal, B.normal) > 0.97) continue;
+      const nb = unit(add(A.normal, B.normal)), mid = times(add(v[e.a], v[e.b]), 0.5);
+      let p = map.pts[e.a], q = map.pts[e.b];
+      const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
+      if (len < w * 3) continue;
+      // (Short of the corners: three edges meeting there make a corner of their own.)
+      const t = Math.min(0.2, w / len);
+      [p, q] = [mix(p, q, t), mix(q, p, t)];
+      let shift = null;
+      if (toon) {
+        const lit = (n) => bandOf(S, lightOn(S, n)), band = lit(nb);
+        if (band <= Math.max(lit(A.normal), lit(B.normal))) continue;
+        // (Beside the ink, on the plane more in the light.)
+        shift = lightOn(S, A.normal) >= lightOn(S, B.normal) || !e.faces[1] ? A : B;
+        const colour = shade(S, E.base, nb, mid[2], { at: mid, self: E, cel: band });
+        out.push(stroke(S, inward([p, q], shift, w + S.lineW * 0.6), w, colour, "flat", { cel: true, clip, meant: () => colour }));
+        continue;
+      }
+      if (!e.faces[1]) shift = A;
+      const colour = shade(S, E.base, nb, mid[2], { at: mid, self: E });
+      out.push(stroke(S, shift ? inward([p, q], shift, w * 0.5) : [p, q], w, colour, "soft", { alpha: 0.9, clip, meant: () => colour }));
+    }
+    return out;
+  }
+  // A line in the picture moved a little onto a plane: toward the middle of where that plane shows.
+  function inward([p, q], face, by) {
+    const c = middleOf(face.screen), m = mix(p, q, 0.5), l = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1;
+    let nx = -(q[1] - p[1]) / l, ny = (q[0] - p[0]) / l;
+    if (nx * (c[0] - m[0]) + ny * (c[1] - m[1]) < 0) { nx = -nx; ny = -ny; }
+    return [[p[0] + nx * by, p[1] + ny * by], [q[0] + nx * by, q[1] + ny * by]];
+  }
+  // Where it meets what it stands on or against: a seam, a little darker along the joint - less of the light round about gets in there (Lighting).
+  function seamStrokes(S, E) {
+    if (!E.host || !E.map?.edges) return [];
+    const out = [], v = E.placed.verts;
+    for (const e of contactEdges(E)) {
+      const f = e.faces[0], p = E.map.pts[e.a], q = E.map.pts[e.b];
+      if (!f || Math.hypot(q[0] - p[0], q[1] - p[1]) < 4) continue;
+      const mid = times(add(v[e.a], v[e.b]), 0.5), c = shade(S, E.base, f.normal, mid[2], { at: mid, self: E }).map((x) => x * 0.6);
+      out.push(stroke(S, [p, mix(p, q, 0.5), q], Math.max(1.4, S.lineW * 0.9), c, "soft", { alpha: 0.85, meant: () => c }));
+    }
+    return out;
   }
   /* A plane filled: strokes the way it runs (upright on an upright plane,
    * across on a level one, along its lowest edge on a slanted one), laid
@@ -2618,9 +2688,9 @@
       const base0 = add(times(A, 1 - v), times(Cn, v)), base1 = add(times(B, 1 - v), times(Cn, v));
       return add(times(base0, 1 - u), times(base1, u));
     };
-    // What the plane is meant to look like anywhere on it: its light at the depth the eye's ray meets it.
-    const c0 = face.centre;
-    const meant = (x, y) => { const p = onPlane(cam, x, y, n, c0) || c0; return shade(S, base, n, p[2], { at: p, self: E }); };
+    // What the plane is meant to look like anywhere on it: its light at the depth the eye's ray meets it - a plane swelling a little, as nothing made is dead flat.
+    const c0 = face.centre, bend = swellOf(S, face);
+    const meant = (x, y) => { const p = onPlane(cam, x, y, n, c0) || c0; return shade(S, base, bend(p), p[2], { at: p, self: E }); };
     /* Rows across the plane, ordered far to near by where each lies, laid
      * inside its edges (each stroke clipped to the plane's shape, a hair
      * outside it so two planes meet without a gap) - so the lines its corners
@@ -2642,7 +2712,7 @@
         const a = project(cam, at(u0, v)), b = project(cam, at(u1, v)), m = at((u0 + u1) / 2, v);
         // (Wide enough to meet the next row: two rows set in from the edges stand further apart than a band.)
         const width = deep * Math.max(band * 1.25, gap * 1.15) * (1 + 0.12 * clamp((4 - m[2]) / 2, -1, 1));
-        const colour = shade(S, base, n, m[2], { at: m, self: E }).map((c) => c + (S.rng() - 0.5) * 4);
+        const colour = shade(S, base, bend(m), m[2], { at: m, self: E }).map((c) => c + (S.rng() - 0.5) * 4);
         out.push(stroke(S, [a, off(S, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], width * 0.04), b], width, colour, "flat", { alpha: 0.97, clip, meant }));
       }
     }
@@ -2947,7 +3017,13 @@
     const a = shape.verts[bottom.idx[0]], b = shape.verts[bottom.idx[1]];
     return Math.atan2(b[2] - a[2], b[0] - a[0]);
   }
-  const squareYaw = (S, kind, form) => (S.square === null ? S.rng() * Math.PI * 2 : S.square + edgeTurn(kind, form) + Math.floor(S.rng() * 4) * Math.PI / 2);
+  /* Square to the seed - or, now and then, turned its own way, so the same
+   * sides of the same shapes are not always the ones seen: which, learned. */
+  function squareYaw(S, kind, form) {
+    if (S.square === null) return S.rng() * Math.PI * 2;
+    const square = S.square + edgeTurn(kind, form) + Math.floor(S.rng() * 4) * Math.PI / 2;
+    return pick(S.rng, [{ c: false, feats: ["squared to the seed"] }, { c: true, feats: ["turned its own way"] }]).c ? square + (S.rng() < 0.5 ? -1 : 1) * (0.25 + S.rng() * 0.5) : square;
+  }
   // The seed's square, from the first solid with edges.
   function squareTo(S, P) {
     if (S.square === null && !P.round && P.kind !== "sphere" && P.kind !== "blob" && !P.parts) S.square = P.yaw - edgeTurn(P.kind, P.form);
@@ -3047,7 +3123,9 @@
       const host = standing[Math.floor(S.rng() * standing.length)];
       const mode = how || (host.top && S.rng() < 0.45 ? "on" : "beside");
       if (mode === "on" ? !host.top : host.low > 0.01) continue;
-      const k = kind || pickKind(S);
+      let k = kind || pickKind(S);
+      // (Not the same shape again beside the one it stands by, as a rule: a cube by a cube, a sphere on a sphere, only now and then.)
+      for (let r = 0; r < 2 && !kind && k === host.kind; r++) k = pickKind(S);
       const P = mode === "on" ? placeOn(S, host, k) : placeBeside(S, host, k);
       if (!P) continue;
       P.base = pieceColour(S, null, P);
@@ -3322,13 +3400,16 @@
       return flatFill(S, clipOf(f.screen, 0.6), shade(S, q.base || P.base, f.normal, f.depth, { at: f.centre, self: P, cel: band }), f.holeScreens);
     });
     const carved = q.placed && q.kind !== "blob" && (q.carve || q.engraved?.face !== undefined) && farOf(S, q) < 0.7;
-    if (!carved) { yield* inSteps(label + ", plane by plane, each one flat colour", fills); return; }
+    // (Its edges rounded where the turn catches the light: a thin line of the light beside the ink.)
+    const edges = () => (q === P && P.map === q.map ? bevelStrokes(S, P, true) : []);
+    if (!carved) { yield* inSteps(label + ", plane by plane, each one flat colour", fills); yield* inSteps(label + ", its edges catching the light", edges()); return; }
     for (let i = 0; i < faces.length; i++) {
       const idx = q.map.faces.indexOf(faces[i]);
       yield { label: label + ", a plane in one flat colour", strokes: [fills[i]] };
       if (q.engraved?.face === idx) yield* engraveSteps(S, q, "“" + q.engraved.text + "” cut into " + label);
       else if (q.carve?.faces[idx]) yield* inSteps("carving " + label + " (" + q.carve.faces[idx].type + ", " + q.carve.way + ")", carveSteps(S, q, faces[i], idx));
     }
+    yield* inSteps(label + ", its edges catching the light", edges());
   }
   // A round solid's bands, darkest first, each one flat shape laid over the last; then its rim light and its shine.
   function* celRound(S, P, q, label) {
@@ -6257,6 +6338,8 @@
     S.lightY = +(-light.L[1] / l2).toFixed(3);
     S.lineW = Math.max(1.6, Math.min(W, H) * 0.006);
     S.floor = { h: 0, base: colours.floor, clip: null };
+    // (How much its planes swell - nothing made is dead flat: Form.)
+    S.swell = pick(S.rng, [{ c: 0.08, feats: ["planes nearly flat"] }, { c: 0.16, feats: ["planes swelling a little"] }, { c: 0.26, feats: ["planes swelling"] }]).c;
     S.app = chooseApp(S, { kind: "room" });
     // The ground the medium is laid on, and what taking paint off goes back to.
     groundFor(S, medium);
