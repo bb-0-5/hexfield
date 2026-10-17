@@ -5,11 +5,6 @@ on:
     paths:
       - "worker.js"
       - "public/index.html"
-      - "public/app.js"
-      - "public/letter-carving.js"
-      - "public/volumetric-carving.js"
-      - "public/3d-carving.html"
-      - "public/3d-carving-launcher.js"
       - "public/studio.html"
       - "public/legacy.html"
       - "public/hexfield-integrations.js"
@@ -21,11 +16,6 @@ on:
     paths:
       - "worker.js"
       - "public/index.html"
-      - "public/app.js"
-      - "public/letter-carving.js"
-      - "public/volumetric-carving.js"
-      - "public/3d-carving.html"
-      - "public/3d-carving-launcher.js"
       - "public/studio.html"
       - "public/legacy.html"
       - "public/hexfield-integrations.js"
@@ -48,7 +38,7 @@ jobs:
       - name: Evolving painting procedures
         run: node --experimental-default-type=module tests/studio-evolution.test.mjs
       - name: Install Canvas test renderer
-        run: npm install --no-save --no-package-lock skia-canvas@3.0.8 three@0.180.0 three-bvh-csg@0.0.18
+        run: npm install --no-save --no-package-lock skia-canvas@3.0.8
       - name: Parse all new unified studio and historic engine modules
         run: |
           node --check public/studio/rule-studio.js
@@ -56,13 +46,6 @@ jobs:
           node --check public/studio/word-surface.js
           node --check public/studio/legacy-rules.js
           node --check public/app.js
-          node --check public/letter-carving.js
-          node --check public/volumetric-carving.js
-          node --check public/3d-carving-launcher.js
-      - name: Verify actual 3D CSG cavity and export hooks
-        run: node --experimental-default-type=module tests/volumetric-carving.test.mjs
-      - name: Verify shape-constrained subtractive lettering and replay
-        run: node --experimental-default-type=module tests/letter-carving.test.mjs
       - name: Verify executable Rule Studio and archive law engine
         run: node --experimental-default-type=module tests/studio-rules.test.mjs
       - name: Verify Build 313 mark application and frame derivation

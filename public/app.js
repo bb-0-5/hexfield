@@ -9746,90 +9746,7 @@ function blitWorkerField(ctx, W, H, bitmap, p) {
   applyFinishExperiment(ctx, W, H, p);
 }
 
-function isCarvedMode(mode = textMode()) {
-  return mode === "carved" || mode === "uncarved";
-}
-
-function carvingSettings(mode = textMode()) {
-  return {
-    text: window.HexfieldCarving.cleanText(document.getElementById("letteringText")?.value || "HEXFIELD"),
-    template: document.getElementById("letterCarveTemplate")?.value || "block",
-    mode: mode === "uncarved" ? "off" : "carve",
-  };
-}
-
-function rememberCarvingProperty(params, key, value) {
-  Object.defineProperty(params, key, { value, writable: true, configurable: true });
-}
-
-function renderCarvedStack(ctx, W, H, params, mode) {
-  const settings = carvingSettings(mode);
-  let stack = params.__hexfieldCarveStack;
-  if (!stack) {
-    // Harvest this composition once, at a fixed working size. Rewording a
-    // template or asking for the uncut view cannot change its source quarry.
-    const source = document.createElement("canvas");
-    source.width = MASTER_DESIGN_WIDTH; source.height = MASTER_DESIGN_HEIGHT;
-    const sg = source.getContext("2d", { willReadFrequently: true });
-    sg.drawImage(ctx.canvas, 0, 0, W, H, 0, 0, source.width, source.height);
-    const shapes = extractShapes(sg, source.width, source.height, 18, .0012, .82, { preserveColour: true });
-    stack = window.HexfieldCarving.createStack(shapes, {
-      seed: Number(params.artifact?.seed) || hashText(stableRecipeJson(params)),
-      aspect: MASTER_DESIGN_ASPECT,
-    });
-    source.width = 0;
-    rememberCarvingProperty(params, "__hexfieldCarveStack", stack);
-  }
-  const plan = window.HexfieldCarving.compose(ctx, W, H, {
-    ...settings, stack, skeletons: LETTER_SKELETONS,
-  });
-  rememberCarvingProperty(params, "__hexfieldCarvePlan", plan);
-  return plan;
-}
-
-function updateCarvingStatus(params) {
-  const plan = params?.__hexfieldCarvePlan;
-  const status = document.getElementById("letterCarveStatus");
-  if (!plan || !status) return;
-  status.textContent = `${plan.shapeCount} overlapping shapes · ${plan.template} template · ` +
-    (plan.mode === "off" ? "uncut stack" : "letters cut through this stack");
-  if (plan.mode !== "off" && plan.skeletonContact < .78) {
-    status.textContent += " · gaps in the material interrupt some strokes";
-  }
-  status.dataset.source = plan.sourceFingerprint;
-  status.dataset.constraint = plan.maskFingerprint;
-  status.dataset.contact = plan.skeletonContact.toFixed(3);
-}
-
-function updateQuarryPreview(params) {
-  const canvas = document.getElementById("liveLogo");
-  const stack = params?.__hexfieldCarveStack;
-  if (!canvas || !stack) return false;
-  const ctx = canvas.getContext("2d");
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = "#eee8dd"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(stack.canvas, 0, 0, canvas.width, canvas.height);
-  canvas.setAttribute("aria-label", "Uncut stacked shapes used to carve the current letters");
-  return true;
-}
-
-function carvingSummary(plan) {
-  if (!plan) return null;
-  const { version, text, template, mode, sourceFingerprint, maskFingerprint,
-    harvestFingerprint, shapeCount, changedPixels, constrainedPixels,
-    protectedPixels, materialCoverage, skeletonContact } = plan;
-  return { version, text, template, mode, sourceFingerprint, maskFingerprint,
-    harvestFingerprint, shapeCount, changedPixels, constrainedPixels,
-    protectedPixels, materialCoverage, skeletonContact };
-}
-
 function renderComposite(ctx, W, H, p, rng, text, mode) {
-  // A held quarry is independent of the word and the template. Replaying it
-  // also keeps exported cuts exact when the render size changes.
-  if (isCarvedMode(mode) && p.__hexfieldCarveStack) {
-    renderCarvedStack(ctx, W, H, p, mode);
-    return;
-  }
   /* The mask is a function of the field's parameters and nothing else, so a
    * recipe and a word determine a letterform exactly. */
   const program = (mode === "grown" || mode === "painted" || mode === "neural-painted") ? letterProgramForRender(p) : null;
@@ -9866,10 +9783,6 @@ function renderComposite(ctx, W, H, p, rng, text, mode) {
   // silhouettes now return as compositional objects before the foreground
   // lettering, so successive passes visibly build a vocabulary of their own.
   paintHarvestArtifacts(ctx, W, H, p);
-  if (isCarvedMode(mode)) {
-    renderCarvedStack(ctx, W, H, p, mode);
-    return;
-  }
   // Painted letters go on top of a finished field rather than being cut out of
   // one, which is what gives outline, shadow, extrusion and fill somewhere to
   // land. Before the snapshot, so the harvest and grammar passes read the same
@@ -10004,7 +9917,7 @@ function subdivideComponent(labels, box, W, H, maxShapes) {
  * letter body well under this on any realistic canvas. */
 const MAX_HARVEST_TILE = 256;
 
-function fallbackHarvestTiles(data, W, H, maxShapes, backgroundLum, { preserveColour = false } = {}) {
+function fallbackHarvestTiles(data, W, H, maxShapes, backgroundLum) {
   // A connected-component pass can legitimately find nothing when a field is
   // one continuous dark mass or a fine coloured texture. In that case use a
   // few deterministic tiles as silhouettes. They are still made from the
@@ -10062,9 +9975,7 @@ function fallbackHarvestTiles(data, W, H, maxShapes, backgroundLum, { preserveCo
           const foreground = Math.abs(lum - backgroundLum) > 0.045 || (chroma > 0.08 && lum > 0.045);
           if (!foreground) continue;
           const dst = (y * ow + x) * 4;
-          img.data[dst] = preserveColour ? r : 255;
-          img.data[dst + 1] = preserveColour ? g : 255;
-          img.data[dst + 2] = preserveColour ? b : 255;
+          img.data[dst] = img.data[dst + 1] = img.data[dst + 2] = 255;
           img.data[dst + 3] = 255;
           area++;
         }
@@ -10143,7 +10054,7 @@ function otsuThreshold(hist, total) {
   return best;
 }
 
-function extractShapes(ctx, W, H, maxShapes = 20, minAreaFrac = 0.0012, maxAreaFrac = 0.82, { preserveColour = false } = {}) {
+function extractShapes(ctx, W, H, maxShapes = 20, minAreaFrac = 0.0012, maxAreaFrac = 0.82) {
   const { data } = ctx.getImageData(0, 0, W, H);
   const n = W * H;
   const lumBin = new Uint32Array(256);
@@ -10341,7 +10252,7 @@ function extractShapes(ctx, W, H, maxShapes = 20, minAreaFrac = 0.0012, maxAreaF
   }
   if (!kept.length) {
     harvestPathStat = "tiles";
-    return fallbackHarvestTiles(data, W, H, maxShapes, backgroundLum, { preserveColour });
+    return fallbackHarvestTiles(data, W, H, maxShapes, backgroundLum);
   }
 
   // Render each kept component to its own tight silhouette canvas: this
@@ -10375,11 +10286,8 @@ function extractShapes(ctx, W, H, maxShapes = 20, minAreaFrac = 0.0012, maxAreaF
         if (labels[y * W + x] !== b.id) continue;
         const dx = Math.min(cw - 1, Math.floor((x - b.minX + pad) * scale));
         const o = (dy * cw + dx) * 4;
+        img.data[o] = 255; img.data[o + 1] = 255; img.data[o + 2] = 255; img.data[o + 3] = 255;
         const src = (y * W + x) * 4;
-        img.data[o] = preserveColour ? data[src] : 255;
-        img.data[o + 1] = preserveColour ? data[src + 1] : 255;
-        img.data[o + 2] = preserveColour ? data[src + 2] : 255;
-        img.data[o + 3] = 255;
         red += data[src]; green += data[src + 1]; blue += data[src + 2]; inked++;
       }
     }
@@ -23482,9 +23390,11 @@ function traceVisiblePaintVerdict(result) {
  * `!seedText()` and skip drawing letters when it's empty; #liveLogo keeps its
  * own independent "HEXFIELD" fallback for the actual logo and is unaffected. */
 const seedText = () => $("seed").value.trim();
-// The written word and its template are independent from the composition's
-// autonomous source seed. The source comparison changes only the subtraction.
-const textMode = () => document.getElementById("letterCarveMode")?.value === "off" ? "uncarved" : "carved";
+/* The live painter no longer draws lettering: the seed text shapes the field
+ * and the description steers its style, and neither appears as letters. The
+ * picker is gone; renderComposite still understands the retired lettering
+ * modes so archived museum recipes that recorded one keep rendering. */
+const textMode = () => "seed";
 const fontMode = () => $("fontmode").value;
 
 function renderConstructionFrame(result, stage = "constructing") {
@@ -26356,7 +26266,7 @@ function makeSearchCandidate(text, forcedField, index, plan = null, fieldBitmap 
    * on "seed", and the alternative would be shipping the mask to every worker
    * to have it rendered there, which is a lot of machinery for a probe-sized
    * image the search is only ranking. */
-  const grown = isCarvedMode() || textMode() === "grown" || textMode() === "painted" || textMode() === "neural-painted";
+  const grown = textMode() === "grown" || textMode() === "painted" || textMode() === "neural-painted";
   /* A pure interpretation must be measured against the exact visible pixels it
    * claims to leave alone. Rendering its complete master here would measure
    * unfinished-detail differences as if the word `tree` had painted them, then
@@ -26446,7 +26356,7 @@ function composeCandidateOnProbe(cand) {
     // render, so there is nothing to lay over a worker's bitmap.
     if (cand.visibleControl && activeVisibleControlProbePixels?.length) {
       putPixelsOnProbe(activeVisibleControlProbePixels);
-    } else if (cand.fieldBitmap && textMode() !== "grown" && !isCarvedMode()) {
+    } else if (cand.fieldBitmap && textMode() !== "grown") {
       blitWorkerField(pctx, probe.width, probe.height, cand.fieldBitmap, params);
     } else {
       renderComposite(pctx, probe.width, probe.height, params,
@@ -27857,7 +27767,6 @@ function startHeadlessSim(mode = "visitor") {
  * measures the composite. */
 function learningTextMode() {
   const selected = textMode();
-  if (isCarvedMode(selected)) return selected;
   if (selected === "seed") return "seed";
   if (selected === "painted" || selected === "grown" || selected === "neural-painted") return selected;
   return "grown";
@@ -28352,7 +28261,6 @@ function analysisKey(result) {
     drawSeed: Number(result?.drawSeed) || 0,
     format: $("format").value,
     textMode: textMode(),
-    carving: isCarvedMode() ? carvingSettings() : null,
     seedText: seedText(),
     // The harvested alphabet, the shared letterform style and the font
     // controls all change the pixels, so they all belong in the identity.
@@ -28509,14 +28417,6 @@ const CANONICAL_MASTER_HEIGHT = isMobileBrowser() ? MOBILE_MASTER_HEIGHT : 1000;
 const CANONICAL_MASTER_SLOTS = 2;
 let canonicalMasters = [];
 
-function hydrateCarvingMaster(params, entry) {
-  if (!entry?.carvingStack) return;
-  // A replay may supply a fresh plain recipe object. Its cached pixels and
-  // the quarry those pixels came from must travel together.
-  rememberCarvingProperty(params, "__hexfieldCarveStack", entry.carvingStack);
-  rememberCarvingProperty(params, "__hexfieldCarvePlan", entry.carvingPlan);
-}
-
 function canonicalMasterKey(params, drawSeed, text, mode) {
   const publicParams = Object.fromEntries(Object.entries(params || {})
     .filter(([key]) => !key.startsWith("__hexfield")));
@@ -28527,7 +28427,6 @@ function canonicalMasterKey(params, drawSeed, text, mode) {
     sceneProposal: params?.__hexfieldSceneProposal || null,
     drawSeed: Number(drawSeed) || 0,
     text: String(text || ""), mode: String(mode || "seed"),
-    carving: isCarvedMode(mode) ? carvingSettings(mode) : null,
   })) >>> 0);
 }
 
@@ -28641,8 +28540,8 @@ async function canonicalMasterCanvasStepped(params, drawSeed, text, mode, minimu
   const requestedHeight = Math.max(CANONICAL_MASTER_HEIGHT, Math.round(minimumHeight) || 0);
   const cached = () => canonicalMasters.find((entry) => entry.key === key &&
     entry.width >= requestedWidth && entry.height >= requestedHeight);
-  if (cached()) { hydrateCarvingMaster(params, cached()); return; }
-  const measured = isCarvedMode(mode) ? null : measuredMiniMasters.get(key);
+  if (cached()) return;
+  const measured = measuredMiniMasters.get(key);
   if (!measured) {
     canonicalMasterCanvas(params, drawSeed, text, mode, minimumWidth, minimumHeight);
     return;
@@ -28652,14 +28551,13 @@ async function canonicalMasterCanvasStepped(params, drawSeed, text, mode, minimu
   const steps = enrichMeasuredMiniMasterSteps(sourceCtx, requestedWidth, requestedHeight, measured,
     params, drawSeed, text, mode);
   while (!steps.next().done) await new Promise((resolve) => setTimeout(resolve, 0));
-  if (cached()) { hydrateCarvingMaster(params, cached()); source.width = 0; source.height = 0; return; }
+  if (cached()) { source.width = 0; source.height = 0; return; }
   while (canonicalMasters.length >= CANONICAL_MASTER_SLOTS) {
     const evicted = canonicalMasters.shift();
     evicted.canvas.width = 0;
     evicted.canvas.height = 0;
   }
-  canonicalMasters.push({ key, canvas: source, width: requestedWidth, height: requestedHeight,
-    carvingStack: params.__hexfieldCarveStack, carvingPlan: params.__hexfieldCarvePlan });
+  canonicalMasters.push({ key, canvas: source, width: requestedWidth, height: requestedHeight });
 }
 
 function canonicalMasterCanvas(params, drawSeed, text, mode, minimumWidth = 0, minimumHeight = 0) {
@@ -28671,7 +28569,6 @@ function canonicalMasterCanvas(params, drawSeed, text, mode, minimumWidth = 0, m
   if (hit >= 0) {
     const [entry] = canonicalMasters.splice(hit, 1);
     canonicalMasters.push(entry);
-    hydrateCarvingMaster(params, entry);
     return entry.canvas;
   }
   while (canonicalMasters.length >= CANONICAL_MASTER_SLOTS) {
@@ -28681,7 +28578,7 @@ function canonicalMasterCanvas(params, drawSeed, text, mode, minimumWidth = 0, m
   }
   const source = paintBuffer(requestedWidth, requestedHeight);
   const sourceCtx = source.getContext("2d", { willReadFrequently: true });
-  const measured = isCarvedMode(mode) ? null : measuredMiniMasters.get(key);
+  const measured = measuredMiniMasters.get(key);
   if (measured) {
     enrichMeasuredMiniMaster(sourceCtx, requestedWidth, requestedHeight, measured,
       params, drawSeed, text, mode);
@@ -28689,8 +28586,7 @@ function canonicalMasterCanvas(params, drawSeed, text, mode, minimumWidth = 0, m
     renderComposite(sourceCtx, requestedWidth, requestedHeight, params,
       mulberry32(Number(drawSeed) || 0), text, mode);
   }
-  canonicalMasters.push({ key, canvas: source, width: requestedWidth, height: requestedHeight,
-    carvingStack: params.__hexfieldCarveStack, carvingPlan: params.__hexfieldCarvePlan });
+  canonicalMasters.push({ key, canvas: source, width: requestedWidth, height: requestedHeight });
   return source;
 }
 
@@ -31176,15 +31072,6 @@ function rejectPaintEvidence(result, reason) {
 }
 
 function updatePainterStatus(result) {
-  if (isCarvedMode()) {
-    const label = document.getElementById("painterStatus");
-    const plan = result?.params?.__hexfieldCarvePlan || current?.params?.__hexfieldCarvePlan;
-    if (label && plan) label.textContent = plan.mode === "off"
-      ? "uncut source stack · change the letters or carve this material"
-      : "carved from this stack · each new composition constrains the template";
-    updateCarvingStatus(result?.params || current?.params);
-    return;
-  }
   renderChoiceCard();
   lastPassCompletedAt = Date.now();
   const label = document.getElementById("painterStatus");
@@ -46224,7 +46111,6 @@ function paintStudyBatch(result, plan) {
 }
 
 function continueMasterDetail(result) {
-  if (isCarvedMode()) return false;
   // A new painting still being prepared has nothing to detail yet.
   if (strokePainter.preparing) return false;
   // A study lays its own steps (Studies).
@@ -46645,51 +46531,6 @@ function commitPaintTarget(result, target, { refinement = false } = {}) {
 }
 
 function drawImmediate(result, { refinement = false } = {}) {
-  if (isCarvedMode()) {
-    // The subtractive master is the finished artwork. Repainting it through
-    // broad pigment strokes would close its counters and refill its cuts.
-    const target = paintBuffer(view.width, view.height);
-    result.miniDesignLayout = renderMiniBasedTarget(target.getContext("2d"), view.width, view.height,
-      result.params, result.drawSeed, seedText(), textMode());
-    const settings = carvingSettings();
-    const lastPlan = result.params.__hexfieldCarvePlan;
-    if (lastPlan?.mode !== settings.mode || lastPlan?.text !== settings.text || lastPlan?.template !== settings.template) {
-      // A cached master already has its pixels; refresh only its diagnostics.
-      const stack = result.params.__hexfieldCarveStack;
-      const plan = window.HexfieldCarving.derive(stack.canvas, { ...settings, skeletons: LETTER_SKELETONS });
-      plan.mode = settings.mode; plan.shapeCount = stack.placements.length;
-      plan.harvestFingerprint = stack.sourceFingerprint;
-      rememberCarvingProperty(result.params, "__hexfieldCarvePlan", plan);
-    }
-    activePaintAnimation = 0;
-    strokePainter.preparing = null;
-    strokePainter.plan = null;
-    strokePainter.enhanced = null;
-    paintOpening = null;
-    hideFinishLayer(); hideMunkerLayer();
-    vctx.clearRect(0, 0, view.width, view.height);
-    vctx.drawImage(target, 0, 0);
-    target.width = 0;
-    painterPass++;
-    result.paintCommit = refinement ? "carved-refinement" : "carved";
-    result.paintCanvasCoverage = 1; result.paintCanvasFilled = true;
-    result.paintProgress = 1;
-    result.carving = carvingSummary(result.params.__hexfieldCarvePlan);
-    view.dataset.paintCoverage = "1.000";
-    view.dataset.paintCanvasFilled = "1";
-    view.dataset.paintProgress = "1";
-    view.dataset.carving = result.carving?.mode || "carve";
-    view.dataset.carveSource = result.carving?.sourceFingerprint || "";
-    view.dataset.carveConstraint = result.carving?.maskFingerprint || "";
-    paintRevision++; view.dataset.paintRevision = String(paintRevision);
-    markPaintTimingCompleted(result);
-    visiblePaintCompletion = Promise.resolve(true);
-    paintingFinishedAt = Date.now();
-    snapshotSourceField(vctx, view.width, view.height);
-    updateQuarryPreview(result.params);
-    updatePainterStatus(result);
-    return true;
-  }
   // While a new painting is being prepared a refinement has nothing to
   // refine: held, without rendering a target for it.
   if (refinement && strokePainter.preparing) {
@@ -47396,10 +47237,11 @@ function autonomousRandom() {
   return Math.random();
 }
 
-/* The carving workbench uses its wide master on every device. Historic
- * paintings keep their phone portrait format; reseeds follow the same rule. */
+/* Phones paint in portrait, everything else on the landscape master. Reseeds
+ * reset the control to this; setting it to "master" on a phone left the
+ * portrait canvas exporting as a squashed 4400×1000 file. */
 function defaultFormat() {
-  return isMobileBrowser() && !isCarvedMode() ? "print" : "master";
+  return isMobileBrowser() ? "print" : "master";
 }
 
 function setAutonomousControl(id, value) {
@@ -47516,7 +47358,6 @@ function tasteBrainLogoSeed(reason = "taste") {
  * square outputs contain that one composition; nothing cuts it into rows. Only
  * an accepted result replaces this source. */
 function renderLiveTasteLogo(reason = "taste") {
-  if (isCarvedMode()) return updateQuarryPreview(current?.params || livePaintPreview?.params);
   const canvas = document.getElementById("liveLogo");
   if (!canvas) return false;
   const ctx = canvas.getContext("2d");
@@ -51439,33 +51280,6 @@ $("fontFamily").addEventListener("change", () => {
 $("fontAssembly").addEventListener("change", () => { updateFontMutationStatus(latestBrushProgram); if (current) draw(current); });
 $("effort").addEventListener("input", (e) => { $("effortVal").textContent = e.target.value; });
 
-let carveInputTimer = null;
-function redrawCarving() {
-  clearTimeout(carveInputTimer);
-  try {
-    localStorage.setItem("hexfield.carving-controls.v1", JSON.stringify(carvingSettings()));
-  } catch {}
-  if (current?.params) draw(current);
-}
-try {
-  const saved = JSON.parse(localStorage.getItem("hexfield.carving-controls.v1") || "null");
-  if (saved) {
-    const input = document.getElementById("letteringText");
-    const template = document.getElementById("letterCarveTemplate");
-    if (input) input.value = window.HexfieldCarving.cleanText(saved.text);
-    if (template && ["block", "rounded", "condensed"].includes(saved.template)) template.value = saved.template;
-  }
-} catch {}
-document.getElementById("letterCarveForm")?.addEventListener("submit", (event) => {
-  event.preventDefault(); redrawCarving();
-});
-document.getElementById("letteringText")?.addEventListener("input", () => {
-  clearTimeout(carveInputTimer);
-  carveInputTimer = setTimeout(redrawCarving, 180);
-});
-document.getElementById("letterCarveMode")?.addEventListener("change", redrawCarving);
-document.getElementById("letterCarveTemplate")?.addEventListener("change", redrawCarving);
-
 /* The export used to report progress through #overlay, which the autonomous
  * studio hides with `#cands, #overlay { display: none !important }`. A click
  * therefore started a 24-megapixel render with nothing on screen for tens of
@@ -51532,10 +51346,7 @@ async function renderPrintBlob(fmt) {
   out.height = fmt.eh;
   const octx = out.getContext("2d");
   await new Promise((r) => setTimeout(r, 16));
-  if (isCarvedMode()) {
-    renderMiniBasedTarget(octx, out.width, out.height, current.params,
-      current.drawSeed, seedText(), textMode());
-  } else if (current.params.field === "fractal") {
+  if (current.params.field === "fractal") {
     /* The chunked renderer exists so a 24-megapixel fractal does not lock the
      * tab, and it draws the field itself - so the word has to reach it the same
      * way it reaches every other field, as a mask, or the print comes back
@@ -51665,7 +51476,7 @@ $("export").addEventListener("click", async () => {
     // The screen shows a painting, so the file is that painting: the same
     // strokes redrawn at print size. Only a screen that is not a logged
     // painting (nothing painted yet) exports the render itself.
-    const painted = !isCarvedMode() && await paintExportFromLog(out, (frac) => {
+    const painted = await paintExportFromLog(out, (frac) => {
       setExportStatus(`painting… ${Math.round(frac * 100)}%`);
     });
     // The painting's finish, applied to the replayed strokes as on screen.
@@ -51681,10 +51492,7 @@ $("export").addEventListener("click", async () => {
       octx.restore();
       finished.width = 0;
     }
-    if (isCarvedMode()) {
-      renderMiniBasedTarget(octx, out.width, out.height, current.params,
-        current.drawSeed, seedText(), textMode());
-    } else if (!painted && current.params.field === "fractal") {
+    if (!painted && current.params.field === "fractal") {
       // The chunked fractal renderer draws its own field, so the word has to
       // reach it as a mask exactly as it does on screen - otherwise the export
       // and the screen disagree and a wrong file goes to a printer.
@@ -51705,7 +51513,7 @@ $("export").addEventListener("click", async () => {
 
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    const slug = (isCarvedMode() ? carvingSettings().text : seedText() || "field").toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40);
+    const slug = (seedText() || "field").toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40);
     a.href = url;
     a.download = `hexfield-${slug}-${current.params.field}.png`;
     a.click();
@@ -51860,7 +51668,7 @@ async function connectAndStart() {
    * is background learning for the shared museum/taste model, not
    * anything the visible canvas needs - so it is worth simply not starting
    * on a phone rather than tuning its budget yet again. */
-  if (!isMobileBrowser() && !isCarvedMode()) startHeadlessSim();
+  if (!isMobileBrowser()) startHeadlessSim();
   /* The manual controls that used to trigger a taste cycle (and, with it, the
    * museum submission) are permanently hidden by the autonomous blackout
    * above - "the autonomous presentation is the point" - so nothing has
@@ -52052,14 +51860,6 @@ function learningContractSnapshot() {
 // Exposed so the headless render check can drive the page.
 window.HexfieldStrokeContract = HexfieldStrokeContract;
 window.__hexfield = {
-  carving: {
-    settings: carvingSettings,
-    redraw: redrawCarving,
-    get: () => carvingSummary(current?.params?.__hexfieldCarvePlan),
-    getPlan: () => current?.params?.__hexfieldCarvePlan || null,
-    getStack: () => current?.params?.__hexfieldCarveStack || null,
-    skeletons: LETTER_SKELETONS,
-  },
   search, draw, perturb, perturbParams, signature, novelty, distance,
   signatureRmsDistance, signatureSeparation, candidateNonRedundancy,
   assignNonRedundancy, diversifyRankedCandidates,
