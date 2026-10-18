@@ -3579,7 +3579,10 @@
     if (P.how === "on" && P.ground.clip) yield* laid(S, shadowSteps(S, P, P.ground, "its shadow on " + theOf(P.host)), { out: outsFor(S, P.host).filter((c) => c !== P.cover).concat(own) });
     // Its shadow on the solids it reaches - the floor's shadow climbing their sides - then it, then theirs on it.
     for (const Q of others) yield* laid(S, castSteps(S, P, Q), { out: outsFor(S, Q).filter((c) => c !== P.cover).concat(own) });
-    yield* laid(S, pieceSteps(S, P), { out: front, app: P.app });
+    // (A letter cut from shapes made as it was cut, step by step - where its paint covers: in a medium that cannot take paint away, or paint thin enough to see through, each step would show under the next, so it is painted as it ends - Letters cut from shapes.)
+    if (P.making && !S.rules.darkenOnly && P.app?.load !== "thin" && (P.form?.opacity ?? 1) >= 1) yield* makeLetter(S, P, front);
+    else yield* laid(S, pieceSteps(S, P), { out: front, app: P.app });
+    delete P.making;
     for (const Q of others) yield* laid(S, castSteps(S, Q, P), { out: front });
     yield* laid(S, edgeSteps(S, P), { out: front });
     // What stands near takes some of its colour, and loses some light to it.
@@ -3602,25 +3605,33 @@
     });
     const cast = P.shot.on ? [...P.shot.on.values()].flat() : [];
     const region = [clipOf(P.outline, S.lineW * 1.8 + 2), ...(P.shot.floor ? [clipOf(P.shot.floor, 3)] : []), ...(P.shot.top ? [clipOf(P.shot.top, 3)] : []), ...guides, ...cast];
-    const box = boxOf(region), standing = alive(S), covers = standing.map((Q) => Q.cover), prefix = "where " + name + " was: ";
     S.name = nameOf(S);
-    if (S.rules.darkenOnly) yield* laid(S, liftSteps(S, region, "lifting " + name + " off"), { within: region, box, out: covers });
+    yield* paintBehind(S, region, P, "where " + name + " was: ", "lifting " + name + " off");
+    yield* lookAgain(S, since, "where " + name + " was", null);
+  }
+  /* What a solid hid, painted back far to near inside `region`: the room,
+   * the shadows on the floor, the solids behind - each after what it
+   * stands on, each with its shadow on that first, and the shadows the
+   * others throw on it. `P` is gone - or, still standing, cut away there
+   * (its shadow still on the floor, its cover no longer over what is
+   * behind it). */
+  function* paintBehind(S, region, P, prefix, lifting) {
+    const box = boxOf(region), standing = alive(S).filter((Q) => Q !== P), covers = standing.map((Q) => Q.cover), outs = (Q) => outsFor(S, Q).filter((c) => c !== P.cover);
+    if (S.rules.darkenOnly) yield* laid(S, liftSteps(S, region, lifting), { within: region, box, out: covers });
     yield* laid(S, room(S), { within: region, box, out: covers, prefix });
-    for (const Q of standing) {
+    for (const Q of P.alive ? standing.concat(P) : standing) {
       if (Q.shot.floor && boxesMeet(boxOf([Q.shot.floor]), box)) yield* laid(S, shadowSteps(S, Q, S.floor, "the shadow of " + theOf(Q)), { within: region, box, out: covers.filter((c) => c !== Q.cover), prefix });
     }
-    // The solids it hid, each after what it stands on, each with its shadow on that first.
     for (const Q of standing) {
       if (Q.how === "on" && Q.ground.clip && Q.shot.top && boxesMeet(boxOf([Q.shot.top]), box)) {
-        yield* laid(S, shadowSteps(S, Q, Q.ground, "the shadow of " + theOf(Q) + " on " + theOf(Q.host)), { within: region, box, out: outsFor(S, Q.host).filter((c) => c !== Q.cover), prefix });
+        yield* laid(S, shadowSteps(S, Q, Q.ground, "the shadow of " + theOf(Q) + " on " + theOf(Q.host)), { within: region, box, out: outs(Q.host).filter((c) => c !== Q.cover), prefix });
       }
       if (boxesMeet(Q.coverBox, box)) {
-        yield* laid(S, pieceSteps(S, Q), { within: region, box, out: outsFor(S, Q), app: Q.app, prefix });
+        yield* laid(S, pieceSteps(S, Q), { within: region, box, out: outs(Q), app: Q.app, prefix });
         // (And the shadows the others still throw on it.)
-        for (const C of standing) if (C !== Q) yield* laid(S, castSteps(S, C, Q), { within: region, box, out: outsFor(S, Q), prefix });
+        for (const C of standing) if (C !== Q) yield* laid(S, castSteps(S, C, Q), { within: region, box, out: outs(Q), prefix });
       }
     }
-    yield* lookAgain(S, since, "where " + name + " was", null);
   }
   // Reworking a solid: painted again over itself - in a new colour, or the same with the handling chosen afresh - and what stands on it throws its shadow on it again.
   function* reworkPiece(S, P, recolour = false, colour = null) {
@@ -4236,6 +4247,7 @@
       spacing: 0.12 + r() * 0.38, depth: 0.14 + r() * 0.46, stencil: r() < 0.18, wobble: r() < 0.6 ? 0 : 0.015 + r() * 0.045,
       shadow: r() < 0.4 ? "parallel" : "cast",
       soft: opened("soften") && v("softened corners") > 0 ? 0.14 : 0, clear: opened("clear") && v("seen through") > 0.05 ? 0.7 : 1,
+      shapes: better("letters cut from shapes", "letters built of strokes", 0.7),
     };
   }
   // One of its own faces again, changed: a gene or two moved, now and then one switched.
@@ -4244,12 +4256,12 @@
     out.weight = jitter(g.weight, 0.03, 0.08, 0.27); out.width = jitter(g.width, 0.12, 0.62, 1.42); out.spacing = jitter(g.spacing, 0.08, 0.1, 0.55); out.depth = jitter(g.depth, 0.1, 0.12, 0.62);
     if (g.slant) out.slant = jitter(g.slant, 0.05, 0.04, 0.32);
     if (g.contrast < 1) out.contrast = jitter(g.contrast, 0.1, 0.32, 0.95);
-    const flip = ["serifs", "cut", "balls", "stencil"][Math.floor(r() * 4)];
+    const flip = ["serifs", "cut", "balls", "stencil", "shapes"][Math.floor(r() * 5)];
     if (r() < 0.35) out[flip] = !out[flip];
     return out;
   }
   // How unlike two faces are, 0 (the same) to about 1.
-  const faceApart = (a, b) => 0.18 * (a.stems !== b.stems) + 0.1 * ((a.serifs !== b.serifs) + (a.cut !== b.cut) + (a.balls !== b.balls) + (a.stencil !== b.stencil)) / 2
+  const faceApart = (a, b) => 0.18 * (a.stems !== b.stems) + 0.18 * (!a.shapes !== !b.shapes) + 0.1 * ((a.serifs !== b.serifs) + (a.cut !== b.cut) + (a.balls !== b.balls) + (a.stencil !== b.stencil)) / 2
     + Math.abs(a.weight - b.weight) * 1.6 + Math.abs(a.width - b.width) * 0.5 + Math.abs(a.slant - b.slant) * 1.2 + Math.abs(a.contrast - b.contrast) * 0.4 + Math.abs(a.spacing - b.spacing) * 0.4;
   // What a face did: the votes on a word set in it, kept against it in the catalogue.
   function noteFace(g, vote) {
@@ -4313,14 +4325,16 @@
     // (Set narrow, a heavy face would close its counters: no heavier than its width leaves room for them.)
     const face = { ...g, genes: g, weight: Math.min(g.weight, 0.1 + 0.15 * (g.width || 1)) };
     face.bold = face.weight > 0.17;
+    // (Letters cut from shapes have no feet and no balls, and are as deep as the face is set - Letters cut from shapes.)
+    if (g.shapes) { face.serifs = false; face.balls = false; }
     // (A round stem's depth is its own width; else as deep as the face is set.)
-    face.depth = face.stems === "cylinder" ? face.weight : g.depth;
+    face.depth = face.stems === "cylinder" && !g.shapes ? face.weight : g.depth;
     const width = g.width < 0.86 ? "condensed" : g.width > 1.16 ? "wide" : "";
-    face.feats = [face.stems === "cylinder" ? "letters of cylinders" : "letters of boxes", face.serifs ? "letters on slab feet" : "letters without feet",
+    face.feats = [g.shapes ? "letters cut from shapes" : "letters built of strokes", face.stems === "cylinder" ? "letters of cylinders" : "letters of boxes", face.serifs ? "letters on slab feet" : "letters without feet",
       face.cut ? "letters with cut corners" : "letters with square corners", face.balls ? "letters ending in balls" : "letters ending plain", face.bold ? "bold letters" : "light letters",
       width ? width + " letters" : "letters of the usual width", g.slant ? "slanted letters" : "upright letters", g.contrast < 0.8 ? "letters thick and thin" : "letters of an even stroke",
       g.stencil ? "stencil letters" : "unbroken letters", g.shadow === "parallel" ? "letters with dropped shadows" : "letters with thrown shadows"];
-    face.name = [face.bold ? "bold" : "light", width, g.slant ? "slanted" : "", g.contrast < 0.8 ? "thick-and-thin" : "", face.stems === "cylinder" ? "round-stemmed" : "square-stemmed",
+    face.name = [face.bold ? "bold" : "light", width, g.slant ? "slanted" : "", g.contrast < 0.8 ? "thick-and-thin" : "", g.shapes ? "cut from shapes" : face.stems === "cylinder" ? "round-stemmed" : "square-stemmed",
       face.cut ? "cut-cornered" : "", face.serifs ? "slab-footed" : "", face.balls ? "ball-ended" : "", g.stencil ? "stencil" : "", g.wobble ? "hand-cut" : ""].filter(Boolean).join(", ");
     return face;
   }
@@ -4375,9 +4389,20 @@
    * anticlockwise, any holes (an O's, an A's) clockwise, in as few straight
    * lines as say it. In a cap's units: across, and up from the baseline. */
   const GLYPH_OUTLINES = new Map();
-  function glyphOutline(ch, face) {
-    const key = [ch, face.weight, face.cut, face.serifs, face.balls, face.width, face.slant, face.wobble, face.seed, face.contrast, face.stencil].join("|");
-    if (!GLYPH_OUTLINES.has(key)) { if (GLYPH_OUTLINES.size > 400) GLYPH_OUTLINES.clear(); GLYPH_OUTLINES.set(key, traceGlyph(ch, face)); }
+  function glyphOutline(ch, face, step = null) {
+    // (A face that cuts its letters from shapes: the outline when all of its steps are made - or, being made, after step `step`.)
+    const shaped = face.shapes && SHAPED[ch], key = [ch, face.weight, face.cut, face.serifs, face.balls, face.width, face.slant, face.wobble, face.seed, face.contrast, face.stencil, shaped ? "shaped" : "", step ?? ""].join("|");
+    if (!GLYPH_OUTLINES.has(key)) {
+      if (GLYPH_OUTLINES.size > 400) GLYPH_OUTLINES.clear();
+      const steps = shaped ? shapedSteps(ch, face) : null, at = steps ? steps[step ?? steps.length - 1] : null;
+      GLYPH_OUTLINES.set(key, at ? traceField(at.field, glyphWide(ch, face)) : traceGlyph(ch, face));
+    }
+    return GLYPH_OUTLINES.get(key);
+  }
+  // What a step that cuts takes away: what was there before it, where its shape is.
+  function cutAway(ch, face, step) {
+    const key = [ch, face.weight, face.cut, face.width, face.slant, face.wobble, face.seed, face.contrast, face.stencil, "away", step].join("|");
+    if (!GLYPH_OUTLINES.has(key)) { const st = shapedSteps(ch, face)[step]; GLYPH_OUTLINES.set(key, traceField(shapeMeet(st.before, st.shape), glyphWide(ch, face))); }
     return GLYPH_OUTLINES.get(key);
   }
   function traceGlyph(ch, face) {
@@ -4400,8 +4425,12 @@
         else if (face.balls && !upright && curved) fields.push((x, y) => Math.hypot(x - end[0], y - end[1]) - w * 0.85);
       }
     });
-    const res = 0.022, x0 = -0.3, y0 = -0.4, nx = Math.ceil((glyphWide(ch, face) + 0.6) / res) + 1, ny = Math.ceil(1.8 / res) + 1, g = new Float32Array(nx * ny);
-    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { const x = x0 + i * res, y = y0 + j * res; let d = Infinity; for (const f of fields) d = Math.min(d, f(x, y)); g[j * nx + i] = d; }
+    return traceField((x, y) => { let d = Infinity; for (const f of fields) d = Math.min(d, f(x, y)); return d; }, glyphWide(ch, face));
+  }
+  // Round where a field is nothing, over a letter `wide` across - its rings, outside anticlockwise, holes clockwise.
+  function traceField(field, wide) {
+    const res = 0.022, x0 = -0.3, y0 = -0.4, nx = Math.ceil((wide + 0.6) / res) + 1, ny = Math.ceil(1.8 / res) + 1, g = new Float32Array(nx * ny);
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) g[j * nx + i] = field(x0 + i * res, y0 + j * res);
     // Marching squares: each cell's crossings, joined edge to edge into rings.
     const at = (i, j) => g[j * nx + i], crossing = (id) => {
       const [k, i, j] = id.split(","), a = +i, b = +j, va = at(a, b), vb = k === "h" ? at(a + 1, b) : at(a, b + 1), t = va / (va - vb);
@@ -4430,6 +4459,153 @@
       return { ring: hole === ccw ? r.slice().reverse() : r, hole };
     });
   }
+  /* ── Letters cut from shapes ─────────────────────────────────────────
+   * A face may make its letters as a joiner or a sign-cutter would, out of
+   * whole shapes: a C is a disc with its middle cut out and then a box cut
+   * out of its side; an E a box with two boxes cut out of it; a T a bar with
+   * a post joined under it; a D a box with a round side, its middle cut
+   * out; a W two Vs joined. Each letter is so many steps, a shape joined on
+   * or one cut away, and it is painted that way: the first shape whole,
+   * then each one joined to it, or cut out of it - what was behind painted
+   * back where the cut goes - so the painting shows how it was made. The
+   * shapes are the solids' own, as deep as the letter: a disc's edge, a
+   * box's corners, a wedge's slope.
+   *   op     "add", a shape joined on, or "cut", one cut away
+   *   name   what it is, to say so
+   *   field  how far a point is from it (less than nothing inside), in a cap's units */
+  const shapeBox = (x0, y0, x1, y1) => (x, y) => { const qx = Math.max(x0 - x, x - x1), qy = Math.max(y0 - y, y - y1); return qx > 0 || qy > 0 ? Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) : Math.max(qx, qy); };
+  const shapeOval = (cx, cy, rx, ry) => (x, y) => (Math.hypot((x - cx) / rx, (y - cy) / ry) - 1) * Math.min(rx, ry);
+  // (Past a line by `by` - toward the side `s` is on - or not yet.)
+  const shapePast = ([ax, ay], [bx, by_], [sx, sy], by = 0) => {
+    const dx = bx - ax, dy = by_ - ay, l = Math.hypot(dx, dy) || 1, k = ((sx - ax) * -dy + (sy - ay) * dx) >= 0 ? 1 : -1, nx = -dy / l * k, ny = dx / l * k;
+    return (x, y) => by - ((x - ax) * nx + (y - ay) * ny);
+  };
+  // (A shape bounded by straight sides: its corners, any way round.)
+  const shapeSides = (...pts) => {
+    const c = [pts.reduce((t, q) => t + q[0], 0) / pts.length, pts.reduce((t, q) => t + q[1], 0) / pts.length], sides = pts.map((q, i) => shapePast(q, pts[(i + 1) % pts.length], c));
+    return (x, y) => { let d = -Infinity; for (const f of sides) d = Math.max(d, f(x, y)); return d; };
+  };
+  // (A bar from one point to another, `w` across, square at its ends.)
+  const shapeBar = (a, b, w) => { const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1, nx = -dy / l * w / 2, ny = dx / l * w / 2; return shapeSides([a[0] + nx, a[1] + ny], [b[0] + nx, b[1] + ny], [b[0] - nx, b[1] - ny], [a[0] - nx, a[1] - ny]); };
+  const shapeJoin = (...fs) => (x, y) => { let d = Infinity; for (const f of fs) d = Math.min(d, f(x, y)); return d; };
+  const shapeMeet = (...fs) => (x, y) => { let d = -Infinity; for (const f of fs) d = Math.max(d, f(x, y)); return d; };
+  const shapeLess = (a, b) => (x, y) => Math.max(a(x, y), -b(x, y));
+  /* Each letter's steps, in its box - `L` to `R` across, `B` to `T` up, `t`
+   * a stem's thickness, `th` a crossing stroke's (thinner, as the face's
+   * contrast says) - its middle `cx`, `cy`. */
+  const SHAPED = {
+    O: (g) => [["add", "a disc", g.disc()], ["cut", "its middle cut out", g.hole()]],
+    0: (g) => SHAPED.O(g),
+    Q: (g) => [...SHAPED.O(g), ["add", "a bar joined across its foot", g.clip(shapeBar([g.cx + g.w * 0.08, g.cy - g.hgt * 0.12], [g.R + g.t * 0.2, g.B - g.t * 0.3], g.t))]],
+    C: (g) => [...SHAPED.O(g), ["cut", "a box cut out of its side", shapeBox(g.cx, g.cy - g.hgt * 0.17, g.R + 0.3, g.cy + g.hgt * 0.17)]],
+    G: (g) => [...SHAPED.O(g), ["cut", "a box cut out of its side", shapeBox(g.cx + g.t * 0.3, g.cy + g.th / 2, g.R + 0.3, g.cy + g.hgt * 0.24)],
+      ["add", "a bar joined inside it", shapeBox(g.cx + g.t * 0.3, g.cy - g.th / 2, g.R - g.t * 0.5, g.cy + g.th / 2)]],
+    D: (g) => { const x = g.L + g.w * 0.42; return [["add", "a box with a round side", g.roundSide(x, g.B, g.T, 0)], ["cut", "its middle cut out", g.roundSide(x, g.B, g.T, 1)]]; },
+    B: (g) => {
+      const x = g.L + g.w * 0.4, m = g.B + g.hgt * 0.53, up = (k) => g.roundSide(x, m - g.th / 2, g.T, k, g.R - g.w * 0.07), down = (k) => g.roundSide(x, g.B, m + g.th / 2, k);
+      return [["add", "a box with two round sides", shapeJoin(up(0), down(0))], ["cut", "its two middles cut out", shapeJoin(up(1), down(1))]];
+    },
+    P: (g) => { const x = g.L + g.w * 0.42, m = g.B + g.hgt * 0.4; return [["add", "a post with a round-sided box at its top", shapeJoin(g.post(g.L), g.roundSide(x, m, g.T, 0))], ["cut", "its middle cut out", g.roundSide(x, m, g.T, 1)]]; },
+    R: (g) => { const x = g.L + g.w * 0.42, m = g.B + g.hgt * 0.42; return [...SHAPED.P(g), ["add", "a leg joined under it", g.clip(shapeBar([x - g.t * 0.2, m + g.th * 0.3], [g.R - g.t * 0.35, g.B - g.t * 0.4], g.t))]]; },
+    U: (g) => [["add", "a box rounded at its foot", g.cup(0)], ["cut", "a box cut out of its top", g.cup(1)]],
+    J: (g) => [["add", "a box rounded at its foot", g.cup(0)], ["cut", "a box cut out of its top, and most of its side", shapeJoin(g.cup(1), shapeBox(g.L - 0.3, g.B + g.cupH + g.hgt * 0.08, g.cx, g.T + 0.3))]],
+    E: (g) => { const m = g.cy; return [["add", "a box", g.block()], ["cut", "two boxes cut out of its side", shapeJoin(shapeBox(g.L + g.t, g.B + g.th, g.R + 0.3, m - g.th / 2), shapeBox(g.L + g.t, m + g.th / 2, g.R + 0.3, g.T - g.th), shapeBox(g.R - g.w * 0.14, m - g.th, g.R + 0.3, m + g.th))]]; },
+    F: (g) => { const m = g.cy - g.hgt * 0.04; return [["add", "a box", g.block()], ["cut", "two boxes cut out of it", shapeJoin(shapeBox(g.L + g.t, m + g.th / 2, g.R + 0.3, g.T - g.th), shapeBox(g.L + g.t, g.B - 0.3, g.R + 0.3, m - g.th / 2), shapeBox(g.R - g.w * 0.14, m - g.th, g.R + 0.3, m + g.th))]]; },
+    H: (g) => [["add", "a box", g.block()], ["cut", "a box cut out of its top, and one out of its foot", shapeJoin(shapeBox(g.L + g.t, g.cy + g.th / 2, g.R - g.t, g.T + 0.3), shapeBox(g.L + g.t, g.B - 0.3, g.R - g.t, g.cy - g.th / 2))]],
+    I: (g) => [["add", "a post", g.block()]],
+    L: (g) => [["add", "a box", g.block()], ["cut", "a box cut out of its corner", shapeBox(g.L + g.t, g.B + g.th, g.R + 0.3, g.T + 0.3)]],
+    T: (g) => [["add", "a bar", shapeBox(g.L, g.T - g.th, g.R, g.T)], ["add", "a post joined under it", g.post(g.cx - g.t / 2)]],
+    K: (g) => [["add", "a post", g.post(g.L)], ["add", "two bars joined to it", g.clip(shapeJoin(shapeBar([g.L + g.t * 0.5, g.B + g.hgt * 0.36], [g.R - g.t * 0.2, g.T + g.t * 0.6], g.t), shapeBar([g.L + g.w * 0.36, g.B + g.hgt * 0.56], [g.R - g.t * 0.2, g.B - g.t * 0.6], g.t)))]],
+    M: (g) => {
+      const a = [g.L + g.t / 2, g.T], j = [g.cx, g.B + g.hgt * 0.3], b = [g.R - g.t / 2, g.T], up = [g.cx, g.T + 1], down = [g.cx, g.B - 1], between = shapeBox(g.L + g.t, g.B - 0.3, g.R - g.t, g.T + 0.3);
+      return [["add", "a box", g.block()], ["cut", "a wedge cut out of its top, and one out of its foot", shapeJoin(shapeMeet(shapePast(a, j, up, g.t / 2), shapePast(j, b, up, g.t / 2), between), shapeMeet(shapeJoin(shapePast(a, j, down, g.t / 2), shapePast(j, b, down, g.t / 2)), between))]];
+    },
+    N: (g) => {
+      const a = [g.L + g.t / 2, g.T], b = [g.R - g.t / 2, g.B], between = shapeBox(g.L + g.t, g.B - 0.3, g.R - g.t, g.T + 0.3);
+      return [["add", "a box", g.block()], ["cut", "two wedges cut out of it", shapeJoin(shapeMeet(shapePast(a, b, [g.R, g.T], g.t * 0.55), between), shapeMeet(shapePast(a, b, [g.L, g.B], g.t * 0.55), between))]];
+    },
+    V: (g) => [["add", "a wedge", g.vee(g.L, g.R, 0)], ["cut", "a wedge cut out of it", g.vee(g.L, g.R, 1)]],
+    A: (g) => {
+      const l = [[g.L, g.B], [g.cx - g.t * 0.45, g.T]], r = [[g.R, g.B], [g.cx + g.t * 0.45, g.T]], mid = [g.cx, g.cy], y = g.B + g.hgt * 0.34;
+      const inside = shapeMeet(shapePast(...l, mid, g.t), shapePast(...r, mid, g.t));
+      return [["add", "a wedge", shapeSides([g.L, g.B], [g.R, g.B], r[1], l[1])], ["cut", "its middle and its foot cut out", shapeJoin(shapeMeet(inside, (x, yy) => y + g.th / 2 - yy), shapeMeet(inside, (x, yy) => yy - (y - g.th / 2)))]];
+    },
+    W: (g) => { const m = g.cx; return [["add", "a V", shapeLess(g.vee(g.L, m + g.t * 0.4, 0), g.vee(g.L, m + g.t * 0.4, 1))], ["add", "another joined to it", shapeLess(g.vee(m - g.t * 0.4, g.R, 0), g.vee(m - g.t * 0.4, g.R, 1))]]; },
+    X: (g) => [["add", "a bar", g.clip(shapeBar([g.L + g.t * 0.35, g.T + 0.3], [g.R - g.t * 0.35, g.B - 0.3], g.t * 1.05))], ["add", "another across it", g.clip(shapeBar([g.L + g.t * 0.35, g.B - 0.3], [g.R - g.t * 0.35, g.T + 0.3], g.t * 1.05))]],
+    Y: (g) => { const m = g.B + g.hgt * 0.46; return [["add", "a V", shapeLess(g.vee(g.L, g.R, 0, m), g.vee(g.L, g.R, 1, m))], ["add", "a post joined under it", shapeBox(g.cx - g.t / 2, g.B, g.cx + g.t / 2, m + g.t)]]; },
+    Z: (g) => {
+      const a = [g.R - g.t * 0.55, g.T - g.th], b = [g.L + g.t * 0.55, g.B + g.th];
+      return [["add", "a box", g.block()], ["cut", "two wedges cut out of it", shapeJoin(shapeMeet(shapePast(a, b, [g.L, g.T], g.t * 0.55), (x, y) => y - (g.T - g.th)), shapeMeet(shapePast(a, b, [g.R, g.B], g.t * 0.55), (x, y) => g.B + g.th - y))]];
+    },
+    S: (g) => {
+      const m = g.B + g.hgt * 0.52, top = g.ring(g.L + g.w * 0.03, g.R - g.w * 0.03, m - g.th / 2, g.T), low = g.ring(g.L, g.R, g.B, m + g.th / 2);
+      return [["add", "a ring with a box cut out of its side", shapeLess(top.f, shapeBox(g.cx + g.w * 0.04, top.B - 0.3, g.R + 0.3, top.cy + top.ry * 0.18))],
+        ["add", "another, turned, joined under it", shapeLess(low.f, shapeBox(g.L - 0.3, low.cy - low.ry * 0.18, g.cx - g.w * 0.04, low.T + 0.3))]];
+    },
+    2: (g) => {
+      const top = g.ring(g.L, g.R, g.B + g.hgt * 0.4, g.T);
+      return [["add", "a ring cut open", shapeLess(top.f, shapeBox(g.L - 0.3, g.B - 0.3, g.cx + g.w * 0.1, top.cy))],
+        ["add", "a bar slanting down to a foot, joined to it", shapeJoin(g.clip(shapeBar([g.R - g.t * 0.45, top.cy - top.ry * 0.25], [g.L + g.t * 0.4, g.B + g.th * 0.5], g.t)), shapeBox(g.L, g.B, g.R, g.B + g.th))]];
+    },
+    3: (g) => {
+      const m = g.B + g.hgt * 0.53, top = g.ring(g.L + g.w * 0.06, g.R - g.w * 0.04, m - g.th / 2, g.T), low = g.ring(g.L, g.R, g.B, m + g.th / 2);
+      const open = (r, up) => shapeJoin(shapeBox(g.L - 0.3, up ? r.B + g.th : r.cy - r.ry * 0.2, g.cx - g.w * 0.05, up ? r.cy + r.ry * 0.2 : r.T - g.th), shapeBox(g.L - 0.3, up ? r.B - 0.3 : r.T - g.th - 0.01, g.L + g.w * 0.3, up ? r.B + g.th + 0.01 : r.T + 0.3));
+      return [["add", "a ring with a box cut out of its side", shapeLess(top.f, open(top, true))], ["add", "another, joined under it", shapeLess(low.f, open(low, false))]];
+    },
+    4: (g) => { const x = g.L + g.w * 0.72, y = g.B + g.hgt * 0.32; return [["add", "a post", g.post(x - g.t / 2)], ["add", "a bar across and one slanting, joined to it", shapeJoin(shapeBox(g.L, y - g.th / 2, g.R, y + g.th / 2), g.clip(shapeBar([x, g.T], [g.L + g.t * 0.3, y], g.t)))]]; },
+    5: (g) => {
+      const low = g.ring(g.L, g.R, g.B, g.B + g.hgt * 0.6);
+      return [["add", "a bar and a post", shapeJoin(shapeBox(g.L + g.t * 0.2, g.T - g.th, g.R - g.w * 0.04, g.T), shapeBox(g.L + g.t * 0.2, low.cy + low.ry * 0.62, g.L + g.t * 1.2, g.T))],
+        ["add", "a ring cut open, joined under them", shapeLess(low.f, shapeBox(g.L - 0.3, low.cy - low.ry * 0.3, g.cx - g.w * 0.08, low.cy + low.ry * 0.62))]];
+    },
+    6: (g) => { const low = g.ring(g.L, g.R, g.B, g.B + g.hgt * 0.62), big = g.ring(g.L, g.R + g.w * 0.25, g.B, g.T); return [["add", "a ring", low.f], ["add", "an arc joined over it", shapeMeet(shapeLess(big.f, shapeBox(g.cx + g.w * 0.08, g.B - 0.3, g.R + 0.6, g.T - g.hgt * 0.16)), shapeBox(g.L, g.B, g.R, g.T))]]; },
+    9: (g) => { const up = g.ring(g.L, g.R, g.T - g.hgt * 0.62, g.T), big = g.ring(g.L - g.w * 0.25, g.R, g.B, g.T); return [["add", "a ring", up.f], ["add", "an arc joined under it", shapeMeet(shapeLess(big.f, shapeBox(g.L - 0.6, g.B + g.hgt * 0.16, g.cx - g.w * 0.08, g.T + 0.3)), shapeBox(g.L, g.B, g.R, g.T))]]; },
+    7: (g) => [["add", "a bar", shapeBox(g.L, g.T - g.th, g.R, g.T)], ["add", "a slanting bar joined under it", g.clip(shapeBar([g.R - g.t * 0.5, g.T - g.th * 0.5], [g.L + g.w * 0.22, g.B - 0.3], g.t))]],
+    8: (g) => { const m = g.B + g.hgt * 0.54, low = g.ring(g.L, g.R, g.B, m + g.th / 2), up = g.ring(g.L + g.w * 0.07, g.R - g.w * 0.07, m - g.th / 2, g.T); return [["add", "a ring", low.f], ["add", "another on it", up.f]]; },
+    1: (g) => { const x = g.R - g.t; return [["add", "a post", g.post(x)], ["add", "a flag joined to it", g.clip(shapeBar([x + g.t * 0.5, g.T - g.th * 0.3], [g.L + g.t * 0.2, g.T - g.hgt * 0.26], g.t * 0.9))]]; },
+  };
+  /* A letter's steps as a face cuts it: in its box as the face sets its
+   * strokes (as wide, as heavy, leaning as far), each step's shape moved a
+   * hair by a hand-cutter's wobble. Each step's field is all of the steps
+   * so far: a shape joined, the nearer of the two; a shape cut, inside the
+   * one and outside the other. */
+  const SHAPED_STEPS = new Map();
+  function shapedSteps(ch, face) {
+    if (!SHAPED[ch]) return null;
+    const key = [ch, face.weight, face.width, face.slant, face.contrast, face.wobble, face.seed, face.cut, face.stencil].join("|");
+    if (SHAPED_STEPS.has(key)) return SHAPED_STEPS.get(key);
+    if (SHAPED_STEPS.size > 300) SHAPED_STEPS.clear();
+    const t = face.weight, th = t * (face.contrast ?? 1), raw = Math.max(...GLYPHS[ch].flat().map((q) => q[0])), L = -t / 2, R = raw * (face.width || 1) + t / 2, B = -t / 2, T = 1 + t / 2;
+    const g = { L, R, B, T, t, th, w: R - L, hgt: T - B, cx: (L + R) / 2, cy: (B + T) / 2 };
+    // (The shapes the letters share: a disc and its hole, a box, a post, a box with a round side, a box rounded at its foot, a wedge and the wedge out of it, a ring.)
+    g.disc = () => shapeOval(g.cx, g.cy, g.w / 2, g.hgt / 2);
+    g.hole = () => shapeOval(g.cx, g.cy, g.w / 2 - t, g.hgt / 2 - th);
+    g.block = () => shapeBox(L, B, R, T);
+    g.post = (x) => shapeBox(x, B, x + t, T);
+    g.clip = (f) => shapeMeet(f, shapeBox(L, B, R, T));
+    g.roundSide = (x, y0, y1, k, r = R) => { const cy = (y0 + y1) / 2, ry = (y1 - y0) / 2; return shapeJoin(shapeBox(L + t * k, y0 + th * k, x, y1 - th * k), shapeMeet(shapeOval(x, cy, r - x - t * k, ry - th * k), shapeBox(x, y0 + th * k, r, y1 - th * k))); };
+    g.cupH = Math.min(g.w / 2, g.hgt * 0.45);
+    g.cup = (k) => { const y = B + g.cupH; return shapeJoin(shapeBox(L + t * k, y, R - t * k, T + 0.3 * k), shapeMeet(shapeOval(g.cx, y, g.w / 2 - t * k, g.cupH - th * k), shapeBox(L, B - 1, R, y))); };
+    g.vee = (x0, x1, k, y0 = B) => { const m = (x0 + x1) / 2, l = [[x0, T], [m - t * 0.42, y0]], r = [[x1, T], [m + t * 0.42, y0]], mid = [m, (y0 + T) / 2];
+      return k ? shapeMeet(shapePast(...l, mid, t), shapePast(...r, mid, t)) : shapeSides(l[0], r[0], r[1], l[1]); };
+    g.ring = (x0, x1, y0, y1) => { const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, rx = (x1 - x0) / 2, ry = (y1 - y0) / 2;
+      return { f: shapeLess(shapeOval(cx, cy, rx, ry), shapeOval(cx, cy, rx - t, ry - th)), cx, cy, rx, ry, B: y0, T: y1 }; };
+    const recipe = SHAPED[ch](g).map(([op, name, field]) => ({ op, name, field }));
+    // (A face with its corners cut: a box's outside corners cut across, once it is made. A stencil face: a slot cut through where it would close on itself.)
+    if (face.cut && recipe[0].name === "a box") recipe.push({ op: "cut", name: "its corners cut off", field: shapeJoin(...[[L, B, 1, 1], [R, B, -1, 1], [R, T, -1, -1], [L, T, 1, -1]].map(([x, y, sx, sy]) => (px, py) => (px - x) * sx + (py - y) * sy - t * 0.55)) });
+    if (face.stencil && /[OQDBPRA0689]/.test(ch)) recipe.push({ op: "cut", name: "a slot cut through it, as a stencil's", field: shapeBox(g.cx - t * 0.22, g.cy + th, g.cx + t * 0.22, T + 0.3) });
+    // Each step's shape a hair out of true, as a hand cuts it; and all of them leaning as the face leans.
+    const rng = seeded(((face.seed || 0) * 977 + ch.charCodeAt(0) * 131) >>> 0), wob = (face.wobble || 0) * 0.6, slant = face.slant || 0;
+    let acc = null;
+    const steps = recipe.map((st, i) => {
+      const ox = i ? (rng() - 0.5) * 2 * wob : 0, oy = i ? (rng() - 0.5) * 2 * wob : 0, own = st.field, f = (x, y) => own(x - slant * y - ox, y - oy);
+      const was = acc;
+      acc = !was ? f : st.op === "add" ? shapeJoin(was, f) : shapeLess(was, f);
+      return { op: st.op, name: st.name, field: acc, shape: f, before: was };
+    });
+    SHAPED_STEPS.set(key, steps);
+    return steps;
+  }
   // A ring in as few points as keep it within `tol` (Douglas and Peucker's way, from its two farthest-apart points).
   function simplify(ring, tol) {
     const far = (a, b, pts) => { let best = -1, at = -1; const [ax, ay] = a, dx = b[0] - ax, dy = b[1] - ay, l = Math.hypot(dx, dy) || 1e-9; pts.forEach(([x, y], i) => { const d = Math.abs((x - ax) * dy - (y - ay) * dx) / l; if (d > best) { best = d; at = i; } }); return [best, at]; };
@@ -4443,10 +4619,10 @@
    * the same behind it, and its sides between - one solid, wound so each
    * face's way out is its own, mapped and built point by point and plane by
    * plane as the cube is (facetedSteps). */
-  function glyphSolid(ch, face, h, at, U, N) {
+  function glyphSolid(ch, face, h, at, U, N, rings = glyphOutline(ch, face)) {
     const w = face.weight * h, dep = face.depth * h, V = [0, 1, 0], verts = [], faces = [];
     const world = (x, y, z) => add(at, add(times(U, x * h), add(times(V, y * h + w / 2), times(N, z))));
-    const rings = glyphOutline(ch, face), fronts = [];
+    const fronts = [];
     for (const { ring, hole } of rings) {
       const base = verts.length, n = ring.length;
       for (const [x, y] of ring) verts.push(world(x, y, dep));
@@ -4534,6 +4710,7 @@
             const at = add(start, times(U, x * h)), parts = letterParts(c, face, h, at, U, N);
             const L = compound(S, "letter", "the letter " + c, parts, base, { char: c, front: N, face, form: face.clear < 1 ? { opacity: face.clear } : {} });
             L.built = () => glyphSolid(c, face, h, at, U, N);
+            if (face.shapes && SHAPED[c]) L.making = { at, U, N, h };
             if (!fitsLetter(S, L, others.length ? others.concat(letters) : letters)) { ok = false; break; }
             letters.push(L);
           }
@@ -4585,6 +4762,7 @@
     const put = (c, u) => {
       const at = add(times(U, u), times(N, n0)), L = compound(S, "letter", "the letter " + c, letterParts(c, face, h, at, U, N), base, { char: c, front: N, face, form: face.clear < 1 ? { opacity: face.clear } : {} });
       L.built = () => glyphSolid(c, face, h, at, U, N);
+      if (face.shapes && SHAPED[c]) L.making = { at, U, N, h };
       if (!fitsLetter(S, L, letters)) return false;
       letters.push(L);
       return true;
@@ -4642,6 +4820,33 @@
     Object.defineProperties(G, { base: { get: () => L.base }, app: { get: () => L.app }, low: { get: () => L.low }, high: { get: () => L.high } });
     G.map = premap(S.cam, solid);
     L.glyph = G;
+  }
+  /* A letter cut from shapes, made as it was cut (Letters cut from
+   * shapes): its first shape painted whole; then each shape joined to it,
+   * the letter as it is so far painted again; each shape cut out of it,
+   * what was behind painted back where it took away - then what is left.
+   * The last is the letter itself. */
+  function* makeLetter(S, L, front) {
+    const { at, U, N, h } = L.making, ch = L.char, face = L.face, steps = shapedSteps(ch, face), letter = L.glyph, name = theOf(L), word = S.action;
+    delete L.making;
+    for (let k = 0; k < steps.length; k++) {
+      const st = steps[k], what = name + ", " + (k ? st.name : st.name + " to start");
+      if (k < steps.length - 1) {
+        L.glyph = null;
+        glyphOf(S, L, glyphSolid(ch, face, h, at, U, N, glyphOutline(ch, face, k)));
+        if (!L.glyph) continue;
+      } else L.glyph = letter;
+      S.action = word + " - " + what;
+      if (st.op === "cut" && k) {
+        // (Where the cut goes: what it takes away, front and back, as the eye sees it - and a line's width round, for the drawing along its edges.)
+        const away = glyphSolid(ch, face, h, at, U, N, cutAway(ch, face, k)), backs = away.faces.filter((f) => f.name === "back");
+        const region = away.faces.filter((f) => f.name === "front").map((f, i) => clipOf(hull2([...f.idx, ...(backs[i]?.idx || [])].map((v) => project(S.cam, away.verts[v]))), S.lineW * 1.8 + 2)).filter((r) => r.length > 2);
+        if (region.length) yield* paintBehind(S, region, L, what + ": ", "lifting where " + st.name.replace(/ cut out.*$/, "") + " goes");
+      }
+      yield* laid(S, pieceSteps(S, L), { out: front, app: L.app, prefix: what + ": " });
+    }
+    L.glyph = letter;
+    S.action = word;
   }
   function* letterSteps(S, L) {
     // (Built as the cube is, point by point, plane by plane: Type.)
@@ -5982,7 +6187,7 @@
     if (a.type === "plant" && PLANTS[a.kind]) return { type: "plant", kind: a.kind, near: onto(S, a.onto), rel: a.rel, asked: true, feats: ["growing a plant", "growing " + plantName(a.kind)], label: "growing " + plantName(a.kind) };
     if (a.type === "word" && a.text) {
       // (One typeface for every row of one line typed.)
-      const face = (a.group && S.faces?.[a.group]) || faceOf(S, a.text);
+      const face = (a.group && S.faces?.[a.group]) || faceAsked(S, faceOf(S, a.text), a.group);
       if (a.group) (S.faces ||= {})[a.group] = face;
       // (A text in rows is set out as one: the rows still to come taken with the first.)
       const more = a.rows > 1 ? (S.asks || []).filter((b) => b.type === "word" && b.group === a.group) : [];
@@ -5992,7 +6197,7 @@
     }
     // (Words cut into a solid standing, as big as its face lets them be - or, nowhere on it they could be read, lettered standing.)
     if (a.type === "engrave" && a.text) {
-      const P = alive(S).find((Q) => Q.id === a.id), face = (a.group && S.faces?.[a.group]) || faceOf(S, a.text);
+      const P = alive(S).find((Q) => Q.id === a.id), face = (a.group && S.faces?.[a.group]) || faceAsked(S, faceOf(S, a.text), a.group);
       if (a.group) (S.faces ||= {})[a.group] = face;
       const cut = P && !P.parts ? engraveLayout(S, P, a.text, face) : null;
       if (cut) return { type: "engrave", piece: P, cut, asked: true, feats: ["cutting a word into a solid", "cutting a word into " + P.name], label: "cutting \u201c" + cut.text + "\u201d into " + theOf(P) };
@@ -6127,7 +6332,19 @@
     if (alive(S).some((P) => P.kind === "letter") && !asks.some((a) => a?.type === "clear")) asks.push({ type: "clear", label: "take away “" + (S.word?.text || "the word") + "”" });
     rows.forEach((row, i) => asks.push({ type: "word", text: row, group, row: i, rows: rows.length, label: "letter \u201c" + row + "\u201d" }));
   }
+  /* Its letters asked to be made out of shapes ("HEX out of shapes", "shape
+   * letters") or of strokes ("in strokes"): said so, the face it chose for
+   * them is made so (Letters cut from shapes). */
+  const SHAPES_SAID = /\s*\b(?:(?:cut|made|built)\s+)?(?:out\s+of|from|of|with|in)\s+shapes\b|\bshape[ds]?\s+letters\b/gi, STROKES_SAID = /\s*\b(?:(?:made|built)\s+)?(?:out\s+of|of|with|in)\s+strokes\b|\bstroke\s+letters\b/gi;
+  const faceAsked = (S, face, group) => { const how = S.groupHow?.[group]; return how === undefined || !face.shapes === !how ? face : faceFrom({ ...face.genes, id: face.genes.id + (how ? "s" : "b"), shapes: how }); };
   function askText(S, text) {
+    const said = String(text || "").trim(), shapes = said.search(SHAPES_SAID) >= 0, strokes = said.search(STROKES_SAID) >= 0;
+    if (!S || !said || !(shapes || strokes)) return askedText(S, said);
+    const before = S.askGroup || 0, out = askedText(S, said.replace(SHAPES_SAID, " ").replace(STROKES_SAID, " ").replace(/\s+/g, " ").trim());
+    for (let g = before + 1; g <= (S.askGroup || 0); g++) (S.groupHow ||= {})[g] = shapes;
+    return out.map((l) => (/^(?:letter|cut) /.test(l) ? l + (shapes ? ", out of shapes" : ", in strokes") : l));
+  }
+  function askedText(S, text) {
     const raw = String(text || "").trim();
     if (!S || !raw) return [];
     // (Undo - "undo", "go back", "take that back", "undo undo": each takes back one more change.)

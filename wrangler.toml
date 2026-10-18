@@ -1,6 +1,18 @@
 name = "hexfield"
 main = "worker.js"
 compatibility_date = "2024-09-23"
+# The workers.dev address stays on beside the domains, as a way in if they are ever lost.
+workers_dev = true
+
+# Its domains, attached on every deploy: a Worker made again from this
+# repository comes back on hexfield.org and www by itself.
+[[routes]]
+pattern = "hexfield.org"
+custom_domain = true
+
+[[routes]]
+pattern = "www.hexfield.org"
+custom_domain = true
 
 [assets]
 directory = "./public"
