@@ -4453,8 +4453,8 @@
       while (at0 && !done.has(at0)) { done.add(at0); ring.push(crossing(at0)); const next = links.get(at0).find((q) => q !== prev && !done.has(q)); prev = at0; at0 = next; }
       if (ring.length > 4) rings.push(simplify(ring, res * 0.45));
     }
-    // (The outside anticlockwise, a hole - inside another ring - clockwise.)
-    return rings.filter((r) => r.length >= 3).map((r) => {
+    // (The outside anticlockwise, a hole - inside another ring - clockwise; a sliver too small to see - where a stencil's break or a hand's wobble all but closes - not kept.)
+    return rings.filter((r) => r.length >= 3 && Math.abs(areaOf(r)) >= 8e-4).map((r) => {
       const hole = rings.some((o) => o !== r && inPoly(o, r[0][0], r[0][1])), ccw = areaOf(r) > 0;
       return { ring: hole === ccw ? r.slice().reverse() : r, hole };
     });
@@ -6597,6 +6597,344 @@
     return S;
   }
 
+  /* ── Printing ─────────────────────────────────────────────────────────
+   * What stands in the painting, as a file a 3D printer can make (STL):
+   * every solid a closed skin of triangles, each turned outward - its
+   * planes cut into triangles (a letter's, holes and all); a sphere, a
+   * cylinder, a cone or a dome made round again, finer than it is
+   * painted; a character from its domes, where its distance from them is
+   * nothing, found a little cube at a time; a plant's stems as rods and
+   * its leaves given enough thickness to stand - all of it on a slab, the
+   * floor they stand on. Up is the printer's: across, back, up, in
+   * millimetres, the whole of it no bigger than a printer's bed. */
+  const PRINT = { bed: 150, most: 40, slab: 0.06, margin: 0.18, stem: 0.014, leaf: 0.02, round: 96, ball: [56, 28], dome: [64, 14], cell: 0.016, cells: 100 };
+  // (A shape on its own plane: across it and up it, square to `n`.)
+  function planeOf(n) {
+    const u = unit(Math.abs(n[0]) < 0.9 ? cross(n, [1, 0, 0]) : cross(n, [0, 1, 0]));
+    return { u, v: cross(n, u) };
+  }
+  /* A plane with holes in it cut into triangles (the ear-cutting way, with
+   * holes joined in as Eberly and earcut join them). Each ring a loop of
+   * corners: the outside run anticlockwise, each hole clockwise; each hole,
+   * from its corner farthest across, joined to the outside where a line
+   * straight across first meets an edge that faces it - to that edge's
+   * corner farthest across, or to a nearer corner of the ring that stands
+   * in the way, if the join to it runs inside the ring there - the two
+   * then one loop, run round with the join gone over twice. Then ears cut
+   * off the loop one by one: a corner that turns the loop's way, with no
+   * corner turning against it in it or on it. A corner on a straight run
+   * goes as a triangle of no size, so the planes beside the face still
+   * meet it edge to edge. Triangles of indices, anticlockwise. */
+  function earsOf(outer, holes, at) {
+    const node = (i) => ({ i, x: at[i][0], y: at[i][1], prev: null, next: null });
+    const turn = (p, q, r) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+    const loop = (ring, ccw) => {
+      let s = 0;
+      for (let k = 0; k < ring.length; k++) { const p = at[ring[k]], q = at[ring[(k + 1) % ring.length]]; s += p[0] * q[1] - q[0] * p[1]; }
+      const order = (s > 0) === ccw ? ring : ring.slice().reverse(), nodes = order.map(node);
+      nodes.forEach((n, k) => { n.next = nodes[(k + 1) % nodes.length]; n.prev = nodes[(k + nodes.length - 1) % nodes.length]; });
+      return nodes[0];
+    };
+    const each = (start, f) => { let p = start; do { f(p); p = p.next; } while (p !== start); };
+    const same = (p, q) => p.x === q.x && p.y === q.y;
+    // (In it or on it, whichever way the triangle runs.)
+    const within = (p, a, b, c) => { const d1 = turn(a, b, p), d2 = turn(b, c, p), d3 = turn(c, a, p); return (d1 >= 0 && d2 >= 0 && d3 >= 0) || (d1 <= 0 && d2 <= 0 && d3 <= 0); };
+    // (A join from a corner runs inside the ring there: between its two edges, on the inside.)
+    const insideAt = (a, b) => (turn(a.prev, a, a.next) < 0 ? turn(a, b, a.next) >= 0 || turn(a, a.prev, b) >= 0 : turn(a, b, a.prev) < 0 && turn(a, a.next, b) < 0);
+    let ring = loop(outer, true);
+    const hs = holes.map((h) => { let far = loop(h, false); each(far, (p) => { if (p.x > far.x || (p.x === far.x && p.y < far.y)) far = p; }); return far; }).sort((a, b) => b.x - a.x);
+    for (const M of hs) {
+      let qx = Infinity, m = null, touch = false;
+      each(ring, (p) => {
+        if (touch || !(p.y <= M.y && M.y <= p.next.y && p.y !== p.next.y)) return;
+        const x = p.x + (M.y - p.y) * (p.next.x - p.x) / (p.next.y - p.y);
+        if (x >= M.x && x < qx) { qx = x; m = p.x > p.next.x ? p : p.next; if (x === M.x) touch = true; }
+      });
+      if (!m) continue;
+      if (!touch) {
+        const stop = m, I = { x: qx, y: M.y };
+        let best = Infinity, p = m;
+        do {
+          if (M.x <= p.x && p.x <= stop.x && p.x !== M.x && within(p, M, I, stop)) {
+            const tan = Math.abs(M.y - p.y) / (p.x - M.x);
+            if (insideAt(p, M) && (tan < best || (tan === best && p.x < m.x))) { m = p; best = tan; }
+          }
+          p = p.next;
+        } while (p !== stop);
+      }
+      // (A corner the loop goes through more than once already: joined from the one whose own angle the join leaves through.)
+      const twins = [];
+      each(ring, (q) => { if (q.i === m.i && same(q, m)) twins.push(q); });
+      if (twins.length > 1) m = twins.find((t) => insideAt(t, M)) || m;
+      // (The join, gone over twice: each end of it a corner twice.)
+      const a2 = { ...m }, b2 = { ...M }, an = m.next, bp = M.prev;
+      m.next = M; M.prev = m; a2.next = an; an.prev = a2; b2.next = a2; a2.prev = b2; bp.next = b2; b2.prev = bp;
+    }
+    // Ears off, one by one.
+    const tris = [], drop = (p) => { p.prev.next = p.next; p.next.prev = p.prev; };
+    const isEar = (e) => {
+      const a = e.prev, b = e, c = e.next;
+      if (turn(a, b, c) <= 0) return false;
+      // (A corner that is one of these three over again, where a join goes over it twice, opens the other way: it does not stand in the way.)
+      for (let p = c.next; p !== a; p = p.next) if (within(p, a, b, c) && turn(p.prev, p, p.next) <= 0 && !((p.i === a.i && same(p, a)) || (p.i === b.i && same(p, b)) || (p.i === c.i && same(p, c)))) return false;
+      return true;
+    };
+    // (A corner on a straight run, or on top of the next: let go - a straight one as a triangle of no size, so the planes beside the face meet it edge to edge.)
+    const tidy = (start) => {
+      let p = start, end = start, again;
+      do {
+        again = false;
+        if (p !== p.next && (same(p, p.next) || turn(p.prev, p, p.next) === 0)) {
+          if (!same(p, p.next) && !same(p, p.prev) && p.prev.i !== p.next.i) tris.push([p.prev.i, p.i, p.next.i]);
+          drop(p);
+          p = end = p.prev;
+          if (p === p.next) break;
+          again = true;
+        } else p = p.next;
+      } while (again || p !== end);
+      return end;
+    };
+    // (Two edges that cross - or that lie along each other.)
+    const onSeg = (p, q, r) => q.x <= Math.max(p.x, r.x) && q.x >= Math.min(p.x, r.x) && q.y <= Math.max(p.y, r.y) && q.y >= Math.min(p.y, r.y);
+    const crosses = (p1, q1, p2, q2) => {
+      const s = (v) => (v > 0 ? 1 : v < 0 ? -1 : 0), o1 = s(turn(p1, q1, p2)), o2 = s(turn(p1, q1, q2)), o3 = s(turn(p2, q2, p1)), o4 = s(turn(p2, q2, q1));
+      return (o1 !== o2 && o3 !== o4) || (o1 === 0 && onSeg(p1, p2, q1)) || (o2 === 0 && onSeg(p1, q2, q1)) || (o3 === 0 && onSeg(p2, p1, q2)) || (o4 === 0 && onSeg(p2, q1, q2));
+    };
+    // (Two edges of the loop that cross where a small knot is: the knot cut off as a triangle.)
+    const unknot = (start) => {
+      let p = start;
+      do {
+        const a = p.prev, b = p.next.next;
+        if (!same(a, b) && crosses(a, p, p.next, b) && insideAt(a, b) && insideAt(b, a)) { tris.push([a.i, p.i, b.i]); drop(p); drop(p.next); p = start = b; }
+        p = p.next;
+      } while (p !== start);
+      return tidy(p);
+    };
+    // (A line from one corner to another that the loop can be cut in two along: inside it at both ends, and through no edge of it.)
+    const diagonal = (a, b) => {
+      if (a.next.i === b.i || a.prev.i === b.i) return false;
+      // (Not along an edge the loop has already, from any corner the same as either end.)
+      let p = a;
+      do { if ((p.i === a.i && (p.next.i === b.i || p.prev.i === b.i)) || (p.i === b.i && (p.next.i === a.i || p.prev.i === a.i))) return false; p = p.next; } while (p !== a);
+      do { if (p.i !== a.i && p.next.i !== a.i && p.i !== b.i && p.next.i !== b.i && crosses(p, p.next, a, b)) return false; p = p.next; } while (p !== a);
+      let inside = false, q = a;
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      do { if ((q.y > my) !== (q.next.y > my) && q.next.y !== q.y && mx < (q.next.x - q.x) * (my - q.y) / (q.next.y - q.y) + q.x) inside = !inside; q = q.next; } while (q !== a);
+      return insideAt(a, b) && insideAt(b, a) && inside && (turn(a.prev, a, b.prev) !== 0 || turn(a, b.prev, b) !== 0);
+    };
+    const split = (a, b) => {
+      const a2 = { ...a }, b2 = { ...b }, an = a.next, bp = b.prev;
+      a.next = b; b.prev = a; a2.next = an; an.prev = a2; b2.next = a2; a2.prev = b2; bp.next = b2; b2.prev = bp;
+      return b2;
+    };
+    const clip = (ear, pass = 0) => {
+      if (!ear) return;
+      let stop = ear;
+      while (ear.prev !== ear.next) {
+        const prev = ear.prev, next = ear.next;
+        if (isEar(ear)) { tris.push([prev.i, ear.i, next.i]); drop(ear); ear = next.next; stop = next.next; continue; }
+        ear = next;
+        if (ear !== stop) continue;
+        if (pass === 0) clip(tidy(ear), 1);
+        else if (pass === 1) clip(unknot(tidy(ear)), 2);
+        else {
+          // (Still no ear: cut the loop in two along a line inside it, and take the ears off each.)
+          let a = ear;
+          do {
+            for (let b = a.next.next; b !== a.prev; b = b.next) {
+              if (a.i !== b.i && diagonal(a, b)) { const c = split(a, b); clip(tidy(a.next === a ? a : a), 0); clip(tidy(c), 0); return; }
+            }
+            a = a.next;
+          } while (a !== ear);
+        }
+        break;
+      }
+    };
+    clip(tidy(ring));
+    return tris;
+  }
+  /* A solid's skin: each of its planes in triangles, turned out - by its
+   * winding where it is wound so, else away from its middle (the mean of
+   * its corners, which is inside it however it is shaped). */
+  function skinOf(solid, out) {
+    const V = solid.verts, mid = times(V.reduce(add, [0, 0, 0]), 1 / V.length);
+    for (const f of solid.faces) {
+      const world = f.idx.map((i) => V[i]);
+      if (world.length < 3) continue;
+      let n = solid.wound ? newell(world) : unit(cross(sub(world[1], world[0]), sub(world[2], world[1])));
+      if (!solid.wound && dot(n, sub(times(world.reduce(add, [0, 0, 0]), 1 / world.length), mid)) < 0) n = times(n, -1);
+      // (A plane with holes, or not convex, cut by its ears - anticlockwise across it, so already facing out, even a triangle of no size; one that is convex, from a corner, turned out.)
+      if (f.holes?.length || f.concave) {
+        const { u, v } = planeOf(n), at = {};
+        for (const i of [...f.idx, ...(f.holes || []).flat()]) at[i] = [dot(V[i], u), dot(V[i], v)];
+        for (const [a, b, c] of earsOf(f.idx, f.holes || [], at)) out.push([V[a], V[b], V[c]]);
+      } else for (let k = 1; k + 1 < f.idx.length; k++) out.push(facingOut([V[f.idx[0]], V[f.idx[k]], V[f.idx[k + 1]]], n));
+    }
+    return out;
+  }
+  // (A triangle turned, if it must be, to face the way `way` goes.)
+  const facingOut = (t, way) => (dot(cross(sub(t[1], t[0]), sub(t[2], t[0])), way) >= 0 ? t : [t[0], t[2], t[1]]);
+  function ballSkin(c, r, out, [m, k] = PRINT.ball) {
+    const at = (i, j) => { const e = -Math.PI / 2 + Math.PI * j / k, a = 2 * Math.PI * i / m; return add(c, [r * Math.cos(e) * Math.cos(a), r * Math.sin(e), r * Math.cos(e) * Math.sin(a)]); };
+    for (let j = 0; j < k; j++) for (let i = 0; i < m; i++) {
+      const p = at(i, j), q = at(i + 1, j), s = at(i + 1, j + 1), t = at(i, j + 1);
+      if (j > 0) out.push([p, s, q]);
+      if (j < k - 1) out.push([p, t, s]);
+    }
+    return out;
+  }
+  // (A rod from one point to another, `r` thick, closed at both ends.)
+  function rodSkin(a, b, r, out, m = 16) {
+    const d = unit(sub(b, a)), u = unit(cross(d, Math.abs(d[1]) > 0.95 ? [1, 0, 0] : [0, 1, 0])), v = cross(d, u), ring = (o) => Array.from({ length: m }, (_, i) => add(o, add(times(u, r * Math.cos(2 * Math.PI * i / m)), times(v, r * Math.sin(2 * Math.PI * i / m)))));
+    const A = ring(a), B = ring(b);
+    for (let i = 0; i < m; i++) {
+      const j = (i + 1) % m, side = sub(add(A[i], A[j]), times(a, 2));
+      out.push(facingOut([A[i], B[j], A[j]], side), facingOut([A[i], B[i], B[j]], side), facingOut([a, A[j], A[i]], times(d, -1)), facingOut([b, B[i], B[j]], d));
+    }
+    return out;
+  }
+  // (A leaf or a petal made a plate `t` thick: its face, the same behind it, and its edge between.)
+  function plateSkin(world, n, t, out) {
+    const c = times(world.reduce(add, [0, 0, 0]), 1 / world.length), up = world.map((p) => add(p, times(n, t / 2))), dn = world.map((p) => add(p, times(n, -t / 2))), cu = add(c, times(n, t / 2)), cd = add(c, times(n, -t / 2));
+    for (let i = 0; i < world.length; i++) {
+      const j = (i + 1) % world.length, edge = sub(times(add(world[i], world[j]), 0.5), c);
+      out.push(facingOut([cu, up[i], up[j]], n), facingOut([cd, dn[i], dn[j]], times(n, -1)), facingOut([up[i], dn[i], dn[j]], edge), facingOut([up[i], dn[j], up[j]], edge));
+    }
+    return out;
+  }
+  /* A character's skin: its distance from its domes found at the corners of
+   * little cubes round it; in each cube the surface passes through, one
+   * point, where the edges it crosses are crossed, on average; and across
+   * each edge the surface crosses, the four cubes round that edge joined
+   * by their points - a square in two triangles, turned from the end of
+   * the edge that is inside toward the end that is out. Closed, as the
+   * surface is closed in the cubes round it. */
+  function fieldSkin(f, lo, hi, cell, out) {
+    const nx = Math.max(2, Math.ceil((hi[0] - lo[0]) / cell)), ny = Math.max(2, Math.ceil((hi[1] - lo[1]) / cell)), nz = Math.max(2, Math.ceil((hi[2] - lo[2]) / cell));
+    const sx = (hi[0] - lo[0]) / nx, sy = (hi[1] - lo[1]) / ny, sz = (hi[2] - lo[2]) / nz, X = nx + 1, Y = ny + 1, g = new Float64Array(X * Y * (nz + 1));
+    const id = (i, j, k) => (k * Y + j) * X + i;
+    for (let k = 0; k <= nz; k++) for (let j = 0; j <= ny; j++) for (let i = 0; i <= nx; i++) g[id(i, j, k)] = f(lo[0] + i * sx, lo[1] + j * sy, lo[2] + k * sz);
+    // Each cube's point, where the surface crosses it.
+    const at = new Map(), EDGES = [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]];
+    const point = (i, j, k) => {
+      const key = (k * ny + j) * nx + i;
+      if (at.has(key)) return at.get(key);
+      const c = [0, 1, 2, 3, 4, 5, 6, 7].map((q) => [i + (q & 1), j + ((q >> 1) & 1), k + ((q >> 2) & 1)]), v = c.map(([a, b, d]) => g[id(a, b, d)]);
+      let x = 0, y = 0, z = 0, n = 0;
+      for (const [a, b] of EDGES) {
+        if ((v[a] < 0) === (v[b] < 0)) continue;
+        const t = v[a] / (v[a] - v[b]);
+        x += c[a][0] + (c[b][0] - c[a][0]) * t; y += c[a][1] + (c[b][1] - c[a][1]) * t; z += c[a][2] + (c[b][2] - c[a][2]) * t; n++;
+      }
+      const p = [lo[0] + x / n * sx, lo[1] + y / n * sy, lo[2] + z / n * sz];
+      at.set(key, p);
+      return p;
+    };
+    // Each edge the surface crosses: the four cubes round it, in order round it, as a square.
+    for (let k = 1; k < nz; k++) for (let j = 1; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const a = g[id(i, j, k)], b = g[id(i + 1, j, k)];
+      if ((a < 0) === (b < 0)) continue;
+      const q = [point(i, j - 1, k - 1), point(i, j, k - 1), point(i, j, k), point(i, j - 1, k)];
+      lay(q, a < 0 ? [1, 0, 0] : [-1, 0, 0]);
+    }
+    for (let k = 1; k < nz; k++) for (let j = 0; j < ny; j++) for (let i = 1; i < nx; i++) {
+      const a = g[id(i, j, k)], b = g[id(i, j + 1, k)];
+      if ((a < 0) === (b < 0)) continue;
+      const q = [point(i - 1, j, k - 1), point(i, j, k - 1), point(i, j, k), point(i - 1, j, k)];
+      lay(q, a < 0 ? [0, 1, 0] : [0, -1, 0]);
+    }
+    for (let k = 0; k < nz; k++) for (let j = 1; j < ny; j++) for (let i = 1; i < nx; i++) {
+      const a = g[id(i, j, k)], b = g[id(i, j, k + 1)];
+      if ((a < 0) === (b < 0)) continue;
+      const q = [point(i - 1, j - 1, k), point(i, j - 1, k), point(i, j, k), point(i - 1, j, k)];
+      lay(q, a < 0 ? [0, 0, 1] : [0, 0, -1]);
+    }
+    // (Turned to face the way the edge runs out of it; split across whichever diagonal is shorter.)
+    function lay([p0, p1, p2, p3], way) {
+      const d02 = Math.hypot(...sub(p2, p0)), d13 = Math.hypot(...sub(p3, p1));
+      const [t1, t2] = d02 <= d13 ? [[p0, p1, p2], [p0, p2, p3]] : [[p0, p1, p3], [p1, p2, p3]];
+      const turn = dot(cross(sub(p1, p0), sub(p2, p0)), way) + dot(cross(sub(p2, p0), sub(p3, p0)), way) >= 0;
+      out.push(turn ? t1 : [t1[0], t1[2], t1[1]], turn ? t2 : [t2[0], t2[2], t2[1]]);
+    }
+    return out;
+  }
+  function characterSkin(P, out) {
+    const D = charWorld(P), A = charFlat(D), n = D.length, idx = Int16Array.from({ length: n }, (_, i) => i);
+    const lo = [0, 1, 2].map((a) => Math.min(...D.map((d) => d.C[a] - d.reach)) - PRINT.cell * 2), hi = [0, 1, 2].map((a) => Math.max(...D.map((d) => d.C[a] + d.reach)) + PRINT.cell * 2);
+    lo[1] = Math.max(lo[1], P.low - PRINT.cell * 0.5);
+    // (Fine enough for its smallest dome - a pupil - and no finer than a printer can show.)
+    const small = Math.min(...D.filter((d) => !d.cut).map((d) => Math.min(...d.r))), cell = Math.max(Math.min(PRINT.cell, small / 1.2), Math.max(...hi.map((h, a) => h - lo[a])) / PRINT.cells);
+    // (Cut level where it stands, so it stands flat.)
+    return fieldSkin((x, y, z) => Math.max(charSdf(A, idx, n, x, y, z), P.low - y), lo, hi, cell, out);
+  }
+  /* A solid round again, finer than it is painted: its own shape made
+   * with more sides, stretched, turned and set where it stands as it is. */
+  function roundAgain(P) {
+    const e = P.size, st = P.form?.stretch;
+    const fine = P.kind === "cylinder" ? prismSolid(e / 2, e, PRINT.round) : P.kind === "cone" ? pyramidSolid(e / 2, PRINT.round, e * 1.15) : null;
+    if (P.kind === "dome") {
+      const [m, k] = PRINT.dome, verts = [], faces = [];
+      for (let j = 0; j < k; j++) for (let i = 0; i < m; i++) { const el = j / k * Math.PI / 2, a = i / m * 2 * Math.PI; verts.push([e * Math.cos(el) * Math.cos(a), e * Math.sin(el), e * Math.cos(el) * Math.sin(a)]); }
+      verts.push([0, e, 0]);
+      faces.push({ idx: Array.from({ length: m }, (_, i) => i) });
+      for (let j = 0; j < k - 1; j++) for (let i = 0; i < m; i++) faces.push({ idx: [j * m + i, j * m + (i + 1) % m, (j + 1) * m + (i + 1) % m, (j + 1) * m + i] });
+      for (let i = 0; i < m; i++) faces.push({ idx: [(k - 1) * m + i, (k - 1) * m + (i + 1) % m, k * m] });
+      return place({ verts, faces, low: 0, high: e }, P.yaw || 0, P.placed.middle);
+    }
+    return fine ? place(stretched(fine, st), P.yaw || 0, P.placed.middle) : P.placed;
+  }
+  // Each thing standing, as its skins: { name, tris } - a thing of parts, a skin for each.
+  function printSkins(S) {
+    const out = [];
+    for (const P of alive(S)) {
+      const tris = [];
+      if (P.kind === "character") characterSkin(P, tris);
+      else if (P.kind === "sphere") ballSkin(P.middle, P.radius, tris);
+      else if (P.kind === "letter" && P.glyph) skinOf(P.glyph.placed, tris);
+      else if (P.parts) {
+        for (const q of P.parts) {
+          if (q.kind === "sphere") ballSkin(q.middle, q.radius, tris, [24, 12]);
+          else if (q.kind === "rod") rodSkin(q.a, q.b, Math.max(q.r, PRINT.stem), tris);
+          else if (q.kind === "blade") plateSkin(q.world, q.normal, PRINT.leaf, tris);
+          else if (q.placed?.faces) skinOf(q.placed, tris);
+        }
+      } else if (P.placed?.faces) skinOf(ROUND.has(P.kind) ? roundAgain(P) : P.placed, tris);
+      if (tris.length) out.push({ name: P.name, kind: P.kind, tris });
+    }
+    return out;
+  }
+  /* The painting as one STL file: its things, and the floor they stand on as
+   * a slab under them all; in millimetres, upright the printer's way. */
+  function stl(S, options = {}) {
+    const skins = printSkins(S);
+    if (!skins.length) return null;
+    const all = skins.flatMap((s) => s.tris), lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (const t of all) for (const p of t) for (let a = 0; a < 3; a++) { if (p[a] < lo[a]) lo[a] = p[a]; if (p[a] > hi[a]) hi[a] = p[a]; }
+    if (options.base !== false) {
+      const m = PRINT.margin, x0 = lo[0] - m, x1 = hi[0] + m, z0 = lo[2] - m, z1 = hi[2] + m, y0 = Math.min(0, lo[1]) - PRINT.slab, y1 = Math.min(0, lo[1]) + 1e-4;
+      const slab = { verts: [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], [x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1]],
+        faces: [[0, 1, 2, 3], [4, 7, 6, 5], [0, 4, 5, 1], [1, 5, 6, 2], [2, 6, 7, 3], [3, 7, 4, 0]].map((idx) => ({ idx })) };
+      const base = skinOf(slab, []);
+      skins.push({ name: "the floor", kind: "floor", tris: base });
+      all.push(...base);
+      lo[0] = x0; lo[1] = y0; lo[2] = z0; hi[0] = Math.max(hi[0], x1); hi[2] = Math.max(hi[2], z1);
+    }
+    // (Across stays across, back is how far in, up is up - mirrored, so each triangle is turned the other way round to stay facing out.)
+    const size = [hi[0] - lo[0], hi[2] - lo[2], hi[1] - lo[1]], mm = Math.min(PRINT.most, PRINT.bed / Math.max(size[0], size[1], size[2], 1e-6)), cx = (lo[0] + hi[0]) / 2, cz = (lo[2] + hi[2]) / 2;
+    const to = (p) => [(p[0] - cx) * mm, (p[2] - cz) * mm, (p[1] - lo[1]) * mm];
+    const buf = new ArrayBuffer(84 + all.length * 50), view = new DataView(buf);
+    const head = ("hexfield " + (S.name || "painting")).slice(0, 79);
+    for (let i = 0; i < head.length; i++) view.setUint8(i, head.charCodeAt(i) & 0x7f);
+    view.setUint32(80, all.length, true);
+    let o = 84;
+    for (const t of all) {
+      const a = to(t[0]), b = to(t[2]), c = to(t[1]), n = unit(cross(sub(b, a), sub(c, a)));
+      for (const v of [n, a, b, c]) for (const x of v) { view.setFloat32(o, Number.isFinite(x) ? x : 0, true); o += 4; }
+      view.setUint16(o, 0, true); o += 2;
+    }
+    return { buffer: buf, triangles: all.length, size: size.map((v) => +(v * mm).toFixed(1)), mm: +mm.toFixed(2), things: skins.map((s) => s.name), name: S.name };
+  }
+
   global.HexfieldStudy = { KINDS, SOLIDS, NAMES, ROOM, BUILD, MEDIA, MEDIUMS, LOOK, LEARN, RULES, VIEWS, PLANTS, COMPOSITIONS, HARMONIES, make, premap, camera, project, cubeSolid, tetraSolid, octaSolid, pyramidSolid, prismSolid, place,
-    rulesOf, freedomsOf, credit, learned, seedKind, memory, ask, askText, suggestions, stripes };
+    rulesOf, freedomsOf, credit, learned, seedKind, memory, ask, askText, suggestions, stripes, stl, printSkins };
 })(typeof globalThis !== "undefined" ? globalThis : this);

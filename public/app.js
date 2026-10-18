@@ -51530,7 +51530,45 @@ $("export").addEventListener("click", async () => {
   }
 });
 
-const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".split("");
+/* EXPORT STL: the painting's things as a file for a 3D printer. The study
+ * already holds every solid it paints, so the file is made from those, not
+ * from the picture - what stands in the painting now, on a slab, in
+ * millimetres. */
+let stlInFlight = false;
+async function saveStl() {
+  if (stlInFlight) return;
+  const study = strokePainter.plan?.study, Study = globalThis.HexfieldStudy;
+  stlInFlight = true;
+  const button = $("stl");
+  if (button) button.disabled = true;
+  try {
+    setExportStatus("building the 3D file…");
+    await new Promise((r) => setTimeout(r, 16));
+    const made = study && Study?.stl ? Study.stl(study) : null;
+    if (!made) throw new Error("nothing-standing");
+    const blob = new Blob([made.buffer], { type: "model/stl" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    // (The study's name can be long - "a sphere, two truncated pyramids, ..." - so it is cut between words.)
+    const full = (seedText() || study.name || "painting").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const slug = full.length > 40 ? full.slice(0, 41).replace(/-[^-]*$/, "").replace(/-(a|an|the|and)$/, "") : full;
+    a.href = url;
+    a.download = `hexfield-${slug}.stl`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    view.dataset.stlTriangles = String(made.triangles);
+    setExportStatus(`saved the 3D file · ${made.triangles.toLocaleString()} triangles · ${made.size.join(" × ")} mm`);
+  } catch (error) {
+    console.warn("STL export failed", error);
+    setExportStatus(error?.message === "nothing-standing" ? "nothing standing yet - try again in a moment" : "3D export failed - try again");
+  } finally {
+    stlInFlight = false;
+    if (button) button.disabled = false;
+  }
+}
+$("stl")?.addEventListener("click", saveStl);
+
+const LETTERS ="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".split("");
 let selectedShape = null;
 
 function analyzeCanvasDensity(ctx, w, h) {
@@ -51762,6 +51800,8 @@ function mountShopEssentials() {
   if (exportBtn) host.appendChild(exportBtn);
   const timelapseBtn = document.getElementById("timelapse");
   if (timelapseBtn) host.appendChild(timelapseBtn);
+  const stlBtn = document.getElementById("stl");
+  if (stlBtn) host.appendChild(stlBtn);
 
   /* MUSEUM survived in the source but not on screen for the same reason
    * EXPORT didn't: it sat in the blacked-out sidebar row alongside TASTE
