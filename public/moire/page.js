@@ -1,8 +1,8 @@
 /* The homepage: one painting at a time, and nothing to press. What it paints
  * next comes from what it has learned (learn.js): it starts from the archive
  * shipped with the site (moire/archive.json) and goes on learning in this
- * browser - every painting judged by its own eye before a stroke is laid, and
- * kept if it is the best of its kind so far. Each painting's moiré is read and
+ * browser - every painting it thinks of judged by its own eye before a stroke
+ * is laid, and kept if it is the best of its kind so far. Each painting's moiré is read and
  * painted stroke by stroke, big to small, kept to its surface (a little paint
  * straying past the edge), then held, then the next. (MOIRE_HYPERBOLIC_358.md) */
 (function () {
@@ -28,12 +28,26 @@
   }
   let resized = false, held = null;
   window.addEventListener("resize", () => { resized = true; });
+  /* What it paints: it thinks of up to five, each judged small (as its archive
+   * was learned), learns from every one of them - new tries included - and
+   * paints the first its eye finds worth painting, or else the best of them. */
+  function choose(W, H) {
+    const w = 320, h = Math.max(120, Math.round(320 * H / W));
+    let best = null, kept = false;
+    for (let t = 0; t < 5; t++) {
+      const genes = L.next(arc, rng), judged = L.evaluate(genes, w, h);
+      kept = L.offer(arc, genes, judged) || kept;
+      if (!best || judged.score > best.judged.score) best = { genes, judged };
+      if (judged.score >= 0.6) break;
+    }
+    if (kept) save();
+    return best;
+  }
   function next() {
     clearTimeout(held);
     resized = false;
-    const [W, H] = fit(), genes = L.next(arc, rng), scene = L.decode(genes);
-    const R = M.raw(scene, W, H), read = M.reading(R, L.sigmaFor(scene, W, H)), judged = L.judge(R, read, scene);
-    if (L.offer(arc, genes, judged)) save();
+    const [W, H] = fit(), { genes, judged } = choose(W, H), scene = L.decode(genes);
+    const R = M.raw(scene, W, H), read = M.reading(R, L.sigmaFor(scene, W, H));
     canvas.dataset.painting = [scene.surface, scene.kind, judged.key, judged.score.toFixed(3)].join(" | ");
     const seed = Math.floor(rng() * 1e9), list = M.strokes(R, read, seed, scene.style), pal = M.palette(scene.style);
     // (The ground painted once; the strokes on a layer of their own, kept to the surface by its mask as they land.)
