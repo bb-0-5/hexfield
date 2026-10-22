@@ -23,8 +23,8 @@
   const ctx = canvas.getContext("2d");
   // (Asked for less motion: each stage appears whole instead of stroke by stroke, and rests longer.)
   const still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-  // (Genome version 4, build 363: what an older version learned is for other genomes, and is let go.)
-  const PER_FRAME = still ? Infinity : 45, MAX_PIXELS = 1.6e6, VERSION = 4, KEY = "hexfield.moire.archive.v" + VERSION;
+  // (Genome version 5, build 364: what an older version learned is for other genomes, and is let go.)
+  const PER_FRAME = still ? Infinity : 45, MAX_PIXELS = 1.6e6, VERSION = 5, KEY = "hexfield.moire.archive.v" + VERSION;
   try { for (let v = 1; v < VERSION; v++) localStorage.removeItem("hexfield.moire.archive.v" + v); } catch { /* no storage here */ }
   // How long it rests on a finished stage, how many glazes a composition gets before a new one, and how good an idea must be to be painted.
   const REST_MS = still ? 20000 : 3500, GLAZES = 6, WORTH = 0.6;
@@ -105,7 +105,7 @@
   }
   // Every other new composition, when there is one, is the best shared find this eye has kept; the rest are its own ideas.
   const choose = (W, H) => (compositions++ % 2 === 1 && keepers.length ? keepers.shift() : think(() => L.next(arc, rng), W, H, true));
-  const label = (scene, judged) => { canvas.dataset.painting = [scene.surface, scene.kind, scene.mode, judged.key, judged.score.toFixed(3), "glaze " + (current?.glazes ?? 0), current?.shared ? "shared" : "own"].join(" | "); };
+  const label = (scene, judged) => { canvas.dataset.painting = [scene.form, scene.plan.stack.map((p) => p.key + (p.flip ? "↓" : "")).join("/"), scene.kind, scene.mode, judged.key, judged.score.toFixed(3), "glaze " + (current?.glazes ?? 0), current?.shared ? "shared" : "own"].join(" | "); };
   // A new composition: the ground painted once, the strokes on a layer of their own kept to the surface by its mask, the old painting fading out over it.
   function compose(W, H) {
     const pick = choose(W, H), scene = L.decode(pick.genes), sigma = L.sigmaFor(scene, W, H);

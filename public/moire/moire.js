@@ -97,6 +97,66 @@
     },
   };
 
+  /* ── Structures: pillars of stacked pieces, arches between them ────────
+   * A piece is one of the surfaces, turned to show the side its own view
+   * shows (the bell and the saddle from inside), upright or upside down,
+   * scaled to its pillar's width at its storey and set on the piece below it
+   * with a little gap. The plane it carries is turned and slid (an isometry of
+   * the plane), so each storey shows its own part of the same gratings: one
+   * glaze over the whole structure. Pillars stand side by side, `span` times
+   * the width of their tops apart (and never so close their widest storeys
+   * touch), and an arch - the inside-out disk - springs from each two
+   * neighbouring tops, its feet solved to be just as wide as the pieces they
+   * stand on. */
+  const FACING = { bell: Math.PI, saddle: Math.PI }, ARCH_OUT = 3.1;
+  // The plane turned by `turn` about its centre, then slid `slide` toward `dir`.
+  function isometry(turn, slide, dir) {
+    const c = Math.cos(turn), s = Math.sin(turn), to = slide > 1e-6 ? slideTo(fromPolar(slide, dir)) : null;
+    return (P) => { const Q = [P[0] * c - P[1] * s, P[0] * s + P[1] * c, P[2]]; return to ? to(Q) : Q; };
+  }
+  // One piece: a surface turned (and flipped), scaled to `width`, its lowest point at height `base`, centred on `x`.
+  function piece(key, { flip = false, width = 1, x = 0, base = 0, u = null, iso = null } = {}) {
+    const S = SURFACES[key], [u0, u1] = u || S.u, [v0, v1] = S.v, f = FACING[key] || 0, cf = Math.cos(f), sf = Math.sin(f), fl = flip ? -1 : 1;
+    const turn = (p) => [fl * (p[0] * cf + p[2] * sf), fl * p[1], -p[0] * sf + p[2] * cf];
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (let i = 0; i <= 24; i++) for (let j = 0; j <= 24; j++) {
+      const p = turn(S.pos(u0 + (u1 - u0) * i / 24, v0 + (v1 - v0) * j / 24));
+      x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]);
+    }
+    const k = width / (x1 - x0), tx = x - (x0 + x1) / 2 * k, ty = base - y0 * k;
+    return {
+      key, flip, flat: S.flat, u: [u0, u1], v: [v0, v1], x, base, width, height: (y1 - y0) * k,
+      pos: (a, b) => { const p = turn(S.pos(a, b)); return [p[0] * k + tx, p[1] * k + ty, p[2] * k]; },
+      plane: iso ? (a, b) => iso(S.plane(a, b)) : S.plane,
+    };
+  }
+  /* A structure from its plan - { pillars, stack: [{ key, flip }, ...] from the
+   * ground up, taper, span, gap, slide, turn, vary } - as its pieces (pillar by
+   * pillar from the ground up, then the arches), the middle of its box, and its size. */
+  function structure(plan) {
+    const pieces = [], P = plan.pillars, widths = plan.stack.map((_, k) => Math.pow(plan.taper, k)), top = widths[widths.length - 1];
+    const spacing = Math.max(plan.span * top, Math.max(...widths) + 2 * plan.gap), span = spacing / top;
+    let height = 0;
+    for (let p = 0; p < P; p++) {
+      let base = 0;
+      plan.stack.forEach(({ key, flip }, k) => {
+        const iso = isometry(k * plan.turn + p * plan.vary, k * plan.slide, k * GOLDEN_TURN);
+        const pc = piece(key, { flip, width: widths[k], x: (p - (P - 1) / 2) * spacing, base, iso });
+        pieces.push(pc);
+        base += pc.height + plan.gap;
+      });
+      height = base;
+    }
+    // (The arch's feet: centred span·top apart and top wide - its inner edge where that puts it, between the rim at infinity and its outer edge.)
+    const sIn = ARCH_OUT * (span - 1) / (span + 1), k = plan.stack.length;
+    for (let p = 0; p + 1 < P; p++)
+      pieces.push(piece("arch", { width: spacing * 2 * ARCH_OUT / (sIn + ARCH_OUT), x: (p + 0.5 - (P - 1) / 2) * spacing, base: height, u: [sIn, ARCH_OUT],
+        iso: isometry(k * plan.turn + p * plan.vary + 0.5, k * plan.slide, k * GOLDEN_TURN) }));
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const pc of pieces) { x0 = Math.min(x0, pc.x - pc.width / 2); x1 = Math.max(x1, pc.x + pc.width / 2); y0 = Math.min(y0, pc.base); y1 = Math.max(y1, pc.base + pc.height); }
+    return { pieces, centre: [(x0 + x1) / 2, (y0 + y1) / 2, 0], size: Math.max(x1 - x0, y1 - y0) };
+  }
+
   /* ── Gratings, in the plane's own geometry ─────────────────────────────
    * horocycles: the rings around one point at infinity, every `every` apart
    * (the plane's plane waves); several, toward points turned from each other,
@@ -190,18 +250,17 @@
    * the picture, `fill` of its width or of its height (whichever is tighter) -
    * never cut by the frame. */
   const FRAME = { fill: 0.84 }, MAX_FILL = 0.94;
-  function rasterize(surface, view, W, H, frame = FRAME, NU = 180, NV = 180) {
-    const cam = camera(view, W, H), n = W * H;
-    const depth = new Float32Array(n).fill(Infinity), U = new Float32Array(n), V = new Float32Array(n), shade = new Float32Array(n), cover = new Uint8Array(n);
+  // One piece's mesh, seen by the camera: where each corner lands, its depth, its parameters and the light on it.
+  function mesh(S, cam, W, H, NU, NV) {
     const nu = NU + 1, nv = NV + 1, m = nu * nv;
     const sx = new Float32Array(m), sy = new Float32Array(m), iz = new Float32Array(m), pu = new Float32Array(m), pv = new Float32Array(m), sh = new Float32Array(m);
-    const [u0, u1] = surface.u, [v0, v1] = surface.v, du = (u1 - u0) / NU, dv = (v1 - v0) / NV;
+    const [u0, u1] = S.u, [v0, v1] = S.v, du = (u1 - u0) / NU, dv = (v1 - v0) / NV;
     for (let i = 0; i < nu; i++) for (let j = 0; j < nv; j++) {
-      const k = i * nv + j, u = u0 + i * du, v = v0 + j * dv, p = surface.pos(u, v);
+      const k = i * nv + j, u = u0 + i * du, v = v0 + j * dv, p = S.pos(u, v);
       // (Its slope both ways, for which way it faces: the light on it, from either side.)
-      const e = 1e-4, a = sub(surface.pos(Math.min(u + e, u1), v), surface.pos(Math.max(u - e, u0), v)), b = sub(surface.pos(u, Math.min(v + e, v1)), surface.pos(u, Math.max(v - e, v0)));
+      const e = 1e-4, a = sub(S.pos(Math.min(u + e, u1), v), S.pos(Math.max(u - e, u0), v)), b = sub(S.pos(u, Math.min(v + e, v1)), S.pos(u, Math.max(v - e, v0)));
       let nrm = cross(a, b);
-      if (!(Math.hypot(nrm[0], nrm[1], nrm[2]) > 1e-12)) nrm = surface.flat ? [0, 0, 1] : [0, 1, 0];
+      if (!(Math.hypot(nrm[0], nrm[1], nrm[2]) > 1e-12)) nrm = S.flat ? [0, 0, 1] : [0, 1, 0];
       nrm = unit(nrm);
       const d = sub(p, cam.eye), zc = dot(d, cam.fwd);
       sx[k] = W / 2 + cam.f * dot(d, cam.right) / zc;
@@ -210,38 +269,51 @@
       pu[k] = u; pv[k] = v;
       sh[k] = 0.3 + 0.7 * Math.abs(dot(nrm, LIGHT));
     }
+    return { NU, NV, nv, m, sx, sy, iz, pu, pv, sh };
+  }
+  /* A surface, or a structure's pieces, drawn into the same buffers (nearest
+   * wins): for each pixel which piece is there, its parameters and its light. */
+  function rasterize(pieces, view, W, H, frame = FRAME, NU = 180, NV = 180) {
+    const list = Array.isArray(pieces) ? pieces : [pieces], cam = camera(view, W, H), n = W * H;
+    const depth = new Float32Array(n).fill(Infinity), U = new Float32Array(n), V = new Float32Array(n), shade = new Float32Array(n), cover = new Uint8Array(n), which = new Uint8Array(n);
+    // (Each piece's mesh as fine as its share of the picture needs.)
+    const per = Math.sqrt(list.length), meshes = list.map((S) => mesh(S, cam, W, H, Math.max(24, Math.round(NU / per)), Math.max(24, Math.round(NV / per))));
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-    for (let k = 0; k < m; k++) if (iz[k]) { x0 = Math.min(x0, sx[k]); x1 = Math.max(x1, sx[k]); y0 = Math.min(y0, sy[k]); y1 = Math.max(y1, sy[k]); }
+    for (const g of meshes) for (let k = 0; k < g.m; k++) if (g.iz[k]) { x0 = Math.min(x0, g.sx[k]); x1 = Math.max(x1, g.sx[k]); y0 = Math.min(y0, g.sy[k]); y1 = Math.max(y1, g.sy[k]); }
     // (Every point of the surface lands inside the box round its mesh's corners, so that box fitted and centred is the silhouette fitted and centred.)
     const fill = Math.min(frame.fill ?? FRAME.fill, MAX_FILL), k0 = fill * Math.min(W / (x1 - x0), H / (y1 - y0)), cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-    for (let k = 0; k < m; k++) { sx[k] = W / 2 + (sx[k] - cx) * k0; sy[k] = H / 2 + (sy[k] - cy) * k0; }
-    const tri = (a, b, c) => {
-      if (!iz[a] || !iz[b] || !iz[c]) return;
-      const area = (sx[b] - sx[a]) * (sy[c] - sy[a]) - (sy[b] - sy[a]) * (sx[c] - sx[a]);
-      if (Math.abs(area) < 1e-9) return;
-      const bx0 = Math.max(0, Math.floor(Math.min(sx[a], sx[b], sx[c]))), bx1 = Math.min(W - 1, Math.ceil(Math.max(sx[a], sx[b], sx[c])));
-      const by0 = Math.max(0, Math.floor(Math.min(sy[a], sy[b], sy[c]))), by1 = Math.min(H - 1, Math.ceil(Math.max(sy[a], sy[b], sy[c])));
-      for (let y = by0; y <= by1; y++) for (let x = bx0; x <= bx1; x++) {
-        const px = x + 0.5, py = y + 0.5;
-        const wa = ((sx[c] - sx[b]) * (py - sy[b]) - (sy[c] - sy[b]) * (px - sx[b])) / area;
-        const wb = ((sx[a] - sx[c]) * (py - sy[c]) - (sy[a] - sy[c]) * (px - sx[c])) / area;
-        const wc = 1 - wa - wb;
-        if (wa < -1e-6 || wb < -1e-6 || wc < -1e-6) continue;
-        const q = wa * iz[a] + wb * iz[b] + wc * iz[c], z = 1 / q, o = y * W + x;
-        if (z >= depth[o]) continue;
-        depth[o] = z;
-        const ka = wa * iz[a] / q, kb = wb * iz[b] / q, kc = wc * iz[c] / q;
-        U[o] = ka * pu[a] + kb * pu[b] + kc * pu[c];
-        V[o] = ka * pv[a] + kb * pv[b] + kc * pv[c];
-        shade[o] = ka * sh[a] + kb * sh[b] + kc * sh[c];
-        cover[o] = 1;
+    meshes.forEach((g, index) => {
+      const { sx, sy, iz, pu, pv, sh, nv } = g;
+      for (let k = 0; k < g.m; k++) { sx[k] = W / 2 + (sx[k] - cx) * k0; sy[k] = H / 2 + (sy[k] - cy) * k0; }
+      const tri = (a, b, c) => {
+        if (!iz[a] || !iz[b] || !iz[c]) return;
+        const area = (sx[b] - sx[a]) * (sy[c] - sy[a]) - (sy[b] - sy[a]) * (sx[c] - sx[a]);
+        if (Math.abs(area) < 1e-9) return;
+        const bx0 = Math.max(0, Math.floor(Math.min(sx[a], sx[b], sx[c]))), bx1 = Math.min(W - 1, Math.ceil(Math.max(sx[a], sx[b], sx[c])));
+        const by0 = Math.max(0, Math.floor(Math.min(sy[a], sy[b], sy[c]))), by1 = Math.min(H - 1, Math.ceil(Math.max(sy[a], sy[b], sy[c])));
+        for (let y = by0; y <= by1; y++) for (let x = bx0; x <= bx1; x++) {
+          const px = x + 0.5, py = y + 0.5;
+          const wa = ((sx[c] - sx[b]) * (py - sy[b]) - (sy[c] - sy[b]) * (px - sx[b])) / area;
+          const wb = ((sx[a] - sx[c]) * (py - sy[c]) - (sy[a] - sy[c]) * (px - sx[c])) / area;
+          const wc = 1 - wa - wb;
+          if (wa < -1e-6 || wb < -1e-6 || wc < -1e-6) continue;
+          const q = wa * iz[a] + wb * iz[b] + wc * iz[c], z = 1 / q, o = y * W + x;
+          if (z >= depth[o]) continue;
+          depth[o] = z;
+          const ka = wa * iz[a] / q, kb = wb * iz[b] / q, kc = wc * iz[c] / q;
+          U[o] = ka * pu[a] + kb * pu[b] + kc * pu[c];
+          V[o] = ka * pv[a] + kb * pv[b] + kc * pv[c];
+          shade[o] = ka * sh[a] + kb * sh[b] + kc * sh[c];
+          cover[o] = 1;
+          which[o] = index;
+        }
+      };
+      for (let i = 0; i < g.NU; i++) for (let j = 0; j < g.NV; j++) {
+        const a = i * nv + j, b = (i + 1) * nv + j, c = (i + 1) * nv + j + 1, d = i * nv + j + 1;
+        tri(a, b, c); tri(a, c, d);
       }
-    };
-    for (let i = 0; i < NU; i++) for (let j = 0; j < NV; j++) {
-      const a = i * nv + j, b = (i + 1) * nv + j, c = (i + 1) * nv + j + 1, d = i * nv + j + 1;
-      tri(a, b, c); tri(a, c, d);
-    }
-    return { W, H, depth, U, V, shade, cover };
+    });
+    return { W, H, depth, U, V, shade, cover, piece: which };
   }
   /* ── Sims acting on each other ─────────────────────────────────────────
    * Each grating's beats move the other gratings' lines: where one crowds,
@@ -254,10 +326,11 @@
    * pushed, all over the picture (moving its lines across, swelling them, or
    * both, as the genome's mode says), how hard on average, and how much the
    * pushing changed the sims' own bands from what each makes alone. */
-  function interact(surface, view, frame, g, W, H, sigma, rounds = 3) {
+  function interact(pieces, view, frame, g, W, H, sigma, rounds = 3) {
+    const list = Array.isArray(pieces) ? pieces : [pieces];
     const k = Math.min(1, 200 / Math.max(W, H)), w = Math.max(32, Math.round(W * k)), h = Math.max(24, Math.round(H * k)), n = w * h, F = g.families.length;
-    const r = rasterize(surface, view, w, h, frame, 90, 90), P = new Array(n), cov = new Float32Array(n);
-    for (let o = 0; o < n; o++) if (r.cover[o]) { P[o] = surface.plane(r.U[o], r.V[o]); cov[o] = 1; }
+    const r = rasterize(list, view, w, h, frame, 90, 90), P = new Array(n), cov = new Float32Array(n);
+    for (let o = 0; o < n; o++) if (r.cover[o]) { P[o] = list[r.piece[o]].plane(r.U[o], r.V[o]); cov[o] = 1; }
     const sig = Math.max(1, sigma * k), bc = blur(cov, w, h, sig), shifts = g.families.map(() => new Float32Array(n)), ink = new Float32Array(n);
     let alone = null, last = null;
     for (let round = 0; round < rounds; round++) {
@@ -292,20 +365,30 @@
     const fx = Math.min(w - 1.001, Math.max(0, x)), fy = Math.min(h - 1.001, Math.max(0, y)), x0 = fx | 0, y0 = fy | 0, tx = fx - x0, ty = fy - y0, o = y0 * w + x0;
     return (field[o] * (1 - tx) + field[o + 1] * tx) * (1 - ty) + (field[o + w] * (1 - tx) + field[o + w + 1] * tx) * ty;
   }
-  // The raw moiré: ink at every covered pixel, from the plane point there - its gratings moved by each other first, if they act on each other.
-  function raw(genome, W, H, sigma = 6 * Math.min(W, H) / 390) {
+  /* What a genome stands in front of the camera: a structure's pieces, its
+   * camera aimed at the middle of it from `dist` times its size away - or one
+   * surface, as its own view sees it. */
+  function stage(genome) {
+    if (genome.plan) {
+      const st = structure(genome.plan), v = genome.view || {};
+      return { pieces: st.pieces, view: { target: st.centre, fov: 0.8, yaw: v.yaw ?? 0.3, pitch: v.pitch ?? -0.1, dist: st.size * (v.dist ?? 2.2) } };
+    }
     // (A flat map reaches as near its rim as the genome says: the nearer, the finer the plane crowds there.)
     const base = SURFACES[genome.surface], surface = genome.reach ? { ...base, u: [base.u[0], Math.min(base.u[1], genome.reach)] } : base;
-    const view = { ...surface.view, ...genome.view }, frame = { ...FRAME, ...genome.frame };
-    const r = rasterize(surface, view, W, H, frame), ink = new Float32Array(W * H);
-    const acting = genome.couple?.some((row) => row.some((c) => c)) ? interact(surface, view, frame, genome, W, H, sigma, genome.rounds || 3) : null;
+    return { pieces: [surface], view: { ...surface.view, ...genome.view } };
+  }
+  // The raw moiré: ink at every covered pixel, from the plane point there - its gratings moved by each other first, if they act on each other.
+  function raw(genome, W, H, sigma = 6 * Math.min(W, H) / 390) {
+    const { pieces, view } = stage(genome), frame = { ...FRAME, ...genome.frame };
+    const r = rasterize(pieces, view, W, H, frame), ink = new Float32Array(W * H);
+    const acting = genome.couple?.some((row) => row.some((c) => c)) ? interact(pieces, view, frame, genome, W, H, sigma, genome.rounds || 3) : null;
     const shifts = acting ? new Float32Array(genome.families.length) : null, sx = acting ? acting.w / W : 0, sy = acting ? acting.h / H : 0;
     for (let y = 0, o = 0; y < H; y++) for (let x = 0; x < W; x++, o++) {
       if (!r.cover[o]) continue;
       if (acting) for (let i = 0; i < shifts.length; i++) shifts[i] = sample(acting.shifts[i], acting.w, acting.h, (x + 0.5) * sx - 0.5, (y + 0.5) * sy - 0.5);
-      ink[o] = inkAt(surface.plane(r.U[o], r.V[o]), genome, shifts);
+      ink[o] = inkAt(pieces[r.piece[o]].plane(r.U[o], r.V[o]), genome, shifts);
     }
-    return { ...r, ink, acting };
+    return { ...r, ink, acting, pieces };
   }
 
   /* ── Reading the moiré ─────────────────────────────────────────────────
@@ -513,7 +596,7 @@
 
   global.HexfieldMoire = {
     PHI, IRRATIONAL, GOLDEN_TURN, SURFACES, FRAME, STYLE, mink, fromPolar, fromDisk, fromHalfPlane, fromKlein, slideTo, lineThrough,
-    horocycles, billiard, waves, geodesics, lineAt, inkAt, interact, camera, rasterize, raw, blur, beatAt, reading, read, palette, ramp,
+    horocycles, billiard, waves, geodesics, lineAt, inkAt, interact, camera, isometry, piece, structure, stage, rasterize, raw, blur, beatAt, reading, read, palette, ramp,
     strokes, groundStrokes, drawStroke, maskImage, canvasOf, paint, compose, rawImage, readImage, mulberry32,
     get GROUND() { return `rgb(${palette().ground.join(",")})`; },
   };

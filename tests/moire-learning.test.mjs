@@ -1,10 +1,12 @@
-/* Builds 359–363 — the hyperbolic moiré painter: its geometry is the
+/* Builds 359–364 — the hyperbolic moiré painter: its geometry is the
  * hyperbolic plane's (standing in space, or flat as one of its own maps), its
- * sims act on each other - moving and swelling each other's lines (and leave
- * each other alone when they are not coupled) - every silhouette is whole and
- * centred in the frame, its genomes always make a painting, a painting carried
- * on keeps its composition, and it learns: with the same number of paintings,
- * its best and what it paints next beat random tries by its own eye. */
+ * structures stand - pillars of stacked pieces apart, arches landing on their
+ * tops - its sims act on each other - moving and swelling each other's lines
+ * (and leave each other alone when they are not coupled) - every silhouette is
+ * whole and centred in the frame, its genomes always make a painting, a
+ * painting carried on keeps its composition, and it learns: with the same
+ * number of paintings, its best and what it paints next beat random tries by
+ * its own eye. */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 await import('../public/moire/moire.js');
@@ -72,52 +74,75 @@ for (const a of [0.3, 2.2, 4.9]) {
   }
 }
 
-// Every genome makes a painting: a surface it has, two or three sims acting on each other, sensible numbers; a change stays a genome.
+// Every genome makes a painting: a structure of at least two of its surfaces, two or three sims acting on each other, sensible numbers; a change stays a genome.
 {
   const rng = M.mulberry32(5);
   for (let i = 0; i < 200; i++) {
     const genes = L.randomGenes(rng), scene = L.decode(genes), child = L.mutate(genes, rng), F = scene.families.length;
-    assert.ok(M.SURFACES[scene.surface] && scene.kind.split('+').every((t) => L.TYPES.includes(t)));
+    const { plan } = scene, pieces = plan.pillars * plan.stack.length + plan.pillars - 1;
+    assert.ok(plan.pillars >= 1 && plan.pillars <= 3 && plan.stack.length >= 1 && plan.stack.length <= 4 && pieces >= 2, 'a structure of fewer than two pieces');
+    assert.ok(plan.stack.every((p) => M.SURFACES[p.key]) && scene.kind.split('+').every((t) => L.TYPES.includes(t)));
+    assert.equal(scene.form, L.FORMS[plan.pillars - 1] + '-' + (plan.stack.length <= 2 ? 'low' : 'tall'));
     assert.ok(F >= 2 && F <= 3 && scene.families.every((f) => f.type !== 'billiard' || f.normals.length > 0));
     assert.ok(scene.couple.length === F && scene.couple.every((row, a) => row.length === F && row[a] === 0));
     assert.ok(Math.max(...scene.couple.flat().map(Math.abs)) >= 1, 'sims that do not push each other hard anywhere');
     assert.ok(['shift', 'swell', 'both'].includes(scene.mode) && scene.rounds >= 3 && scene.rounds <= 6);
-    // (A painting carried on keeps its surface, view, framing and colours, and which sims it has.)
+    // (A painting carried on keeps its structure, view, framing and colours, and which sims it has.)
     const carried = L.drift(genes, rng);
-    for (const name of ['surface', 'yaw', 'pitch', 'dist', 'fill', 'accent', 'warmth', 'spill', 'stroke', 's0', 's1', 's2'])
+    for (const name of ['pillars', 'storeys', 'p0', 'p1', 'p2', 'p3', 'flips', 'taper', 'span', 'gap', 'yaw', 'pitch', 'dist', 'fill', 'accent', 'warmth', 'spill', 'stroke', 's0', 's1', 's2'])
       assert.equal(carried[L.GENES.indexOf(name)], genes[L.GENES.indexOf(name)], `drift changed ${name}`);
     assert.ok(scene.frame.fill >= 0.72 && scene.frame.fill <= 0.92 && Number.isFinite(scene.view.yaw + scene.view.pitch + scene.view.dist));
-    // (A flat map is seen square on, turned only in its own plane, reaching toward its rim as far as its surface allows.)
-    if (M.SURFACES[scene.surface].flat) assert.ok(scene.view.yaw === 0 && scene.view.pitch === 0 && scene.reach >= M.SURFACES[scene.surface].reach[0] && scene.reach <= M.SURFACES[scene.surface].reach[1]);
     assert.equal(child.length, L.GENES.length);
     assert.ok(child.every((g) => g >= 0 && g < 1) && child.some((g, k) => g !== genes[k]), 'a change that is not a genome, or no change');
   }
 }
 
-// Build 363: the whole silhouette, centred, on every surface and in every shape of frame - never cut by its edge - as big as the genome says.
+// Build 364: structures stand. Pillars never touch each other; every piece sits on the one below with a gap; each arch's feet are
+// centred on the tops it springs from and just as wide; every piece carries the plane (its glaze turned and slid, still on it).
 {
-  const rng = M.mulberry32(363), seen = new Set();
+  const rng = M.mulberry32(364);
+  for (let i = 0; i < 300; i++) {
+    const { plan } = L.decode(L.randomGenes(rng)), st = M.structure(plan), n = plan.stack.length, P = plan.pillars, col = st.pieces.slice(0, n * P);
+    for (let p = 0; p < P; p++) for (let k = 0; k < n; k++) {
+      const a = col[p * n + k];
+      if (k) { const b = col[p * n + k - 1]; assert.ok(Math.abs(a.base - (b.base + b.height + plan.gap)) < 1e-9, 'a piece not set on the one below'); }
+      if (p) { const b = col[(p - 1) * n + k]; assert.ok(a.x - a.width / 2 - (b.x + b.width / 2) >= plan.gap * 2 - 1e-9, 'neighbouring pillars touching'); }
+    }
+    st.pieces.slice(n * P).forEach((arch, p) => {
+      const left = col[p * n + n - 1], right = col[(p + 1) * n + n - 1];
+      assert.ok(Math.abs(arch.x - arch.width / 2 - (left.x - left.width / 2)) < 1e-9 && Math.abs(arch.x + arch.width / 2 - (right.x + right.width / 2)) < 1e-9, 'an arch not landing on its tops');
+      assert.ok(Math.abs(arch.base - (left.base + left.height + plan.gap)) < 1e-9, 'an arch not springing from the tops');
+    });
+    if (i < 20) for (const pc of st.pieces) {
+      const P0 = pc.plane((pc.u[0] + pc.u[1]) / 2, (pc.v[0] + pc.v[1]) / 2);
+      assert.ok(Math.abs(M.mink(P0, P0) + 1) < 1e-8, 'a piece carrying a point off the plane');
+    }
+  }
+}
+
+// Builds 363–364: the whole silhouette, centred, for every form and in every shape of frame - never cut by its edge - as big as the genome says.
+{
+  const rng = M.mulberry32(363), seen = new Set(), G = (n) => L.GENES.indexOf(n);
   for (let i = 0; i < 24; i++) {
     const genes = L.randomGenes(rng);
-    genes[L.GENES.indexOf('surface')] = (i % L.SURFACE_KEYS.length + 0.5) / L.SURFACE_KEYS.length;
+    genes[G('pillars')] = ((i % 3) + 0.5) / 3;
+    genes[G('storeys')] = (Math.floor(i / 3) % 2) ? 0.9 : 0.3;
     const scene = L.decode(genes);
-    seen.add(scene.surface);
+    seen.add(scene.form);
     for (const [w, h] of [[160, 120], [90, 160], [120, 120]]) {
       const R = M.raw(scene, w, h);
       let x0 = w, x1 = -1, y0 = h, y1 = -1;
       for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (R.cover[y * w + x]) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
-      assert.ok(x0 > 0 && y0 > 0 && x1 < w - 1 && y1 < h - 1, `${scene.surface} cut by the frame at ${w}×${h}`);
-      assert.ok(Math.abs((x0 + x1) / 2 - (w - 1) / 2) <= 3 && Math.abs((y0 + y1) / 2 - (h - 1) / 2) <= 3, `${scene.surface} off centre at ${w}×${h}`);
-      assert.ok(Math.abs(Math.max((x1 - x0 + 1) / w, (y1 - y0 + 1) / h) - scene.frame.fill) < 0.07, `${scene.surface} not as big as its genome says at ${w}×${h}`);
+      assert.ok(x0 > 0 && y0 > 0 && x1 < w - 1 && y1 < h - 1, `${scene.form} cut by the frame at ${w}×${h}`);
+      assert.ok(Math.abs((x0 + x1) / 2 - (w - 1) / 2) <= 3 && Math.abs((y0 + y1) / 2 - (h - 1) / 2) <= 3, `${scene.form} off centre at ${w}×${h}`);
+      assert.ok(Math.abs(Math.max((x1 - x0 + 1) / w, (y1 - y0 + 1) / h) - scene.frame.fill) < 0.07, `${scene.form} not as big as its genome says at ${w}×${h}`);
     }
   }
-  assert.equal(seen.size, 6, 'not every surface framed');
-  // (Seen square on and not turned, half of a flat disk is a half-disk: π/4 of its box.)
+  assert.equal(seen.size, 6, 'not every form framed');
+  // (One flat map alone, seen square on and not turned: half of a disk is a half-disk, π/4 of its box.)
   for (const surface of ['disk', 'klein']) {
-    const genes = L.randomGenes(M.mulberry32(7));
-    genes[L.GENES.indexOf('surface')] = (L.SURFACE_KEYS.indexOf(surface) + 0.5) / L.SURFACE_KEYS.length;
-    genes[L.GENES.indexOf('yaw')] = 0;
-    const R = M.raw(L.decode(genes), 200, 150);
+    const families = [M.horocycles(0.3, 0.14), M.waves([0.8, 2.0], 0.15)];
+    const R = M.raw({ surface, overlap: 'xor', families, view: { yaw: 0, pitch: 0, roll: 0 } }, 200, 150);
     let n = 0, x0 = 200, x1 = -1, y0 = 150, y1 = -1;
     for (let y = 0; y < 150; y++) for (let x = 0; x < 200; x++) if (R.cover[y * 200 + x]) { n++; x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
     assert.ok(Math.abs(n / ((x1 - x0 + 1) * (y1 - y0 + 1)) - Math.PI / 4) < 0.03 && (x1 - x0) > 1.8 * (y1 - y0), `${surface} is not a flat half-disk seen square on`);
@@ -129,7 +154,7 @@ for (const a of [0.3, 2.2, 4.9]) {
   const rng = M.mulberry32(9), arc = L.archive();
   for (let i = 0; i < 12; i++) {
     const genes = L.randomGenes(rng), judged = L.evaluate(genes, 160, 120);
-    assert.ok(judged.score >= 0 && judged.score <= 1 && /^[a-z]+·[a-z+]+·[0-2]$/.test(judged.key));
+    assert.ok(judged.score >= 0 && judged.score <= 1 && /^(column|gate|arcade)-(low|tall)·[a-z+]+·[0-2]$/.test(judged.key));
     assert.ok(judged.parts.interplay >= 0 && judged.parts.interplay <= 1, 'interplay out of range');
     const before = arc.cells[judged.key]?.score ?? -1;
     assert.equal(L.offer(arc, genes, judged), judged.score > before);

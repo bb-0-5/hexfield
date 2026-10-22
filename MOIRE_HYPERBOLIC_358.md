@@ -1,4 +1,4 @@
-# Builds 358–363 plan: moiré on half of an inverted hyperbolic plane, and a painter that learns
+# Builds 358–364 plan: moiré on half of an inverted hyperbolic plane, and a painter that learns
 
 The old painter (solid shapes, plants, characters and words in a room) is retired
 from the homepage. It is kept, unchanged, at `/studies.html`. The site was
@@ -20,6 +20,9 @@ The subject is always the same kind of thing, and never the same picture.
   seen straight on:
   - **disk**: the Poincaré disk, true to angles;
   - **klein**: the Klein disk, true to straight lines.
+
+  Since build 364 these are pieces of a structure: pillars of stacked pieces with
+  arches between them, one glaze over all of it.
 - **The camera.** Three-point perspective. The camera is raised or lowered and
   tilted, so verticals meet at a third point above or below the picture.
   - A flat map is seen square on, turned only in its own plane, so the picture is
@@ -297,6 +300,62 @@ If it doesn't beat random, it isn't learning, and that build doesn't ship.
     - the Klein map keeps the plane's lines straight;
     - the homepage on a desktop and a phone keeps painting, flat maps and surfaces
       in space alike, with no errors.
+- **364: arches connecting pillars of stacked pieces.** The sims now glaze a
+  structure instead of one surface.
+  - **Pillars:** one, two or three, side by side.
+    - Each is up to four stacked pieces, set one on another with a small gap so
+      each reads on its own.
+    - A piece can be any of the six surfaces, upright or upside down, turned to
+      show the side its own view shows.
+    - Each storey narrows or widens from the one below.
+    - Neighbouring pillars never touch.
+  - **Arches:** the inside-out disk springs from each two neighbouring tops. Its
+    inner edge is solved so its feet are centred on the tops and exactly as wide
+    as the pieces they stand on; in an arcade two arches share the middle pillar.
+  - **One glaze:** one set of sims runs over the whole structure. Each storey shows
+    its own part of the same plane, turned and slid by an isometry of the plane,
+    so the pattern flows across the pieces and changes from storey to storey.
+    Glazes drift how it lies on each storey, too.
+  - **Camera:** low and looking up, or high and looking down, so the uprights meet
+    at a third point. The whole structure is always centred and never cut.
+  - **Genome version 5:** 52 numbers.
+    - **Kinds:** column, gate (two pillars, one arch) or arcade (three pillars, two
+      arches), each low (one or two storeys) or tall, so 126 kinds again. A column
+      always has at least two pieces.
+    - **The eye:** its best coverage is now three tenths of the frame, not two
+      fifths, since pillars, gaps and arches leave paper between them.
+    - **Mutation:** with 52 numbers and 15 choices, a child kept as many changes as
+      the old 40-number genome gave it (about seven and a half numbers nudged, and
+      a choice made again three times in four), so it stays near its parent. With
+      the old per-gene rates, children strayed further, and learning beat random
+      only narrowly on one seed.
+  - **Starting memory (`archive.json`):** six learning runs of 600 paintings
+    merged, 101 of the 126 kinds, 15–19 of each form.
+  - **Proof:** 600 paintings a run at 320×240. Seeds 4–6 were never used for
+    anything else.
+
+    | seed | best ten: random → learned | whole archive: random → learned |
+    |---|---|---|
+    | 1 | 0.924 → 0.956 | 57.7 → 53.6 |
+    | 2 | 0.904 → 0.978 | 56.3 → 57.0 |
+    | 3 | 0.941 → 0.956 | 61.3 → 56.1 |
+    | 4 | 0.907 → 0.972 | 55.9 → 58.0 |
+    | 5 | 0.908 → 0.979 | 55.5 → 56.4 |
+    | 6 | 0.926 → 0.953 | 60.9 → 60.5 |
+
+    - Its best ten beat random on all six seeds.
+    - Its whole archive beats random on three of six: random tries reach more kinds.
+    - What the homepage paints next from the new memory averages 0.85–0.87, against
+      0.53–0.57 for random tries.
+    - 84–85% of its next paintings score 0.75 or more, against 13% of random tries.
+    - Its structures average about six pieces.
+  - **Checked:**
+    - three hundred random structures: every piece set on the one below, pillars
+      never touching, arches landing exactly on their tops, every piece's plane on
+      the plane;
+    - every form whole and centred in landscape, square and phone-shaped frames;
+    - the homepage on a desktop and a phone painting and glazing structures of
+      every form, with no errors.
 - **Next: your picks.** Sheets of what it learned; the numbers you name go into the
   archive as picks, which it breeds from more often.
 - **Then:** judging the finished painting (its strokes and colours), not only the
@@ -311,5 +370,7 @@ If it doesn't beat random, it isn't learning, and that build doesn't ship.
    plane's own flat maps (half of the Poincaré disk and half of the Klein disk) are
    two more surfaces.
 4. Centre the silhouette so nothing is clipped? Yes, always, from build 363.
+5. Use the sims to build shapes on top of each other, like arches connecting
+   pillars of stacked geometries? Yes, from build 364.
 
 Which of them it paints, and how, is what it learns.
