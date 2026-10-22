@@ -1,9 +1,10 @@
-/* Builds 359–361 — the hyperbolic moiré painter: its geometry is the
- * hyperbolic plane's, its sims act on each other - moving and swelling each
- * other's lines (and leave each other alone when they are not coupled) - its
- * genomes always make a painting, a painting carried on keeps its composition, and it
- * learns: with the same number of paintings, its best and what it paints next
- * beat random tries by its own eye. */
+/* Builds 359–363 — the hyperbolic moiré painter: its geometry is the
+ * hyperbolic plane's (standing in space, or flat as one of its own maps), its
+ * sims act on each other - moving and swelling each other's lines (and leave
+ * each other alone when they are not coupled) - every silhouette is whole and
+ * centred in the frame, its genomes always make a painting, a painting carried
+ * on keeps its composition, and it learns: with the same number of paintings,
+ * its best and what it paints next beat random tries by its own eye. */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 await import('../public/moire/moire.js');
@@ -11,8 +12,13 @@ await import('../public/moire/learn.js');
 const M = globalThis.HexfieldMoire, L = globalThis.HexfieldLearn;
 
 // Every model of the plane lands on it (x² + y² − z² = −1), and sliding it keeps it there.
-for (const P of [M.fromPolar(1.7, 2.1), M.fromDisk(-0.6, 0.7), M.fromHalfPlane(-1.2, 0.3), M.slideTo(M.fromPolar(1.1, 0.4))(M.fromDisk(0.5, 0.2))])
+for (const P of [M.fromPolar(1.7, 2.1), M.fromDisk(-0.6, 0.7), M.fromHalfPlane(-1.2, 0.3), M.fromKlein(0.3, -0.9), M.slideTo(M.fromPolar(1.1, 0.4))(M.fromDisk(0.5, 0.2))])
   assert.ok(Math.abs(M.mink(P, P) + 1) < 1e-9, 'a point off the plane');
+// The Klein map keeps the plane's lines straight: three points in a straight row on it lie on one line of the plane.
+for (const [ax, ay, bx, by] of [[-0.9, 0.1, 0.7, 0.6], [0.2, -0.95, 0.1, 0.97]]) {
+  const n = M.lineThrough(M.fromKlein(ax, ay), M.fromKlein(bx, by));
+  for (const t of [0.17, 0.5, 0.83]) assert.ok(Math.abs(M.mink(M.fromKlein(ax + t * (bx - ax), ay + t * (by - ay)), n)) < 1e-9, 'a straight row on the Klein map off the line');
+}
 
 // Horocycles are the plane's straight waves: walking toward their point at infinity, each step of t crosses t worth of rings.
 for (const a of [0.3, 2.2, 4.9]) {
@@ -78,11 +84,43 @@ for (const a of [0.3, 2.2, 4.9]) {
     assert.ok(['shift', 'swell', 'both'].includes(scene.mode) && scene.rounds >= 3 && scene.rounds <= 6);
     // (A painting carried on keeps its surface, view, framing and colours, and which sims it has.)
     const carried = L.drift(genes, rng);
-    for (const name of ['surface', 'yaw', 'pitch', 'dist', 'fill', 'dx', 'dy', 'accent', 'warmth', 'spill', 'stroke', 's0', 's1', 's2'])
+    for (const name of ['surface', 'yaw', 'pitch', 'dist', 'fill', 'accent', 'warmth', 'spill', 'stroke', 's0', 's1', 's2'])
       assert.equal(carried[L.GENES.indexOf(name)], genes[L.GENES.indexOf(name)], `drift changed ${name}`);
-    assert.ok(scene.frame.fill >= 0.7 && scene.frame.fill <= 1.25 && Number.isFinite(scene.view.yaw + scene.view.pitch + scene.view.dist));
+    assert.ok(scene.frame.fill >= 0.72 && scene.frame.fill <= 0.92 && Number.isFinite(scene.view.yaw + scene.view.pitch + scene.view.dist));
+    // (A flat map is seen square on, turned only in its own plane, reaching toward its rim as far as its surface allows.)
+    if (M.SURFACES[scene.surface].flat) assert.ok(scene.view.yaw === 0 && scene.view.pitch === 0 && scene.reach >= M.SURFACES[scene.surface].reach[0] && scene.reach <= M.SURFACES[scene.surface].reach[1]);
     assert.equal(child.length, L.GENES.length);
     assert.ok(child.every((g) => g >= 0 && g < 1) && child.some((g, k) => g !== genes[k]), 'a change that is not a genome, or no change');
+  }
+}
+
+// Build 363: the whole silhouette, centred, on every surface and in every shape of frame - never cut by its edge - as big as the genome says.
+{
+  const rng = M.mulberry32(363), seen = new Set();
+  for (let i = 0; i < 24; i++) {
+    const genes = L.randomGenes(rng);
+    genes[L.GENES.indexOf('surface')] = (i % L.SURFACE_KEYS.length + 0.5) / L.SURFACE_KEYS.length;
+    const scene = L.decode(genes);
+    seen.add(scene.surface);
+    for (const [w, h] of [[160, 120], [90, 160], [120, 120]]) {
+      const R = M.raw(scene, w, h);
+      let x0 = w, x1 = -1, y0 = h, y1 = -1;
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (R.cover[y * w + x]) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+      assert.ok(x0 > 0 && y0 > 0 && x1 < w - 1 && y1 < h - 1, `${scene.surface} cut by the frame at ${w}×${h}`);
+      assert.ok(Math.abs((x0 + x1) / 2 - (w - 1) / 2) <= 3 && Math.abs((y0 + y1) / 2 - (h - 1) / 2) <= 3, `${scene.surface} off centre at ${w}×${h}`);
+      assert.ok(Math.abs(Math.max((x1 - x0 + 1) / w, (y1 - y0 + 1) / h) - scene.frame.fill) < 0.07, `${scene.surface} not as big as its genome says at ${w}×${h}`);
+    }
+  }
+  assert.equal(seen.size, 6, 'not every surface framed');
+  // (Seen square on and not turned, half of a flat disk is a half-disk: π/4 of its box.)
+  for (const surface of ['disk', 'klein']) {
+    const genes = L.randomGenes(M.mulberry32(7));
+    genes[L.GENES.indexOf('surface')] = (L.SURFACE_KEYS.indexOf(surface) + 0.5) / L.SURFACE_KEYS.length;
+    genes[L.GENES.indexOf('yaw')] = 0;
+    const R = M.raw(L.decode(genes), 200, 150);
+    let n = 0, x0 = 200, x1 = -1, y0 = 150, y1 = -1;
+    for (let y = 0; y < 150; y++) for (let x = 0; x < 200; x++) if (R.cover[y * 200 + x]) { n++; x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    assert.ok(Math.abs(n / ((x1 - x0 + 1) * (y1 - y0 + 1)) - Math.PI / 4) < 0.03 && (x1 - x0) > 1.8 * (y1 - y0), `${surface} is not a flat half-disk seen square on`);
   }
 }
 
@@ -117,8 +155,9 @@ function nextAgainstRandom(arc, seed, n) {
   for (let i = 0; i < n; i++) { next.push(L.evaluate(L.next(arc, rng), 160, 120).score); tries.push(L.evaluate(L.randomGenes(rng), 160, 120).score); }
   return [mean(next), mean(tries)];
 }
+// (The budget grows with the kinds there are to fill: 280 paintings for the 84 kinds of four surfaces, 420 for the 126 of six.)
 for (const seed of [21, 22]) {
-  const random = race(seed, 280, 50, false), learned = race(seed, 280, 50, true), [next, tries] = nextAgainstRandom(learned.arc, seed + 100, 40);
+  const random = race(seed, 420, 75, false), learned = race(seed, 420, 75, true), [next, tries] = nextAgainstRandom(learned.arc, seed + 100, 40);
   console.log(`seed ${seed}: best ten ${learned.top.toFixed(3)} learned vs ${random.top.toFixed(3)} random · next paintings ${next.toFixed(3)} vs random tries ${tries.toFixed(3)} · whole archive ${learned.quality.toFixed(1)} vs ${random.quality.toFixed(1)}`);
   assert.ok(learned.top > random.top, 'its best paintings no better than random tries');
   assert.ok(next > tries, 'what it paints next no better than random tries');

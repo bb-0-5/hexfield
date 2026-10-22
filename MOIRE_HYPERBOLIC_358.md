@@ -1,4 +1,4 @@
-# Builds 358–362 plan: moiré on half of an inverted hyperbolic plane, and a painter that learns
+# Builds 358–363 plan: moiré on half of an inverted hyperbolic plane, and a painter that learns
 
 The old painter (solid shapes, plants, characters and words in a room) is retired
 from the homepage. It is kept, unchanged, at `/studies.html`. The site was
@@ -15,8 +15,17 @@ The subject is always the same kind of thing, and never the same picture.
   - **saddle**: a saddle turned over, carrying the Poincaré disk;
   - **arch**: the Poincaré disk turned inside out (inverted in its rim), with its
     upper half standing as an arch.
+
+  Since build 363 there are also two of the plane's own flat maps, half of each,
+  seen straight on:
+  - **disk**: the Poincaré disk, true to angles;
+  - **klein**: the Klein disk, true to straight lines.
 - **The camera.** Three-point perspective. The camera is raised or lowered and
   tilted, so verticals meet at a third point above or below the picture.
+  - A flat map is seen square on, turned only in its own plane, so the picture is
+    the map.
+  - Since build 363 the whole silhouette always sits in the middle of the frame,
+    never cut by its edge.
 - **The gratings.** These are drawn in the plane's own geometry, not laid on like wallpaper.
   - **Horocycles** are the hyperbolic plane's straight waves: rings round a point at
     infinity, evenly spaced however far out they go. A painting uses two or three
@@ -87,9 +96,10 @@ the best painting found in each niche.
 **Your taste, still without buttons.**
 - **While offline:** sheets like the earlier 20. You name the numbers you like, and
   your picks count for far more than its own score.
-- **Once online again:**
-  - how long people stay on a painting is a weak signal;
-  - the archive is shared between visitors, not kept per browser.
+- **Online:** the archive is shared between visitors, not kept per browser (build 362).
+- **Not a signal:** how long someone stays on a painting. There are no buttons and
+  nothing to reseed, and the painting changes by itself, so lingering says nothing
+  about any one painting.
 
 **Proof that it learns.** An offline run of a few hundred generations, with two
 outputs:
@@ -242,13 +252,64 @@ If it doesn't beat random, it isn't learning, and that build doesn't ship.
     - **The archive gain is small.** In a five-minute visit a browser rarely beats the
       shipped archive: its kinds average 0.88, and half of them are above 0.9. So the
       memory fills slowly, and it grows with every visitor and every tab left open.
+- **363: the whole silhouette, centred; and the plane's flat maps.**
+  - **Framing:** every painting's silhouette is fitted whole in the middle of the
+    frame, at 72–92% of its width or height (whichever is tighter), on any screen.
+    - The offset genes are gone.
+    - So is the old allowance that let a wide surface run off the sides of a tall
+      screen. On a phone a wide shape now sits smaller, in the middle.
+  - **The plane's flat maps** are two more surfaces. Each is half of the map, seen
+    square on, so the picture is the map.
+    - **disk** (Poincaré): true to angles.
+    - **klein:** true to straight lines. The plane's lines are straight chords, and
+      a billiard path is string art.
+    - **Turn:** each can be turned any way round in its own plane.
+    - **Reach:** how near its rim it reaches is a gene. The plane crowds ever finer
+      toward the rim, past the pixels.
+  - **Genome version 4:** 40 numbers and six surfaces, so 126 kinds of picture.
+    - What browsers had learned for version 3 is let go, and the shared memory
+      takes version 4 finds only.
+    - The eye no longer weighs cropping, since nothing is cropped.
+  - **Starting memory (`archive.json`):** three learning runs of 600 paintings
+    merged, 103 of the 126 kinds, 14–19 on each surface.
+  - **Proof:** 600 paintings a run at 320×240, on untuned seeds.
+
+    | seed | best ten: random → learned | whole archive: random → learned |
+    |---|---|---|
+    | 1 | 0.913 → 0.950 | 59.1 → 64.4 |
+    | 2 | 0.938 → 0.979 | 64.5 → 63.8 |
+    | 3 | 0.919 → 0.965 | 58.7 → 65.0 |
+
+    - What the homepage paints next from the new memory averages 0.76–0.79, against
+      0.52–0.56 for random tries.
+    - Two thirds of its next paintings score 0.75 or more, against 11–14% of random
+      tries.
+    - About a third of what it paints next is a flat map.
+  - **The test's budget grows with the kinds.** At the old test budget (280
+    paintings, made for 84 kinds) learning lost to random on its best ten on one of
+    the two test seeds. With 126 kinds to fill, 280 paintings don't reach. The
+    budget now scales with the kinds (420 paintings, the same seeds), and both seeds
+    pass.
+  - **Checked:**
+    - every surface in landscape, square and phone-shaped frames: never touching the
+      frame's edge, centred to within three pixels;
+    - a flat map seen square on is a true half-disk;
+    - the Klein map keeps the plane's lines straight;
+    - the homepage on a desktop and a phone keeps painting, flat maps and surfaces
+      in space alike, with no errors.
 - **Next: your picks.** Sheets of what it learned; the numbers you name go into the
   archive as picks, which it breeds from more often.
-- **Then:** the dwell signal (how long people stay on a painting).
+- **Then:** judging the finished painting (its strokes and colours), not only the
+  reading under it.
 
 ## Questions answered
 
 1. Which surface? All four: dome, bell, saddle and arch.
 2. Gratings or trajectories? Both, and a mix of the two.
+3. Leave the geometry standing in space, or map it flat onto a 2D plane? Both. The
+   four surfaces stay, because perspective is half of what makes their moiré. The
+   plane's own flat maps (half of the Poincaré disk and half of the Klein disk) are
+   two more surfaces.
+4. Centre the silhouette so nothing is clipped? Yes, always, from build 363.
 
 Which of them it paints, and how, is what it learns.

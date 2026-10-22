@@ -23,13 +23,15 @@
   const ctx = canvas.getContext("2d");
   // (Asked for less motion: each stage appears whole instead of stroke by stroke, and rests longer.)
   const still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const PER_FRAME = still ? Infinity : 45, MAX_PIXELS = 1.6e6, KEY = "hexfield.moire.archive.v3";
+  // (Genome version 4, build 363: what an older version learned is for other genomes, and is let go.)
+  const PER_FRAME = still ? Infinity : 45, MAX_PIXELS = 1.6e6, VERSION = 4, KEY = "hexfield.moire.archive.v" + VERSION;
+  try { for (let v = 1; v < VERSION; v++) localStorage.removeItem("hexfield.moire.archive.v" + v); } catch { /* no storage here */ }
   // How long it rests on a finished stage, how many glazes a composition gets before a new one, and how good an idea must be to be painted.
   const REST_MS = still ? 20000 : 3500, GLAZES = 6, WORTH = 0.6;
   const rng = M.mulberry32((Date.now() ^ Math.floor(Math.random() * 2 ** 32)) >>> 0);
   const arc = L.archive();
   const local = () => { try { return JSON.parse(localStorage.getItem(KEY) || "null"); } catch { return null; } };
-  const save = () => { try { localStorage.setItem(KEY, JSON.stringify({ version: 3, made: arc.made, cells: arc.cells, picked: arc.picked })); } catch { /* a private window, or full: it learns for this visit only */ } };
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify({ version: VERSION, made: arc.made, cells: arc.cells, picked: arc.picked })); } catch { /* a private window, or full: it learns for this visit only */ } };
   // The canvas's own box on the page (the whole window on the homepage), in device pixels up to a limit.
   function fit() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -53,7 +55,7 @@
   const seen = new Set(), keyOf = (genes) => genes.join(",");
   function fetchShared() {
     fetch(SHARED).then((r) => (r.ok ? r.json() : null)).then((d) => {
-      if (d?.version === 3 && Array.isArray(d.finds)) unchecked = d.finds.filter((f) => Array.isArray(f.genes) && f.genes.length === L.GENES.length && f.genes.every((g) => typeof g === "number" && g >= 0 && g < 1) && !seen.has(keyOf(f.genes))).slice(0, 120);
+      if (d?.version === VERSION && Array.isArray(d.finds)) unchecked = d.finds.filter((f) => Array.isArray(f.genes) && f.genes.length === L.GENES.length && f.genes.every((g) => typeof g === "number" && g >= 0 && g < 1) && !seen.has(keyOf(f.genes))).slice(0, 120);
     }).catch(() => { /* no shared memory here: it learns on its own */ });
   }
   function send() {
@@ -61,7 +63,7 @@
     lastSent = Date.now();
     const find = outbox.sort((a, b) => b.score - a.score).shift();
     outbox.length = Math.min(outbox.length, 8);
-    fetch(SHARED, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: 3, ...find }) }).catch(() => {});
+    fetch(SHARED, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: VERSION, ...find }) }).catch(() => {});
   }
   // One idea, judged small (as its archive was learned) and learned from; kept, and its own, it is sent to the shared memory.
   function learnFrom(genes, own) {

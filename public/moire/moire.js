@@ -1,7 +1,8 @@
 /* Hexfield moiré.
  *
  * The hyperbolic plane - half of it, turned upside down or inside out - laid on
- * a surface and seen in three-point perspective. Gratings are drawn on it in
+ * a surface and seen in three-point perspective, or flat, as one of its own
+ * maps (the Poincaré or the Klein disk) seen straight on. Gratings are drawn on it in
  * its own geometry: horocycles (its straight waves: rings the same distance
  * apart however far out they go) spaced in irrational ratios, and the paths of
  * a billiard ball in one of its circles, turned an irrational angle at every
@@ -35,6 +36,7 @@
   const fromPolar = (rho, a) => { const s = Math.sinh(rho); return [s * Math.cos(a), s * Math.sin(a), Math.cosh(rho)]; };
   const fromDisk = (x, y) => { const r2 = x * x + y * y, k = 1 / (1 - r2); return [2 * x * k, 2 * y * k, (1 + r2) * k]; };
   const fromHalfPlane = (x, y) => { const q = x * x + y * y; return [x / y, (q - 1) / (2 * y), (q + 1) / (2 * y)]; };
+  const fromKlein = (x, y) => { const t = 1 / Math.sqrt(1 - x * x - y * y); return [x * t, y * t, t]; };
   // The plane slid so that its centre lands on C (a boost toward C): a circle about the centre becomes a circle about C.
   function slideTo(C) {
     const rho = Math.acosh(Math.max(1, C[2])), phi = Math.atan2(C[1], C[0]), ch = Math.cosh(rho), sh = Math.sinh(rho), c = Math.cos(phi), s = Math.sin(phi);
@@ -46,7 +48,9 @@
 
   /* ── Surfaces: a 180° slice of the plane, inverted, standing in space ──
    * Each has a parameter domain (u, v), where a parameter point stands (pos,
-   * y up) and which point of the plane it carries (plane). */
+   * y up) and which point of the plane it carries (plane). The flat ones are
+   * the plane's own maps, half of each, seen straight on (the camera square to
+   * them, turned only in their own plane): no perspective, the picture is the map. */
   const SURFACES = {
     // The hyperboloid itself, upside down: a dome whose flanks run out toward a cone; half of it, cut through its peak.
     dome: {
@@ -76,6 +80,20 @@
       pos: (s, a) => [1.6 * s * Math.cos(a), 1.6 * s * Math.sin(a), 0],
       plane: (s, a) => fromDisk(Math.cos(a) / s, Math.sin(a) / s),
       view: { target: [0, 2.3, 0], yaw: 0.6, pitch: -0.28, dist: 10.5, fov: 0.85 },
+    },
+    // The Poincaré disk, flat: true to angles; the plane crowds ever finer toward its rim, which is infinitely far away. Half of it.
+    disk: {
+      name: "half of the Poincaré disk, flat", flat: true, u: [0, 0.998], v: [0, Math.PI], reach: [0.9, 0.998],
+      pos: (r, a) => [r * Math.cos(a), r * Math.sin(a), 0],
+      plane: (r, a) => fromDisk(r * Math.cos(a), r * Math.sin(a)),
+      view: { target: [0, 0.5, 0], yaw: 0, pitch: 0, dist: 8, fov: 0.6 },
+    },
+    // The Klein disk, flat: true to straight lines - the plane's lines are straight chords, its circles ellipses - and crowding harder toward the rim. Half of it.
+    klein: {
+      name: "half of the Klein disk, flat", flat: true, u: [0, 0.9998], v: [0, Math.PI], reach: [0.99, 0.9998],
+      pos: (r, a) => [r * Math.cos(a), r * Math.sin(a), 0],
+      plane: (r, a) => fromKlein(r * Math.cos(a), r * Math.sin(a)),
+      view: { target: [0, 0.5, 0], yaw: 0, pitch: 0, dist: 8, fov: 0.6 },
     },
   };
 
@@ -148,11 +166,14 @@
 
   /* ── Three-point perspective ───────────────────────────────────────────
    * A pinhole camera raised (or lowered) and turned: tipped, it makes the
-   * verticals meet at a third point above or below the picture. */
+   * verticals meet at a third point above or below the picture. (Square to a
+   * flat map it is turned only about its own axis - roll - and the picture is
+   * the map, scaled.) */
   function camera(view, W, H) {
-    const { target, yaw, pitch, dist, fov } = view;
+    const { target, yaw, pitch, dist, fov, roll = 0 } = view;
     const eye = [target[0] + dist * Math.cos(pitch) * Math.sin(yaw), target[1] + dist * Math.sin(pitch), target[2] + dist * Math.cos(pitch) * Math.cos(yaw)];
-    const fwd = unit(sub(target, eye)), right = unit(cross(fwd, [0, 1, 0])), up = cross(right, fwd);
+    const fwd = unit(sub(target, eye)), r0 = unit(cross(fwd, [0, 1, 0])), u0 = cross(r0, fwd), c = Math.cos(roll), s = Math.sin(roll);
+    const right = [r0[0] * c + u0[0] * s, r0[1] * c + u0[1] * s, r0[2] * c + u0[2] * s], up = [u0[0] * c - r0[0] * s, u0[1] * c - r0[1] * s, u0[2] * c - r0[2] * s];
     const f = (Math.min(W, H) / 2) / Math.tan(fov / 2);
     return { eye, fwd, right, up, f, W, H };
   }
@@ -164,10 +185,11 @@
    * perspective) and how the light falls on it. The grating is then worked
    * out at each pixel from the plane point there - one sample a pixel, so
    * where the lines fall finer than the pixels the grid itself beats with them.
-   * Framed by the lens shifted and zoomed - how much of the picture the
-   * surface fills and where it sits - which keeps the perspective as it is, as
-   * a view camera's shift does. */
-  const FRAME = { fill: 0.84, dx: 0, dy: 0 };
+   * Framed by the lens shifted and zoomed, which keeps the perspective as it
+   * is, as a view camera's shift does: the whole silhouette in the middle of
+   * the picture, `fill` of its width or of its height (whichever is tighter) -
+   * never cut by the frame. */
+  const FRAME = { fill: 0.84 }, MAX_FILL = 0.94;
   function rasterize(surface, view, W, H, frame = FRAME, NU = 180, NV = 180) {
     const cam = camera(view, W, H), n = W * H;
     const depth = new Float32Array(n).fill(Infinity), U = new Float32Array(n), V = new Float32Array(n), shade = new Float32Array(n), cover = new Uint8Array(n);
@@ -179,7 +201,7 @@
       // (Its slope both ways, for which way it faces: the light on it, from either side.)
       const e = 1e-4, a = sub(surface.pos(Math.min(u + e, u1), v), surface.pos(Math.max(u - e, u0), v)), b = sub(surface.pos(u, Math.min(v + e, v1)), surface.pos(u, Math.max(v - e, v0)));
       let nrm = cross(a, b);
-      if (!(Math.hypot(nrm[0], nrm[1], nrm[2]) > 1e-12)) nrm = [0, 1, 0];
+      if (!(Math.hypot(nrm[0], nrm[1], nrm[2]) > 1e-12)) nrm = surface.flat ? [0, 0, 1] : [0, 1, 0];
       nrm = unit(nrm);
       const d = sub(p, cam.eye), zc = dot(d, cam.fwd);
       sx[k] = W / 2 + cam.f * dot(d, cam.right) / zc;
@@ -190,11 +212,9 @@
     }
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
     for (let k = 0; k < m; k++) if (iz[k]) { x0 = Math.min(x0, sx[k]); x1 = Math.max(x1, sx[k]); y0 = Math.min(y0, sy[k]); y1 = Math.max(y1, sy[k]); }
-    // (On a tall screen a wide surface may run off the sides - up to half again as big - rather than sit as a strip across the middle.)
-    const fill = frame.fill ?? FRAME.fill, byW = W * fill / (x1 - x0), byH = H * fill / (y1 - y0), cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-    const k0 = W < H * 0.8 && byW < byH ? Math.min(byH, byW * 1.5) : Math.min(byW, byH);
-    const ox = W / 2 + (frame.dx || 0) * W, oy = H / 2 + (frame.dy || 0) * H;
-    for (let k = 0; k < m; k++) { sx[k] = ox + (sx[k] - cx) * k0; sy[k] = oy + (sy[k] - cy) * k0; }
+    // (Every point of the surface lands inside the box round its mesh's corners, so that box fitted and centred is the silhouette fitted and centred.)
+    const fill = Math.min(frame.fill ?? FRAME.fill, MAX_FILL), k0 = fill * Math.min(W / (x1 - x0), H / (y1 - y0)), cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    for (let k = 0; k < m; k++) { sx[k] = W / 2 + (sx[k] - cx) * k0; sy[k] = H / 2 + (sy[k] - cy) * k0; }
     const tri = (a, b, c) => {
       if (!iz[a] || !iz[b] || !iz[c]) return;
       const area = (sx[b] - sx[a]) * (sy[c] - sy[a]) - (sy[b] - sy[a]) * (sx[c] - sx[a]);
@@ -274,7 +294,9 @@
   }
   // The raw moiré: ink at every covered pixel, from the plane point there - its gratings moved by each other first, if they act on each other.
   function raw(genome, W, H, sigma = 6 * Math.min(W, H) / 390) {
-    const surface = SURFACES[genome.surface], view = { ...surface.view, ...genome.view }, frame = { ...FRAME, ...genome.frame };
+    // (A flat map reaches as near its rim as the genome says: the nearer, the finer the plane crowds there.)
+    const base = SURFACES[genome.surface], surface = genome.reach ? { ...base, u: [base.u[0], Math.min(base.u[1], genome.reach)] } : base;
+    const view = { ...surface.view, ...genome.view }, frame = { ...FRAME, ...genome.frame };
     const r = rasterize(surface, view, W, H, frame), ink = new Float32Array(W * H);
     const acting = genome.couple?.some((row) => row.some((c) => c)) ? interact(surface, view, frame, genome, W, H, sigma, genome.rounds || 3) : null;
     const shifts = acting ? new Float32Array(genome.families.length) : null, sx = acting ? acting.w / W : 0, sy = acting ? acting.h / H : 0;
@@ -490,7 +512,7 @@
   }
 
   global.HexfieldMoire = {
-    PHI, IRRATIONAL, GOLDEN_TURN, SURFACES, FRAME, STYLE, mink, fromPolar, fromDisk, fromHalfPlane, slideTo, lineThrough,
+    PHI, IRRATIONAL, GOLDEN_TURN, SURFACES, FRAME, STYLE, mink, fromPolar, fromDisk, fromHalfPlane, fromKlein, slideTo, lineThrough,
     horocycles, billiard, waves, geodesics, lineAt, inkAt, interact, camera, rasterize, raw, blur, beatAt, reading, read, palette, ramp,
     strokes, groundStrokes, drawStroke, maskImage, canvasOf, paint, compose, rawImage, readImage, mulberry32,
     get GROUND() { return `rgb(${palette().ground.join(",")})`; },
