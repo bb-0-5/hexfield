@@ -10,14 +10,17 @@
   const M = globalThis.HexfieldMoire, L = globalThis.HexfieldLearn, canvas = document.getElementById("view");
   if (!M || !L || !canvas) return;
   const ctx = canvas.getContext("2d");
-  const HOLD_MS = 14000, PER_FRAME = 45, MAX_PIXELS = 1.6e6, KEY = "hexfield.moire.archive.v1";
+  // (Asked for less motion: each painting appears whole instead of stroke by stroke.)
+  const still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const HOLD_MS = still ? 30000 : 14000, PER_FRAME = still ? Infinity : 45, MAX_PIXELS = 1.6e6, KEY = "hexfield.moire.archive.v1";
   const rng = M.mulberry32((Date.now() ^ Math.floor(Math.random() * 2 ** 32)) >>> 0);
   const arc = L.archive();
   const local = () => { try { return JSON.parse(localStorage.getItem(KEY) || "null"); } catch { return null; } };
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify({ version: 1, made: arc.made, cells: arc.cells, picked: arc.picked })); } catch { /* a private window, or full: it learns for this visit only */ } };
+  // The canvas's own box on the page (the whole window on the homepage), in device pixels up to a limit.
   function fit() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    let w = Math.round(window.innerWidth * dpr), h = Math.round(window.innerHeight * dpr);
+    let w = Math.round((canvas.clientWidth || window.innerWidth) * dpr), h = Math.round((canvas.clientHeight || window.innerHeight) * dpr);
     const k = Math.min(1, Math.sqrt(MAX_PIXELS / (w * h)));
     w = Math.max(64, Math.round(w * k)); h = Math.max(64, Math.round(h * k));
     if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
