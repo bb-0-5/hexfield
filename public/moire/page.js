@@ -12,7 +12,7 @@
   const ctx = canvas.getContext("2d");
   // (Asked for less motion: each painting appears whole instead of stroke by stroke.)
   const still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const HOLD_MS = still ? 30000 : 14000, PER_FRAME = still ? Infinity : 45, MAX_PIXELS = 1.6e6, KEY = "hexfield.moire.archive.v1";
+  const HOLD_MS = still ? 30000 : 14000, PER_FRAME = still ? Infinity : 45, MAX_PIXELS = 1.6e6, KEY = "hexfield.moire.archive.v2";
   const rng = M.mulberry32((Date.now() ^ Math.floor(Math.random() * 2 ** 32)) >>> 0);
   const arc = L.archive();
   const local = () => { try { return JSON.parse(localStorage.getItem(KEY) || "null"); } catch { return null; } };
@@ -46,8 +46,8 @@
   function next() {
     clearTimeout(held);
     resized = false;
-    const [W, H] = fit(), { genes, judged } = choose(W, H), scene = L.decode(genes);
-    const R = M.raw(scene, W, H), read = M.reading(R, L.sigmaFor(scene, W, H));
+    const [W, H] = fit(), { genes, judged } = choose(W, H), scene = L.decode(genes), sigma = L.sigmaFor(scene, W, H);
+    const R = M.raw(scene, W, H, sigma), read = M.reading(R, sigma);
     canvas.dataset.painting = [scene.surface, scene.kind, judged.key, judged.score.toFixed(3)].join(" | ");
     const seed = Math.floor(rng() * 1e9), list = M.strokes(R, read, seed, scene.style), pal = M.palette(scene.style);
     // (The ground painted once; the strokes on a layer of their own, kept to the surface by its mask as they land.)

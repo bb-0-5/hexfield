@@ -105,6 +105,10 @@
     }
     return { type: "billiard", C, coshR: Math.cosh(radius), normals, sinhWidth: Math.sinh(width), radius, turn, width };
   }
+  // waves: ripples spreading from one point of the plane - circles about it, `every` apart.
+  function waves(source, every, phase = 0, width = 0.5) {
+    return { type: "waves", S: fromPolar(source[0], source[1]), every, phase, width };
+  }
   function geodesics(count, turn, drift, reach, width, start = 0) {
     const normals = [];
     for (let j = 0; j < count; j++) {
@@ -113,17 +117,26 @@
     }
     return { type: "geodesics", normals, sinhWidth: Math.sinh(width), width };
   }
-  // Ink at a point of the plane: each grating on or off there, the gratings overlapped as the genome says.
-  function inkAt(P, g) {
+  /* One grating at a point of the plane: on or off there, its lines moved by
+   * `shift` - in its own spacings for rings and ripples, a little way across
+   * for a path's chords. (Shifts are how the sims move each other: interact.) */
+  const CHORD_SHIFT = 0.08;
+  function lineAt(f, P, shift = 0) {
+    if (f.type === "horocycles" || f.type === "waves") {
+      const d = f.type === "waves" ? Math.acosh(Math.max(1, -mink(P, f.S))) : Math.log(P[2] - P[0] * f.cx - P[1] * f.cy);
+      const t = d / f.every + f.phase + shift;
+      return Math.abs(t - Math.round(t)) < f.width / 2 ? 1 : 0;
+    }
+    if (f.type === "billiard" && -mink(P, f.C) > f.coshR) return 0;
+    const off = shift * CHORD_SHIFT;
+    for (const n of f.normals) if (Math.abs(P[0] * n[0] + P[1] * n[1] - P[2] * n[2] + off) < f.sinhWidth) return 1;
+    return 0;
+  }
+  // Ink at a point of the plane: each grating on or off there (moved by its shift, if it has one), overlapped as the genome says.
+  function inkAt(P, g, shifts = null) {
     let ink = 0;
-    for (const f of g.families) {
-      let on = 0;
-      if (f.type === "horocycles") {
-        const t = Math.log(P[2] - P[0] * f.cx - P[1] * f.cy) / f.every + f.phase;
-        on = Math.abs(t - Math.round(t)) < f.width / 2 ? 1 : 0;
-      } else if (f.type !== "billiard" || -mink(P, f.C) <= f.coshR) {
-        for (const n of f.normals) if (Math.abs(P[0] * n[0] + P[1] * n[1] - P[2] * n[2]) < f.sinhWidth) { on = 1; break; }
-      }
+    for (let i = 0; i < g.families.length; i++) {
+      const on = lineAt(g.families[i], P, shifts ? shifts[i] : 0);
       ink = g.overlap === "or" ? Math.max(ink, on) : g.overlap === "and" ? (ink && on ? 1 : 0) : ink ^ on;
     }
     return ink;
@@ -206,12 +219,58 @@
     }
     return { W, H, depth, U, V, shade, cover };
   }
-  // The raw moiré: ink at every covered pixel, from the plane point there.
-  function raw(genome, W, H) {
-    const surface = SURFACES[genome.surface], r = rasterize(surface, { ...surface.view, ...genome.view }, W, H, { ...FRAME, ...genome.frame });
-    const ink = new Float32Array(W * H);
-    for (let o = 0; o < ink.length; o++) if (r.cover[o]) ink[o] = inkAt(surface.plane(r.U[o], r.V[o]), genome);
-    return { ...r, ink };
+  /* ── Sims acting on each other ─────────────────────────────────────────
+   * Each grating's beats move the other gratings' lines: where one crowds,
+   * another's lines slide over (by how much, and which way, couple[i][j]:
+   * grating j's beats on grating i's lines; 0 leaves it alone). Worked out on
+   * a small picture - the beats are broad, so a small one holds them - over a
+   * few rounds back and forth: each round every grating is drawn with its
+   * lines moved by the others' beats from the round before, and blurred into
+   * beats of its own again. What comes back is how far each grating's lines
+   * have been moved, all over the picture. */
+  function interact(surface, view, frame, g, W, H, sigma, rounds = 3) {
+    const k = Math.min(1, 200 / Math.max(W, H)), w = Math.max(32, Math.round(W * k)), h = Math.max(24, Math.round(H * k)), n = w * h, F = g.families.length;
+    const r = rasterize(surface, view, w, h, frame, 90, 90), P = new Array(n), cov = new Float32Array(n);
+    for (let o = 0; o < n; o++) if (r.cover[o]) { P[o] = surface.plane(r.U[o], r.V[o]); cov[o] = 1; }
+    const sig = Math.max(1, sigma * k), bc = blur(cov, w, h, sig), shifts = g.families.map(() => new Float32Array(n)), ink = new Float32Array(n);
+    for (let round = 0; round < rounds; round++) {
+      const beats = g.families.map((f, i) => {
+        for (let o = 0; o < n; o++) ink[o] = P[o] ? lineAt(f, P[o], shifts[i][o]) : 0;
+        const b = blur(ink, w, h, sig);
+        let sum = 0, m = 0;
+        for (let o = 0; o < n; o++) if (cov[o] && bc[o] > 0.05) { b[o] /= bc[o]; sum += b[o]; m++; } else b[o] = 0;
+        const mean = m ? sum / m : 0;
+        for (let o = 0; o < n; o++) if (cov[o]) b[o] -= mean;
+        return b;
+      });
+      for (let i = 0; i < F; i++) {
+        shifts[i].fill(0);
+        for (let j = 0; j < F; j++) {
+          const c = g.couple?.[i]?.[j] || 0;
+          if (i === j || !c) continue;
+          for (let o = 0; o < n; o++) shifts[i][o] += 2 * c * beats[j][o];
+        }
+      }
+    }
+    return { w, h, shifts };
+  }
+  // A small picture's value at a pixel of the full one, read between its four nearest.
+  function sample(field, w, h, x, y) {
+    const fx = Math.min(w - 1.001, Math.max(0, x)), fy = Math.min(h - 1.001, Math.max(0, y)), x0 = fx | 0, y0 = fy | 0, tx = fx - x0, ty = fy - y0, o = y0 * w + x0;
+    return (field[o] * (1 - tx) + field[o + 1] * tx) * (1 - ty) + (field[o + w] * (1 - tx) + field[o + w + 1] * tx) * ty;
+  }
+  // The raw moiré: ink at every covered pixel, from the plane point there - its gratings moved by each other first, if they act on each other.
+  function raw(genome, W, H, sigma = 6 * Math.min(W, H) / 390) {
+    const surface = SURFACES[genome.surface], view = { ...surface.view, ...genome.view }, frame = { ...FRAME, ...genome.frame };
+    const r = rasterize(surface, view, W, H, frame), ink = new Float32Array(W * H);
+    const acting = genome.couple?.some((row) => row.some((c) => c)) ? interact(surface, view, frame, genome, W, H, sigma, genome.rounds || 3) : null;
+    const shifts = acting ? new Float32Array(genome.families.length) : null, sx = acting ? acting.w / W : 0, sy = acting ? acting.h / H : 0;
+    for (let y = 0, o = 0; y < H; y++) for (let x = 0; x < W; x++, o++) {
+      if (!r.cover[o]) continue;
+      if (acting) for (let i = 0; i < shifts.length; i++) shifts[i] = sample(acting.shifts[i], acting.w, acting.h, (x + 0.5) * sx - 0.5, (y + 0.5) * sy - 0.5);
+      ink[o] = inkAt(surface.plane(r.U[o], r.V[o]), genome, shifts);
+    }
+    return { ...r, ink, acting };
   }
 
   /* ── Reading the moiré ─────────────────────────────────────────────────
@@ -415,7 +474,7 @@
 
   global.HexfieldMoire = {
     PHI, IRRATIONAL, GOLDEN_TURN, SURFACES, FRAME, STYLE, mink, fromPolar, fromDisk, fromHalfPlane, slideTo, lineThrough,
-    horocycles, billiard, geodesics, inkAt, camera, rasterize, raw, blur, beatAt, reading, read, palette, ramp,
+    horocycles, billiard, waves, geodesics, lineAt, inkAt, interact, camera, rasterize, raw, blur, beatAt, reading, read, palette, ramp,
     strokes, groundStrokes, drawStroke, maskImage, canvasOf, paint, compose, rawImage, readImage, mulberry32,
     get GROUND() { return `rgb(${palette().ground.join(",")})`; },
   };

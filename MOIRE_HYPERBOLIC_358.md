@@ -1,4 +1,4 @@
-# Builds 358–359 plan: moiré on half of an inverted hyperbolic plane, and a painter that learns
+# Builds 358–360 plan: moiré on half of an inverted hyperbolic plane, and a painter that learns
 
 The old painter (solid shapes, plants, characters and words in a room) is retired
 from the homepage. It is kept, unchanged, at `/studies.html`. The site stays
@@ -138,6 +138,40 @@ If it doesn't beat random, it isn't learning, and that build doesn't ship.
     - the genomes;
     - its eye;
     - that its best paintings and its next paintings beat random tries.
+- **360: sims that act on each other.** Each painting runs two or three sims at once:
+  - rings;
+  - billiard paths;
+  - ripples, which are new: circles spreading from a point of the plane.
+
+  Each sim's beats move the other sims' lines: where one crowds, another's lines
+  slide over. How strongly each pushes each other one, and which way, is part of the
+  genome (40 numbers), so it learns which interactions make good paintings.
+  - **How it runs:** the interaction is worked out on a small picture over three
+    rounds back and forth, then the full picture is drawn with the moved lines.
+    Uncoupled, the sims come out exactly as they are apart.
+  - **Kinds:** surface × which sims × how many bands (84).
+  - **Starting memory (`archive.json`):** three learning runs merged, 74 kinds,
+    covering all seven mixes of sims.
+  - **Proof:** 600 paintings a run, on untuned seeds.
+
+    | seed | best ten: random → learned | whole archive: random → learned |
+    |---|---|---|
+    | 1 | 0.933 → 0.986 | 50.1 → 47.0 |
+    | 2 | 0.954 → 0.985 | 51.6 → 50.0 |
+    | 3 | 0.947 → 0.981 | 49.2 → 48.2 |
+
+    What it paints next averages 0.82–0.83, against 0.59–0.60 for random tries.
+    Two thirds of its next paintings score 0.75 or more, against 17–18% of random
+    tries.
+  - **The result:** with more numbers to learn, its best paintings beat random by
+    more than before, but random tries now find more kinds of picture across the
+    whole archive.
+  - **The test** (`tests/moire-learning.test.mjs`) also checks:
+    - uncoupled sims come out unchanged;
+    - coupled sims move each other's lines;
+    - ripples are evenly spaced;
+    - what the homepage paints next, from the shipped memory, clearly beats random
+      tries.
 - **Next: your picks.** Sheets of what it learned; the numbers you name go into the
   archive as picks, which it breeds from more often.
 - **Back online, only when you say so:** shared archive and the dwell signal.

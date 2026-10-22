@@ -1,45 +1,61 @@
 /* How it learns what to paint, with nothing to press.
  *
- * A painting is a genome: 25 numbers between 0 and 1, read as which surface,
- * which kind of gratings (rings, trajectories, or one of each), the camera,
- * the gratings' spacings, turns and widths, how wide the reading blurs, the
- * framing, and where the painting sits in its colours. Its own eye scores
- * each painting on what this kind of painting needs - beats you can see,
- * bands neither too few nor too many, a picture that holds together - and an
- * archive keeps the best it has found of each kind of picture (surface ×
- * gratings × how many bands × how dark): most new paintings are a small change
- * to one of those, some are new tries. It gets better within each kind and
- * stays varied across them. Paintings someone has picked are kept apart and
- * bred from more often: picks count for more than its own eye. */
+ * A painting is a genome: 40 numbers between 0 and 1, read as which surface,
+ * which sims run on it - two or three of rings, billiard paths and ripples,
+ * each with its own spacings, turns and widths - how strongly each one's
+ * beats move the others' lines (the sims act on each other), the camera, how
+ * wide the reading blurs, the framing, and where the painting sits in its
+ * colours. Its own eye scores each painting on what this kind of painting
+ * needs - beats you can see, bands neither too few nor too many, a picture
+ * that holds together - and an archive keeps the best it has found of each
+ * kind of picture (surface × which sims × how many bands): most new paintings
+ * are a small change to one of those, some are new tries. It gets better
+ * within each kind and stays varied across them. Paintings someone has picked
+ * are kept apart and bred from more often: picks count for more than its own
+ * eye. */
 (function (global) {
   "use strict";
   const M = global.HexfieldMoire;
-  const SURFACE_KEYS = Object.keys(M.SURFACES), KINDS = ["rings", "trajectories", "mixed"];
+  const SURFACE_KEYS = Object.keys(M.SURFACES), TYPES = ["rings", "billiard", "waves"];
   const CONSTANTS = Object.values(M.IRRATIONAL), DENOMINATORS = [5, 6, 8, 10, 12];
-  const GENES = ["surface", "kind", "yaw", "pitch", "dist", "count", "every", "constant", "denominator", "start", "duty",
-    "radius", "centre", "multiple", "chords", "width", "overlap", "blur", "fill", "dx", "dy", "accent", "warmth", "spill", "stroke"];
+  // (Each sim's slot: what it is, then six numbers it reads its own way - see sim().)
+  const SLOT = (k) => ["s" + k, ...["a", "b", "c", "d", "e", "f"].map((x) => "s" + k + x)];
+  const GENES = ["surface", "overlap", "yaw", "pitch", "dist", "blur", "fill", "dx", "dy", "accent", "warmth", "spill", "stroke",
+    ...SLOT(0), ...SLOT(1), ...SLOT(2), "k01", "k02", "k10", "k12", "k20", "k21"];
   const N = GENES.length, gi = Object.fromEntries(GENES.map((g, i) => [g, i]));
   // (Genes read as a choice among a few, not a quantity: these change by being chosen again, not by being nudged.)
-  const CHOICE = new Set(["surface", "kind", "constant", "denominator", "overlap", "multiple"]);
+  const CHOICE = new Set(["surface", "overlap", "s0", "s1", "s2", "s0c", "s1c", "s2c"]);
   const pickOf = (list, g) => list[Math.min(list.length - 1, Math.floor(g * list.length))];
 
   // A ratio near 1 that never comes out even: an irrational number over the nearest fraction to it.
   const nearOne = (c, q) => c / (Math.round(c * q) / q);
+  /* One sim from its six numbers:
+   * rings - the direction they face, their spacing (times an irrational ratio), their width, where they start;
+   * billiard - where its circle is and how big, its turn (an irrational fraction of a full turn), its width;
+   * waves - where they spread from, their spacing (times an irrational ratio), their width, where they start.
+   * (On the arch, circles and sources sit out toward its rim, which is where the arch shows the plane.) */
+  function sim(type, [a, b, c, d, e, f], surface) {
+    const k = pickOf(CONSTANTS, c), arch = surface === "arch";
+    if (type === "rings") return M.horocycles(a * 2 * Math.PI, (0.07 + b * 0.18) * nearOne(k, pickOf(DENOMINATORS, d)), f, 0.3 + e * 0.4);
+    if (type === "waves") return M.waves(arch ? [1.8 + d * 1.4, Math.PI / 2 + (a - 0.5) * 1.2] : [d * 1.4, a * 2 * Math.PI], (0.07 + b * 0.18) * nearOne(k, 8), f, 0.3 + e * 0.4);
+    return M.billiard(arch ? [1.6 + d * 1.4, Math.PI / 2] : [d * 1.2, a * 2 * Math.PI], 0.9 + b * 1.8, 2 * Math.PI * ((k * (1 + Math.floor(f * 4))) % 1), 130, 0.006 + e * 0.03, a * 2 * Math.PI);
+  }
+  /* A painting from its genes: two sims, or three; how strongly each one's
+   * beats move each other one's lines, and which way (every painting's sims
+   * act on each other at least a little); then the camera, framing, reading
+   * and colours as before. */
   function decode(genes) {
     const g = (name) => genes[gi[name]];
-    const surface = pickOf(SURFACE_KEYS, g("surface")), kind = pickOf(KINDS, g("kind")), base = M.SURFACES[surface].view;
-    const c = pickOf(CONSTANTS, g("constant")), ratio = nearOne(c, pickOf(DENOMINATORS, g("denominator")));
-    const start = g("start") * 2 * Math.PI, every = 0.07 + g("every") * 0.18, duty = 0.3 + g("duty") * 0.4;
-    const rings = (n) => Array.from({ length: n }, (_, k) => M.horocycles(start + k * M.GOLDEN_TURN, every * Math.pow(ratio, k), k * 0.37, duty));
-    // (A billiard's circle: on the dome, the bell and the saddle near the middle of what shows; on the arch out toward its rim, which is where the arch shows the plane.)
-    const radius = 0.9 + g("radius") * 1.8, centre = [surface === "arch" ? 1.6 + g("centre") * 1.4 : g("centre") * 1.2, surface === "arch" ? Math.PI / 2 : start];
-    const turn = 2 * Math.PI * ((c * (1 + Math.floor(g("multiple") * 4))) % 1), chords = 60 + Math.floor(g("chords") * 120), width = 0.006 + g("width") * 0.03;
-    const beam = (t, offset = 0) => M.billiard(centre, radius, t, chords, width, start + offset);
-    const families = kind === "rings" ? rings(2 + Math.floor(g("count") * 1.999))
-      : kind === "trajectories" ? [beam(turn), beam(turn * ratio, 0.3)]
-        : [...rings(1), beam(turn)];
+    const surface = pickOf(SURFACE_KEYS, g("surface")), base = M.SURFACES[surface].view;
+    const slots = [0, 1, 2].map((k) => ({ k, type: k < 2 ? pickOf(TYPES, g("s" + k)) : pickOf([...TYPES, "off", "off"], g("s2")) })).filter((x) => x.type !== "off");
+    const families = slots.map(({ k, type }) => sim(type, ["a", "b", "c", "d", "e", "f"].map((x) => g("s" + k + x)), surface));
+    const couple = slots.map(({ k: i }) => slots.map(({ k: j }) => (i === j ? 0 : (g("k" + i + j) - 0.5) * 3)));
+    let most = 0;
+    for (const row of couple) for (const c of row) if (Math.abs(c) > Math.abs(most)) most = c;
+    if (Math.abs(most) < 0.5) for (const row of couple) for (let j = 0; j < row.length; j++) if (row[j] === most) row[j] = most < 0 ? -0.5 : 0.5;
+    const kind = [...new Set(slots.map((x) => x.type))].sort().join("+");
     return {
-      genes: Array.from(genes), surface, kind, families, overlap: g("overlap") < 0.75 ? "xor" : "or",
+      genes: Array.from(genes), surface, kind, types: slots.map((x) => x.type), families, couple, overlap: g("overlap") < 0.75 ? "xor" : "or",
       view: { yaw: base.yaw + (g("yaw") - 0.5) * 0.6, pitch: base.pitch + (g("pitch") - 0.5) * 0.4, dist: base.dist * (0.7 + g("dist") * 0.7) },
       frame: { fill: 0.7 + g("fill") * 0.55, dx: (g("dx") - 0.5) * 0.3, dy: (g("dy") - 0.5) * 0.3 },
       blur: 0.6 + g("blur") * 1.4,
@@ -76,7 +92,7 @@
       const b = beat[o], w = 0.3 + b;
       n++; sum += b; sum2 += b * b; wx += w * x; wy += w * y; ws += w;
     }
-    if (n < W * H * 0.02) return { score: 0, parts: { beats: 0, structure: 0, composition: 0 }, key: [scene.surface, scene.kind, 0, 0].join("·"), bands: 0, darkness: 0 };
+    if (n < W * H * 0.02) return { score: 0, parts: { beats: 0, structure: 0, composition: 0 }, key: [scene.surface, scene.kind, 0].join("·"), bands: 0, darkness: 0 };
     const mean = sum / n, spread = Math.sqrt(Math.max(0, sum2 / n - mean * mean)), f = n / (W * H);
     // (Bands crossed: along rows and columns a twenty-fourth of the picture apart, counting a crossing only once it is clear of the middle.)
     let crossings = 0, run = 0;
@@ -105,12 +121,12 @@
     const crop = Math.max(0, 1 - 2 * Math.max(0, cut - 0.25));
     const composition = 0.5 * fills + 0.3 * balance + 0.2 * crop;
     const score = 0.45 * beats + 0.3 * structure + 0.25 * composition;
-    const bandBin = bands < 7 ? 0 : bands < 14 ? 1 : 2, darkBin = mean < 0.33 ? 0 : mean < 0.5 ? 1 : 2;
-    return { score, parts: { beats, structure, composition }, key: [scene.surface, scene.kind, bandBin, darkBin].join("·"), bands, darkness: mean };
+    const bandBin = bands < 7 ? 0 : bands < 14 ? 1 : 2;
+    return { score, parts: { beats, structure, composition }, key: [scene.surface, scene.kind, bandBin].join("·"), bands, darkness: mean };
   }
   // One painting made and judged (no strokes): what the archive needs to know about it.
   function evaluate(genes, W, H) {
-    const scene = decode(genes), R = M.raw(scene, W, H), read = M.reading(R, sigmaFor(scene, W, H));
+    const scene = decode(genes), sigma = sigmaFor(scene, W, H), R = M.raw(scene, W, H, sigma), read = M.reading(R, sigma);
     return { scene, R, read, ...judge(R, read, scene) };
   }
 
@@ -150,5 +166,5 @@
     return into;
   }
 
-  global.HexfieldLearn = { GENES, KINDS, SURFACE_KEYS, NEXT, decode, sigmaFor, randomGenes, mutate, judge, evaluate, archive, offer, quality, best, next, merge };
+  global.HexfieldLearn = { GENES, TYPES, SURFACE_KEYS, NEXT, decode, sigmaFor, randomGenes, mutate, judge, evaluate, archive, offer, quality, best, next, merge };
 })(typeof globalThis !== "undefined" ? globalThis : this);
