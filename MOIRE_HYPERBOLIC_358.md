@@ -1,4 +1,4 @@
-# Build 358 plan: moiré on half of an inverted hyperbolic plane, and a painter that learns
+# Builds 358–359 plan: moiré on half of an inverted hyperbolic plane, and a painter that learns
 
 The old painter (solid shapes, plants, characters and words in a room) is retired
 from the homepage. It is kept, unchanged, at `/studies.html`. The site stays
@@ -100,22 +100,51 @@ If it doesn't beat random, it isn't learning, and that build doesn't ship.
 
 ## Builds
 
-- **358 (this one):**
+- **358:**
   - the prototype engine;
   - the buttonless homepage (the old painter is kept at `/studies.html`);
   - this plan.
-- **359: the painter proper.**
-  - reading at two scales;
-  - painting built up from big to small, with marks like a medium's;
-  - composition: where the surface sits in the frame;
-  - colour taken from the reading;
-  - sheets to check it.
-- **360: learning.** The genome, its own eye, the archive, and the proof run.
-- **361:** your picks feeding the archive, through sheets while offline.
+- **359: the painter proper, and it learns.** Answers to the open questions: all
+  four surfaces, and both gratings and trajectories.
+  - **Trajectories:** billiard paths in circles of the plane, turned an irrational
+    angle at every bounce, alone or crossed with rings.
+  - **Painting:**
+    - reading at two scales;
+    - marks with bristles;
+    - the silhouette kept by a mask, with paint straying past it;
+    - a painted ground;
+    - framing and colour as genes;
+    - on a tall screen, a wide surface may run off the sides.
+  - **Learning (`learn.js`):** the 25-number genome, its own eye, and the archive
+    (up to 108 kinds).
+  - **Starting memory (`archive.json`):** three learning runs merged, 76 kinds.
+  - **On the homepage:** it judges every painting and goes on learning in each browser.
+  - **Proof (`tools/moire-learn.mjs`):** 600 paintings a run at 320×240, on seeds
+    never used for tuning.
+
+    | seed | best ten: random → learned | whole archive: random → learned |
+    |---|---|---|
+    | 1 | 0.969 → 0.977 | 50.2 → 50.1 |
+    | 2 | 0.953 → 0.987 | 49.2 → 55.4 |
+    | 3 | 0.962 → 0.975 | 46.1 → 46.3 |
+
+    What it paints next, from what it learned, averages 0.85, against 0.57–0.59 for
+    random tries. Between 74% and 82% of its next paintings score 0.75 or more,
+    against 18–20% of random tries.
+  - **The result:** its best paintings beat random every time. Its whole archive
+    comes out about even with random at this budget.
+  - **CI:** `tests/moire-learning.test.mjs` checks four things:
+    - the geometry;
+    - the genomes;
+    - its eye;
+    - that its best paintings and its next paintings beat random tries.
+- **Next: your picks.** Sheets of what it learned; the numbers you name go into the
+  archive as picks, which it breeds from more often.
 - **Back online, only when you say so:** shared archive and the dwell signal.
 
-## Open questions
+## Questions answered
 
-1. Which surface is the "inverted hyperbolic plane" you mean: dome, bell, saddle,
-   arch, or more than one?
-2. Gratings (irrational trigonometry), trajectories, or both?
+1. Which surface? All four: dome, bell, saddle and arch.
+2. Gratings or trajectories? Both, and a mix of the two.
+
+Which of them it paints, and how, is what it learns.

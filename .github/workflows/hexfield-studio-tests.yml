@@ -10,6 +10,8 @@ on:
       - "public/hexfield-integrations.js"
       - "public/print-handoff.js"
       - "public/studio/**"
+      - "public/moire/**"
+      - "tools/moire-learn.mjs"
       - "tests/**"
       - ".github/workflows/hexfield-studio-tests.yml"
   pull_request:
@@ -21,6 +23,8 @@ on:
       - "public/hexfield-integrations.js"
       - "public/print-handoff.js"
       - "public/studio/**"
+      - "public/moire/**"
+      - "tools/moire-learn.mjs"
       - "tests/**"
 jobs:
   studio:
@@ -37,6 +41,8 @@ jobs:
         run: node --experimental-default-type=module tests/print-handoff.test.mjs
       - name: Evolving painting procedures
         run: node --experimental-default-type=module tests/studio-evolution.test.mjs
+      - name: Verify 359 hyperbolic moiré geometry, and that it learns (beats random tries)
+        run: node --experimental-default-type=module tests/moire-learning.test.mjs
       - name: Install Canvas test renderer
         run: npm install --no-save --no-package-lock skia-canvas@3.0.8
       - name: Parse all new unified studio and historic engine modules
