@@ -1,13 +1,15 @@
 /* How it learns what to paint, with nothing to press.
  *
- * A painting is a genome: 40 numbers between 0 and 1, read as which surface,
+ * A painting is a genome: 42 numbers between 0 and 1, read as which surface,
  * which sims run on it - two or three of rings, billiard paths and ripples,
  * each with its own spacings, turns and widths - how strongly each one's
- * beats move the others' lines (the sims act on each other), the camera, how
+ * beats push the others' lines, how (moving them across, swelling them, or
+ * both) and for how many rounds back and forth, the camera, how
  * wide the reading blurs, the framing, and where the painting sits in its
  * colours. Its own eye scores each painting on what this kind of painting
  * needs - beats you can see, bands neither too few nor too many, a picture
- * that holds together - and an archive keeps the best it has found of each
+ * that holds together, sims that visibly act on each other - and an archive
+ * keeps the best it has found of each
  * kind of picture (surface × which sims × how many bands): most new paintings
  * are a small change to one of those, some are new tries. It gets better
  * within each kind and stays varied across them. Paintings someone has picked
@@ -21,10 +23,10 @@
   // (Each sim's slot: what it is, then six numbers it reads its own way - see sim().)
   const SLOT = (k) => ["s" + k, ...["a", "b", "c", "d", "e", "f"].map((x) => "s" + k + x)];
   const GENES = ["surface", "overlap", "yaw", "pitch", "dist", "blur", "fill", "dx", "dy", "accent", "warmth", "spill", "stroke",
-    ...SLOT(0), ...SLOT(1), ...SLOT(2), "k01", "k02", "k10", "k12", "k20", "k21"];
+    ...SLOT(0), ...SLOT(1), ...SLOT(2), "k01", "k02", "k10", "k12", "k20", "k21", "mode", "rounds"];
   const N = GENES.length, gi = Object.fromEntries(GENES.map((g, i) => [g, i]));
   // (Genes read as a choice among a few, not a quantity: these change by being chosen again, not by being nudged.)
-  const CHOICE = new Set(["surface", "overlap", "s0", "s1", "s2", "s0c", "s1c", "s2c"]);
+  const CHOICE = new Set(["surface", "overlap", "s0", "s1", "s2", "s0c", "s1c", "s2c", "mode"]);
   const pickOf = (list, g) => list[Math.min(list.length - 1, Math.floor(g * list.length))];
 
   // A ratio near 1 that never comes out even: an irrational number over the nearest fraction to it.
@@ -41,21 +43,23 @@
     return M.billiard(arch ? [1.6 + d * 1.4, Math.PI / 2] : [d * 1.2, a * 2 * Math.PI], 0.9 + b * 1.8, 2 * Math.PI * ((k * (1 + Math.floor(f * 4))) % 1), 130, 0.006 + e * 0.03, a * 2 * Math.PI);
   }
   /* A painting from its genes: two sims, or three; how strongly each one's
-   * beats move each other one's lines, and which way (every painting's sims
-   * act on each other at least a little); then the camera, framing, reading
+   * beats push each other one's lines, and which way (every painting's sims
+   * push each other hard somewhere: the strongest push at least 1), how the
+   * pushes land, and for how many rounds; then the camera, framing, reading
    * and colours as before. */
   function decode(genes) {
     const g = (name) => genes[gi[name]];
     const surface = pickOf(SURFACE_KEYS, g("surface")), base = M.SURFACES[surface].view;
     const slots = [0, 1, 2].map((k) => ({ k, type: k < 2 ? pickOf(TYPES, g("s" + k)) : pickOf([...TYPES, "off", "off"], g("s2")) })).filter((x) => x.type !== "off");
     const families = slots.map(({ k, type }) => sim(type, ["a", "b", "c", "d", "e", "f"].map((x) => g("s" + k + x)), surface));
-    const couple = slots.map(({ k: i }) => slots.map(({ k: j }) => (i === j ? 0 : (g("k" + i + j) - 0.5) * 3)));
+    const couple = slots.map(({ k: i }) => slots.map(({ k: j }) => (i === j ? 0 : (g("k" + i + j) - 0.5) * 5)));
     let most = 0;
     for (const row of couple) for (const c of row) if (Math.abs(c) > Math.abs(most)) most = c;
-    if (Math.abs(most) < 0.5) for (const row of couple) for (let j = 0; j < row.length; j++) if (row[j] === most) row[j] = most < 0 ? -0.5 : 0.5;
+    if (Math.abs(most) < 1) for (const row of couple) for (let j = 0; j < row.length; j++) if (row[j] === most) row[j] = most < 0 ? -1 : 1;
     const kind = [...new Set(slots.map((x) => x.type))].sort().join("+");
     return {
       genes: Array.from(genes), surface, kind, types: slots.map((x) => x.type), families, couple, overlap: g("overlap") < 0.75 ? "xor" : "or",
+      mode: pickOf(["shift", "swell", "both"], g("mode")), rounds: 3 + Math.floor(g("rounds") * 3.999),
       view: { yaw: base.yaw + (g("yaw") - 0.5) * 0.6, pitch: base.pitch + (g("pitch") - 0.5) * 0.4, dist: base.dist * (0.7 + g("dist") * 0.7) },
       frame: { fill: 0.7 + g("fill") * 0.55, dx: (g("dx") - 0.5) * 0.3, dy: (g("dy") - 0.5) * 0.3 },
       blur: 0.6 + g("blur") * 1.4,
@@ -77,14 +81,26 @@
     return out;
   }
 
+  // A painting carried on: the same surface, view, framing and colours; its sims, their pushes, how and for how long, changed a little.
+  const DRIFTS = GENES.map((name, i) => [name, i]).filter(([name]) => /^s\d[a-f]$|^k\d\d$|^mode$|^rounds$/.test(name)).map(([, i]) => i);
+  function drift(genes, rng, size = 0.05) {
+    const out = Array.from(genes);
+    for (let t = 0; t < 4; t++) { const i = DRIFTS[Math.floor(rng() * DRIFTS.length)]; out[i] = CHOICE.has(GENES[i]) ? rng() : Math.min(0.9999, Math.max(0, out[i] + gauss(rng) * size)); }
+    return out;
+  }
+
   /* ── Its eye ────────────────────────────────────────────────────────────
-   * From the reading, before a stroke is laid:
+   * From the reading (and how hard its sims pushed each other), before a
+   * stroke is laid:
    * beats - how strongly the beats stand out (the spread of the reading);
    * structure - how many bands a line across the surface crosses, best at
    *   about five (ten crossings) and worse toward one band or a hundred;
    * composition - how much of the picture the surface fills (best near two
    *   fifths), where its weight sits (anywhere but jammed against an edge), and
-   *   not too much of it cut off by the frame. */
+   *   not too much of it cut off by the frame;
+   * interplay - how much its sims changed each other's bands from what
+   *   each would make alone, on average over the surface (full marks at 0.15:
+   *   a quarter of random paintings reach it). */
   function judge(R, read, scene) {
     const { W, H, cover } = R, beat = read.beat;
     let n = 0, sum = 0, sum2 = 0, wx = 0, wy = 0, ws = 0;
@@ -92,7 +108,7 @@
       const b = beat[o], w = 0.3 + b;
       n++; sum += b; sum2 += b * b; wx += w * x; wy += w * y; ws += w;
     }
-    if (n < W * H * 0.02) return { score: 0, parts: { beats: 0, structure: 0, composition: 0 }, key: [scene.surface, scene.kind, 0].join("·"), bands: 0, darkness: 0 };
+    if (n < W * H * 0.02) return { score: 0, parts: { beats: 0, structure: 0, composition: 0, interplay: 0 }, key: [scene.surface, scene.kind, 0].join("·"), bands: 0, darkness: 0 };
     const mean = sum / n, spread = Math.sqrt(Math.max(0, sum2 / n - mean * mean)), f = n / (W * H);
     // (Bands crossed: along rows and columns a twenty-fourth of the picture apart, counting a crossing only once it is clear of the middle.)
     let crossings = 0, run = 0;
@@ -120,9 +136,10 @@
     const balance = Math.max(0, 1 - 2.5 * (Math.max(0, Math.abs(cx - 0.5) - 0.2) + Math.max(0, Math.abs(cy - 0.5) - 0.2)));
     const crop = Math.max(0, 1 - 2 * Math.max(0, cut - 0.25));
     const composition = 0.5 * fills + 0.3 * balance + 0.2 * crop;
-    const score = 0.45 * beats + 0.3 * structure + 0.25 * composition;
+    const interplay = Math.min(1, (R.acting?.changed || 0) / 0.15);
+    const score = 0.35 * beats + 0.2 * structure + 0.2 * composition + 0.25 * interplay;
     const bandBin = bands < 7 ? 0 : bands < 14 ? 1 : 2;
-    return { score, parts: { beats, structure, composition }, key: [scene.surface, scene.kind, bandBin].join("·"), bands, darkness: mean };
+    return { score, parts: { beats, structure, composition, interplay }, key: [scene.surface, scene.kind, bandBin].join("·"), bands, darkness: mean };
   }
   // One painting made and judged (no strokes): what the archive needs to know about it.
   function evaluate(genes, W, H) {
@@ -166,5 +183,5 @@
     return into;
   }
 
-  global.HexfieldLearn = { GENES, TYPES, SURFACE_KEYS, NEXT, decode, sigmaFor, randomGenes, mutate, judge, evaluate, archive, offer, quality, best, next, merge };
+  global.HexfieldLearn = { GENES, TYPES, SURFACE_KEYS, NEXT, decode, sigmaFor, randomGenes, mutate, drift, judge, evaluate, archive, offer, quality, best, next, merge };
 })(typeof globalThis !== "undefined" ? globalThis : this);

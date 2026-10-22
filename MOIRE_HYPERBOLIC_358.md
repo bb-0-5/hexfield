@@ -1,4 +1,4 @@
-# Builds 358–360 plan: moiré on half of an inverted hyperbolic plane, and a painter that learns
+# Builds 358–361 plan: moiré on half of an inverted hyperbolic plane, and a painter that learns
 
 The old painter (solid shapes, plants, characters and words in a room) is retired
 from the homepage. It is kept, unchanged, at `/studies.html`. The site stays
@@ -172,6 +172,26 @@ If it doesn't beat random, it isn't learning, and that build doesn't ship.
     - ripples are evenly spaced;
     - what the homepage paints next, from the shipped memory, clearly beats random
       tries.
+- **361: sims that act on each other more, and a painting that never stops.**
+  - **Pushes:** stronger (up to ±2.5, the strongest at least 1). They land three
+    ways: lines moved across, lines swollen or thinned, or both. Each painting gets
+    3–6 rounds back and forth. All of this is in the genome (42 numbers).
+  - **Its eye rewards interplay:** how much the sims change each other's bands from
+    what each would make alone. That is now a quarter of the score.
+  - **Measured on what the homepage paints next:** the interaction changes the
+    painted bands by 0.212 on average, against 0.167 in build 360 (+27%).
+  - **Proof:** 600 paintings a run, on untuned seeds. Its best ten beat random on
+    all three seeds (0.976, 0.990 and 0.969 against 0.935, 0.949 and 0.956). Its
+    whole archive beats random on two of three. What it paints next averages
+    0.82–0.84, against 0.58–0.60 for random tries.
+  - **Never stops:**
+    - A composition is painted, then glazed over six times. Each glaze is the best
+      of five drifted versions: same surface, view, framing and colours, its sims
+      and their pushes changed a little.
+    - Then a new composition fades in over the old one.
+    - Any error starts a new painting 1.5 s later.
+    - A watchdog restarts it if no paint has landed for 30 s on screen.
+    - While the page is hidden, it goes on having ideas and learning from them.
 - **Next: your picks.** Sheets of what it learned; the numbers you name go into the
   archive as picks, which it breeds from more often.
 - **Back online, only when you say so:** shared archive and the dwell signal.

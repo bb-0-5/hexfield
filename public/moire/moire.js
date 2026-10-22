@@ -119,24 +119,28 @@
   }
   /* One grating at a point of the plane: on or off there, its lines moved by
    * `shift` - in its own spacings for rings and ripples, a little way across
-   * for a path's chords. (Shifts are how the sims move each other: interact.) */
-  const CHORD_SHIFT = 0.08;
-  function lineAt(f, P, shift = 0) {
+   * for a path's chords - and swollen or thinned by `swell`. (Shifts and swells
+   * are how the sims act on each other: interact.) */
+  const CHORD_SHIFT = 0.12;
+  function lineAt(f, P, shift = 0, swell = 0) {
     if (f.type === "horocycles" || f.type === "waves") {
       const d = f.type === "waves" ? Math.acosh(Math.max(1, -mink(P, f.S))) : Math.log(P[2] - P[0] * f.cx - P[1] * f.cy);
-      const t = d / f.every + f.phase + shift;
-      return Math.abs(t - Math.round(t)) < f.width / 2 ? 1 : 0;
+      const t = d / f.every + f.phase + shift, width = swell ? Math.min(0.92, Math.max(0.08, f.width * (1 + 0.8 * swell))) : f.width;
+      return Math.abs(t - Math.round(t)) < width / 2 ? 1 : 0;
     }
     if (f.type === "billiard" && -mink(P, f.C) > f.coshR) return 0;
-    const off = shift * CHORD_SHIFT;
-    for (const n of f.normals) if (Math.abs(P[0] * n[0] + P[1] * n[1] - P[2] * n[2] + off) < f.sinhWidth) return 1;
+    const off = shift * CHORD_SHIFT, reach = swell ? f.sinhWidth * Math.max(0.2, 1 + 0.8 * swell) : f.sinhWidth;
+    for (const n of f.normals) if (Math.abs(P[0] * n[0] + P[1] * n[1] - P[2] * n[2] + off) < reach) return 1;
     return 0;
   }
-  // Ink at a point of the plane: each grating on or off there (moved by its shift, if it has one), overlapped as the genome says.
-  function inkAt(P, g, shifts = null) {
+  // How one sim's push lands on another's lines: moved across (shift), swollen or thinned (swell), or both.
+  const pushOf = (mode, v) => (mode === "swell" ? [0, v] : mode === "both" ? [v, v] : [v, 0]);
+  // Ink at a point of the plane: each grating on or off there (pushed by the others, if they act on it), overlapped as the genome says.
+  function inkAt(P, g, pushes = null) {
     let ink = 0;
     for (let i = 0; i < g.families.length; i++) {
-      const on = lineAt(g.families[i], P, shifts ? shifts[i] : 0);
+      const [shift, swell] = pushes ? pushOf(g.mode, pushes[i]) : [0, 0];
+      const on = lineAt(g.families[i], P, shift, swell);
       ink = g.overlap === "or" ? Math.max(ink, on) : g.overlap === "and" ? (ink && on ? 1 : 0) : ink ^ on;
     }
     return ink;
@@ -226,16 +230,19 @@
    * a small picture - the beats are broad, so a small one holds them - over a
    * few rounds back and forth: each round every grating is drawn with its
    * lines moved by the others' beats from the round before, and blurred into
-   * beats of its own again. What comes back is how far each grating's lines
-   * have been moved, all over the picture. */
+   * beats of its own again. What comes back is how hard each grating is
+   * pushed, all over the picture (moving its lines across, swelling them, or
+   * both, as the genome's mode says), how hard on average, and how much the
+   * pushing changed the sims' own bands from what each makes alone. */
   function interact(surface, view, frame, g, W, H, sigma, rounds = 3) {
     const k = Math.min(1, 200 / Math.max(W, H)), w = Math.max(32, Math.round(W * k)), h = Math.max(24, Math.round(H * k)), n = w * h, F = g.families.length;
     const r = rasterize(surface, view, w, h, frame, 90, 90), P = new Array(n), cov = new Float32Array(n);
     for (let o = 0; o < n; o++) if (r.cover[o]) { P[o] = surface.plane(r.U[o], r.V[o]); cov[o] = 1; }
     const sig = Math.max(1, sigma * k), bc = blur(cov, w, h, sig), shifts = g.families.map(() => new Float32Array(n)), ink = new Float32Array(n);
+    let alone = null, last = null;
     for (let round = 0; round < rounds; round++) {
       const beats = g.families.map((f, i) => {
-        for (let o = 0; o < n; o++) ink[o] = P[o] ? lineAt(f, P[o], shifts[i][o]) : 0;
+        for (let o = 0; o < n; o++) { if (!P[o]) { ink[o] = 0; continue; } const [shift, swell] = pushOf(g.mode, shifts[i][o]); ink[o] = lineAt(f, P[o], shift, swell); }
         const b = blur(ink, w, h, sig);
         let sum = 0, m = 0;
         for (let o = 0; o < n; o++) if (cov[o] && bc[o] > 0.05) { b[o] /= bc[o]; sum += b[o]; m++; } else b[o] = 0;
@@ -243,6 +250,9 @@
         for (let o = 0; o < n; o++) if (cov[o]) b[o] -= mean;
         return b;
       });
+      // (The first round is each sim on its own, unpushed: what the rounds after it change is the interaction.)
+      if (!round) alone = beats;
+      last = beats;
       for (let i = 0; i < F; i++) {
         shifts[i].fill(0);
         for (let j = 0; j < F; j++) {
@@ -252,7 +262,10 @@
         }
       }
     }
-    return { w, h, shifts };
+    // How hard the sims pushed, and how much they changed each other's bands from what each would make alone - on average over the surface.
+    let push = 0, changed = 0, m = 0;
+    for (let o = 0; o < n; o++) if (cov[o]) { for (let i = 0; i < F; i++) { push += Math.abs(shifts[i][o]); changed += Math.abs(last[i][o] - alone[i][o]); } m += F; }
+    return { w, h, shifts, push: m ? push / m : 0, changed: m && rounds > 1 ? changed / m : 0 };
   }
   // A small picture's value at a pixel of the full one, read between its four nearest.
   function sample(field, w, h, x, y) {
@@ -351,12 +364,16 @@
     }
     return stops[stops.length - 1][1];
   }
-  // The strokes, in the order they are laid: { pts, rgb, width, alpha, hair }.
-  function strokes(R, read, seed = 1, style = STYLE) {
+  /* The strokes, in the order they are laid: { pts, rgb, width, alpha, hair }.
+   * A glaze is a painting carried on over itself: no broad first pass, and
+   * thinner paint, so what is under it still shows through where it changes. */
+  function strokes(R, read, seed = 1, style = STYLE, glaze = false) {
     const fine = read.M || read, coarse = read.coarse || fine, pal = palette(style);
     const { W, H, cover, shade } = R, rng = mulberry32(seed), at = (x, y) => (Math.min(H - 1, Math.max(0, y | 0)) * W + Math.min(W - 1, Math.max(0, x | 0)));
     const s = Math.min(W, H) / 480 * (style.stroke ?? 1), out = [];
-    for (const pass of [{ step: 15, len: 44, width: 15, alpha: 0.42, M: coarse }, { step: 8, len: 26, width: 7, alpha: 0.6, M: fine }, { step: 4.5, len: 13, width: 2.6, alpha: 0.8, M: fine }]) {
+    const passes = glaze ? [{ step: 8, len: 26, width: 7, alpha: 0.32, M: fine }, { step: 4.5, len: 13, width: 2.6, alpha: 0.48, M: fine }]
+      : [{ step: 15, len: 44, width: 15, alpha: 0.42, M: coarse }, { step: 8, len: 26, width: 7, alpha: 0.6, M: fine }, { step: 4.5, len: 13, width: 2.6, alpha: 0.8, M: fine }];
+    for (const pass of passes) {
       const M = pass.M, grad = (x, y) => [M[at(x + 2, y)] - M[at(x - 2, y)], M[at(x, y + 2)] - M[at(x, y - 2)]];
       const seeds = [], step = pass.step * s;
       for (let y = 0; y < H; y += step) for (let x = 0; x < W; x += step) seeds.push([x + (rng() - 0.5) * step, y + (rng() - 0.5) * step]);

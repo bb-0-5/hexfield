@@ -1,6 +1,7 @@
-/* Builds 359–360 — the hyperbolic moiré painter: its geometry is the
- * hyperbolic plane's, its sims act on each other (and leave each other alone
- * when they are not coupled), its genomes always make a painting, and it
+/* Builds 359–361 — the hyperbolic moiré painter: its geometry is the
+ * hyperbolic plane's, its sims act on each other - moving and swelling each
+ * other's lines (and leave each other alone when they are not coupled) - its
+ * genomes always make a painting, a painting carried on keeps its composition, and it
  * learns: with the same number of paintings, its best and what it paints next
  * beat random tries by its own eye. */
 import assert from 'node:assert/strict';
@@ -55,6 +56,14 @@ for (const a of [0.3, 2.2, 4.9]) {
     if (apart.cover[o]) { covered++; moved += apart.ink[o] !== acting.ink[o]; }
   }
   assert.ok(moved / covered > 0.1, 'coupled sims barely moved each other');
+  assert.ok(acting.acting.push > 0, 'no push measured between coupled sims');
+  // (And the other ways a push can land: lines swollen or thinned, or moved and swollen at once.)
+  for (const mode of ['swell', 'both']) {
+    const pushed = M.raw({ surface: 'dome', overlap: 'xor', families, mode, couple: [[0, 1.2, -0.8], [0.9, 0, 0.6], [-1, 0.7, 0]] }, 160, 120);
+    let changed = 0;
+    for (let o = 0; o < apart.ink.length; o++) if (apart.cover[o]) changed += apart.ink[o] !== pushed.ink[o];
+    assert.ok(changed / covered > 0.05, `pushes that ${mode} barely changed the lines`);
+  }
 }
 
 // Every genome makes a painting: a surface it has, two or three sims acting on each other, sensible numbers; a change stays a genome.
@@ -65,7 +74,12 @@ for (const a of [0.3, 2.2, 4.9]) {
     assert.ok(M.SURFACES[scene.surface] && scene.kind.split('+').every((t) => L.TYPES.includes(t)));
     assert.ok(F >= 2 && F <= 3 && scene.families.every((f) => f.type !== 'billiard' || f.normals.length > 0));
     assert.ok(scene.couple.length === F && scene.couple.every((row, a) => row.length === F && row[a] === 0));
-    assert.ok(Math.max(...scene.couple.flat().map(Math.abs)) >= 0.5, 'sims that do not act on each other');
+    assert.ok(Math.max(...scene.couple.flat().map(Math.abs)) >= 1, 'sims that do not push each other hard anywhere');
+    assert.ok(['shift', 'swell', 'both'].includes(scene.mode) && scene.rounds >= 3 && scene.rounds <= 6);
+    // (A painting carried on keeps its surface, view, framing and colours, and which sims it has.)
+    const carried = L.drift(genes, rng);
+    for (const name of ['surface', 'yaw', 'pitch', 'dist', 'fill', 'dx', 'dy', 'accent', 'warmth', 'spill', 'stroke', 's0', 's1', 's2'])
+      assert.equal(carried[L.GENES.indexOf(name)], genes[L.GENES.indexOf(name)], `drift changed ${name}`);
     assert.ok(scene.frame.fill >= 0.7 && scene.frame.fill <= 1.25 && Number.isFinite(scene.view.yaw + scene.view.pitch + scene.view.dist));
     assert.equal(child.length, L.GENES.length);
     assert.ok(child.every((g) => g >= 0 && g < 1) && child.some((g, k) => g !== genes[k]), 'a change that is not a genome, or no change');
@@ -78,6 +92,7 @@ for (const a of [0.3, 2.2, 4.9]) {
   for (let i = 0; i < 12; i++) {
     const genes = L.randomGenes(rng), judged = L.evaluate(genes, 160, 120);
     assert.ok(judged.score >= 0 && judged.score <= 1 && /^[a-z]+·[a-z+]+·[0-2]$/.test(judged.key));
+    assert.ok(judged.parts.interplay >= 0 && judged.parts.interplay <= 1, 'interplay out of range');
     const before = arc.cells[judged.key]?.score ?? -1;
     assert.equal(L.offer(arc, genes, judged), judged.score > before);
     assert.ok(arc.cells[judged.key].score >= before);
