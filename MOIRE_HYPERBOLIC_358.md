@@ -1,8 +1,8 @@
-# Builds 358–361 plan: moiré on half of an inverted hyperbolic plane, and a painter that learns
+# Builds 358–362 plan: moiré on half of an inverted hyperbolic plane, and a painter that learns
 
 The old painter (solid shapes, plants, characters and words in a room) is retired
-from the homepage. It is kept, unchanged, at `/studies.html`. The site stays
-offline while this is built: hexfield.org shows only `offline/index.html`.
+from the homepage. It is kept, unchanged, at `/studies.html`. The site was
+offline while 358 and 359 were built; it has been back online since 360.
 
 ## What it paints
 
@@ -192,9 +192,59 @@ If it doesn't beat random, it isn't learning, and that build doesn't ship.
     - Any error starts a new painting 1.5 s later.
     - A watchdog restarts it if no paint has landed for 30 s on screen.
     - While the page is hidden, it goes on having ideas and learning from them.
+- **362: one memory for every visitor's browser.**
+  - **What goes in:** each browser's new bests. A find is its kind, its 42 genes and
+    the score its own eye gave it. Finds go to `/api/moire/finds` one at a time, at
+    least 15 s apart.
+  - **What is kept** (Cloudflare D1, `hexfield-moire`; schema in
+    `migrations/0001_moire_finds.sql`): per kind, the six best claimed and the six
+    newest. A false claim can hold a place among the best, but it can't stop new
+    finds coming through.
+  - **What comes back:** per kind, the two best and the two newest, most promising
+    first. A browser fetches them when it opens, then every ten minutes.
+  - **Trust:** a claimed score is only a hint.
+    - Each browser judges every shared find with its own eye, at the size every
+      browser judges at (320×240).
+    - It keeps a find only if it is the best of its kind there.
+    - It does this in the rests between stages, when nothing is moving, so the
+      painting never waits on it.
+  - **What you see:** every other new composition is the best shared find this
+    browser has confirmed. The ones in between are its own ideas.
+  - **Guarded:**
+    - finds are taken only from the site's own pages;
+    - they must be well formed: this genome version, a real kind, 42 genes in [0, 1),
+      at most 4 KB;
+    - at most 20 a minute from one address;
+    - what goes out is kept at the edge for a minute, so many browsers asking cost
+      one read.
+  - **Checked:**
+    - `tests/moire-shared.test.mjs` runs the Worker against real SQLite made from the
+      same schema.
+    - Two browsers ran against the site locally (`wrangler dev`, local D1). The first,
+      starting with no memory, sent its finds. The second, also starting empty,
+      fetched them, checked them, kept them, and painted one as its second
+      composition.
+  - **Does sharing help?** `tools/moire-share.mjs` plays the homepage's loop at the
+    level of ideas.
+    - **Setup:** visitors arrive one after another. Each is a fresh browser that
+      starts from the shipped archive and stays for 21 stages (three compositions and
+      their glazes, about five minutes). Each visit is run twice: with the shared
+      memory and alone.
+    - **Results,** on two seeds, for the ten visitors after the first:
+
+      | | alone | shared |
+      |---|---|---|
+      | what they were shown (judged score of every stage painted) | 0.908 | 0.945 |
+      | archive when they left (summed over 73 kinds) | 64.55 | 64.64 |
+
+      What they were shown was higher for 9 of the 10 and the same for one. Their
+      archive was better for 8 of the 10.
+    - **The archive gain is small.** In a five-minute visit a browser rarely beats the
+      shipped archive: its kinds average 0.88, and half of them are above 0.9. So the
+      memory fills slowly, and it grows with every visitor and every tab left open.
 - **Next: your picks.** Sheets of what it learned; the numbers you name go into the
   archive as picks, which it breeds from more often.
-- **Back online, only when you say so:** shared archive and the dwell signal.
+- **Then:** the dwell signal (how long people stay on a painting).
 
 ## Questions answered
 

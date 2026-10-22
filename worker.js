@@ -157,9 +157,66 @@ async function apiImagination(request,env){
       failure.http);
   }
 }
+/* Build 362 - the moire painter's shared memory: the best finds of every
+ * visitor's browser, by kind of painting, in D1 (env.MOIRE). Browsers send
+ * what they find; every browser checks each shared find with its own eye
+ * before trusting it, so a claimed score is only ever a hint. Kept small and
+ * moving: per kind, the six best claimed and the six newest (a false claim
+ * can hold a place among the best, never stop new finds coming through). */
+const MOIRE_VERSION=3,MOIRE_GENES=42,MOIRE_KEEP=6;
+const MOIRE_KIND=/^(dome|bell|saddle|arch)\u00b7(billiard|rings|waves)(\+(billiard|rings|waves)){0,2}\u00b7[0-2]$/;
+// A find as sent: this genome version, a kind it could be, 42 genes in [0,1), a score in [0,1] - or nothing.
+function moireFind(body){
+  if(!body||body.version!==MOIRE_VERSION)return null;
+  const {kind,genes,score}=body;
+  if(typeof kind!=='string'||kind.length>64||!MOIRE_KIND.test(kind))return null;
+  if(!Array.isArray(genes)||genes.length!==MOIRE_GENES||!genes.every(g=>typeof g==='number'&&g>=0&&g<1))return null;
+  if(typeof score!=='number'||!(score>=0&&score<=1))return null;
+  return {kind,genes:JSON.stringify(genes.map(g=>Math.round(g*1e4)/1e4)),score:Math.round(score*1e4)/1e4};
+}
+async function apiMoireFinds(request,env){
+  if(!env?.MOIRE)return data({error:'The shared memory is not set up'},503);
+  if(request.method==='GET'){
+    // (Kept at the edge for a minute, under one key whatever the query: one read of the memory however many browsers ask.)
+    const cache=globalThis.caches?.default,key=new Request(new URL(request.url).origin+'/api/moire/finds');
+    const hit=cache&&await cache.match(key);
+    if(hit)return hit;
+    // (Of each kind, the two best claimed and the two newest; the most promising first.)
+    const {results}=await env.MOIRE.prepare('SELECT kind,genes,score,at FROM finds WHERE version=?1').bind(MOIRE_VERSION).all();
+    const kinds=new Map();
+    for(const r of results||[]){if(!kinds.has(r.kind))kinds.set(r.kind,[]);kinds.get(r.kind).push(r);}
+    const picked=[];
+    for(const rows of kinds.values())picked.push(...new Set([
+      ...[...rows].sort((a,b)=>b.score-a.score).slice(0,2),...[...rows].sort((a,b)=>b.at-a.at).slice(0,2)]));
+    const finds=picked.sort((a,b)=>b.score-a.score).map(r=>({kind:r.kind,genes:JSON.parse(r.genes),score:r.score}));
+    const response=new Response(JSON.stringify({version:MOIRE_VERSION,finds}),{headers:{
+      'Content-Type':'application/json; charset=utf-8','Cache-Control':'public, max-age=60','X-Content-Type-Options':'nosniff'}});
+    if(cache)await cache.put(key,response.clone());
+    return response;
+  }
+  if(request.method!=='POST')return data({error:'GET or POST only'},405);
+  // (From the site's own pages: hexfield.org, or wherever this Worker itself is served from.)
+  const origin=request.headers.get('origin');
+  if(!origins.has(origin)&&origin!==new URL(request.url).origin)return data({error:'Finds are taken only from hexfield.org'},403);
+  const text=await request.text();
+  if(text.length>4096)return data({error:'Too large to be a find'},413);
+  let find=null;
+  try{find=moireFind(JSON.parse(text));}catch{find=null;}
+  if(!find)return data({error:'Not a find'},400);
+  if(env.MOIRE_POSTS){
+    const {success}=await env.MOIRE_POSTS.limit({key:request.headers.get('cf-connecting-ip')||'unknown'});
+    if(!success)return data({error:'Too many finds at once; try again in a minute'},429);
+  }
+  await env.MOIRE.batch([
+    env.MOIRE.prepare('INSERT OR IGNORE INTO finds (kind,genes,score,version,at) VALUES (?1,?2,?3,?4,?5)').bind(find.kind,find.genes,find.score,MOIRE_VERSION,Date.now()),
+    env.MOIRE.prepare('DELETE FROM finds WHERE kind=?1 AND version=?2 AND rowid NOT IN (SELECT rowid FROM (SELECT rowid FROM finds WHERE kind=?1 AND version=?2 ORDER BY score DESC LIMIT ?3) UNION SELECT rowid FROM (SELECT rowid FROM finds WHERE kind=?1 AND version=?2 ORDER BY at DESC LIMIT ?3))').bind(find.kind,MOIRE_VERSION,MOIRE_KEEP),
+  ]);
+  return new Response(null,{status:204});
+}
 export default {
   async fetch(request,env){
     const url=new URL(request.url);
+    if(url.pathname==='/api/moire/finds')return apiMoireFinds(request,env);
     if(url.pathname==='/api/imagine'){
       if(request.method!=='POST')return data({error:'POST only'},405);
       return apiImagination(request,env);
@@ -175,4 +232,4 @@ export default {
     return env.ASSETS.fetch(new Request(url,request));
   }
 };
-export {unpackModelPlan,planWithModel,apiImagination};
+export {unpackModelPlan,planWithModel,apiImagination,moireFind,apiMoireFinds};

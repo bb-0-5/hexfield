@@ -12,6 +12,7 @@ on:
       - "public/studio/**"
       - "public/moire/**"
       - "tools/moire-learn.mjs"
+      - "migrations/**"
       - "tests/**"
       - ".github/workflows/hexfield-studio-tests.yml"
   pull_request:
@@ -25,6 +26,7 @@ on:
       - "public/studio/**"
       - "public/moire/**"
       - "tools/moire-learn.mjs"
+      - "migrations/**"
       - "tests/**"
 jobs:
   studio:
@@ -43,6 +45,8 @@ jobs:
         run: node --experimental-default-type=module tests/studio-evolution.test.mjs
       - name: Verify 359 hyperbolic moiré geometry, and that it learns (beats random tries)
         run: node --experimental-default-type=module tests/moire-learning.test.mjs
+      - name: Verify 362 shared moiré memory (takes only finds, keeps the best and the newest)
+        run: node --experimental-default-type=module tests/moire-shared.test.mjs
       - name: Install Canvas test renderer
         run: npm install --no-save --no-package-lock skia-canvas@3.0.8
       - name: Parse all new unified studio and historic engine modules

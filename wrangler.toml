@@ -21,3 +21,15 @@ not_found_handling = "single-page-application"
 
 [ai]
 binding = "AI"
+
+# The moiré painter's shared memory: the best finds of every visitor's browser, by kind (build 362).
+[[d1_databases]]
+binding = "MOIRE"
+database_name = "hexfield-moire"
+database_id = "833fe6ff-fe5e-4eea-b93f-4a06821d412d"
+
+# Finds sent, per visitor: at most twenty a minute.
+[[ratelimits]]
+name = "MOIRE_POSTS"
+namespace_id = "3621"
+simple = { limit = 20, period = 60 }

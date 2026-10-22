@@ -9,7 +9,11 @@
  * glazed over what is there, then again, so the painting keeps changing; after
  * a few glazes a new composition fades in over the old one. Every idea it has,
  * painted or not, is judged and learned from, and while nobody is looking (the
- * page hidden) it goes on having ideas and learning from them. If anything
+ * page hidden) it goes on having ideas and learning from them. It shares what
+ * it learns: its new bests go to a memory every visitor's browser feeds, and
+ * what the others found comes back, each find checked with its own eye (in the
+ * rests between stages, when nothing is moving) before it is trusted; every
+ * other new composition is the best of the finds it confirmed. If anything
  * goes wrong it starts a new painting rather than stopping.
  * (MOIRE_HYPERBOLIC_358.md) */
 (function () {
@@ -39,24 +43,70 @@
   window.addEventListener("resize", () => { resized = true; });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) lastTick = Date.now(); });
 
-  // Ideas, judged small (as its archive was learned) and every one learned from: the best of them, or the first worth painting if `first`.
+  /* The shared memory (/api/moire/finds): finds from every visitor's browser,
+   * each one only a hint - checked here with this eye, at the size every
+   * browser judges at, before it goes into this browser's archive - and this
+   * browser's own new bests sent back, one at a time, a little apart. */
+  const SHARED = "/api/moire/finds", CHECK_W = 320, CHECK_H = 240, SEND_GAP_MS = 15000;
+  let unchecked = [], outbox = [], keepers = [], lastSent = 0, compositions = 0;
+  // (Finds already checked or sent on this visit, so none is judged twice.)
+  const seen = new Set(), keyOf = (genes) => genes.join(",");
+  function fetchShared() {
+    fetch(SHARED).then((r) => (r.ok ? r.json() : null)).then((d) => {
+      if (d?.version === 3 && Array.isArray(d.finds)) unchecked = d.finds.filter((f) => Array.isArray(f.genes) && f.genes.length === L.GENES.length && f.genes.every((g) => typeof g === "number" && g >= 0 && g < 1) && !seen.has(keyOf(f.genes))).slice(0, 120);
+    }).catch(() => { /* no shared memory here: it learns on its own */ });
+  }
+  function send() {
+    if (!outbox.length || Date.now() - lastSent < SEND_GAP_MS) return;
+    lastSent = Date.now();
+    const find = outbox.sort((a, b) => b.score - a.score).shift();
+    outbox.length = Math.min(outbox.length, 8);
+    fetch(SHARED, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: 3, ...find }) }).catch(() => {});
+  }
+  // One idea, judged small (as its archive was learned) and learned from; kept, and its own, it is sent to the shared memory.
+  function learnFrom(genes, own) {
+    const judged = L.evaluate(genes, CHECK_W, CHECK_H), kept = L.offer(arc, genes, judged);
+    if (kept && own) {
+      const find = { kind: judged.key, genes: Array.from(genes, (g) => Math.round(g * 1e4) / 1e4), score: Math.round(judged.score * 1e4) / 1e4 };
+      seen.add(keyOf(find.genes));
+      outbox.push(find);
+    }
+    return { judged, kept };
+  }
+  // A shared find, checked: kept here only if this eye finds it the best of its kind so far - and then, if worth painting, a composition in waiting.
+  function checkShared() {
+    if (!unchecked.length) return false;
+    const genes = unchecked.shift().genes, r = learnFrom(genes, false);
+    seen.add(keyOf(genes));
+    if (r.kept && r.judged.score >= WORTH) keepers = [...keepers, { genes, judged: r.judged, shared: true }].sort((x, y) => y.judged.score - x.judged.score).slice(0, 24);
+    return r.kept;
+  }
+  // (While it rests on a finished stage, nothing moving, it checks shared finds one at a time, a little apart.)
+  function checkWhileResting(until) {
+    if (!unchecked.length || document.hidden || Date.now() > until) return;
+    try { if (checkShared()) save(); } catch { /* the next one */ }
+    setTimeout(() => checkWhileResting(until), 250);
+  }
+  // Its own ideas, every one learned from: the best of them, or the first worth painting if `first`.
   function think(make, W, H, first) {
-    const w = 320, h = Math.max(120, Math.round(320 * H / W));
     let best = null, kept = false;
     for (let t = 0; t < 5; t++) {
-      const genes = make(), judged = L.evaluate(genes, w, h);
-      kept = L.offer(arc, genes, judged) || kept;
-      if (!best || judged.score > best.judged.score) best = { genes, judged };
-      if (first && judged.score >= WORTH) break;
+      const genes = make(), r = learnFrom(genes, true);
+      kept = r.kept || kept;
+      if (!best || r.judged.score > best.judged.score) best = { genes, judged: r.judged };
+      if (first && r.judged.score >= WORTH) break;
     }
     if (kept) save();
+    send();
     canvas.dataset.ideas = String(arc.made);
     return best;
   }
-  const label = (scene, judged) => { canvas.dataset.painting = [scene.surface, scene.kind, scene.mode, judged.key, judged.score.toFixed(3), "glaze " + (current?.glazes ?? 0)].join(" | "); };
+  // Every other new composition, when there is one, is the best shared find this eye has kept; the rest are its own ideas.
+  const choose = (W, H) => (compositions++ % 2 === 1 && keepers.length ? keepers.shift() : think(() => L.next(arc, rng), W, H, true));
+  const label = (scene, judged) => { canvas.dataset.painting = [scene.surface, scene.kind, scene.mode, judged.key, judged.score.toFixed(3), "glaze " + (current?.glazes ?? 0), current?.shared ? "shared" : "own"].join(" | "); };
   // A new composition: the ground painted once, the strokes on a layer of their own kept to the surface by its mask, the old painting fading out over it.
   function compose(W, H) {
-    const pick = think(() => L.next(arc, rng), W, H, true), scene = L.decode(pick.genes), sigma = L.sigmaFor(scene, W, H);
+    const pick = choose(W, H), scene = L.decode(pick.genes), sigma = L.sigmaFor(scene, W, H);
     const R = M.raw(scene, W, H, sigma), read = M.reading(R, sigma), seed = Math.floor(rng() * 1e9), pal = M.palette(scene.style);
     let before = null;
     if (current && current.W === W && current.H === H) { before = M.canvasOf(W, H); before.getContext("2d").drawImage(canvas, 0, 0); }
@@ -66,7 +116,7 @@
     for (const g of [gg, lg]) { g.lineCap = "round"; g.lineJoin = "round"; }
     for (const k of M.groundStrokes(W, H, seed, scene.style)) M.drawStroke(gg, k);
     mask.getContext("2d").putImageData(M.maskImage(R, new ImageData(W, H)), 0, 0);
-    current = { genes: pick.genes, scene, R, W, H, ground, layer, lg, mask, kept: M.canvasOf(W, H), glazes: 0, before, fade: before ? 1 : 0 };
+    current = { genes: pick.genes, scene, R, W, H, ground, layer, lg, mask, kept: M.canvasOf(W, H), glazes: 0, before, fade: before ? 1 : 0, shared: !!pick.shared };
     label(scene, pick.judged);
     paint(M.strokes(R, read, seed, scene.style));
   }
@@ -94,7 +144,7 @@
         M.compose(ctx, c.layer, c.R, c.scene.style, c.mask, c.kept);
         if (c.before && c.fade > 0) { ctx.globalAlpha = c.fade; ctx.drawImage(c.before, 0, 0); ctx.globalAlpha = 1; c.fade = Math.max(0, c.fade - 0.03); }
         if (i < list.length || c.fade > 0) requestAnimationFrame(frame);
-        else { c.before = null; timer = setTimeout(stage, REST_MS); }
+        else { c.before = null; timer = setTimeout(stage, REST_MS); checkWhileResting(Date.now() + REST_MS - 600); }
       } catch (error) { recover(error); }
     };
     requestAnimationFrame(frame);
@@ -120,9 +170,17 @@
   // While nobody is looking, it goes on having ideas and learning from them (as often as the browser lets a hidden page run).
   setInterval(() => {
     if (!document.hidden) return;
-    try { const genes = L.next(arc, rng); if (L.offer(arc, genes, L.evaluate(genes, 320, 240))) save(); canvas.dataset.ideas = String(arc.made); } catch { /* the next idea */ }
+    try {
+      const checked = checkShared(), own = learnFrom(L.next(arc, rng), true).kept;
+      if (checked || own) save();
+      send();
+      canvas.dataset.ideas = String(arc.made);
+    } catch { /* the next idea */ }
   }, 3000);
   // What it starts from: the archive shipped with the site, and on top of it what this browser has learned.
   fetch("moire/archive.json").then((r) => (r.ok ? r.json() : null)).catch(() => null)
-    .then((shared) => { L.merge(arc, shared); L.merge(arc, local()); stage(); });
+    .then((shipped) => { L.merge(arc, shipped); L.merge(arc, local()); stage(); });
+  // ...and what every other visitor's browser has found, fetched now and again every ten minutes.
+  fetchShared();
+  setInterval(fetchShared, 600000);
 })();
