@@ -1,5 +1,8 @@
 name = "hexfield"
-main = "worker.js"
+# Offline: no Worker script runs - every path on the domains shows the holding
+# page in offline/. Nothing is deleted: the painter is still in public/ and the
+# Worker in worker.js; reverting this change brings the site back as it was.
+# main = "worker.js"
 compatibility_date = "2024-09-23"
 # The workers.dev address stays on beside the domains, as a way in if they are ever lost.
 workers_dev = true
@@ -15,9 +18,8 @@ pattern = "www.hexfield.org"
 custom_domain = true
 
 [assets]
-directory = "./public"
-binding = "ASSETS"
+directory = "./offline"
 not_found_handling = "single-page-application"
 
-[ai]
-binding = "AI"
+# [ai]
+# binding = "AI"
