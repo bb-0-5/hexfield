@@ -1,4 +1,4 @@
-# Builds 358–364 plan: moiré on half of an inverted hyperbolic plane, and a painter that learns
+# Builds 358–365 plan: moiré on half of an inverted hyperbolic plane, and a painter that learns
 
 The old painter (solid shapes, plants, characters and words in a room) is retired
 from the homepage. It is kept, unchanged, at `/studies.html`. The site was
@@ -22,7 +22,8 @@ The subject is always the same kind of thing, and never the same picture.
   - **klein**: the Klein disk, true to straight lines.
 
   Since build 364 these are pieces of a structure: pillars of stacked pieces with
-  arches between them, one glaze over all of it.
+  arches between them, one glaze over all of it. Since build 365 the structure
+  stands in depth, on a ground, under a sun that casts its shadows.
 - **The camera.** Three-point perspective. The camera is raised or lowered and
   tilted, so verticals meet at a third point above or below the picture.
   - A flat map is seen square on, turned only in its own plane, so the picture is
@@ -356,6 +357,68 @@ If it doesn't beat random, it isn't learning, and that build doesn't ship.
     - every form whole and centred in landscape, square and phone-shaped frames;
     - the homepage on a desktop and a phone painting and glazing structures of
       every form, with no errors.
+- **365: depth, a ground, and the sun's shadows.**
+  - **Depth:** pillars stand in a straight row, staggered back and forth, or
+    stepping back one after another, 0.3–1.2 times their spacing apart in depth.
+    Each arch turns to span between its two tops, wherever they stand, with its
+    feet still centred on them and exactly as wide. In perspective the nearer
+    pillars overlap the farther ones.
+  - **The ground:** the structure stands on a ground plane, and the camera never
+    goes below it. Views are tilted a little more toward looking down, so the
+    ground reads.
+    - It is painted as a pool of tone round the structure, its strokes laid across
+      the ground so they recede with it, fading into the paper.
+    - The paper is the ground, so the shadows go on across it as far as they fall.
+  - **A sun for each painting:** from in front, either side or behind, between a
+    third and two thirds of the way up the sky (two genes).
+    - The structure is seen from the sun as a depth map on a grid square to the
+      light.
+    - A point of a piece, or of the ground, is in shadow where a piece stands
+      between it and the sun, softened over its neighbours on the grid.
+    - Pieces are painted darker in shadow, so a front pillar shades the ones behind
+      it.
+    - Shadows on the ground are laid in slate strokes along the way they fall.
+  - **Framing:** the structure and the shadow it casts are framed together, whole
+    and centred. A long shadow moves the structure off the middle to make room for
+    it.
+  - **Cost:** the shadows take about 0.2 s at 1280×800, once per composition. Its
+    glazes reuse them, which gives exactly the same result, because a glaze changes
+    neither the structure, the sun nor the camera.
+  - **Genome version 6:** 56 numbers. The new genes are layout, depth, the sun's
+    bearing and its height. The eye still judges only the glaze on the structure.
+  - **Starting memory (`archive.json`):** six learning runs of 600 paintings
+    merged, 98 of the 126 kinds, 14–18 of each form. Of the structures with more
+    than one pillar it keeps, 31 step back, 20 are staggered and 17 stand in a row.
+  - **Proof:** 600 paintings a run at 320×240.
+
+    | seed | best ten: random → learned | whole archive: random → learned |
+    |---|---|---|
+    | 1 | 0.874 → 0.912 | 54.1 → 51.6 |
+    | 2 | 0.870 → 0.919 | 58.7 → 50.3 |
+    | 3 | 0.876 → 0.972 | 58.0 → 56.0 |
+    | 4 | 0.885 → 0.914 | 52.6 → 50.1 |
+    | 5 | 0.877 → 0.910 | 54.5 → 45.6 |
+    | 6 | 0.914 → 0.935 | 57.6 → 55.7 |
+
+    - Its best ten beat random on all six seeds.
+    - Its whole archive is behind random on all six this time (three of six in
+      364): it reaches fewer kinds (67–74, against 72–84 for random tries).
+    - Scores are lower than in 364 all round: the frame now holds the shadow too,
+      so the structure is smaller in it.
+    - What the homepage paints next from the new memory averages 0.77–0.79,
+      against 0.50–0.52 for random tries. Two thirds of its next paintings score
+      0.75 or more, against 9–13% of random tries.
+  - **Checked:**
+    - three hundred random structures: arch feet on their tops in every layout,
+      pillars never touching in depth, the camera never under the ground;
+    - columns cast their shadows away from the sun, never cut by the frame, and
+      are not darkened by their own shadow where they face the sun;
+    - structure and shadow together centred (to within 3%) and whole, in
+      landscape, square and phone-shaped frames at the sizes paintings are made;
+    - reused glaze shadows identical to ones worked out again;
+    - the homepage on a desktop and a phone, with no errors.
+  - **CI:** the job's time limit goes from 6 to 10 minutes. The learning test
+    takes about two minutes here.
 - **Next: your picks.** Sheets of what it learned; the numbers you name go into the
   archive as picks, which it breeds from more often.
 - **Then:** judging the finished painting (its strokes and colours), not only the
@@ -372,5 +435,6 @@ If it doesn't beat random, it isn't learning, and that build doesn't ship.
 4. Centre the silhouette so nothing is clipped? Yes, always, from build 363.
 5. Use the sims to build shapes on top of each other, like arches connecting
    pillars of stacked geometries? Yes, from build 364.
+6. Depth, and a ground with shadows? Yes, from build 365.
 
 Which of them it paints, and how, is what it learns.

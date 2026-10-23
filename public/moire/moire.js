@@ -103,19 +103,21 @@
    * scaled to its pillar's width at its storey and set on the piece below it
    * with a little gap. The plane it carries is turned and slid (an isometry of
    * the plane), so each storey shows its own part of the same gratings: one
-   * glaze over the whole structure. Pillars stand side by side, `span` times
-   * the width of their tops apart (and never so close their widest storeys
-   * touch), and an arch - the inside-out disk - springs from each two
-   * neighbouring tops, its feet solved to be just as wide as the pieces they
-   * stand on. */
-  const FACING = { bell: Math.PI, saddle: Math.PI }, ARCH_OUT = 3.1;
+   * glaze over the whole structure. Pillars stand `span` times the width of
+   * their tops apart along the row (and never so close their widest storeys
+   * touch) - in a straight row, staggered back and forth, or stepping back one
+   * after another, `depth` times that apart front to back - and an arch - the
+   * inside-out disk - springs from each two neighbouring tops, turned to span
+   * between them however far apart in depth, its feet solved to be just as
+   * wide as the pieces they stand on. The ground is y = 0. */
+  const FACING = { bell: Math.PI, saddle: Math.PI }, ARCH_OUT = 3.1, LAYOUTS = ["row", "zigzag", "steps"];
   // The plane turned by `turn` about its centre, then slid `slide` toward `dir`.
   function isometry(turn, slide, dir) {
     const c = Math.cos(turn), s = Math.sin(turn), to = slide > 1e-6 ? slideTo(fromPolar(slide, dir)) : null;
     return (P) => { const Q = [P[0] * c - P[1] * s, P[0] * s + P[1] * c, P[2]]; return to ? to(Q) : Q; };
   }
-  // One piece: a surface turned (and flipped), scaled to `width`, its lowest point at height `base`, centred on `x`.
-  function piece(key, { flip = false, width = 1, x = 0, base = 0, u = null, iso = null } = {}) {
+  // One piece: a surface turned (and flipped), scaled to `width`, its lowest point at height `base`, centred on (x, z) and turned `yaw` about the upright.
+  function piece(key, { flip = false, width = 1, x = 0, z = 0, base = 0, yaw = 0, u = null, iso = null } = {}) {
     const S = SURFACES[key], [u0, u1] = u || S.u, [v0, v1] = S.v, f = FACING[key] || 0, cf = Math.cos(f), sf = Math.sin(f), fl = flip ? -1 : 1;
     const turn = (p) => [fl * (p[0] * cf + p[2] * sf), fl * p[1], -p[0] * sf + p[2] * cf];
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
@@ -123,38 +125,48 @@
       const p = turn(S.pos(u0 + (u1 - u0) * i / 24, v0 + (v1 - v0) * j / 24));
       x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]);
     }
-    const k = width / (x1 - x0), tx = x - (x0 + x1) / 2 * k, ty = base - y0 * k;
+    const k = width / (x1 - x0), mx = (x0 + x1) / 2, cy = Math.cos(yaw), sy = Math.sin(yaw);
     return {
-      key, flip, flat: S.flat, u: [u0, u1], v: [v0, v1], x, base, width, height: (y1 - y0) * k,
-      pos: (a, b) => { const p = turn(S.pos(a, b)); return [p[0] * k + tx, p[1] * k + ty, p[2] * k]; },
+      key, flip, flat: S.flat, u: [u0, u1], v: [v0, v1], x, z, base, width, yaw, height: (y1 - y0) * k,
+      pos: (a, b) => { const p = turn(S.pos(a, b)), lx = (p[0] - mx) * k, lz = p[2] * k; return [x + lx * cy + lz * sy, base + (p[1] - y0) * k, z - lx * sy + lz * cy]; },
       plane: iso ? (a, b) => iso(S.plane(a, b)) : S.plane,
     };
   }
   /* A structure from its plan - { pillars, stack: [{ key, flip }, ...] from the
-   * ground up, taper, span, gap, slide, turn, vary } - as its pieces (pillar by
-   * pillar from the ground up, then the arches), the middle of its box, and its size. */
+   * ground up, taper, span, gap, layout, depth, slide, turn, vary } - as its
+   * pieces (pillar by pillar from the ground up, then the arches), the middle
+   * of its box, its size, and how far its footing reaches round that middle. */
   function structure(plan) {
     const pieces = [], P = plan.pillars, widths = plan.stack.map((_, k) => Math.pow(plan.taper, k)), top = widths[widths.length - 1];
-    const spacing = Math.max(plan.span * top, Math.max(...widths) + 2 * plan.gap), span = spacing / top;
+    const spacing = Math.max(plan.span * top, Math.max(...widths) + 2 * plan.gap), depth = (plan.depth || 0) * spacing;
+    // (Where each pillar stands: x along the row; z back from the front - none, every other one back, or each one further back.)
+    const at = (p) => [(p - (P - 1) / 2) * spacing, plan.layout === "zigzag" ? -(p % 2) * depth : plan.layout === "steps" ? -p * depth : 0];
     let height = 0;
     for (let p = 0; p < P; p++) {
       let base = 0;
+      const [x, z] = at(p);
       plan.stack.forEach(({ key, flip }, k) => {
         const iso = isometry(k * plan.turn + p * plan.vary, k * plan.slide, k * GOLDEN_TURN);
-        const pc = piece(key, { flip, width: widths[k], x: (p - (P - 1) / 2) * spacing, base, iso });
+        const pc = piece(key, { flip, width: widths[k], x, z, base, iso });
         pieces.push(pc);
         base += pc.height + plan.gap;
       });
       height = base;
     }
-    // (The arch's feet: centred span·top apart and top wide - its inner edge where that puts it, between the rim at infinity and its outer edge.)
-    const sIn = ARCH_OUT * (span - 1) / (span + 1), k = plan.stack.length;
-    for (let p = 0; p + 1 < P; p++)
-      pieces.push(piece("arch", { width: spacing * 2 * ARCH_OUT / (sIn + ARCH_OUT), x: (p + 0.5 - (P - 1) / 2) * spacing, base: height, u: [sIn, ARCH_OUT],
+    // (The arch's feet: centred on two tops and as wide as them - its inner edge where that puts it, between the rim at infinity and its outer edge - turned to face along the line between them.)
+    const k = plan.stack.length;
+    for (let p = 0; p + 1 < P; p++) {
+      const [xa, za] = at(p), [xb, zb] = at(p + 1), d = Math.hypot(xb - xa, zb - za), span = d / top, sIn = ARCH_OUT * (span - 1) / (span + 1);
+      pieces.push(piece("arch", { width: d * 2 * ARCH_OUT / (sIn + ARCH_OUT), x: (xa + xb) / 2, z: (za + zb) / 2, yaw: Math.atan2(-(zb - za), xb - xa), base: height, u: [sIn, ARCH_OUT],
         iso: isometry(k * plan.turn + p * plan.vary + 0.5, k * plan.slide, k * GOLDEN_TURN) }));
-    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-    for (const pc of pieces) { x0 = Math.min(x0, pc.x - pc.width / 2); x1 = Math.max(x1, pc.x + pc.width / 2); y0 = Math.min(y0, pc.base); y1 = Math.max(y1, pc.base + pc.height); }
-    return { pieces, centre: [(x0 + x1) / 2, (y0 + y1) / 2, 0], size: Math.max(x1 - x0, y1 - y0) };
+    }
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (const pc of pieces) for (let i = 0; i <= 6; i++) for (let j = 0; j <= 6; j++) {
+      const q = pc.pos(pc.u[0] + (pc.u[1] - pc.u[0]) * i / 6, pc.v[0] + (pc.v[1] - pc.v[0]) * j / 6);
+      for (let c = 0; c < 3; c++) { lo[c] = Math.min(lo[c], q[c]); hi[c] = Math.max(hi[c], q[c]); }
+    }
+    const centre = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+    return { pieces, centre, size: Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]), reach: Math.hypot(hi[0] - lo[0], hi[2] - lo[2]) / 2 };
   }
 
   /* ── Gratings, in the plane's own geometry ─────────────────────────────
@@ -250,10 +262,13 @@
    * the picture, `fill` of its width or of its height (whichever is tighter) -
    * never cut by the frame. */
   const FRAME = { fill: 0.84 }, MAX_FILL = 0.94;
-  // One piece's mesh, seen by the camera: where each corner lands, its depth, its parameters and the light on it.
-  function mesh(S, cam, W, H, NU, NV) {
+  // Where a point of the world lands in the camera's picture (before framing), and how far in front of it.
+  const project = (cam, W, H, p) => { const d = sub(p, cam.eye), zc = dot(d, cam.fwd); return [W / 2 + cam.f * dot(d, cam.right) / zc, H / 2 - cam.f * dot(d, cam.up) / zc, zc]; };
+  // One piece's mesh, seen by the camera: where each corner lands, its depth, its parameters, where it is in the world and the light on it.
+  function mesh(S, cam, W, H, NU, NV, light = LIGHT) {
     const nu = NU + 1, nv = NV + 1, m = nu * nv;
     const sx = new Float32Array(m), sy = new Float32Array(m), iz = new Float32Array(m), pu = new Float32Array(m), pv = new Float32Array(m), sh = new Float32Array(m);
+    const wx = new Float32Array(m), wy = new Float32Array(m), wz = new Float32Array(m);
     const [u0, u1] = S.u, [v0, v1] = S.v, du = (u1 - u0) / NU, dv = (v1 - v0) / NV;
     for (let i = 0; i < nu; i++) for (let j = 0; j < nv; j++) {
       const k = i * nv + j, u = u0 + i * du, v = v0 + j * dv, p = S.pos(u, v);
@@ -262,24 +277,32 @@
       let nrm = cross(a, b);
       if (!(Math.hypot(nrm[0], nrm[1], nrm[2]) > 1e-12)) nrm = S.flat ? [0, 0, 1] : [0, 1, 0];
       nrm = unit(nrm);
-      const d = sub(p, cam.eye), zc = dot(d, cam.fwd);
-      sx[k] = W / 2 + cam.f * dot(d, cam.right) / zc;
-      sy[k] = H / 2 - cam.f * dot(d, cam.up) / zc;
-      iz[k] = zc > 0.05 ? 1 / zc : 0;
-      pu[k] = u; pv[k] = v;
-      sh[k] = 0.3 + 0.7 * Math.abs(dot(nrm, LIGHT));
+      const [x, y, zc] = project(cam, W, H, p);
+      sx[k] = x; sy[k] = y; iz[k] = zc > 0.05 ? 1 / zc : 0;
+      pu[k] = u; pv[k] = v; wx[k] = p[0]; wy[k] = p[1]; wz[k] = p[2];
+      sh[k] = 0.3 + 0.7 * Math.abs(dot(nrm, light));
     }
-    return { NU, NV, nv, m, sx, sy, iz, pu, pv, sh };
+    return { NU, NV, nv, m, sx, sy, iz, pu, pv, sh, wx, wy, wz };
   }
   /* A surface, or a structure's pieces, drawn into the same buffers (nearest
-   * wins): for each pixel which piece is there, its parameters and its light. */
-  function rasterize(pieces, view, W, H, frame = FRAME, NU = 180, NV = 180) {
+   * wins): for each pixel which piece is there, its parameters and its light.
+   * Standing on the ground, the shadows it casts there are part of the
+   * picture too: they are framed with it, so they are never cut either. */
+  function rasterize(pieces, view, W, H, frame = FRAME, NU = 180, NV = 180, light = LIGHT, ground = null) {
     const list = Array.isArray(pieces) ? pieces : [pieces], cam = camera(view, W, H), n = W * H;
     const depth = new Float32Array(n).fill(Infinity), U = new Float32Array(n), V = new Float32Array(n), shade = new Float32Array(n), cover = new Uint8Array(n), which = new Uint8Array(n);
     // (Each piece's mesh as fine as its share of the picture needs.)
-    const per = Math.sqrt(list.length), meshes = list.map((S) => mesh(S, cam, W, H, Math.max(24, Math.round(NU / per)), Math.max(24, Math.round(NV / per))));
+    const per = Math.sqrt(list.length), meshes = list.map((S) => mesh(S, cam, W, H, Math.max(24, Math.round(NU / per)), Math.max(24, Math.round(NV / per)), light));
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-    for (const g of meshes) for (let k = 0; k < g.m; k++) if (g.iz[k]) { x0 = Math.min(x0, g.sx[k]); x1 = Math.max(x1, g.sx[k]); y0 = Math.min(y0, g.sy[k]); y1 = Math.max(y1, g.sy[k]); }
+    const box = (x, y) => { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); };
+    for (const g of meshes) for (let k = 0; k < g.m; k++) {
+      if (g.iz[k]) box(g.sx[k], g.sy[k]);
+      // (Where the sun throws this point onto the ground.)
+      if (ground && light[1] > 0.05 && g.wy[k] >= 0) {
+        const t = g.wy[k] / light[1], [x, y, zc] = project(cam, W, H, [g.wx[k] - t * light[0], 0, g.wz[k] - t * light[2]]);
+        if (zc > 0.05) box(x, y);
+      }
+    }
     // (Every point of the surface lands inside the box round its mesh's corners, so that box fitted and centred is the silhouette fitted and centred.)
     const fill = Math.min(frame.fill ?? FRAME.fill, MAX_FILL), k0 = fill * Math.min(W / (x1 - x0), H / (y1 - y0)), cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
     meshes.forEach((g, index) => {
@@ -313,7 +336,7 @@
         tri(a, b, c); tri(a, c, d);
       }
     });
-    return { W, H, depth, U, V, shade, cover, piece: which };
+    return { W, H, depth, U, V, shade, cover, piece: which, cam, frameMap: { k0, cx, cy }, meshes, light, ground };
   }
   /* ── Sims acting on each other ─────────────────────────────────────────
    * Each grating's beats move the other gratings' lines: where one crowds,
@@ -326,10 +349,10 @@
    * pushed, all over the picture (moving its lines across, swelling them, or
    * both, as the genome's mode says), how hard on average, and how much the
    * pushing changed the sims' own bands from what each makes alone. */
-  function interact(pieces, view, frame, g, W, H, sigma, rounds = 3) {
+  function interact(pieces, view, frame, g, W, H, sigma, rounds = 3, light = LIGHT, ground = null) {
     const list = Array.isArray(pieces) ? pieces : [pieces];
     const k = Math.min(1, 200 / Math.max(W, H)), w = Math.max(32, Math.round(W * k)), h = Math.max(24, Math.round(H * k)), n = w * h, F = g.families.length;
-    const r = rasterize(list, view, w, h, frame, 90, 90), P = new Array(n), cov = new Float32Array(n);
+    const r = rasterize(list, view, w, h, frame, 90, 90, light, ground), P = new Array(n), cov = new Float32Array(n);
     for (let o = 0; o < n; o++) if (r.cover[o]) { P[o] = list[r.piece[o]].plane(r.U[o], r.V[o]); cov[o] = 1; }
     const sig = Math.max(1, sigma * k), bc = blur(cov, w, h, sig), shifts = g.families.map(() => new Float32Array(n)), ink = new Float32Array(n);
     let alone = null, last = null;
@@ -365,23 +388,27 @@
     const fx = Math.min(w - 1.001, Math.max(0, x)), fy = Math.min(h - 1.001, Math.max(0, y)), x0 = fx | 0, y0 = fy | 0, tx = fx - x0, ty = fy - y0, o = y0 * w + x0;
     return (field[o] * (1 - tx) + field[o + 1] * tx) * (1 - ty) + (field[o + w] * (1 - tx) + field[o + w + 1] * tx) * ty;
   }
-  /* What a genome stands in front of the camera: a structure's pieces, its
-   * camera aimed at the middle of it from `dist` times its size away - or one
-   * surface, as its own view sees it. */
+  /* What a genome stands in front of the camera: a structure's pieces on the
+   * ground, under its sun, its camera aimed at the middle of it from `dist`
+   * times its size away and never below the ground - or one surface, as its
+   * own view sees it, under the usual light. */
   function stage(genome) {
     if (genome.plan) {
-      const st = structure(genome.plan), v = genome.view || {};
-      return { pieces: st.pieces, view: { target: st.centre, fov: 0.8, yaw: v.yaw ?? 0.3, pitch: v.pitch ?? -0.1, dist: st.size * (v.dist ?? 2.2) } };
+      const st = structure(genome.plan), v = genome.view || {}, sun = genome.sun;
+      const light = sun ? [Math.sin(sun.az) * Math.cos(sun.el), Math.sin(sun.el), Math.cos(sun.az) * Math.cos(sun.el)] : LIGHT, dist = st.size * (v.dist ?? 2.2);
+      // (The eye kept above the ground, an eighth of the structure's size at least: looking up, it looks up from just above the ground.)
+      const pitch = Math.max(v.pitch ?? -0.1, Math.asin(Math.max(-1, Math.min(1, (0.12 * st.size - st.centre[1]) / dist))));
+      return { pieces: st.pieces, view: { target: st.centre, fov: 0.8, yaw: v.yaw ?? 0.3, pitch, dist }, light, ground: { centre: [st.centre[0], 0, st.centre[2]], radius: st.reach + 0.45 * st.size } };
     }
     // (A flat map reaches as near its rim as the genome says: the nearer, the finer the plane crowds there.)
     const base = SURFACES[genome.surface], surface = genome.reach ? { ...base, u: [base.u[0], Math.min(base.u[1], genome.reach)] } : base;
-    return { pieces: [surface], view: { ...surface.view, ...genome.view } };
+    return { pieces: [surface], view: { ...surface.view, ...genome.view }, light: LIGHT, ground: null };
   }
   // The raw moiré: ink at every covered pixel, from the plane point there - its gratings moved by each other first, if they act on each other.
   function raw(genome, W, H, sigma = 6 * Math.min(W, H) / 390) {
-    const { pieces, view } = stage(genome), frame = { ...FRAME, ...genome.frame };
-    const r = rasterize(pieces, view, W, H, frame), ink = new Float32Array(W * H);
-    const acting = genome.couple?.some((row) => row.some((c) => c)) ? interact(pieces, view, frame, genome, W, H, sigma, genome.rounds || 3) : null;
+    const { pieces, view, light, ground } = stage(genome), frame = { ...FRAME, ...genome.frame };
+    const r = rasterize(pieces, view, W, H, frame, 180, 180, light, ground), ink = new Float32Array(W * H);
+    const acting = genome.couple?.some((row) => row.some((c) => c)) ? interact(pieces, view, frame, genome, W, H, sigma, genome.rounds || 3, light, ground) : null;
     const shifts = acting ? new Float32Array(genome.families.length) : null, sx = acting ? acting.w / W : 0, sy = acting ? acting.h / H : 0;
     for (let y = 0, o = 0; y < H; y++) for (let x = 0; x < W; x++, o++) {
       if (!r.cover[o]) continue;
@@ -389,6 +416,92 @@
       ink[o] = inkAt(pieces[r.piece[o]].plane(r.U[o], r.V[o]), genome, shifts);
     }
     return { ...r, ink, acting, pieces };
+  }
+
+  /* ── Sun and shadow ────────────────────────────────────────────────────
+   * The structure seen from its sun: on a grid square to the light, how near
+   * the sun the nearest piece comes. A point of a piece, or of the ground, is
+   * in shadow where a piece stands between it and the sun - softened over its
+   * neighbours on the grid. Pieces are painted darker where they are in
+   * shadow; the ground is a pool of tone round the structure, fading into
+   * the paper, with the shadows it casts. (Only for painting: its eye judges
+   * the glaze, not the light on it. A glaze changes neither the structure nor
+   * its sun nor the camera, so the shadows worked out for its painting - `from`
+   * - are its shadows too.) */
+  function shadows(R, from = null, N = 384) {
+    if (!R.ground || R.pool) return R;
+    if (from?.sunlit && from.W === R.W && from.H === R.H) {
+      for (let o = 0; o < R.shade.length; o++) R.shade[o] *= from.sunlit[o];
+      R.pool = from.pool; R.shadow = from.shadow; R.sunlit = from.sunlit;
+      return R;
+    }
+    const { W, H, cover, piece: which, U, V, shade, cam, frameMap: { k0, cx, cy }, meshes, light: L, ground, pieces } = R;
+    const ref = Math.abs(L[1]) > 0.95 ? [1, 0, 0] : [0, 1, 0], lu = unit(cross(ref, L)), lv = cross(L, lu);
+    let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+    for (const g of meshes) for (let k = 0; k < g.m; k++) {
+      const a = g.wx[k] * lu[0] + g.wy[k] * lu[1] + g.wz[k] * lu[2], b = g.wx[k] * lv[0] + g.wy[k] * lv[1] + g.wz[k] * lv[2];
+      a0 = Math.min(a0, a); a1 = Math.max(a1, a); b0 = Math.min(b0, b); b1 = Math.max(b1, b);
+    }
+    const pad = 0.02 * Math.max(a1 - a0, b1 - b0);
+    a0 -= pad; a1 += pad; b0 -= pad; b1 += pad;
+    const sa = (N - 1) / (a1 - a0), sb = (N - 1) / (b1 - b0), map = new Float32Array(N * N).fill(-Infinity);
+    for (const g of meshes) {
+      const ga = new Float32Array(g.m), gb = new Float32Array(g.m), gt = new Float32Array(g.m);
+      for (let k = 0; k < g.m; k++) {
+        ga[k] = (g.wx[k] * lu[0] + g.wy[k] * lu[1] + g.wz[k] * lu[2] - a0) * sa;
+        gb[k] = (g.wx[k] * lv[0] + g.wy[k] * lv[1] + g.wz[k] * lv[2] - b0) * sb;
+        gt[k] = g.wx[k] * L[0] + g.wy[k] * L[1] + g.wz[k] * L[2];
+      }
+      const tri = (a, b, c) => {
+        const area = (ga[b] - ga[a]) * (gb[c] - gb[a]) - (gb[b] - gb[a]) * (ga[c] - ga[a]);
+        if (Math.abs(area) < 1e-9) return;
+        const i0 = Math.max(0, Math.floor(Math.min(ga[a], ga[b], ga[c]))), i1 = Math.min(N - 1, Math.ceil(Math.max(ga[a], ga[b], ga[c])));
+        const j0 = Math.max(0, Math.floor(Math.min(gb[a], gb[b], gb[c]))), j1 = Math.min(N - 1, Math.ceil(Math.max(gb[a], gb[b], gb[c])));
+        for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+          const wa = ((ga[c] - ga[b]) * (j - gb[b]) - (gb[c] - gb[b]) * (i - ga[b])) / area, wb = ((ga[a] - ga[c]) * (j - gb[c]) - (gb[a] - gb[c]) * (i - ga[c])) / area, wc = 1 - wa - wb;
+          if (wa < -1e-6 || wb < -1e-6 || wc < -1e-6) continue;
+          const t = wa * gt[a] + wb * gt[b] + wc * gt[c], o = j * N + i;
+          if (t > map[o]) map[o] = t;
+        }
+      };
+      for (let i = 0; i < g.NU; i++) for (let j = 0; j < g.NV; j++) {
+        const a = i * g.nv + j, b = (i + 1) * g.nv + j, c = (i + 1) * g.nv + j + 1, d = i * g.nv + j + 1;
+        tri(a, b, c); tri(a, c, d);
+      }
+    }
+    // How much of a point the sun reaches, 0 to 1 (nine neighbours on the grid; a little leeway so a piece does not shadow itself).
+    const bias = 2.5 * Math.max(1 / sa, 1 / sb);
+    const lit = (P) => {
+      const ia = Math.round((dot(P, lu) - a0) * sa), ib = Math.round((dot(P, lv) - b0) * sb), t = dot(P, L);
+      let n = 0;
+      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+        const i = ia + di, j = ib + dj;
+        n += i < 0 || j < 0 || i >= N || j >= N || t >= map[j * N + i] - bias ? 1 : 0;
+      }
+      return n / 9;
+    };
+    const pool = new Float32Array(W * H), shadow = new Float32Array(W * H), sunlit = new Float32Array(W * H).fill(1), R2 = ground.radius;
+    for (let y = 0, o = 0; y < H; y++) for (let x = 0; x < W; x++, o++) {
+      if (cover[o]) { sunlit[o] = 0.55 + 0.45 * lit(pieces[which[o]].pos(U[o], V[o])); shade[o] *= sunlit[o]; continue; }
+      const G = groundAt(cam, W, H, k0, cx, cy, x + 0.5, y + 0.5);
+      if (!G) continue;
+      // (The pool of tone fades into the paper; the shadows go on across it, as far as they fall - the paper is the ground.)
+      const r = Math.hypot(G[0] - ground.centre[0], G[2] - ground.centre[2]) / R2;
+      pool[o] = r < 0.55 ? 1 : r < 1 ? Math.pow(1 - (r - 0.55) / 0.45, 2) : 0;
+      shadow[o] = 1 - lit(G);
+    }
+    R.pool = pool;
+    R.sunlit = sunlit;
+    R.shadow = blur(shadow, W, H, Math.max(1, Math.min(W, H) / 400));
+    return R;
+  }
+  // Where a pixel of the picture looks onto the ground (y = 0), if it does.
+  function groundAt(cam, W, H, k0, cx, cy, x, y) {
+    const px = (cx + (x - W / 2) / k0 - W / 2) / cam.f, py = (cy + (y - H / 2) / k0 - H / 2) / cam.f;
+    const d = [cam.fwd[0] + cam.right[0] * px - cam.up[0] * py, cam.fwd[1] + cam.right[1] * px - cam.up[1] * py, cam.fwd[2] + cam.right[2] * px - cam.up[2] * py];
+    if (d[1] > -1e-6) return null;
+    const t = -cam.eye[1] / d[1];
+    return t > 0 ? [cam.eye[0] + t * d[0], 0, cam.eye[2] + t * d[2]] : null;
   }
 
   /* ── Reading the moiré ─────────────────────────────────────────────────
@@ -517,6 +630,37 @@
     }
     return out;
   }
+  /* The ground the structure stands on, painted: a pool of tone fading into
+   * the paper, its strokes laid across the ground (so they recede with it),
+   * then the shadows the structure casts there, laid along the way they fall. */
+  function shadowStrokes(R, seed = 1, style = STYLE) {
+    if (!R.pool) return [];
+    const { W, H, pool, shadow, cam, frameMap: { k0, cx, cy }, light: L } = R, rng = mulberry32((seed ^ 0x51ed270b) >>> 0), pal = palette(style), s = Math.min(W, H) / 480, out = [];
+    const at = (x, y) => Math.min(H - 1, Math.max(0, y | 0)) * W + Math.min(W - 1, Math.max(0, x | 0));
+    // (The way a step across the ground from a pixel goes on the picture.)
+    const along = (x, y, step) => {
+      const G = groundAt(cam, W, H, k0, cx, cy, x, y);
+      if (!G) return null;
+      const [x2, y2] = project(cam, W, H, [G[0] + step[0], 0, G[2] + step[2]]), fx = W / 2 + (x2 - cx) * k0 - x, fy = H / 2 + (y2 - cy) * k0 - y, l = Math.hypot(fx, fy);
+      return l > 1e-6 ? [fx / l, fy / l] : null;
+    };
+    const h = Math.hypot(L[0], L[2]), fall = h > 1e-3 ? [-L[0] / h * 0.2, 0, -L[2] / h * 0.2] : [0.2, 0, 0];
+    const tone = pal.ground.map((v) => v * 0.92), slate = [70, 78, 98], mix = (a, b, t) => a.map((v, i) => clamp255(v + (b[i] - v) * t));
+    const lay = (step, len, width, keep, dirOf, colourOf, alphaOf) => {
+      for (let y = 0; y < H; y += step * s) for (let x = 0; x < W; x += step * s) {
+        const px = x + (rng() - 0.5) * step * s, py = y + (rng() - 0.5) * step * s, o = at(px, py);
+        if (!keep(o)) continue;
+        const d = dirOf(px, py);
+        if (!d) continue;
+        const l = len * s * (0.7 + 0.6 * rng());
+        out.push({ pts: [[px - d[0] * l / 2, py - d[1] * l / 2], [px + d[0] * l / 2, py + d[1] * l / 2]], rgb: colourOf(o), width: width * s * (0.75 + 0.5 * rng()), alpha: alphaOf(o), hair: rng() < 0.5 ? -1 : 1 });
+      }
+    };
+    lay(13, 46, 15, (o) => pool[o] > 0.06 && rng() < 0.75, (x, y) => along(x, y, [0.3, 0, 0]), () => tone.map((v) => clamp255(v + (rng() - 0.5) * 10)), (o) => 0.2 * pool[o]);
+    lay(7, 22, 9, (o) => shadow[o] > 0.12, (x, y) => along(x, y, fall), (o) => mix(tone, slate, 0.3 + 0.45 * shadow[o]), (o) => 0.3 * shadow[o]);
+    lay(4.5, 12, 4.5, (o) => shadow[o] > 0.2, (x, y) => along(x, y, fall), (o) => mix(tone, slate, 0.4 + 0.5 * shadow[o]), (o) => 0.42 * shadow[o]);
+    return out;
+  }
   function path(ctx, pts, ox, oy) {
     ctx.beginPath();
     ctx.moveTo(pts[0][0] + ox, pts[0][1] + oy);
@@ -552,11 +696,13 @@
    * of their own, laid over the ground a little (paint straying past the edge)
    * and then kept to the surface, so its edge is found where the light found it. */
   function paint(ctx, R, read, seed = 1, style = STYLE) {
+    shadows(R);
     const { W, H } = R, pal = palette(style), layer = canvasOf(W, H), lg = layer.getContext("2d");
     ctx.fillStyle = `rgb(${pal.ground.join(",")})`;
     ctx.fillRect(0, 0, W, H);
     for (const g of [ctx, lg]) { g.lineCap = "round"; g.lineJoin = "round"; }
     for (const k of groundStrokes(W, H, seed, style)) drawStroke(ctx, k);
+    for (const k of shadowStrokes(R, seed, style)) drawStroke(ctx, k);
     for (const k of strokes(R, read, seed, style)) drawStroke(lg, k);
     compose(ctx, layer, R, style);
   }
@@ -596,8 +742,8 @@
 
   global.HexfieldMoire = {
     PHI, IRRATIONAL, GOLDEN_TURN, SURFACES, FRAME, STYLE, mink, fromPolar, fromDisk, fromHalfPlane, fromKlein, slideTo, lineThrough,
-    horocycles, billiard, waves, geodesics, lineAt, inkAt, interact, camera, isometry, piece, structure, stage, rasterize, raw, blur, beatAt, reading, read, palette, ramp,
-    strokes, groundStrokes, drawStroke, maskImage, canvasOf, paint, compose, rawImage, readImage, mulberry32,
+    LAYOUTS, horocycles, billiard, waves, geodesics, lineAt, inkAt, interact, camera, project, isometry, piece, structure, stage, rasterize, raw, shadows, groundAt,
+    blur, beatAt, reading, read, palette, ramp, strokes, groundStrokes, shadowStrokes, drawStroke, maskImage, canvasOf, paint, compose, rawImage, readImage, mulberry32,
     get GROUND() { return `rgb(${palette().ground.join(",")})`; },
   };
 })(typeof globalThis !== "undefined" ? globalThis : this);

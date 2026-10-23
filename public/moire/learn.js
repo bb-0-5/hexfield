@@ -1,10 +1,11 @@
 /* How it learns what to paint, with nothing to press.
  *
- * A painting is a genome: 52 numbers between 0 and 1, read as a structure -
+ * A painting is a genome: 56 numbers between 0 and 1, read as a structure -
  * one, two or three pillars of up to four stacked pieces (any of the six
  * surfaces, upright or upside down, narrowing or widening as they rise),
- * arches springing between neighbouring pillars, and how the glaze is turned
- * and slid from storey to storey - then which sims run over it - two or three
+ * standing in a row, staggered back and forth or stepping back, arches
+ * springing between neighbouring pillars, and how the glaze is turned and slid
+ * from storey to storey - the sun it stands under, then which sims run over it - two or three
  * of rings, billiard paths and ripples, each with its own spacings, turns and
  * widths - how strongly each one's beats push the others' lines, how (moving
  * them across, swelling them, or both) and for how many rounds back and
@@ -25,12 +26,12 @@
   const CONSTANTS = Object.values(M.IRRATIONAL), DENOMINATORS = [5, 6, 8, 10, 12];
   // (Each sim's slot: what it is, then six numbers it reads its own way - see sim().)
   const SLOT = (k) => ["s" + k, ...["a", "b", "c", "d", "e", "f"].map((x) => "s" + k + x)];
-  const GENES = ["pillars", "storeys", "p0", "p1", "p2", "p3", "flips", "taper", "span", "gap", "slide", "turn", "vary",
+  const GENES = ["pillars", "storeys", "p0", "p1", "p2", "p3", "flips", "taper", "span", "gap", "slide", "turn", "vary", "layout", "depth", "sun", "height",
     "overlap", "yaw", "pitch", "dist", "blur", "fill", "accent", "warmth", "spill", "stroke",
     ...SLOT(0), ...SLOT(1), ...SLOT(2), "k01", "k02", "k10", "k12", "k20", "k21", "mode", "rounds"];
   const N = GENES.length, gi = Object.fromEntries(GENES.map((g, i) => [g, i]));
   // (Genes read as a choice among a few, not a quantity: these change by being chosen again, not by being nudged.)
-  const CHOICE = new Set(["pillars", "storeys", "p0", "p1", "p2", "p3", "flips", "overlap", "s0", "s1", "s2", "s0c", "s1c", "s2c", "mode"]);
+  const CHOICE = new Set(["pillars", "storeys", "p0", "p1", "p2", "p3", "flips", "layout", "overlap", "s0", "s1", "s2", "s0c", "s1c", "s2c", "mode"]);
   const pickOf = (list, g) => list[Math.min(list.length - 1, Math.floor(g * list.length))];
 
   // A ratio near 1 that never comes out even: an irrational number over the nearest fraction to it.
@@ -50,9 +51,11 @@
    * of two or more, or pillars with arches between them); two sims, or three;
    * how strongly each one's beats push each other one's lines, and which way
    * (every painting's sims push each other hard somewhere: the strongest push
-   * at least 1), how the pushes land, and for how many rounds; then the camera
-   * (low and looking up, or high and looking down, so the uprights meet at a
-   * third point), the framing - always the whole silhouette, centred - the
+   * at least 1), how the pushes land, and for how many rounds; then the sun
+   * (from in front, from either side or from behind, between a third and two
+   * thirds of the way up the sky), the camera (low and looking up, or higher
+   * and looking down at the ground, so the uprights meet at a third point),
+   * the framing - always the whole silhouette and its shadow, centred - the
    * reading and the colours. Its kind of form: column, gate (two pillars, one
    * arch) or arcade (three, two arches), low (one or two storeys) or tall. */
   function decode(genes) {
@@ -61,6 +64,7 @@
     const plan = {
       pillars, stack: Array.from({ length: storeys }, (_, k) => ({ key: pickOf(SURFACE_KEYS, g("p" + k)), flip: !!((flips >> k) & 1) })),
       taper: 0.7 + g("taper") * 0.45, span: 2 + g("span") * 2, gap: 0.02 + g("gap") * 0.08,
+      layout: pickOf(M.LAYOUTS, g("layout")), depth: 0.3 + g("depth") * 0.9,
       slide: g("slide") * 0.9, turn: g("turn") * 2 * Math.PI, vary: g("vary") < 0.5 ? 0 : (g("vary") - 0.5) * 4 * Math.PI,
     };
     const form = FORMS[pillars - 1] + "-" + (storeys <= 2 ? "low" : "tall");
@@ -74,8 +78,9 @@
     return {
       genes: Array.from(genes), plan, form, kind, types: slots.map((x) => x.type), families, couple, overlap: g("overlap") < 0.75 ? "xor" : "or",
       mode: pickOf(["shift", "swell", "both"], g("mode")), rounds: 3 + Math.floor(g("rounds") * 3.999),
-      // (Its distance in the structure's own size.)
-      view: { yaw: (g("yaw") - 0.5) * 1.1, pitch: -0.4 + g("pitch") * 0.8, dist: 1.5 + g("dist") * 1.5 },
+      // (Its distance in the structure's own size; the sun's bearing from in front of the structure, and its height, in radians.)
+      view: { yaw: (g("yaw") - 0.5) * 1.1, pitch: -0.3 + g("pitch") * 0.9, dist: 1.5 + g("dist") * 1.5 },
+      sun: { az: (g("sun") - 0.5) * 3.8, el: 0.55 + g("height") * 0.6 },
       frame: { fill: 0.72 + g("fill") * 0.2 },
       blur: 0.6 + g("blur") * 1.4,
       style: { accent: 0.82 + g("accent") * 0.15, warmth: g("warmth"), spill: g("spill") * 0.4, stroke: 0.7 + g("stroke") * 0.7 },

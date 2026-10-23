@@ -1,7 +1,8 @@
-/* Builds 359–364 — the hyperbolic moiré painter: its geometry is the
+/* Builds 359–365 — the hyperbolic moiré painter: its geometry is the
  * hyperbolic plane's (standing in space, or flat as one of its own maps), its
- * structures stand - pillars of stacked pieces apart, arches landing on their
- * tops - its sims act on each other - moving and swelling each other's lines
+ * structures stand - pillars of stacked pieces apart, in depth or not, arches
+ * landing on their tops - on a ground the camera never goes below, its sun's
+ * shadows falling away from it - its sims act on each other - moving and swelling each other's lines
  * (and leave each other alone when they are not coupled) - every silhouette is
  * whole and centred in the frame, its genomes always make a painting, a
  * painting carried on keeps its composition, and it learns: with the same
@@ -89,7 +90,7 @@ for (const a of [0.3, 2.2, 4.9]) {
     assert.ok(['shift', 'swell', 'both'].includes(scene.mode) && scene.rounds >= 3 && scene.rounds <= 6);
     // (A painting carried on keeps its structure, view, framing and colours, and which sims it has.)
     const carried = L.drift(genes, rng);
-    for (const name of ['pillars', 'storeys', 'p0', 'p1', 'p2', 'p3', 'flips', 'taper', 'span', 'gap', 'yaw', 'pitch', 'dist', 'fill', 'accent', 'warmth', 'spill', 'stroke', 's0', 's1', 's2'])
+    for (const name of ['pillars', 'storeys', 'p0', 'p1', 'p2', 'p3', 'flips', 'taper', 'span', 'gap', 'layout', 'depth', 'sun', 'height', 'yaw', 'pitch', 'dist', 'fill', 'accent', 'warmth', 'spill', 'stroke', 's0', 's1', 's2'])
       assert.equal(carried[L.GENES.indexOf(name)], genes[L.GENES.indexOf(name)], `drift changed ${name}`);
     assert.ok(scene.frame.fill >= 0.72 && scene.frame.fill <= 0.92 && Number.isFinite(scene.view.yaw + scene.view.pitch + scene.view.dist));
     assert.equal(child.length, L.GENES.length);
@@ -97,45 +98,88 @@ for (const a of [0.3, 2.2, 4.9]) {
   }
 }
 
-// Build 364: structures stand. Pillars never touch each other; every piece sits on the one below with a gap; each arch's feet are
-// centred on the tops it springs from and just as wide; every piece carries the plane (its glaze turned and slid, still on it).
+// Builds 364–365: structures stand. Pillars never touch each other, in a row or in depth; every piece sits on the one below with a
+// gap; each arch, however it is turned, has its feet centred on the tops it springs from and just as wide; every piece carries
+// the plane (its glaze turned and slid, still on it).
 {
-  const rng = M.mulberry32(364);
+  const rng = M.mulberry32(364), layouts = new Set();
   for (let i = 0; i < 300; i++) {
     const { plan } = L.decode(L.randomGenes(rng)), st = M.structure(plan), n = plan.stack.length, P = plan.pillars, col = st.pieces.slice(0, n * P);
+    if (P > 1) layouts.add(plan.layout);
     for (let p = 0; p < P; p++) for (let k = 0; k < n; k++) {
       const a = col[p * n + k];
       if (k) { const b = col[p * n + k - 1]; assert.ok(Math.abs(a.base - (b.base + b.height + plan.gap)) < 1e-9, 'a piece not set on the one below'); }
-      if (p) { const b = col[(p - 1) * n + k]; assert.ok(a.x - a.width / 2 - (b.x + b.width / 2) >= plan.gap * 2 - 1e-9, 'neighbouring pillars touching'); }
+      if (p) { const b = col[(p - 1) * n + k]; assert.ok(Math.hypot(a.x - b.x, a.z - b.z) - (a.width + b.width) / 2 >= plan.gap * 2 - 1e-9, 'neighbouring pillars touching'); }
     }
     st.pieces.slice(n * P).forEach((arch, p) => {
-      const left = col[p * n + n - 1], right = col[(p + 1) * n + n - 1];
-      assert.ok(Math.abs(arch.x - arch.width / 2 - (left.x - left.width / 2)) < 1e-9 && Math.abs(arch.x + arch.width / 2 - (right.x + right.width / 2)) < 1e-9, 'an arch not landing on its tops');
-      assert.ok(Math.abs(arch.base - (left.base + left.height + plan.gap)) < 1e-9, 'an arch not springing from the tops');
+      const left = col[p * n + n - 1], right = col[(p + 1) * n + n - 1], mid = (arch.u[0] + arch.u[1]) / 2, top = left.base + left.height + plan.gap;
+      for (const [foot, a] of [[left, Math.PI], [right, 0]]) {
+        const q = arch.pos(mid, a), inner = arch.pos(arch.u[0], a), outer = arch.pos(arch.u[1], a);
+        assert.ok(Math.hypot(q[0] - foot.x, q[2] - foot.z) < 1e-9 && Math.abs(q[1] - top) < 1e-9, 'an arch foot not on its top');
+        assert.ok(Math.abs(Math.hypot(outer[0] - inner[0], outer[2] - inner[2]) - foot.width) < 1e-9, 'an arch foot not as wide as its top');
+      }
     });
     if (i < 20) for (const pc of st.pieces) {
       const P0 = pc.plane((pc.u[0] + pc.u[1]) / 2, (pc.v[0] + pc.v[1]) / 2);
       assert.ok(Math.abs(M.mink(P0, P0) + 1) < 1e-8, 'a piece carrying a point off the plane');
     }
+    // (The camera never goes below the ground.)
+    const stg = M.stage(L.decode(L.randomGenes(rng)));
+    assert.ok(M.camera(stg.view, 160, 120).eye[1] > 0, 'the camera under the ground');
   }
+  assert.equal(layouts.size, 3, 'not every way of standing pillars tried');
 }
 
-// Builds 363–364: the whole silhouette, centred, for every form and in every shape of frame - never cut by its edge - as big as the genome says.
+// Build 365: the sun's shadows. A column on the ground casts its shadow away from the sun, and the shadow is framed with it -
+// never cut by the frame; pieces facing the sun, with nothing between, are not darkened by their own shadow.
+{
+  const rng = M.mulberry32(365), G = (n) => L.GENES.indexOf(n);
+  let checked = 0;
+  for (let i = 0; i < 40 && checked < 8; i++) {
+    const genes = L.randomGenes(rng);
+    genes[G('pillars')] = 0.1; genes[G('height')] = 0.3;
+    const scene = L.decode(genes), w = 200, h = 150, before = M.raw(scene, w, h), shadeBefore = Float32Array.from(before.shade), R = M.shadows(before);
+    let sx = 0, sz = 0, n = 0, edge = 0;
+    for (let y = 0, o = 0; y < h; y++) for (let x = 0; x < w; x++, o++) {
+      if (R.shadow[o] < 0.5) continue;
+      if (x === 0 || y === 0 || x === w - 1 || y === h - 1) edge++;
+      const g = M.groundAt(R.cam, w, h, R.frameMap.k0, R.frameMap.cx, R.frameMap.cy, x + 0.5, y + 0.5);
+      sx += g[0]; sz += g[2]; n++;
+    }
+    if (n < 30) continue;
+    checked++;
+    const c = R.ground.centre, away = (sx / n - c[0]) * -R.light[0] + (sz / n - c[2]) * -R.light[2];
+    assert.ok(away > 0, 'a shadow falling toward the sun');
+    assert.equal(edge, 0, 'a shadow cut by the frame');
+    let darker = 0, covered = 0;
+    for (let o = 0; o < w * h; o++) if (R.cover[o]) { covered++; darker += R.shade[o] < shadeBefore[o] * 0.8; }
+    assert.ok(darker / covered < 0.6, 'a structure mostly in its own shadow');
+  }
+  assert.ok(checked >= 4, 'too few columns casting shadows to check');
+}
+
+// Builds 363–365: the whole structure and the shadow it casts, centred together, for every form and in every shape of frame -
+// never cut by its edge - as big as the genome says. (At the sizes paintings are made: a thin part's shadow is a line a pixel
+// or two wide there, too faint to count in a picture a hundred pixels across.)
 {
   const rng = M.mulberry32(363), seen = new Set(), G = (n) => L.GENES.indexOf(n);
-  for (let i = 0; i < 24; i++) {
+  for (let i = 0; i < 12; i++) {
     const genes = L.randomGenes(rng);
     genes[G('pillars')] = ((i % 3) + 0.5) / 3;
     genes[G('storeys')] = (Math.floor(i / 3) % 2) ? 0.9 : 0.3;
     const scene = L.decode(genes);
     seen.add(scene.form);
-    for (const [w, h] of [[160, 120], [90, 160], [120, 120]]) {
-      const R = M.raw(scene, w, h);
+    for (const [w, h] of [[320, 240], [180, 320], [240, 240]]) {
+      const R = M.shadows(M.raw(scene, w, h));
       let x0 = w, x1 = -1, y0 = h, y1 = -1;
-      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (R.cover[y * w + x]) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
-      assert.ok(x0 > 0 && y0 > 0 && x1 < w - 1 && y1 < h - 1, `${scene.form} cut by the frame at ${w}×${h}`);
-      assert.ok(Math.abs((x0 + x1) / 2 - (w - 1) / 2) <= 3 && Math.abs((y0 + y1) / 2 - (h - 1) / 2) <= 3, `${scene.form} off centre at ${w}×${h}`);
-      assert.ok(Math.abs(Math.max((x1 - x0 + 1) / w, (y1 - y0 + 1) / h) - scene.frame.fill) < 0.07, `${scene.form} not as big as its genome says at ${w}×${h}`);
+      for (let y = 0, o = 0; y < h; y++) for (let x = 0; x < w; x++, o++) {
+        if (!R.cover[o] && !(R.shadow[o] > 0.12)) continue;
+        assert.ok(x > 0 && y > 0 && x < w - 1 && y < h - 1, `${scene.form} or its shadow cut by the frame at ${w}×${h}`);
+        x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+      }
+      const big = Math.max((x1 - x0 + 1) / w, (y1 - y0 + 1) / h);
+      assert.ok(Math.abs((x0 + x1) / 2 - (w - 1) / 2) <= 0.03 * w && Math.abs((y0 + y1) / 2 - (h - 1) / 2) <= 0.03 * h, `${scene.form} and its shadow off centre at ${w}×${h}`);
+      assert.ok(big <= scene.frame.fill + 0.02 && big >= scene.frame.fill - 0.06, `${scene.form} and its shadow not as big as its genome says at ${w}×${h}`);
     }
   }
   assert.equal(seen.size, 6, 'not every form framed');
