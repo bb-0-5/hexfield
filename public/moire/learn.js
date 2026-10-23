@@ -1,16 +1,19 @@
 /* How it learns what to paint, with nothing to press.
  *
- * A painting is a genome: 56 numbers between 0 and 1, read as a structure -
+ * A painting is a genome: 61 numbers between 0 and 1, read as a structure -
  * one, two or three pillars of up to four stacked pieces (any of the six
  * surfaces, upright or upside down, narrowing or widening as they rise),
  * standing in a row, staggered back and forth or stepping back, arches
- * springing between neighbouring pillars, and how the glaze is turned and slid
- * from storey to storey - the sun it stands under, then which sims run over it - two or three
+ * springing between neighbouring pillars with smaller and smaller arches set
+ * back inside them, and how the glaze is turned and slid from storey to
+ * storey - the sun that lights it, then which sims run over it - two or three
  * of rings, billiard paths and ripples, each with its own spacings, turns and
  * widths - how strongly each one's beats push the others' lines, how (moving
  * them across, swelling them, or both) and for how many rounds back and
  * forth, the camera, how wide the reading blurs, how big the painting sits in
- * the middle of the frame, and where it sits in its colours. Its own eye scores each painting on what this kind of painting
+ * the middle of the frame, and its colours: a hue, the colour-theory path its
+ * value takes round the wheel from there, which way the value runs, and
+ * paper or neon. Its own eye scores each painting on what this kind of painting
  * needs - beats you can see, bands neither too few nor too many, a picture
  * that holds together, sims that visibly act on each other - and an archive
  * keeps the best it has found of each
@@ -22,16 +25,16 @@
 (function (global) {
   "use strict";
   const M = global.HexfieldMoire;
-  const SURFACE_KEYS = Object.keys(M.SURFACES), TYPES = ["rings", "billiard", "waves"], FORMS = ["column", "gate", "arcade"];
+  const SURFACE_KEYS = Object.keys(M.SURFACES), TYPES = ["rings", "billiard", "waves"], FORMS = ["column", "gate", "arcade"], HARMONY_KEYS = Object.keys(M.HARMONIES);
   const CONSTANTS = Object.values(M.IRRATIONAL), DENOMINATORS = [5, 6, 8, 10, 12];
   // (Each sim's slot: what it is, then six numbers it reads its own way - see sim().)
   const SLOT = (k) => ["s" + k, ...["a", "b", "c", "d", "e", "f"].map((x) => "s" + k + x)];
   const GENES = ["pillars", "storeys", "p0", "p1", "p2", "p3", "flips", "taper", "span", "gap", "slide", "turn", "vary", "layout", "depth", "sun", "height",
-    "overlap", "yaw", "pitch", "dist", "blur", "fill", "accent", "warmth", "spill", "stroke",
+    "nest", "fit", "recess", "overlap", "yaw", "pitch", "dist", "blur", "fill", "hue", "harmony", "lift", "light", "spill", "stroke",
     ...SLOT(0), ...SLOT(1), ...SLOT(2), "k01", "k02", "k10", "k12", "k20", "k21", "mode", "rounds"];
   const N = GENES.length, gi = Object.fromEntries(GENES.map((g, i) => [g, i]));
   // (Genes read as a choice among a few, not a quantity: these change by being chosen again, not by being nudged.)
-  const CHOICE = new Set(["pillars", "storeys", "p0", "p1", "p2", "p3", "flips", "layout", "overlap", "s0", "s1", "s2", "s0c", "s1c", "s2c", "mode"]);
+  const CHOICE = new Set(["pillars", "storeys", "p0", "p1", "p2", "p3", "flips", "layout", "nest", "harmony", "lift", "light", "overlap", "s0", "s1", "s2", "s0c", "s1c", "s2c", "mode"]);
   const pickOf = (list, g) => list[Math.min(list.length - 1, Math.floor(g * list.length))];
 
   // A ratio near 1 that never comes out even: an irrational number over the nearest fraction to it.
@@ -65,6 +68,7 @@
       pillars, stack: Array.from({ length: storeys }, (_, k) => ({ key: pickOf(SURFACE_KEYS, g("p" + k)), flip: !!((flips >> k) & 1) })),
       taper: 0.7 + g("taper") * 0.45, span: 2 + g("span") * 2, gap: 0.02 + g("gap") * 0.08,
       layout: pickOf(M.LAYOUTS, g("layout")), depth: 0.3 + g("depth") * 0.9,
+      nest: pickOf([1, 2, 3, 4, 5], g("nest")), fit: 0.8 + g("fit") * 0.2, recess: 0.08 + g("recess") * 0.5,
       slide: g("slide") * 0.9, turn: g("turn") * 2 * Math.PI, vary: g("vary") < 0.5 ? 0 : (g("vary") - 0.5) * 4 * Math.PI,
     };
     const form = FORMS[pillars - 1] + "-" + (storeys <= 2 ? "low" : "tall");
@@ -83,7 +87,7 @@
       sun: { az: (g("sun") - 0.5) * 3.8, el: 0.55 + g("height") * 0.6 },
       frame: { fill: 0.72 + g("fill") * 0.2 },
       blur: 0.6 + g("blur") * 1.4,
-      style: { accent: 0.82 + g("accent") * 0.15, warmth: g("warmth"), spill: g("spill") * 0.4, stroke: 0.7 + g("stroke") * 0.7 },
+      style: { hue: g("hue") * 360, harmony: pickOf(HARMONY_KEYS, g("harmony")), lift: g("lift") >= 0.5, light: pickOf(["paper", "paper", "paper", "neon", "neon"], g("light")), spill: g("spill") * 0.4, stroke: 0.7 + g("stroke") * 0.7 },
     };
   }
   const sigmaFor = (scene, W, H) => 6 * Math.min(W, H) / 390 * scene.blur;

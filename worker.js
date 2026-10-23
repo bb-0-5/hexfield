@@ -163,10 +163,10 @@ async function apiImagination(request,env){
  * before trusting it, so a claimed score is only ever a hint. Kept small and
  * moving: per kind, the six best claimed and the six newest (a false claim
  * can hold a place among the best, never stop new finds coming through). */
-// (Genome version 6 since build 365: 56 genes; kinds by form - column, gate or arcade, low or tall. Finds of older versions are not given out.)
-const MOIRE_VERSION=6,MOIRE_GENES=56,MOIRE_KEEP=6;
+// (Genome version 7 since build 366: 61 genes; kinds by form - column, gate or arcade, low or tall. Finds of older versions are not given out.)
+const MOIRE_VERSION=7,MOIRE_GENES=61,MOIRE_KEEP=6;
 const MOIRE_KIND=/^(column|gate|arcade)-(low|tall)\u00b7(billiard|rings|waves)(\+(billiard|rings|waves)){0,2}\u00b7[0-2]$/;
-// A find as sent: this genome version, a kind it could be, 56 genes in [0,1), a score in [0,1] - or nothing.
+// A find as sent: this genome version, a kind it could be, 61 genes in [0,1), a score in [0,1] - or nothing.
 function moireFind(body){
   if(!body||body.version!==MOIRE_VERSION)return null;
   const {kind,genes,score}=body;

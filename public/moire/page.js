@@ -4,8 +4,8 @@
  * archive shipped with the site (moire/archive.json) and goes on learning in
  * this browser. A composition is chosen - the first of up to five ideas its
  * eye finds worth painting - and painted stroke by stroke, big to small, kept
- * to its surface, on the ground it stands on, with the shadows its sun casts.
- * Then it carries on: its sims drift (their spacings and turns,
+ * to its surface, in colours its value gives it. Then it carries on: its
+ * sims drift (their spacings and turns,
  * how hard they push each other and how), the best of five drifted versions is
  * glazed over what is there, then again, so the painting keeps changing; after
  * a few glazes a new composition fades in over the old one. Every idea it has,
@@ -24,8 +24,8 @@
   const ctx = canvas.getContext("2d");
   // (Asked for less motion: each stage appears whole instead of stroke by stroke, and rests longer.)
   const still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-  // (Genome version 6, build 365: what an older version learned is for other genomes, and is let go.)
-  const PER_FRAME = still ? Infinity : 45, MAX_PIXELS = 1.6e6, VERSION = 6, KEY = "hexfield.moire.archive.v" + VERSION;
+  // (Genome version 7, build 366: what an older version learned is for other genomes, and is let go.)
+  const PER_FRAME = still ? Infinity : 45, MAX_PIXELS = 1.6e6, VERSION = 7, KEY = "hexfield.moire.archive.v" + VERSION;
   try { for (let v = 1; v < VERSION; v++) localStorage.removeItem("hexfield.moire.archive.v" + v); } catch { /* no storage here */ }
   // How long it rests on a finished stage, how many glazes a composition gets before a new one, and how good an idea must be to be painted.
   const REST_MS = still ? 20000 : 3500, GLAZES = 6, WORTH = 0.6;
@@ -110,8 +110,7 @@
   // A new composition: the ground painted once, the strokes on a layer of their own kept to the surface by its mask, the old painting fading out over it.
   function compose(W, H) {
     const pick = choose(W, H), scene = L.decode(pick.genes), sigma = L.sigmaFor(scene, W, H);
-    // (The sun on it: its pieces darker where they are in shadow, the ground and the shadows cast on it.)
-    const R = M.shadows(M.raw(scene, W, H, sigma)), read = M.reading(R, sigma), seed = Math.floor(rng() * 1e9), pal = M.palette(scene.style);
+    const R = M.raw(scene, W, H, sigma), read = M.reading(R, sigma), seed = Math.floor(rng() * 1e9), pal = M.palette(scene.style);
     let before = null;
     if (current && current.W === W && current.H === H) { before = M.canvasOf(W, H); before.getContext("2d").drawImage(canvas, 0, 0); }
     const ground = M.canvasOf(W, H), gg = ground.getContext("2d"), layer = M.canvasOf(W, H), lg = layer.getContext("2d"), mask = M.canvasOf(W, H);
@@ -119,7 +118,6 @@
     gg.fillRect(0, 0, W, H);
     for (const g of [gg, lg]) { g.lineCap = "round"; g.lineJoin = "round"; }
     for (const k of M.groundStrokes(W, H, seed, scene.style)) M.drawStroke(gg, k);
-    for (const k of M.shadowStrokes(R, seed, scene.style)) M.drawStroke(gg, k);
     mask.getContext("2d").putImageData(M.maskImage(R, new ImageData(W, H)), 0, 0);
     current = { genes: pick.genes, scene, R, W, H, ground, layer, lg, mask, kept: M.canvasOf(W, H), glazes: 0, before, fade: before ? 1 : 0, shared: !!pick.shared };
     label(scene, pick.judged);
@@ -129,7 +127,7 @@
   function glaze(W, H) {
     const pick = think(() => L.drift(current.genes, rng), W, H, false);
     if (pick.judged.score < WORTH * 0.85) return compose(W, H);
-    const scene = L.decode(pick.genes), sigma = L.sigmaFor(scene, W, H), R = M.shadows(M.raw(scene, W, H, sigma), current.R), read = M.reading(R, sigma);
+    const scene = L.decode(pick.genes), sigma = L.sigmaFor(scene, W, H), R = M.raw(scene, W, H, sigma), read = M.reading(R, sigma);
     current.genes = pick.genes;
     current.scene = scene;
     current.glazes++;

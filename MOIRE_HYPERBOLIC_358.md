@@ -1,4 +1,4 @@
-# Builds 358–365 plan: moiré on half of an inverted hyperbolic plane, and a painter that learns
+# Builds 358–366 plan: moiré on half of an inverted hyperbolic plane, and a painter that learns
 
 The old painter (solid shapes, plants, characters and words in a room) is retired
 from the homepage. It is kept, unchanged, at `/studies.html`. The site was
@@ -22,8 +22,9 @@ The subject is always the same kind of thing, and never the same picture.
   - **klein**: the Klein disk, true to straight lines.
 
   Since build 364 these are pieces of a structure: pillars of stacked pieces with
-  arches between them, one glaze over all of it. Since build 365 the structure
-  stands in depth, on a ground, under a sun that casts its shadows.
+  arches between them, one glaze over all of it. Since build 365 its pillars can
+  stand in depth, lit by a sun. Since build 366 smaller and smaller arches stand
+  set back inside each arch, a way into the picture. It casts no shadows.
 - **The camera.** Three-point perspective. The camera is raised or lowered and
   tilted, so verticals meet at a third point above or below the picture.
   - A flat map is seen square on, turned only in its own plane, so the picture is
@@ -61,7 +62,9 @@ The prototype is `public/moire/moire.js`. The homepage runs it through
 Every painting keeps the same:
 - surface family;
 - camera rule;
-- palette family (paper, slate, ink and one vermilion);
+- colour rule: since build 366, full chroma along a colour-theory path round the
+  wheel, its lightness and hue following the value (it was paper, slate, ink and
+  one vermilion before);
 - stroke vocabulary.
 
 What changes from painting to painting is only what the mathematics produces. The old
@@ -357,7 +360,9 @@ If it doesn't beat random, it isn't learning, and that build doesn't ship.
     - every form whole and centred in landscape, square and phone-shaped frames;
     - the homepage on a desktop and a phone painting and glazing structures of
       every form, with no errors.
-- **365: depth, a ground, and the sun's shadows.**
+- **365: depth, a ground, and the sun's shadows.** (The ground and the cast
+  shadows were taken out again in 366, at your call. Depth and the sun's light on
+  the pieces stay.)
   - **Depth:** pillars stand in a straight row, staggered back and forth, or
     stepping back one after another, 0.3–1.2 times their spacing apart in depth.
     Each arch turns to span between its two tops, wherever they stand, with its
@@ -419,6 +424,64 @@ If it doesn't beat random, it isn't learning, and that build doesn't ship.
     - the homepage on a desktop and a phone, with no errors.
   - **CI:** the job's time limit goes from 6 to 10 minutes. The learning test
     takes about two minutes here.
+- **366: depth from nested arches; full-chroma colour from value; neon.**
+  - **No dropped shadows:** the ground and the shadows cast on it and between
+    pieces are gone. The sun only lights the pieces, and the structure alone is
+    framed, centred again.
+  - **Nested arches:** inside each arch stand one to five smaller ones (a gene).
+    - They spring from the same line.
+    - Each one's outer edge is 80–100% of the way to the inner edge of the arch in
+      front, so it fits inside the opening (a gene).
+    - Each is set back 8–58% of its own width behind that arch (a gene).
+    - In perspective they read as a portal, or a corridor of arches going into the
+      picture.
+    - The glaze moves on with each one.
+  - **Colour from value, at full chroma:** how crowded the lines are (the
+    reading's value) sets the paint's lightness, and the hue moves with it.
+    - **Hue path:** round the colour wheel from a base hue (a gene), along a path
+      colour theory gives: analogous, complementary, split-complementary, triadic
+      or the whole spectrum (a gene).
+    - **Full chroma:** every step is at the fullest chroma a screen can show at
+      that lightness and hue, worked out in OKLCH so equal steps look equal.
+    - **Paper:** the ground is a pale tint of the complement. Crowded lines are
+      dark, or, lifted, light (a gene).
+    - **Neon:** the ground is near black in the base hue, and the paint runs from
+      dark to glowing. A soft wide copy of the paint is laid over it as light, made
+      again every fourth frame. About two paintings in five are neon (a gene).
+  - **Genome version 7:** 61 numbers. The eye still judges only the glaze's
+    reading, so its colours are never judged. They are inherited but not chosen.
+  - **Starting memory (`archive.json`):** six learning runs of 600 paintings
+    merged, 95 of the 126 kinds.
+    - 14–18 of each form;
+    - 60 on paper and 35 in neon;
+    - every harmony;
+    - about three arches inside each arch.
+  - **Proof:** 600 paintings a run at 320×240.
+
+    | seed | best ten: random → learned | whole archive: random → learned |
+    |---|---|---|
+    | 1 | 0.904 → 0.951 | 59.1 → 60.1 |
+    | 2 | 0.912 → 0.944 | 53.8 → 51.2 |
+    | 3 | 0.894 → 0.949 | 56.6 → 46.8 |
+    | 4 | 0.917 → 0.982 | 58.4 → 50.9 |
+    | 5 | 0.897 → 0.965 | 57.9 → 52.5 |
+    | 6 | 0.944 → 0.979 | 57.5 → 58.6 |
+
+    - Its best ten beat random on all six seeds.
+    - Its whole archive beats random on two of six.
+    - What the homepage paints next from the new memory averages 0.82–0.85,
+      against 0.50–0.53 for random tries.
+    - 76–84% of its next paintings score 0.75 or more, against 10–15% of random
+      tries.
+  - **Checked:**
+    - three hundred random structures: every inner arch on its arch's springing
+      line, inside the opening of the one in front and set back behind it;
+    - every palette at full chroma at every step, its lightness running with the
+      value, its ground light on paper and near black in neon;
+    - every form whole and centred again;
+    - the homepage on a desktop and a phone, paper and neon, with no errors.
+    - **Cost of the glow:** compositing one frame at 1280×800 takes 13 ms in neon
+      against 8 ms on paper, in a browser without a graphics card.
 - **Next: your picks.** Sheets of what it learned; the numbers you name go into the
   archive as picks, which it breeds from more often.
 - **Then:** judging the finished painting (its strokes and colours), not only the
@@ -435,6 +498,10 @@ If it doesn't beat random, it isn't learning, and that build doesn't ship.
 4. Centre the silhouette so nothing is clipped? Yes, always, from build 363.
 5. Use the sims to build shapes on top of each other, like arches connecting
    pillars of stacked geometries? Yes, from build 364.
-6. Depth, and a ground with shadows? Yes, from build 365.
+6. Depth, and a ground with shadows? Yes, in build 365. Then no dropped
+   shadows, from 366: depth comes from arches nested smaller and smaller inside
+   each arch.
+7. Colour? Full chroma, by colour theory, its gradient following the value; and
+   neon. From build 366.
 
 Which of them it paints, and how, is what it learns.
